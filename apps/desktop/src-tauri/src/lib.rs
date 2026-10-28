@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
@@ -8,6 +9,7 @@ use velvet_application_core::ApplicationCore;
 use velvet_layout_model::{
     LayoutCommand, LayoutState, ViewContainerState, ViewState, WorkbenchAppId, WorkbenchPart,
 };
+use velvet_persistence::JsonFileLayoutStateStore;
 use velvet_preview_core::{PreviewIntent, PreviewSurface, ResolvedPreview};
 use velvet_tauri_adapter::{CoreEventSink, TauriTransport};
 use velvet_workbench_protocol::{
@@ -617,9 +619,16 @@ pub fn run() {
             let sink = TauriEventSink {
                 app: app.handle().clone(),
             };
+            let layout_path = app
+                .path()
+                .app_data_dir()
+                .expect("Velvet app data directory should be available")
+                .join("workbench-layout.json");
             app.manage(AppState {
                 transport: Mutex::new(TauriTransport::with_event_sink(
-                    ApplicationCore::default(),
+                    ApplicationCore::with_store(Arc::new(JsonFileLayoutStateStore::new(
+                        layout_path,
+                    ))),
                     sink,
                 )),
             });

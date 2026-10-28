@@ -32,6 +32,12 @@ root inside Tauri and keeps the browser DemoApp as a local fallback. The next
 implementation gate is broader accessibility, keyboard, resize constraints
 and recovery behavior before drag-and-drop and plugin panel mounting.
 
+The native Tauri composition now injects a JSON layout store at
+`app_data_dir/workbench-layout.json`, and a restart test proves that the Rust
+core restores the persisted revisioned snapshot. Missing files start from the
+default layout; malformed files are rejected by the storage adapter and the
+core starts from its safe default until a later layout write replaces them.
+
 The current shell slice also renders the accepted Part constraint table: fixed
 Parts use stable dimensions, resizable Parts enforce bounded sizes in Rust, and
 visibility/collapse commands are exposed through the host-owned workspace
@@ -375,7 +381,7 @@ export interface CommandDescriptor {
 
 1. **Documentation and vocabulary**: complete `docs/GLOSSARY.md`, accept the topology ADR, and add the decision link to the local Wayfinder map. **Done for the current skeleton.**
 2. **Protocol types**: implement `workbench-protocol`, `layout-model`, `asset-core` and error envelopes without a UI. **Done for the current layout slice; native wire fixtures cover the Tauri mapping.**
-3. **Layout service**: implement versioned layout state, migrations, fixed zones and persistence tests. **Done for the current in-memory/persistence seam.**
+3. **Layout service**: implement versioned layout state, migrations, fixed zones and persistence tests. **Done for the current file-backed Tauri store and restart recovery slice.**
 4. **Workbench parts**: render ActivityBar, Resource Manager, Feed Workbench, PrimarySidebar, WorkspaceArea, AuxiliarySidebar, OperationsPanel and StatusBar with placeholder views. **Initial renderer slice done.**
 5. **View registry**: add built-in views and one example external view per zone. Verify that cross-zone registration is rejected. **Host registry and rejection tests done; renderer mounting remains.**
 6. **Preview core**: implement generic image/file fallback, `PreviewResolver`, Quick/Inspect/Analyze intents and a fake provider used by contract tests.

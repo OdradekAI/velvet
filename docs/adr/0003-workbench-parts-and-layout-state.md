@@ -97,6 +97,13 @@ monotonic revision event. Plugin defaults are merged only when no user override
 exists, and reset commands are available for the Workbench, active
 WorkbenchApp and all View contributions.
 
+The native Tauri composition injects a JSON `LayoutStateStore` rooted at the
+platform application data directory. Its current file name is
+`workbench-layout.json`; the persisted document uses the layout schema version
+and is written through a temporary file before replacement. The storage
+adapter owns filesystem access, while `LayoutService` remains responsible for
+validation, migration and recovery of an invalid or missing document.
+
 ## Alternatives considered
 
 1. Allow every plugin to choose any left, right or bottom location. Rejected because the meaning of each region would drift and plugin discovery would become unpredictable.

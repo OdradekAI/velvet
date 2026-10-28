@@ -3732,6 +3732,7 @@ dependencies = [
  "velvet-application-core",
  "velvet-asset-core",
  "velvet-layout-model",
+ "velvet-persistence",
  "velvet-plugin-api",
  "velvet-preview-core",
  "velvet-tauri-adapter",
@@ -3741,11 +3742,16 @@ dependencies = [
 [[package]]
 name = "velvet-layout-model"
 version = "0.0.2"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "velvet-persistence"
 version = "0.0.2"
 dependencies = [
+ "serde",
+ "serde_json",
  "velvet-layout-model",
 ]
 

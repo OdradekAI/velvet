@@ -17,6 +17,7 @@ tauri-plugin-global-shortcut = "2.4.1"
 velvet-asset-core = { path = "../../../crates/asset-core" }
 velvet-application-core = { path = "../../../crates/application-core" }
 velvet-layout-model = { path = "../../../crates/layout-model" }
+velvet-persistence = { path = "../../../crates/persistence" }
 velvet-plugin-api = { path = "../../../crates/plugin-api" }
 velvet-preview-core = { path = "../../../crates/preview-core" }
 velvet-tauri-adapter = { path = "../../../crates/tauri-adapter" }

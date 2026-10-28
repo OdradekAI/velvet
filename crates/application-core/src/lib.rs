@@ -34,16 +34,19 @@ impl Default for ApplicationCore {
 
 impl ApplicationCore {
     pub fn with_store(layout_store: Arc<dyn LayoutStateStore>) -> Self {
+        let mut layout = InMemoryLayoutService::default();
+        if let Ok(Some(state)) = layout_store.load() {
+            if let Ok(migrated) = layout.migrate(state) {
+                layout = InMemoryLayoutService::from_state(migrated);
+            }
+        }
+
         let mut core = Self {
-            layout: InMemoryLayoutService::default(),
+            layout,
             plugins: InMemoryPluginHost::default(),
             previews: PreviewResolver::default(),
             layout_store,
         };
-
-        if let Ok(Some(state)) = core.layout_store.load() {
-            core.layout = InMemoryLayoutService::from_state(state);
-        }
 
         core.previews.register(Arc::new(GenericFallbackProvider));
         core
@@ -113,13 +116,14 @@ impl ApplicationCore {
             }
         }
 
-        let state = self
-            .layout
+        let mut next_layout = self.layout.clone();
+        let state = next_layout
             .apply(command)
             .map_err(|error| CoreError::Layout(format!("{error:?}")))?;
         self.layout_store
             .save(&state)
             .map_err(|error| CoreError::Layout(format!("{error:?}")))?;
+        self.layout = next_layout;
         Ok(Response::Layout(state))
     }
 }
@@ -149,7 +153,22 @@ impl CoreTransport for InProcessCoreTransport {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+    use std::time::{SystemTime, UNIX_EPOCH};
     use velvet_layout_model::{LayoutCommand, WorkbenchPart};
+    use velvet_persistence::JsonFileLayoutStateStore;
+
+    fn temporary_layout_path() -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be after the Unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "velvet-application-core-restart-{}-{nonce}.json",
+            std::process::id()
+        ))
+    }
 
     #[test]
     fn layout_queries_return_the_canonical_revisioned_snapshot() {
@@ -225,5 +244,44 @@ mod tests {
                 received: PROTOCOL_VERSION + 1,
             }
         );
+    }
+
+    #[test]
+    fn layout_state_is_restored_when_application_core_restarts() {
+        let path = temporary_layout_path();
+        let first_store = Arc::new(JsonFileLayoutStateStore::new(&path));
+        let mut first_core = ApplicationCore::with_store(first_store);
+
+        first_core
+            .dispatch(Request::Command(Command::Layout(
+                LayoutCommand::SetPartVisibility {
+                    part: WorkbenchPart::PrimarySidebar,
+                    visible: false,
+                },
+            )))
+            .expect("the first core should persist the layout change");
+        drop(first_core);
+
+        let second_store = Arc::new(JsonFileLayoutStateStore::new(&path));
+        let mut second_core = ApplicationCore::with_store(second_store);
+        let response = second_core
+            .dispatch(Request::Query(Query::Layout))
+            .expect("the restarted core should load the persisted layout");
+
+        match response {
+            Response::Layout(state) => {
+                assert_eq!(state.revision, 1);
+                assert!(
+                    !state
+                        .parts
+                        .get(&WorkbenchPart::PrimarySidebar)
+                        .expect("primary sidebar should exist")
+                        .visible
+                );
+            }
+            other => panic!("expected a layout response, got {other:?}"),
+        }
+
+        let _ = std::fs::remove_file(path);
     }
 }

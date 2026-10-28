@@ -125,7 +125,7 @@ workspace:
 cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
 ```
 
-The current desktop package contains the app composition root, platform transport types, framework-independent Workbench, two built-in workspace descriptors, preview host, view registry, zone policy and plugin client interfaces. The Tauri command/event boundary and native global shortcut entry are now wired to the React shell; production UI and domain features remain incremental work.
+The current desktop package contains the app composition root, platform transport types, framework-independent Workbench, two built-in workspace descriptors, preview host, view registry, zone policy and plugin client interfaces. The Tauri command/event boundary, native global shortcut entry and app-data-backed layout recovery are now wired to the React shell; production UI and domain features remain incremental work.
 
 ## Repository layout
 
