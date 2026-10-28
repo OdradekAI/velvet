@@ -1,0 +1,13 @@
+[package]
+name = "velvet-application-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+velvet-asset-core = { path = "../asset-core" }
+velvet-layout-model = { path = "../layout-model" }
+velvet-persistence = { path = "../persistence" }
+velvet-plugin-host = { path = "../plugin-host" }
+velvet-preview-core = { path = "../preview-core" }
+velvet-workbench-protocol = { path = "../workbench-protocol" }

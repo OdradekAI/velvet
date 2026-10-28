@@ -1,0 +1,43 @@
+# ADR-0007: Jobs, indexing and cache invalidation
+
+Status: Proposed
+Date: 2026-10-28
+
+## Context
+
+Thumbnail generation, RAW decoding, 3D previews, video analysis, AI tagging and feed synchronization can be expensive. They must not block the workbench, and their results must remain explainable when an extension is disabled or an input file changes.
+
+## Proposed decision
+
+Use one Rust-owned `JobSystem` for indexing, preview analysis, thumbnail generation and synchronization. A job has an extension or core owner, an input fingerprint, a progress stream, cancellation, retry policy and a result status.
+
+Derived artifacts are cached by:
+
+```text
+content fingerprint
++ job kind
++ provider / extension id
++ provider version
++ settings profile hash
+```
+
+When an input, provider or setting changes, the cache becomes stale and the job is rescheduled. The workbench observes jobs through events and renders them in `OperationsPanel`.
+
+## Consequences
+
+Positive:
+
+- All long-running work has consistent cancellation and progress behavior.
+- Plugin-produced data can be recomputed and diagnosed.
+- The UI does not need format-specific background task code.
+
+Costs:
+
+- Job schemas and cache policies must be versioned.
+- Backpressure and memory limits need explicit defaults.
+
+## Open questions
+
+- Which jobs may run concurrently per asset and per device?
+- How are partial results exposed to inspectors?
+- How long are failed artifacts retained for diagnosis?

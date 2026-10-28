@@ -1,0 +1,8 @@
+[package]
+name = "velvet-plugin-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+velvet-layout-model = { path = "../layout-model" }

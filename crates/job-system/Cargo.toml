@@ -1,0 +1,5 @@
+[package]
+name = "velvet-job-system"
+version.workspace = true
+edition.workspace = true
+license.workspace = true

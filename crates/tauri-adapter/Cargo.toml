@@ -1,0 +1,9 @@
+[package]
+name = "velvet-tauri-adapter"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+velvet-application-core = { path = "../application-core" }
+velvet-workbench-protocol = { path = "../workbench-protocol" }

@@ -1,0 +1,19 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/asset-core",
+  "crates/workbench-protocol",
+  "crates/layout-model",
+  "crates/preview-core",
+  "crates/plugin-api",
+  "crates/plugin-host",
+  "crates/job-system",
+  "crates/persistence",
+  "crates/application-core",
+  "crates/tauri-adapter",
+]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2021"
+license = "Apache-2.0"

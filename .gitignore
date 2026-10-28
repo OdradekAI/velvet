@@ -1,0 +1,13 @@
+/target/
+/node_modules/
+/apps/desktop/node_modules/
+/apps/desktop/dist/
+.DS_Store
+.baoyu-skills/
+.scratch/
+.translate/
+translate/
+*.log
+.env
+.env.*
+!.env.example
