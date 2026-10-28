@@ -7,7 +7,7 @@ Your assets and information should be understandable at a glance.
 ---
 
 > [!NOTE]
-> Velvet `0.0.2` is a Workbench foundation release. The React shell, revisioned layout model and extension seams are in place; the full Tauri window, asset indexer and production extensions are still being built.
+> Velvet `0.0.2` is a Workbench foundation release. The React shell, revisioned layout model, native Tauri window boundary and extension seams are in place; the asset indexer and production extensions are still being built.
 
 ## One workbench, two starting points
 
@@ -118,7 +118,14 @@ npm install
 npm run typecheck
 ```
 
-The current desktop package contains the app composition root, platform transport types, framework-independent Workbench, two built-in workspace descriptors, preview host, view registry, zone policy and plugin client interfaces. The complete Tauri window and production UI are planned next.
+The native desktop boundary can be checked independently from the repository
+workspace:
+
+```bash
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
+```
+
+The current desktop package contains the app composition root, platform transport types, framework-independent Workbench, two built-in workspace descriptors, preview host, view registry, zone policy and plugin client interfaces. The Tauri command/event boundary and native global shortcut entry are now wired to the React shell; production UI and domain features remain incremental work.
 
 ## Repository layout
 
@@ -139,7 +146,7 @@ apps/desktop/
   src/platform/            framework-independent core transport types
   src/workbench/           layout and extension host infrastructure
   src/workspaces/          Asset Manager and Feed Workbench modules
-  src-tauri/               future Tauri command integration boundary
+  src-tauri/               Tauri command/event and native shortcut boundary
 ```
 
 ## Project documents

@@ -50,5 +50,42 @@ export class Workbench {
     this.menus = new MenuRegistry(this.commands, this.contextKeys);
     this.overlays = new OverlayRegistry(this.contextKeys);
     this.pluginUi = this.plugins.ui;
+    this.registerBuiltInLayoutCommands();
+  }
+
+  private registerBuiltInLayoutCommands(): void {
+    const commands = [
+      {
+        id: 'workbench.toggle-primary-sidebar',
+        title: 'Toggle Primary Sidebar',
+        keybinding: 'ctrl+b',
+        part: 'primary-sidebar' as const,
+      },
+      {
+        id: 'workbench.toggle-operations-panel',
+        title: 'Toggle Operations Panel',
+        keybinding: 'ctrl+j',
+        part: 'operations-panel' as const,
+      },
+    ];
+
+    for (const descriptor of commands) {
+      this.commands.register({
+        id: descriptor.id,
+        title: descriptor.title,
+        scope: 'workbench',
+        namespace: 'workbench',
+        execute: async () => {
+          await this.layout.apply({ id: 'workbench.toggle-part', part: descriptor.part });
+        },
+      });
+      this.keybindings.register({
+        id: `${descriptor.id}.keybinding`,
+        commandId: descriptor.id,
+        keybinding: descriptor.keybinding,
+        scope: 'workbench',
+        namespace: 'workbench',
+      });
+    }
   }
 }

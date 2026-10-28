@@ -12,13 +12,16 @@ import type {
 } from '../../platform/protocol.js';
 import { PARTS } from '../../workbench/parts/part-registry.js';
 import type { WorkbenchAppDescriptor } from '../../workbench/apps/workbench-app.js';
+import { focusTargetId, type FocusService } from '../../workbench/focus/focus-service.js';
 import { VelvetContextMenu, VelvetPanel } from '../ui/velvet-ui.js';
+import { useFocusDomAdapter } from './focus-dom-adapter.js';
 
 export interface WorkbenchShellProps {
   readonly layout: LayoutSnapshot;
   readonly apps: readonly WorkbenchAppDescriptor[];
   readonly onActivateApp: (appId: WorkbenchAppId) => void;
   readonly onLayoutCommand?: (command: LayoutCommand) => void;
+  readonly focusService?: FocusService;
   readonly children?: ReactNode;
 }
 
@@ -172,8 +175,10 @@ export function WorkbenchShell({
   apps,
   onActivateApp,
   onLayoutCommand,
+  focusService,
   children,
 }: WorkbenchShellProps) {
+  useFocusDomAdapter(focusService);
   const activeApp = apps.find(
     (workspace) => workspace.id === layout.activeApp,
   );
@@ -250,7 +255,9 @@ export function WorkbenchShell({
       <main className="velvet-workbench" style={partStyles(layout)}>
         <header
           className="velvet-part velvet-part--title"
+          data-velvet-focus-target={focusTargetId({ kind: 'part', part: 'title-bar' })}
           hidden={!isPartVisible(layout, 'title-bar')}
+          tabIndex={-1}
         >
           <span>Velvet / {activeApp?.title ?? 'Workbench'}</span>
           <span className="velvet-title__hint">Right-click workspace for layout</span>
@@ -259,7 +266,9 @@ export function WorkbenchShell({
         <nav
           aria-label="Workspaces"
           className="velvet-part velvet-part--activity"
+          data-velvet-focus-target={focusTargetId({ kind: 'part', part: 'activity-bar' })}
           hidden={!isPartVisible(layout, 'activity-bar')}
+          tabIndex={-1}
         >
           {apps.map((app) => (
             <button
@@ -278,10 +287,12 @@ export function WorkbenchShell({
 
         <aside
           className="velvet-part velvet-part--primary"
+          data-velvet-focus-target={focusTargetId({ kind: 'part', part: 'primary-sidebar' })}
           hidden={
             !isPartVisible(layout, 'primary-sidebar') ||
             isPartCollapsed(layout, 'primary-sidebar')
           }
+          tabIndex={-1}
         >
           <VelvetPanel title="Navigation">
             <p>{activeApp?.title ?? 'Workbench'}</p>
@@ -295,7 +306,11 @@ export function WorkbenchShell({
           />
         </aside>
 
-        <section className="velvet-part velvet-part--workspace">
+        <section
+          className="velvet-part velvet-part--workspace"
+          data-velvet-focus-target={focusTargetId({ kind: 'part', part: 'workspace-area' })}
+          tabIndex={-1}
+        >
           <VelvetContextMenu
             actions={[
               {
@@ -317,10 +332,12 @@ export function WorkbenchShell({
 
         <aside
           className="velvet-part velvet-part--auxiliary"
+          data-velvet-focus-target={focusTargetId({ kind: 'part', part: 'auxiliary-sidebar' })}
           hidden={
             !isPartVisible(layout, 'auxiliary-sidebar') ||
             isPartCollapsed(layout, 'auxiliary-sidebar')
           }
+          tabIndex={-1}
         >
           <VelvetPanel title="Auxiliary">
             <p>Inspectors and preview augmentations appear here.</p>
@@ -335,10 +352,12 @@ export function WorkbenchShell({
 
         <section
           className="velvet-part velvet-part--operations"
+          data-velvet-focus-target={focusTargetId({ kind: 'part', part: 'operations-panel' })}
           hidden={
             !isPartVisible(layout, 'operations-panel') ||
             isPartCollapsed(layout, 'operations-panel')
           }
+          tabIndex={-1}
         >
           <VelvetPanel title="Operations">
             <p>Jobs, logs and operational tools appear here.</p>
@@ -353,7 +372,9 @@ export function WorkbenchShell({
 
         <footer
           className="velvet-part velvet-part--status"
+          data-velvet-focus-target={focusTargetId({ kind: 'part', part: 'status-bar' })}
           hidden={!isPartVisible(layout, 'status-bar')}
+          tabIndex={-1}
         >
           Ready · Layout schema {layout.schemaVersion}
         </footer>

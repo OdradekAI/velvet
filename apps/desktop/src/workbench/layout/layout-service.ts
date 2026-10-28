@@ -10,8 +10,11 @@ import type {
 } from '../protocol.js';
 import { migrateLayoutState } from './layout-migrations.js';
 
+export type LayoutListener = (snapshot: LayoutSnapshot) => void;
+
 export class LayoutService {
   private snapshotValue: LayoutSnapshot | undefined;
+  private readonly listeners = new Set<LayoutListener>();
   private readonly unsubscribe: () => void;
 
   public constructor(private readonly core: CoreTransport) {
@@ -20,7 +23,7 @@ export class LayoutService {
         return;
       }
       if (!this.snapshotValue || event.revision >= this.snapshotValue.revision) {
-        this.snapshotValue = migrateLayoutState(event.state);
+        this.setSnapshot(event.state);
       }
     });
   }
@@ -30,12 +33,16 @@ export class LayoutService {
       protocolVersion: 1,
       kind: 'query-layout',
     });
-    this.snapshotValue = migrateLayoutState(this.layoutFromResponse(response));
-    return this.snapshotValue;
+    return this.setSnapshot(this.layoutFromResponse(response));
   }
 
   public snapshot(): LayoutSnapshot | undefined {
     return this.snapshotValue;
+  }
+
+  public subscribe(listener: LayoutListener): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
   }
 
   public async activateApp(appId: WorkbenchAppId): Promise<LayoutSnapshot> {
@@ -113,12 +120,25 @@ export class LayoutService {
       command,
       expectedRevision: this.snapshotValue?.revision,
     });
-    this.snapshotValue = migrateLayoutState(this.layoutFromResponse(response));
-    return this.snapshotValue;
+    return this.setSnapshot(this.layoutFromResponse(response));
   }
 
   public dispose(): void {
     this.unsubscribe();
+    this.listeners.clear();
+  }
+
+  private setSnapshot(snapshot: LayoutSnapshot): LayoutSnapshot {
+    const next = migrateLayoutState(snapshot);
+    this.snapshotValue = next;
+    for (const listener of this.listeners) {
+      try {
+        listener(next);
+      } catch {
+        // One renderer projection must not prevent other projections from updating.
+      }
+    }
+    return next;
   }
 
   private layoutFromResponse(response: CoreResponse): LayoutSnapshot {

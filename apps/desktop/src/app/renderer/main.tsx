@@ -1,6 +1,8 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+import { isTauri } from '@tauri-apps/api/core';
 import { DemoApp } from './demo-app.js';
+import { NativeWorkbenchApp } from './native-workbench-app.js';
 import '../ui/tokens.css';
 
 const root = document.querySelector('#root');
@@ -11,6 +13,6 @@ if (!root) {
 
 createRoot(root).render(
   <StrictMode>
-    <DemoApp />
+    {isTauri() ? <NativeWorkbenchApp /> : <DemoApp />}
   </StrictMode>,
 );

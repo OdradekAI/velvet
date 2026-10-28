@@ -33,6 +33,13 @@ subscribes to `velvet_core_event` only while there are active listeners. The
 adapter rejects protocol-version or request-id mismatches and normalizes native
 invoke failures into `CoreTransportError`.
 
+The Tauri application boundary implements the matching `velvet_core_request`
+command and explicit JSON wire mapping. Successful layout mutations emit
+`velvet_core_event` snapshots through the Rust adapter's event sink. The
+native global shortcut plugin feeds `velvet_keybinding` events into the same
+renderer `KeybindingRegistry`; it does not own command resolution or layout
+state.
+
 The UI SDK exposes host concepts rather than Vue or React component types:
 
 ```text

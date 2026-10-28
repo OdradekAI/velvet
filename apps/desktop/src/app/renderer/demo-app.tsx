@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { LayoutCommand, LayoutSnapshot, WorkbenchAppId } from '../../platform/protocol.js';
 import { defaultLayoutState } from '../../workbench/layout/layout-state.js';
+import { FocusService } from '../../workbench/focus/focus-service.js';
 import { BUILTIN_WORKBENCH_APPS } from '../../workspaces/index.js';
 import { WorkbenchShell } from './workbench-shell.js';
 import { VelvetDialog } from '../ui/velvet-ui.js';
@@ -92,6 +93,7 @@ function applyDemoLayoutCommand(
 
 export function DemoApp() {
   const [layout, setLayout] = useState<LayoutSnapshot>(() => defaultLayoutState());
+  const [focusService] = useState(() => new FocusService());
   const [dialogOpen, setDialogOpen] = useState(false);
 
   function dispatchLayout(command: LayoutCommand) {
@@ -108,6 +110,7 @@ export function DemoApp() {
         layout={layout}
         onActivateApp={activateApp}
         onLayoutCommand={dispatchLayout}
+        focusService={focusService}
         apps={BUILTIN_WORKBENCH_APPS}
       >
         <div className="velvet-empty-state">

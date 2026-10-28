@@ -28,3 +28,9 @@ export type {
   TauriResponseEnvelope,
   TauriTransportOptions,
 } from './tauri-transport.js';
+export { createNativeTauriBridge, createNativeTauriTransport } from './tauri-runtime.js';
+export {
+  TauriShortcutAdapter,
+  type NativeShortcutEvent,
+  type TauriShortcutAdapterOptions,
+} from './tauri-shortcut-adapter.js';

@@ -139,6 +139,9 @@ function normalizeKeyPart(value: string): string {
     case 'command':
     case 'cmd':
       return 'meta';
+    case 'commandorcontrol':
+    case 'cmdorcontrol':
+      return 'ctrl';
     case 'control':
       return 'ctrl';
     case 'option':

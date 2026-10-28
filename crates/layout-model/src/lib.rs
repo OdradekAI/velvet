@@ -181,6 +181,9 @@ pub enum LayoutCommand {
         part: WorkbenchPart,
         visible: bool,
     },
+    TogglePartVisibility {
+        part: WorkbenchPart,
+    },
     ResizePart {
         part: WorkbenchPart,
         size: u32,
@@ -283,6 +286,18 @@ impl LayoutService for InMemoryLayoutService {
                     .get_mut(&part)
                     .ok_or_else(|| LayoutError::UnknownPart(part.clone()))?
                     .visible = visible;
+            }
+            LayoutCommand::TogglePartVisibility { part } => {
+                let constraints = part_constraints(&part);
+                let state = self
+                    .state
+                    .parts
+                    .get_mut(&part)
+                    .ok_or_else(|| LayoutError::UnknownPart(part.clone()))?;
+                if state.visible && !constraints.hideable {
+                    return Err(LayoutError::PartCannotHide(part));
+                }
+                state.visible = !state.visible;
             }
             LayoutCommand::ResizePart { part, size } => {
                 let constraints = part_constraints(&part);
@@ -541,6 +556,34 @@ mod tests {
             .expect("workspace activation should succeed");
 
         assert_eq!(service.snapshot().active_app, WorkbenchAppId::FeedWorkbench);
+    }
+
+    #[test]
+    fn toggle_part_visibility_respects_hideability_constraints() {
+        let mut service = InMemoryLayoutService::default();
+        service
+            .apply(LayoutCommand::TogglePartVisibility {
+                part: WorkbenchPart::PrimarySidebar,
+            })
+            .expect("hideable parts should toggle");
+        assert!(
+            !service
+                .snapshot()
+                .parts
+                .get(&WorkbenchPart::PrimarySidebar)
+                .expect("primary sidebar should exist")
+                .visible
+        );
+
+        let error = service
+            .apply(LayoutCommand::TogglePartVisibility {
+                part: WorkbenchPart::WorkspaceArea,
+            })
+            .expect_err("the required workspace area cannot be hidden");
+        assert_eq!(
+            error,
+            LayoutError::PartCannotHide(WorkbenchPart::WorkspaceArea)
+        );
     }
 
     #[test]

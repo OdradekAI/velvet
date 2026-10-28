@@ -23,14 +23,14 @@ restoration state, leaving keyboard events and DOM focus as renderer adapters.
 ViewContainer order/visibility and View moves are represented in the same
 revisioned layout state, so extension removal can detach contributions without
 destroying the host's remaining order.
-The framework-neutral `TauriCoreTransport` bridge now owns request/event
-correlation and typed native transport errors; the native Tauri command handler
-and serialization format remain the next integration seam. Rust
-`TauriTransport` emits authoritative layout events through an injected event
-sink, keeping native event publication outside `ApplicationCore`.
-The next implementation gate is real Tauri IPC/event wiring plus accessibility,
-keyboard, resize constraints and recovery behavior before drag-and-drop and
-plugin panel mounting.
+The framework-neutral `TauriCoreTransport` bridge owns request/event
+correlation and typed native transport errors. The real Tauri application under
+`apps/desktop/src-tauri` now implements the command/event serialization seam,
+publishes authoritative layout snapshots and forwards native global shortcuts
+into the host keybinding registry. The React renderer selects this composition
+root inside Tauri and keeps the browser DemoApp as a local fallback. The next
+implementation gate is broader accessibility, keyboard, resize constraints
+and recovery behavior before drag-and-drop and plugin panel mounting.
 
 The current shell slice also renders the accepted Part constraint table: fixed
 Parts use stable dimensions, resizable Parts enforce bounded sizes in Rust, and
@@ -374,14 +374,14 @@ export interface CommandDescriptor {
 ## Implementation sequence
 
 1. **Documentation and vocabulary**: complete `docs/GLOSSARY.md`, accept the topology ADR, and add the decision link to the local Wayfinder map. **Done for the current skeleton.**
-2. **Protocol types**: implement `workbench-protocol`, `layout-model`, `asset-core` and error envelopes without a UI. **Done for the current layout slice; Tauri serialization remains.**
+2. **Protocol types**: implement `workbench-protocol`, `layout-model`, `asset-core` and error envelopes without a UI. **Done for the current layout slice; native wire fixtures cover the Tauri mapping.**
 3. **Layout service**: implement versioned layout state, migrations, fixed zones and persistence tests. **Done for the current in-memory/persistence seam.**
 4. **Workbench parts**: render ActivityBar, Resource Manager, Feed Workbench, PrimarySidebar, WorkspaceArea, AuxiliarySidebar, OperationsPanel and StatusBar with placeholder views. **Initial renderer slice done.**
 5. **View registry**: add built-in views and one example external view per zone. Verify that cross-zone registration is rejected. **Host registry and rejection tests done; renderer mounting remains.**
 6. **Preview core**: implement generic image/file fallback, `PreviewResolver`, Quick/Inspect/Analyze intents and a fake provider used by contract tests.
 7. **Plugin host**: load manifests, validate permissions, activate lazily, isolate failures and expose the UI SDK boundary.
 8. **Jobs and facets**: implement one thumbnail job, one metadata facet and one cancellable analysis job.
-9. **Tauri adapter**: connect typed commands, queries and events to the desktop client. No feature should bypass the protocol. **Transport mapping seam done; native command/event handler remains.**
+9. **Tauri adapter**: connect typed commands, queries and events to the desktop client. No feature should bypass the protocol. **Done for the current layout slice, including native command/event serialization and global shortcut entry.**
 
 ## Acceptance scenarios
 

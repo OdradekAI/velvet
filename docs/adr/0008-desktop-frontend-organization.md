@@ -63,11 +63,13 @@ transport error.
 capabilities: `invoke` for request/response envelopes and `listen` for
 revisioned core events. The adapter owns request ids, protocol/request
 correlation, event subscription lifetime and typed transport errors without
-importing the Tauri package. The native command handler and serialization
-format remain an integration concern of the Tauri application boundary. Rust
-`TauriTransport` emits authoritative layout events through an injected event
-sink, so the native `AppHandle` publisher stays replaceable and outside the
-application core.
+importing the Tauri package. The native command and serialization boundary
+lives in `apps/desktop/src-tauri`; it maps the versioned wire envelope,
+publishes authoritative layout events and forwards native global shortcuts as
+the same host keybinding events consumed by the renderer. Rust
+`TauriTransport` emits those layout events through an injected event sink, so
+the native `AppHandle` publisher stays replaceable and outside the application
+core.
 
 The UI ownership layers are:
 
