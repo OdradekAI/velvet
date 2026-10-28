@@ -122,7 +122,7 @@ impl PreviewResolver {
             })
             .collect::<Vec<_>>();
 
-        candidates.sort_by(|left, right| right.0.priority.cmp(&left.0.priority));
+        candidates.sort_by_key(|left| std::cmp::Reverse(left.0.priority));
         let (candidate, provider) =
             candidates
                 .into_iter()

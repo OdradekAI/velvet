@@ -16,7 +16,12 @@ Tauri host plugins      system and desktop capabilities
 Product extensions      workbench, preview and asset capabilities
 ```
 
-Product extensions are declared by a versioned manifest and activated lazily. The default runtime for third-party code is an isolated WASM module or sidecar process. Built-in extensions may use an in-process adapter, but they must use the same public contribution interfaces.
+Product extensions are declared by a versioned manifest and activated lazily. A
+manifest may contain Workbench-level, WorkbenchApp-level and reusable
+capability contributions, each with its own target container and permission
+set. The default runtime for third-party code is an isolated WASM module or
+sidecar process. Built-in extensions may use an in-process adapter, but they
+must use the same public contribution interfaces.
 
 Permissions are capability-based and zone-aware:
 
@@ -33,7 +38,17 @@ operations:
 
 An extension receives capability handles rather than unrestricted file paths. Installation, activation, update, disable, uninstall and rollback are owned by `PluginHost`. A crashed or incompatible extension must not take down the workbench.
 
-In version one, extensions cannot create arbitrary ActivityBar workspaces. They contribute to the fixed AssetManager and FeedWorkbench zones. A future top-level workspace contribution requires a separate manifest capability and review policy.
+In version one, extensions cannot own arbitrary Workbench Parts or bypass the
+fixed semantic Zones. After the `WorkbenchApp` contribution contract is
+accepted, an extension may contribute a top-level `WorkbenchApp`, an
+ActivityBar ViewContainer-only tool, or a reusable capability. These entries
+still use host-owned layout, permissions and lifecycle rules; they do not create
+an independent shell or data store.
+
+The right `AuxiliarySidebar` is reserved for host-approved global
+`CompanionView` contributions, and the bottom `OperationsPanel` is reserved for the shared JobSystem
+and operation history. An app add-on does not gain access to either surface
+merely because it runs inside that app.
 
 Every extension identifier, contribution identifier and persisted facet schema is globally unique and versioned.
 

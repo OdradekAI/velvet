@@ -19,14 +19,19 @@ export class PreviewHost {
   public constructor(private readonly core: CoreTransport) {}
 
   public async open(context: PreviewContext): Promise<ResolvedPreview> {
-    const response = (await this.core.request({
+    const response = await this.core.request({
+      protocolVersion: 1,
       kind: 'resolve-preview',
       assetId: context.assetId,
       contentKind: context.contentKind,
       intent: context.intent,
       surface: context.surface,
-    })) as ResolvedPreview;
+    });
 
-    return response;
+    if (response.kind !== 'preview') {
+      throw new Error(`Expected a preview response, received ${response.kind}`);
+    }
+
+    return response.preview as ResolvedPreview;
   }
 }

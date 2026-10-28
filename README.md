@@ -7,7 +7,7 @@ Your assets and information should be understandable at a glance.
 ---
 
 > [!NOTE]
-> Velvet `0.0.1` is an architecture foundation release. The workbench and extension seams are in place; the full Tauri window, asset indexer and production extensions are still being built.
+> Velvet `0.0.2` is a Workbench foundation release. The React shell, revisioned layout model and extension seams are in place; the full Tauri window, asset indexer and production extensions are still being built.
 
 ## One workbench, two starting points
 
@@ -26,7 +26,7 @@ The interface follows the spatial ideas of VS Code and JetBrains IDEs. Each regi
 Activity Bar       switch between built-in workspaces
 Primary Sidebar    navigation, libraries, sources and collections
 Workspace Area     grids, previews, comparisons and editors
-Context Sidebar    inspectors, metadata and third-party tools
+Auxiliary Sidebar  inspectors, metadata and third-party tools
 Operations Panel   jobs, logs, sync and terminal-like operations
 Status Bar         current state and progress
 ```
@@ -57,7 +57,7 @@ PreviewTool           adds interactive commands
 AnalysisJob           performs expensive background work
 ```
 
-A 3D or RAW extension can provide a renderer, thumbnails, metadata and analysis. A metadata-only extension can add information to the Context Sidebar without replacing the main preview.
+A 3D or RAW extension can provide a renderer, thumbnails, metadata and analysis. A metadata-only extension can add information to the Auxiliary Sidebar without replacing the main preview.
 
 ## Extend by capability
 

@@ -5,9 +5,9 @@ Date: 2026-10-28
 
 ## Context
 
-Velvet is a desktop asset and information workbench. Its first built-in workspaces are:
+Velvet is a desktop resource and information workbench. Its first built-in WorkbenchApps are:
 
-- `AssetManager`: asset libraries, collections, inspection and preview.
+- `asset-manager` (`Resource Manager`): asset libraries, collections, inspection and preview.
 - `FeedWorkbench`: subscriptions, messages and reading workflows.
 
 The application must keep a Rust core stable while the Tauri workbench, built-in features and third-party extensions evolve independently. The term C/S is still ambiguous: it may mean a desktop client with a local Rust service, or a multi-user client connected to a remote server.

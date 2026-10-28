@@ -20,6 +20,13 @@ Handles   opaque references to assets, views, jobs and plugin sessions
 
 The protocol is transport-independent. Tauri IPC is the first transport adapter.
 
+Protocol version `1` uses request and response envelopes with a request id.
+Layout mutations may include an expected revision; Rust rejects stale writes
+with a typed error and returns the authoritative revisioned snapshot. The
+protocol defines layout and plugin lifecycle event shapes for the future Tauri
+subscription, while the desktop TypeScript contract remains an explicit
+adapter mapping until serialization and compatibility fixtures are finalized.
+
 The UI SDK exposes host concepts rather than Vue or React component types:
 
 ```text
@@ -43,6 +50,23 @@ PreviewResolver  sole owner of primary preview selection
 PluginHost       sole owner of extension lifecycle
 JobSystem        sole owner of asynchronous job state
 ```
+
+The first desktop host slice also owns `CommandRegistry`, `MenuRegistry`,
+`ContextKeyService` and `OverlayRegistry`. Commands and menus are namespace-
+aware and resolve app-scoped entries only for the active WorkbenchApp. Context
+predicates use a small declarative grammar; overlays carry host-managed modal,
+escape and focus-restoration state while their body is rendered by a trusted
+Velvet UI adapter or isolated UI bridge.
+
+Layout actions use stable command identifiers (`workbench.toggle-part`,
+`workbench.focus-part`, `workbench.resize-part`, `workbench.collapse-part`,
+`workbench.maximize-part`, `workbench.move-view`,
+`workbench.upsert-view-container`,
+`workbench.set-view-container-visibility`, `workbench.reorder-view-container`,
+`workbench.remove-view-container`, `workbench.reset-layout`,
+`workbench.reset-app-layout` and `workbench.reset-view-layout`). Their typed
+payloads are adapted to the Rust `LayoutService` rather than persisted by the
+renderer.
 
 No view calls another view's implementation directly. Cross-feature actions go through commands and typed context.
 

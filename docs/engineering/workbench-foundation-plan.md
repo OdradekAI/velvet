@@ -1,9 +1,35 @@
 # Workbench foundation plan
 
-Status: In progress; topology accepted, skeleton implementation started
+Status: In progress; topology and desktop renderer decisions accepted, first React shell slice implemented; business-independent Workbench foundation is the active first-stage scope
 Date: 2026-10-28
 
-This plan is intentionally a skeleton. It establishes seams and ownership without pretending that the unresolved domain decisions are already accepted. The open decisions are tracked in the local Wayfinder map under `.scratch/workbench-foundation/`.
+This plan is intentionally a skeleton. It establishes seams and ownership without pretending that the unresolved domain decisions are already accepted. The broad architecture decisions are tracked under `.scratch/workbench-foundation/`; the active first-stage shell decisions are tracked under `.scratch/workbench-shell-foundation/`.
+
+## Active first-stage scope
+
+The immediate destination is the business-independent Workbench foundation, tracked in `.scratch/workbench-shell-foundation/`. It covers fixed Part docking and semantic Zones, VS Code-like visibility, collapse, resize and within-Zone ordering controls, Rust-owned layout persistence and migrations, host commands and overlays, selectable `WorkbenchApp` surfaces, shared `WorkspaceContext` projections, scoped plugin namespaces, reserved global companion/operations surfaces and the framework-neutral ViewContainer/View contribution seam. Built-in apps remain stable Activity Bar entries while accepted extensions may contribute app entries under the same host rules; product-domain behavior, preview providers, jobs, indexing and marketplace policy remain later decisions.
+
+The current React shell is a renderer slice, not the completed foundation. The
+Part/mode, three-scope layout state, WorkbenchApp/AppSurface/shared context,
+contribution scope/container, ViewContainer/View, namespace/lifecycle,
+command/menu/overlay, UI Bridge and canonical transport decisions are accepted.
+The desktop and Rust skeletons now have framework-neutral app and contribution
+registries, lazy surface/plugin activation, app-scoped context commands,
+host-container descriptors, namespace validation, target API checks,
+contribution cleanup, host-owned command/menu/context-key/overlay registries,
+isolated surface sessions, revisioned layout commands and protocol envelopes.
+ViewContainer order/visibility and View moves are represented in the same
+revisioned layout state, so extension removal can detach contributions without
+destroying the host's remaining order.
+The next implementation gate is real Tauri IPC/event wiring plus accessibility,
+keyboard, resize constraints and recovery behavior before drag-and-drop and
+plugin panel mounting.
+
+The current shell slice also renders the accepted Part constraint table: fixed
+Parts use stable dimensions, resizable Parts enforce bounded sizes in Rust, and
+visibility/collapse commands are exposed through the host-owned workspace
+context menu. This is an interaction seam for the eventual Tauri adapter, not a
+second layout persistence owner.
 
 ## Target shape
 
@@ -14,6 +40,13 @@ apps/
       app/
         desktop-app.ts
         index.ts
+        renderer/
+          main.tsx
+          demo-app.tsx
+          workbench-shell.tsx
+        ui/
+          velvet-ui.tsx
+          tokens.css
       platform/
         protocol.ts
         index.ts
@@ -24,7 +57,7 @@ apps/
           activitybar/
           primary-sidebar/
           workspace-area/
-          context-sidebar/
+          auxiliary-sidebar/
           operations-panel/
           statusbar/
           overlay-layer/
@@ -161,13 +194,19 @@ docs/
   plugin-sdk/
 ```
 
-`app/` is the composition root. `platform/` owns the transport-facing types and adapters without importing Vue or React. `workbench/` contains spatial infrastructure and host registries. Product workspaces live under the sibling `workspaces/` directory; they are stable Activity Bar entries and are not plugin views. A plugin view must never be added directly to `parts/`; it is registered through `ViewRegistry`.
+`app/` is the composition root. `platform/` owns the transport-facing types and adapters without importing Vue or React. `workbench/` contains spatial infrastructure and host registries. Built-in `WorkbenchApp` descriptors live under the sibling `workspaces/` directory; external apps register through a host-owned registry. An app surface and its ViewContainers must never take ownership of `parts/`; they are registered through host registries.
 
 The frontend boundary intentionally stays inside `apps/desktop` while there is one client. Extract a named root package only after a second frontend or independently versioned SDK consumes the same capability. This keeps the vben-inspired application/package distinction without creating placeholder packages.
 
 The `packages/` and `extensions/` entries in the target shape are deferred extraction targets. They describe the public SDK and isolated extension packaging that will be introduced after the host contracts have a second consumer; they are not required directories in the current skeleton.
 
 The first code skeleton keeps each Rust crate's public seam in `src/lib.rs` so the dependency graph stays small while the interfaces are being validated. Split a crate into the finer-grained files shown above only when a second implementation or a meaningful internal seam appears.
+
+The desktop renderer currently uses React with TypeScript and Vite. The
+framework-independent Workbench remains the host contract; `app/renderer` and
+`app/ui` are React adapters. The first-party UI layer owns Velvet wrappers and
+semantic tokens, while external extensions use the framework-independent plugin
+SDK and an isolated UI surface.
 
 Avoid generic `common/`, `shared/`, `utils/` and `services/` dumping grounds. A module earns a directory when it owns a meaningful interface, state model or adapter.
 
@@ -178,8 +217,8 @@ These are shape sketches for the first implementation, not final public APIs.
 ### Layout model
 
 ```rust
-pub enum WorkbenchWorkspaceId {
-    AssetManager,
+pub enum WorkbenchAppId {
+    ResourceManager,
     FeedWorkbench,
 }
 
@@ -194,7 +233,7 @@ pub enum WorkbenchPart {
     ActivityBar,
     PrimarySidebar,
     WorkspaceArea,
-    ContextSidebar,
+    AuxiliarySidebar,
     OperationsPanel,
     StatusBar,
     OverlayLayer,
@@ -202,8 +241,10 @@ pub enum WorkbenchPart {
 
 pub struct LayoutState {
     pub schema_version: u32,
-    pub active_workspace: WorkbenchWorkspaceId,
+    pub revision: u64,
+    pub active_app: WorkbenchAppId,
     pub parts: PartState,
+    pub containers: ViewContainerState,
     pub views: ViewState,
 }
 
@@ -325,19 +366,22 @@ export interface CommandDescriptor {
 
 ## Implementation sequence
 
-1. **Documentation and vocabulary**: complete `docs/GLOSSARY.md`, accept the topology ADR, and add the decision link to the local Wayfinder map.
-2. **Protocol types**: implement `workbench-protocol`, `layout-model`, `asset-core` and error envelopes without a UI.
-3. **Layout service**: implement versioned layout state, migrations, fixed zones and persistence tests.
-4. **Workbench parts**: render ActivityBar, AssetManager, FeedWorkbench, PrimarySidebar, WorkspaceArea, ContextSidebar, OperationsPanel and StatusBar with placeholder views.
-5. **View registry**: add built-in views and one example external view per zone. Verify that cross-zone registration is rejected.
+1. **Documentation and vocabulary**: complete `docs/GLOSSARY.md`, accept the topology ADR, and add the decision link to the local Wayfinder map. **Done for the current skeleton.**
+2. **Protocol types**: implement `workbench-protocol`, `layout-model`, `asset-core` and error envelopes without a UI. **Done for the current layout slice; Tauri serialization remains.**
+3. **Layout service**: implement versioned layout state, migrations, fixed zones and persistence tests. **Done for the current in-memory/persistence seam.**
+4. **Workbench parts**: render ActivityBar, Resource Manager, Feed Workbench, PrimarySidebar, WorkspaceArea, AuxiliarySidebar, OperationsPanel and StatusBar with placeholder views. **Initial renderer slice done.**
+5. **View registry**: add built-in views and one example external view per zone. Verify that cross-zone registration is rejected. **Host registry and rejection tests done; renderer mounting remains.**
 6. **Preview core**: implement generic image/file fallback, `PreviewResolver`, Quick/Inspect/Analyze intents and a fake provider used by contract tests.
 7. **Plugin host**: load manifests, validate permissions, activate lazily, isolate failures and expose the UI SDK boundary.
 8. **Jobs and facets**: implement one thumbnail job, one metadata facet and one cancellable analysis job.
-9. **Tauri adapter**: connect typed commands, queries and events to the desktop client. No feature should bypass the protocol.
+9. **Tauri adapter**: connect typed commands, queries and events to the desktop client. No feature should bypass the protocol. **Next implementation gate.**
 
 ## Acceptance scenarios
 
-- The two built-in ActivityBar workspaces are always discoverable and do not move.
+- The built-in `WorkbenchApp` entries are always discoverable and do not move.
+- A trusted or isolated extension can contribute an ActivityBar `WorkbenchApp`, a central `AppSurface`, a ViewContainer-only tool, or the compatible combination without owning global layout.
+- An add-on registered in one WorkbenchApp namespace can contribute an app-local dialog or context-menu action without appearing in another app.
+- A host-approved CompanionView can follow shared context in the AuxiliarySidebar, while global jobs remain visible in the OperationsPanel.
 - A navigation plugin, contextual plugin and operations plugin can only register in their declared zone.
 - A plugin can be disabled while the workbench remains usable.
 - A RAW-like fake provider supports all three preview intents through one resolver.

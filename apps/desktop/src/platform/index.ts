@@ -1,9 +1,16 @@
 export type {
   CoreEvent,
+  CoreError,
   CoreRequest,
+  CoreResponse,
   CoreTransport,
+  LayoutCommand,
+  LayoutCommandId,
+  LayoutOrderAnchor,
   LayoutSnapshot,
   Part,
+  ProtocolVersion,
+  WorkbenchAppId,
   WorkspaceId,
   Zone,
 } from './protocol.js';

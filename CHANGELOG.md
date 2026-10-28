@@ -4,6 +4,26 @@ All notable changes to Velvet (白翎) are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses [Semantic Versioning](https://semver.org/).
 
+## [0.0.2] - 2026-10-29
+
+### Added
+
+- Added the React/Vite desktop Workbench shell with Velvet UI primitives.
+- Added WorkbenchApp, AppSurface, shared context and scoped plugin contribution contracts.
+- Added host-owned commands, menus, context expressions, overlays and the versioned UI bridge.
+- Added revisioned layout transport with visibility, collapse, bounded resize, ViewContainer ordering and View movement.
+- Added keyboard and pointer layout resizing plus workspace context-menu controls for Part visibility and collapse.
+
+### Changed
+
+- Renamed the contextual global region to `AuxiliarySidebar` and standardized Workbench terminology.
+- Promoted the canonical active layout field from `activeWorkspace` to `activeApp`, with migration compatibility for older state.
+- Rust layout state now validates fixed Part geometry and preserves ViewContainer order through extension removal.
+
+### Notes
+
+- The Tauri IPC serialization and event subscription adapter remains the next integration step; this release contains the framework-neutral protocol and renderer seams.
+
 ## [0.0.1] - 2026-10-28
 
 ### Added

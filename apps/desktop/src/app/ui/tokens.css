@@ -1,0 +1,359 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: dark;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  --velvet-surface-app: #17181a;
+  --velvet-surface-panel: #202225;
+  --velvet-surface-raised: #292c30;
+  --velvet-surface-overlay: #30343a;
+  --velvet-surface-active: #3a4048;
+  --velvet-border-subtle: #34383e;
+  --velvet-border-strong: #4b515b;
+  --velvet-text-primary: #f2f4f7;
+  --velvet-text-secondary: #b4bac4;
+  --velvet-text-muted: #7c8490;
+  --velvet-accent: #8ab4ff;
+  --velvet-danger: #ff8f8f;
+  --velvet-focus: #9cc2ff;
+  --velvet-radius-sm: 4px;
+  --velvet-radius-md: 6px;
+  --velvet-control-height: 30px;
+  --velvet-activity-width: 48px;
+  --velvet-title-height: 36px;
+  --velvet-sidebar-width: 260px;
+  --velvet-auxiliary-width: 300px;
+  --velvet-operations-height: 180px;
+  --velvet-status-height: 24px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  overflow: hidden;
+  background: var(--velvet-surface-app);
+  color: var(--velvet-text-primary);
+}
+
+body[data-velvet-resizing] {
+  user-select: none;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button {
+  color: inherit;
+}
+
+.velvet-app {
+  height: 100%;
+  background: var(--velvet-surface-app);
+}
+
+.velvet-workbench {
+  display: grid;
+  grid-template-areas:
+    "title title title title"
+    "activity primary workspace context"
+    "activity primary operations context"
+    "status status status status";
+  grid-template-columns:
+    var(--velvet-activity-width) var(--velvet-sidebar-width) minmax(0, 1fr)
+    var(--velvet-auxiliary-width);
+  grid-template-rows:
+    var(--velvet-title-height) minmax(0, 1fr) var(--velvet-operations-height)
+    var(--velvet-status-height);
+  height: 100%;
+  min-width: 920px;
+  border: 1px solid var(--velvet-border-subtle);
+}
+
+.velvet-part {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.velvet-part--primary,
+.velvet-part--auxiliary,
+.velvet-part--operations {
+  position: relative;
+  overflow: visible;
+}
+
+.velvet-part--title {
+  grid-area: title;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--velvet-border-subtle);
+  background: var(--velvet-surface-panel);
+  color: var(--velvet-text-secondary);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+}
+
+.velvet-title__hint {
+  margin-left: auto;
+  color: var(--velvet-text-muted);
+  font-size: 10px;
+  letter-spacing: 0.02em;
+}
+
+.velvet-part--activity {
+  grid-area: activity;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 7px;
+  border-right: 1px solid var(--velvet-border-subtle);
+  background: var(--velvet-surface-panel);
+}
+
+.velvet-part--primary {
+  grid-area: primary;
+  border-right: 1px solid var(--velvet-border-subtle);
+  background: var(--velvet-surface-panel);
+}
+
+.velvet-part--workspace {
+  grid-area: workspace;
+  background: var(--velvet-surface-app);
+}
+
+.velvet-part--auxiliary {
+  grid-area: context;
+  border-left: 1px solid var(--velvet-border-subtle);
+  background: var(--velvet-surface-panel);
+}
+
+.velvet-part--operations {
+  grid-area: operations;
+  border-top: 1px solid var(--velvet-border-subtle);
+  background: var(--velvet-surface-panel);
+}
+
+.velvet-part--status {
+  grid-area: status;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  border-top: 1px solid var(--velvet-border-subtle);
+  background: var(--velvet-surface-panel);
+  color: var(--velvet-text-muted);
+  font-size: 11px;
+}
+
+.velvet-workspace-button {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid transparent;
+  border-radius: var(--velvet-radius-sm);
+  background: transparent;
+  color: var(--velvet-text-muted);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.velvet-workspace-button:hover,
+.velvet-workspace-button[data-active="true"] {
+  border-color: var(--velvet-border-strong);
+  background: var(--velvet-surface-active);
+  color: var(--velvet-text-primary);
+}
+
+.velvet-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.velvet-panel__header {
+  display: flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--velvet-border-subtle);
+  color: var(--velvet-text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.velvet-panel__body {
+  min-height: 0;
+  flex: 1;
+  padding: 12px;
+  overflow: auto;
+}
+
+.velvet-button {
+  min-height: var(--velvet-control-height);
+  padding: 0 10px;
+  border: 1px solid var(--velvet-border-strong);
+  border-radius: var(--velvet-radius-sm);
+  background: var(--velvet-surface-raised);
+  color: var(--velvet-text-primary);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.velvet-button:hover {
+  background: var(--velvet-surface-active);
+}
+
+.velvet-button:focus-visible,
+.velvet-workspace-button:focus-visible,
+.velvet-context-menu__item:focus-visible {
+  outline: 2px solid var(--velvet-focus);
+  outline-offset: 2px;
+}
+
+.velvet-button--quiet {
+  border-color: transparent;
+  background: transparent;
+  color: var(--velvet-text-secondary);
+}
+
+.velvet-dialog__overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  background: rgb(0 0 0 / 0.58);
+}
+
+.velvet-dialog__content {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 21;
+  width: min(440px, calc(100vw - 32px));
+  transform: translate(-50%, -50%);
+  border: 1px solid var(--velvet-border-strong);
+  border-radius: var(--velvet-radius-md);
+  background: var(--velvet-surface-overlay);
+  box-shadow: 0 18px 48px rgb(0 0 0 / 0.45);
+  padding: 18px;
+}
+
+.velvet-dialog__title {
+  margin: 0;
+  color: var(--velvet-text-primary);
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.velvet-dialog__description {
+  margin: 7px 0 0;
+  color: var(--velvet-text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.velvet-dialog__body {
+  margin: 18px 0;
+  color: var(--velvet-text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.velvet-context-target {
+  display: block;
+  height: 100%;
+}
+
+.velvet-context-menu {
+  min-width: 180px;
+  padding: 5px;
+  border: 1px solid var(--velvet-border-strong);
+  border-radius: var(--velvet-radius-sm);
+  background: var(--velvet-surface-overlay);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.38);
+}
+
+.velvet-context-menu__item {
+  display: flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 8px;
+  border-radius: 3px;
+  color: var(--velvet-text-primary);
+  cursor: default;
+  font-size: 12px;
+}
+
+.velvet-context-menu__item[data-highlighted] {
+  background: var(--velvet-surface-active);
+}
+
+.velvet-context-menu__item[data-disabled] {
+  color: var(--velvet-text-muted);
+  pointer-events: none;
+}
+
+.velvet-empty-state {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  color: var(--velvet-text-muted);
+  font-size: 13px;
+}
+
+.velvet-resize-handle {
+  position: absolute;
+  z-index: 2;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.velvet-resize-handle:hover,
+.velvet-resize-handle:focus-visible {
+  background: var(--velvet-accent);
+}
+
+.velvet-resize-handle--sidebar-end,
+.velvet-resize-handle--sidebar-start {
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+}
+
+.velvet-resize-handle--sidebar-end {
+  right: -3px;
+}
+
+.velvet-resize-handle--sidebar-start {
+  left: -3px;
+}
+
+.velvet-resize-handle--panel-start {
+  top: -3px;
+  right: 0;
+  left: 0;
+  height: 6px;
+  cursor: row-resize;
+}

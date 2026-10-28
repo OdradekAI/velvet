@@ -6,7 +6,8 @@ use velvet_persistence::{InMemoryLayoutStateStore, LayoutStateStore};
 use velvet_plugin_host::{InMemoryPluginHost, PluginHost};
 use velvet_preview_core::{GenericFallbackProvider, PreviewContext, PreviewResolver};
 use velvet_workbench_protocol::{
-    Command, CoreError, CoreTransport, Query, Request, RequestId, Response,
+    Command, CoreError, CoreTransport, Query, Request, RequestEnvelope, RequestId, Response,
+    ResponseEnvelope, PROTOCOL_VERSION,
 };
 
 pub struct ApplicationCore {
@@ -50,16 +51,11 @@ impl ApplicationCore {
 
     pub fn dispatch(&mut self, request: Request) -> Result<Response, CoreError> {
         match request {
-            Request::Command(Command::Layout(command)) => {
-                let state = self
-                    .layout
-                    .apply(command)
-                    .map_err(|error| CoreError::Layout(format!("{error:?}")))?;
-                self.layout_store
-                    .save(&state)
-                    .map_err(|error| CoreError::Layout(format!("{error:?}")))?;
-                Ok(Response::Layout(state))
-            }
+            Request::Command(Command::Layout(command)) => self.apply_layout(None, command),
+            Request::Command(Command::LayoutAt {
+                expected_revision,
+                command,
+            }) => self.apply_layout(expected_revision, command),
             Request::Query(Query::Layout) => Ok(Response::Layout(self.layout.snapshot())),
             Request::Query(Query::Extensions) => Ok(Response::Extensions(self.plugins.discover())),
             Request::Query(Query::ResolvePreview {
@@ -80,6 +76,51 @@ impl ApplicationCore {
                 .map(Response::Preview)
                 .map_err(|error| CoreError::InvalidCommand(format!("{error:?}"))),
         }
+    }
+
+    pub fn dispatch_envelope(
+        &mut self,
+        envelope: RequestEnvelope,
+    ) -> Result<ResponseEnvelope, CoreError> {
+        if envelope.protocol_version != PROTOCOL_VERSION {
+            return Err(CoreError::ProtocolVersionMismatch {
+                expected: PROTOCOL_VERSION,
+                received: envelope.protocol_version,
+            });
+        }
+
+        let request_id = envelope.request_id.clone();
+        let response = self.dispatch(envelope.request)?;
+        Ok(ResponseEnvelope {
+            protocol_version: PROTOCOL_VERSION,
+            request_id,
+            response,
+        })
+    }
+
+    fn apply_layout(
+        &mut self,
+        expected_revision: Option<u64>,
+        command: velvet_layout_model::LayoutCommand,
+    ) -> Result<Response, CoreError> {
+        let actual_revision = self.layout.snapshot().revision;
+        if let Some(expected) = expected_revision {
+            if expected != actual_revision {
+                return Err(CoreError::StaleRevision {
+                    expected,
+                    actual: actual_revision,
+                });
+            }
+        }
+
+        let state = self
+            .layout
+            .apply(command)
+            .map_err(|error| CoreError::Layout(format!("{error:?}")))?;
+        self.layout_store
+            .save(&state)
+            .map_err(|error| CoreError::Layout(format!("{error:?}")))?;
+        Ok(Response::Layout(state))
     }
 }
 
@@ -102,5 +143,87 @@ impl CoreTransport for InProcessCoreTransport {
             .lock()
             .map_err(|_| CoreError::InvalidCommand("core lock poisoned".into()))?
             .dispatch(request)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use velvet_layout_model::{LayoutCommand, WorkbenchPart};
+
+    #[test]
+    fn layout_queries_return_the_canonical_revisioned_snapshot() {
+        let mut core = ApplicationCore::default();
+        let response = core
+            .dispatch_envelope(RequestEnvelope {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: RequestId(1),
+                request: Request::Query(Query::Layout),
+            })
+            .expect("layout query should succeed");
+
+        assert_eq!(response.protocol_version, PROTOCOL_VERSION);
+        assert_eq!(response.request_id, RequestId(1));
+        match response.response {
+            Response::Layout(state) => {
+                assert_eq!(state.revision, 0);
+                assert_eq!(
+                    state.active_app,
+                    velvet_layout_model::WorkbenchAppId::AssetManager
+                );
+            }
+            other => panic!("expected layout response, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn layout_commands_require_the_current_revision() {
+        let mut core = ApplicationCore::default();
+        let command = Request::Command(Command::LayoutAt {
+            expected_revision: Some(0),
+            command: LayoutCommand::SetPartVisibility {
+                part: WorkbenchPart::PrimarySidebar,
+                visible: false,
+            },
+        });
+
+        let first = core
+            .dispatch(command.clone())
+            .expect("first command should succeed");
+        match first {
+            Response::Layout(state) => assert_eq!(state.revision, 1),
+            other => panic!("expected layout response, got {other:?}"),
+        }
+
+        let stale = core
+            .dispatch(command)
+            .expect_err("stale command should be rejected");
+        assert_eq!(
+            stale,
+            CoreError::StaleRevision {
+                expected: 0,
+                actual: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn envelopes_reject_unknown_protocol_versions_before_dispatch() {
+        let mut core = ApplicationCore::default();
+        let error = core
+            .dispatch_envelope(RequestEnvelope {
+                protocol_version: PROTOCOL_VERSION + 1,
+                request_id: RequestId(2),
+                request: Request::Query(Query::Layout),
+            })
+            .expect_err("unknown protocol versions should be rejected");
+
+        assert_eq!(
+            error,
+            CoreError::ProtocolVersionMismatch {
+                expected: PROTOCOL_VERSION,
+                received: PROTOCOL_VERSION + 1,
+            }
+        );
     }
 }
