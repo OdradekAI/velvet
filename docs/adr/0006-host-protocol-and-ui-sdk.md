@@ -64,6 +64,12 @@ predicates use a small declarative grammar; overlays carry host-managed modal,
 escape and focus-restoration state while their body is rendered by a trusted
 Velvet UI adapter or isolated UI bridge.
 
+The host also owns `KeybindingRegistry` and `FocusService`. Keybindings use
+normalized multi-chord sequences, allow context-qualified alternatives, prefer
+the active WorkbenchApp namespace and execute through `CommandRegistry`.
+Focus state is a framework-neutral projection for Parts, Views and overlays;
+the renderer adapts it to DOM focus while the host retains restoration order.
+
 Layout actions use stable command identifiers (`workbench.toggle-part`,
 `workbench.focus-part`, `workbench.resize-part`, `workbench.collapse-part`,
 `workbench.maximize-part`, `workbench.move-view`,

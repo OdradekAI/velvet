@@ -18,6 +18,8 @@ registries, lazy surface/plugin activation, app-scoped context commands,
 host-container descriptors, namespace validation, target API checks,
 contribution cleanup, host-owned command/menu/context-key/overlay registries,
 isolated surface sessions, revisioned layout commands and protocol envelopes.
+The host now also has framework-neutral keybinding resolution and focus
+restoration state, leaving keyboard events and DOM focus as renderer adapters.
 ViewContainer order/visibility and View moves are represented in the same
 revisioned layout state, so extension removal can detach contributions without
 destroying the host's remaining order.

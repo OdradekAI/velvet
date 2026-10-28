@@ -11,11 +11,13 @@ import {
 import { ContributionRegistry } from './contributions/contribution-registry.js';
 import { CommandRegistry } from './commands/command-registry.js';
 import { ContextKeyService } from './commands/context-key-service.js';
+import { KeybindingRegistry } from './commands/keybinding-registry.js';
 import { MenuRegistry } from './commands/menu-registry.js';
 import { InMemoryWorkspaceContext } from './services/workspace-context.js';
 import { OverlayRegistry } from './overlays/overlay-registry.js';
 import { PluginUiRegistry } from './plugins/ui-bridge.js';
 import { ViewRegistry } from './views/view-registry.js';
+import { FocusService } from './focus/focus-service.js';
 import { BUILTIN_WORKBENCH_APPS } from '../workspaces/index.js';
 
 export class Workbench {
@@ -28,8 +30,10 @@ export class Workbench {
   public readonly activityBar = new ActivityBarContributionRegistry();
   public readonly contributions = new ContributionRegistry();
   public readonly context = new InMemoryWorkspaceContext();
+  public readonly focus = new FocusService();
   public readonly contextKeys: ContextKeyService;
   public readonly commands: CommandRegistry;
+  public readonly keybindings: KeybindingRegistry;
   public readonly menus: MenuRegistry;
   public readonly overlays: OverlayRegistry;
   public readonly pluginUi: PluginUiRegistry;
@@ -42,6 +46,7 @@ export class Workbench {
     this.plugins = new PluginClient(core, this.contributions, this.apps);
     this.contextKeys = new ContextKeyService();
     this.commands = new CommandRegistry(this.contextKeys);
+    this.keybindings = new KeybindingRegistry(this.commands, this.contextKeys);
     this.menus = new MenuRegistry(this.commands, this.contextKeys);
     this.overlays = new OverlayRegistry(this.contextKeys);
     this.pluginUi = this.plugins.ui;
