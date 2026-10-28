@@ -60,6 +60,7 @@ name = "velvet-tauri-adapter"
 version = "0.0.2"
 dependencies = [
  "velvet-application-core",
+ "velvet-layout-model",
  "velvet-workbench-protocol",
 ]
 

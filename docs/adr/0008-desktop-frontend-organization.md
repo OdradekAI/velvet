@@ -59,6 +59,16 @@ layout command, but the Rust `LayoutService` remains authoritative and sends
 back the revisioned snapshot; a stale expected revision is surfaced as a typed
 transport error.
 
+`TauriCoreTransport` now implements that desktop seam through two small
+capabilities: `invoke` for request/response envelopes and `listen` for
+revisioned core events. The adapter owns request ids, protocol/request
+correlation, event subscription lifetime and typed transport errors without
+importing the Tauri package. The native command handler and serialization
+format remain an integration concern of the Tauri application boundary. Rust
+`TauriTransport` emits authoritative layout events through an injected event
+sink, so the native `AppHandle` publisher stays replaceable and outside the
+application core.
+
 The UI ownership layers are:
 
 ```text

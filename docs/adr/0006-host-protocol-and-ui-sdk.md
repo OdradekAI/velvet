@@ -27,6 +27,12 @@ protocol defines layout and plugin lifecycle event shapes for the future Tauri
 subscription, while the desktop TypeScript contract remains an explicit
 adapter mapping until serialization and compatibility fixtures are finalized.
 
+The desktop mapping is exposed by `TauriCoreTransport`. It sends a
+`velvet_core_request` envelope with a monotonically allocated request id and
+subscribes to `velvet_core_event` only while there are active listeners. The
+adapter rejects protocol-version or request-id mismatches and normalizes native
+invoke failures into `CoreTransportError`.
+
 The UI SDK exposes host concepts rather than Vue or React component types:
 
 ```text

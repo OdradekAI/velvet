@@ -21,6 +21,11 @@ isolated surface sessions, revisioned layout commands and protocol envelopes.
 ViewContainer order/visibility and View moves are represented in the same
 revisioned layout state, so extension removal can detach contributions without
 destroying the host's remaining order.
+The framework-neutral `TauriCoreTransport` bridge now owns request/event
+correlation and typed native transport errors; the native Tauri command handler
+and serialization format remain the next integration seam. Rust
+`TauriTransport` emits authoritative layout events through an injected event
+sink, keeping native event publication outside `ApplicationCore`.
 The next implementation gate is real Tauri IPC/event wiring plus accessibility,
 keyboard, resize constraints and recovery behavior before drag-and-drop and
 plugin panel mounting.
@@ -374,7 +379,7 @@ export interface CommandDescriptor {
 6. **Preview core**: implement generic image/file fallback, `PreviewResolver`, Quick/Inspect/Analyze intents and a fake provider used by contract tests.
 7. **Plugin host**: load manifests, validate permissions, activate lazily, isolate failures and expose the UI SDK boundary.
 8. **Jobs and facets**: implement one thumbnail job, one metadata facet and one cancellable analysis job.
-9. **Tauri adapter**: connect typed commands, queries and events to the desktop client. No feature should bypass the protocol. **Next implementation gate.**
+9. **Tauri adapter**: connect typed commands, queries and events to the desktop client. No feature should bypass the protocol. **Transport mapping seam done; native command/event handler remains.**
 
 ## Acceptance scenarios
 

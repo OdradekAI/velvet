@@ -1,3 +1,8 @@
+import {
+  TauriCoreTransport,
+  type TauriBridge,
+  type TauriTransportOptions,
+} from '../platform/index.js';
 import type { CoreTransport } from '../platform/protocol.js';
 import { Workbench } from '../workbench/workbench.js';
 
@@ -17,4 +22,12 @@ export function createDesktopApp(core: CoreTransport): DesktopApp {
       await workbench.layout.load();
     },
   };
+}
+
+/** Compose the desktop app with the native Tauri invoke/listen bridge. */
+export function createTauriDesktopApp(
+  bridge: TauriBridge,
+  options?: TauriTransportOptions,
+): DesktopApp {
+  return createDesktopApp(new TauriCoreTransport(bridge, options));
 }
