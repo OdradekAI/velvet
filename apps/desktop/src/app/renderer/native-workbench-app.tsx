@@ -12,7 +12,8 @@ interface NativeWorkbenchState {
 /** Mounts the renderer against the real Rust-owned Tauri workbench. */
 export function NativeWorkbenchApp() {
   const [state, setState] = useState<NativeWorkbenchState>();
-  const [error, setError] = useState<unknown>();
+  const [startupError, setStartupError] = useState<unknown>();
+  const [commandError, setCommandError] = useState<unknown>();
 
   useEffect(() => {
     const app = createNativeTauriDesktopApp();
@@ -24,12 +25,13 @@ export function NativeWorkbenchApp() {
     void app.start()
       .then((layout) => {
         if (!disposed) {
+          app.workbench.focus.focus({ kind: 'part', part: 'workspace-area' });
           setState({ app, layout });
         }
       })
       .catch((reason: unknown) => {
         if (!disposed) {
-          setError(reason);
+          setStartupError(reason);
         }
       });
 
@@ -40,12 +42,12 @@ export function NativeWorkbenchApp() {
     };
   }, []);
 
-  if (error) {
+  if (startupError) {
     return (
       <main className="velvet-empty-state">
         <div>
           <p>Velvet could not start the native workbench.</p>
-          <pre>{error instanceof Error ? error.message : String(error)}</pre>
+          <pre>{startupError instanceof Error ? startupError.message : String(startupError)}</pre>
         </div>
       </main>
     );
@@ -61,12 +63,21 @@ export function NativeWorkbenchApp() {
 
   const currentState = state;
 
+  function reportCommandError(reason: unknown): void {
+    setCommandError(reason);
+    void currentState.app.workbench.layout.load().catch((reloadReason: unknown) => {
+      setCommandError(reloadReason);
+    });
+  }
+
   function activateApp(appId: WorkbenchAppId): void {
-    void currentState.app.workbench.layout.activateApp(appId).catch(setError);
+    setCommandError(undefined);
+    void currentState.app.workbench.layout.activateApp(appId).catch(reportCommandError);
   }
 
   function dispatchLayout(command: LayoutCommand): void {
-    void currentState.app.workbench.layout.apply(command).catch(setError);
+    setCommandError(undefined);
+    void currentState.app.workbench.layout.apply(command).catch(reportCommandError);
   }
 
   return (
@@ -77,10 +88,27 @@ export function NativeWorkbenchApp() {
       onActivateApp={activateApp}
       onLayoutCommand={dispatchLayout}
     >
-      <div className="velvet-empty-state">
-        <div>
-          <p>{currentState.layout.activeApp} workspace</p>
-          <p>Rust-owned layout and native keybindings are active.</p>
+      <div className="velvet-native-workspace">
+        {commandError ? (
+          <div aria-live="polite" className="velvet-command-error" role="alert">
+            <span>
+              Layout command failed:{' '}
+              {commandError instanceof Error ? commandError.message : String(commandError)}
+            </span>
+            <button
+              className="velvet-button velvet-button--quiet"
+              onClick={() => setCommandError(undefined)}
+              type="button"
+            >
+              Dismiss
+            </button>
+          </div>
+        ) : null}
+        <div className="velvet-empty-state">
+          <div>
+            <p>{currentState.layout.activeApp} workspace</p>
+            <p>Rust-owned layout and native keybindings are active.</p>
+          </div>
         </div>
       </div>
     </WorkbenchShell>
