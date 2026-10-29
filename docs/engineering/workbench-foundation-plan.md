@@ -63,6 +63,12 @@ Context-menu and dialog contributions now use the host `MenuRegistry` and
 `OverlayRegistry`; dialog surfaces are mounted through the isolated UI Bridge
 only while an overlay is open, command handlers bind through the plugin
 runtime seam, and namespace/lifecycle cleanup is tested.
+Plugin-owned `WorkbenchApp` manifests now register extension-prefixed app
+descriptors in `WorkbenchAppRegistry`. Their Activity Bar entries are projected
+through the same registry as built-in apps, while the selected AppSurface is
+created as an isolated UI Bridge session, suspended on app switch and disposed
+before deactivation removes the app namespace. Namespace ownership and full
+app cleanup are covered by the plugin lifecycle tests.
 
 The current shell slice also renders the accepted Part constraint table: fixed
 Parts use stable dimensions, resizable Parts enforce bounded sizes in Rust, and

@@ -16,6 +16,8 @@ export function NativeWorkbenchApp() {
   const [state, setState] = useState<NativeWorkbenchState>();
   const [startupError, setStartupError] = useState<unknown>();
   const [commandError, setCommandError] = useState<unknown>();
+  const [surfaceError, setSurfaceError] = useState<unknown>();
+  const [appRevision, setAppRevision] = useState(0);
   const [viewRenderers] = useState(() => new ViewRendererRegistry());
 
   useEffect(() => {
@@ -89,6 +91,58 @@ export function NativeWorkbenchApp() {
     };
   }, [state?.app, viewRenderers]);
 
+  useEffect(() => {
+    const workbench = state?.app.workbench;
+    if (!workbench) {
+      return undefined;
+    }
+    return workbench.apps.subscribe(() => {
+      setAppRevision((revision) => revision + 1);
+      const activeAppId = workbench.layout.snapshot()?.activeApp;
+      if (activeAppId && !workbench.apps.get(activeAppId)) {
+        const fallback = workbench.apps.list()[0];
+        if (fallback) {
+          void workbench.layout.activateApp(fallback.id)
+            .then(() => workbench.context.apply({ kind: 'activate-app', appId: fallback.id }))
+            .catch(() => undefined);
+        }
+      }
+    });
+  }, [state?.app]);
+
+  useEffect(() => {
+    const workbench = state?.app.workbench;
+    const appId = state?.layout.activeApp;
+    if (!workbench || !appId) {
+      return undefined;
+    }
+
+    const descriptor = workbench.apps.get(appId);
+    if (!descriptor || descriptor.surface.trust !== 'isolated') {
+      setSurfaceError(undefined);
+      return undefined;
+    }
+
+    let disposed = false;
+    setSurfaceError(undefined);
+    void workbench.apps.activateSurface(appId, {
+      appId,
+      context: workbench.context,
+      dispatch: (command) => {
+        workbench.context.apply(command);
+      },
+    }).catch((reason: unknown) => {
+      if (!disposed) {
+        setSurfaceError(reason);
+      }
+    });
+
+    return () => {
+      disposed = true;
+      void workbench.apps.deactivateSurface(appId).catch(() => undefined);
+    };
+  }, [state?.app, state?.layout.activeApp]);
+
   if (startupError) {
     return (
       <main className="velvet-empty-state">
@@ -119,7 +173,12 @@ export function NativeWorkbenchApp() {
 
   function activateApp(appId: WorkbenchAppId): void {
     setCommandError(undefined);
-    void currentState.app.workbench.layout.activateApp(appId).catch(reportCommandError);
+    void currentState.app.workbench.layout
+      .activateApp(appId)
+      .then(() => {
+        currentState.app.workbench.context.apply({ kind: 'activate-app', appId });
+      })
+      .catch(reportCommandError);
   }
 
   function dispatchLayout(command: LayoutCommand): void {
@@ -156,7 +215,22 @@ export function NativeWorkbenchApp() {
             </button>
           </div>
         ) : null}
-        <div className="velvet-empty-state">
+        {surfaceError ? (
+          <div aria-live="polite" className="velvet-command-error" role="alert">
+            <span>
+              App surface failed:{' '}
+              {surfaceError instanceof Error ? surfaceError.message : String(surfaceError)}
+            </span>
+            <button
+              className="velvet-button velvet-button--quiet"
+              onClick={() => setSurfaceError(undefined)}
+              type="button"
+            >
+              Dismiss
+            </button>
+          </div>
+        ) : null}
+        <div className="velvet-empty-state" data-app-revision={appRevision}>
           <div>
             <p>{currentState.layout.activeApp} workspace</p>
             <p>Rust-owned layout and native keybindings are active.</p>

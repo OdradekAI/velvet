@@ -14,10 +14,11 @@ const commands = new CommandRegistry(contextKeys);
 const menus = new MenuRegistry(commands, contextKeys);
 const overlays = new OverlayRegistry(contextKeys);
 const ui = new PluginUiRegistry();
+const apps = new WorkbenchAppRegistry();
 const client = new PluginClient(
   { request: async () => ({ kind: 'accepted' }), subscribe: () => () => {} },
   new ContributionRegistry(),
-  new WorkbenchAppRegistry(),
+  apps,
   '1',
   ui,
   new ViewRegistry(),
@@ -25,6 +26,143 @@ const client = new PluginClient(
   menus,
   overlays,
 );
+
+const appManifest = {
+  id: 'sample.app-extension',
+  version: '1.0.0',
+  hostApi: '1',
+  permissions: {},
+  workbenchApp: {
+    id: 'sample.app-extension.research',
+    apiVersion: '1',
+    title: 'Research App',
+    activityBarIcon: 'search',
+    activityBarOrder: 20,
+    surface: {
+      entrypoint: 'wasm://sample/research-app',
+      bridgeVersion: '1',
+    },
+  },
+  contributions: [
+    {
+      id: 'open-tool',
+      scope: 'workbench-app',
+      appId: 'sample.app-extension.research',
+      kind: 'command',
+      title: 'Open tool',
+    },
+  ],
+};
+
+assert.throws(
+  () => client.register({
+    ...appManifest,
+    id: 'sample.foreign-app',
+    workbenchApp: { ...appManifest.workbenchApp, id: 'other.extension.research' },
+  }),
+  /must be owned by extension/,
+);
+
+client.register(appManifest);
+client.activate(appManifest.id);
+assert.equal(apps.get(appManifest.workbenchApp.id)?.surface.trust, 'isolated');
+assert.deepEqual(
+  apps.listActivityBarEntries().map((entry) => entry.appId),
+  [appManifest.workbenchApp.id],
+);
+assert.equal(client.listAppSurfaceBindings().length, 1);
+assert.equal(
+  client.listAppSurfaceBindings()[0].surface.namespace,
+  `workbench.app.${appManifest.workbenchApp.id}`,
+);
+
+let appMounted = false;
+let appUnmounted = false;
+const appSurfaceId = client.listAppSurfaceBindings()[0].surfaceId;
+ui.bindAdapter(appManifest.id, appSurfaceId, {
+  mount: () => {
+    appMounted = true;
+  },
+  unmount: () => {
+    appUnmounted = true;
+  },
+});
+const appActivatedResult = await apps.activateSurface(appManifest.workbenchApp.id, {
+  appId: appManifest.workbenchApp.id,
+  context: {
+    snapshot: () => ({
+      revision: 0,
+      activeAppId: appManifest.workbenchApp.id,
+      dataScope: null,
+      selection: [],
+      query: '',
+      filters: {},
+      sort: [],
+      handoff: null,
+    }),
+    subscribe: () => () => {},
+  },
+  dispatch: () => {},
+});
+assert.equal(appActivatedResult, true);
+assert.equal(appMounted, true);
+assert.equal(apps.getSurfaceState(appManifest.workbenchApp.id), 'active');
+assert.equal(
+  commands.get(`workbench.app.${appManifest.workbenchApp.id}`, 'open-tool')?.appId,
+  appManifest.workbenchApp.id,
+);
+await apps.deactivateSurface(appManifest.workbenchApp.id);
+assert.equal(apps.getSurfaceState(appManifest.workbenchApp.id), 'suspended');
+await apps.activateSurface(appManifest.workbenchApp.id, {
+  appId: appManifest.workbenchApp.id,
+  context: {
+    snapshot: () => ({
+      revision: 0,
+      activeAppId: appManifest.workbenchApp.id,
+      dataScope: null,
+      selection: [],
+      query: '',
+      filters: {},
+      sort: [],
+      handoff: null,
+    }),
+    subscribe: () => () => {},
+  },
+  dispatch: () => {},
+});
+assert.equal(apps.getSurfaceState(appManifest.workbenchApp.id), 'active');
+
+await client.deactivate(appManifest.id);
+assert.equal(appUnmounted, true);
+assert.equal(apps.get(appManifest.workbenchApp.id), undefined);
+assert.equal(apps.listActivityBarEntries().length, 0);
+assert.equal(client.listAppSurfaceBindings().length, 0);
+assert.equal(ui.getDescriptor(appManifest.id, appSurfaceId), undefined);
+
+const contributionAppManifest = {
+  id: 'sample.surface-extension',
+  version: '1.0.0',
+  hostApi: '1',
+  permissions: {},
+  contributions: [
+    {
+      id: 'reader-surface',
+      scope: 'workbench-app',
+      appId: 'sample.surface-extension.reader',
+      kind: 'app-surface',
+      container: 'workspace-area',
+      title: 'Reader',
+      icon: 'book',
+      ui: { kind: 'app-surface', entrypoint: 'wasm://sample/reader', bridgeVersion: '1' },
+    },
+  ],
+};
+client.register(contributionAppManifest);
+client.activate(contributionAppManifest.id);
+assert.equal(apps.get('sample.surface-extension.reader')?.title, 'Reader');
+assert.equal(client.listAppSurfaceBindings()[0].surfaceId, 'reader-surface');
+await client.deactivate(contributionAppManifest.id);
+assert.equal(apps.get('sample.surface-extension.reader'), undefined);
 
 const manifest = {
   id: 'sample.extension',

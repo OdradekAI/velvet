@@ -86,6 +86,16 @@ host-owned command. Apps do not call one another's implementation or access
 persistence directly; cross-app workflows go through core queries, commands
 and events.
 
+The desktop host derives a contributed app's stable id from an extension-owned
+prefix (for example, `sample.extension.research`) and rejects ids owned by
+another extension. `PluginClient` registers the descriptor and its isolated
+AppSurface bridge in `WorkbenchAppRegistry` as one activation unit. The
+registry projects the app into the Activity Bar, lazily creates a bridge
+session when the app becomes active, suspends it when another app is selected,
+and disposes it before extension deactivation removes the Activity Bar entry.
+This keeps the central surface lifecycle host-owned while allowing the bridge
+adapter to be bound by the isolated runtime.
+
 Keep these ownership layers separate:
 
 ```text
@@ -138,6 +148,11 @@ Costs:
 - `WorkbenchAppRegistry` registers descriptors before activation and binds a
   surface factory lazily. A missing or failed factory leaves the Workbench
   usable and does not invalidate layout or core data.
+- A plugin WorkbenchApp uses an extension-prefixed id and an isolated
+  `AppSurface` descriptor. Registry activation and deactivation are tested as
+  one lifecycle: Activity Bar projection appears only while active, the
+  bridge session is mounted on selection, and disposal removes the app,
+  surface descriptor and namespace projections together.
 - The later Asset/Source/Collection model will define the concrete data-scope
   handles and materialization semantics; the first context API remains
   reference-based so that decision does not leak into the shell.

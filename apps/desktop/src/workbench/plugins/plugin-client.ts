@@ -6,11 +6,16 @@ import {
   type ContributionDescriptor,
 } from '../contributions/contribution-registry.js';
 import {
+  type AppSurfaceHost,
+  type AppSurfaceLifecycle,
+  type WorkbenchAppDescriptor,
   WorkbenchAppRegistry,
 } from '../apps/workbench-app.js';
 import type { WorkbenchAppId } from '../../platform/protocol.js';
 import { canUsePermission } from '../zones/zone-policy.js';
 import {
+  asAppSurfaceLifecycle,
+  type PluginSurfaceMountOptions,
   PluginUiRegistry,
   type PluginSurfaceDescriptor,
 } from './ui-bridge.js';
@@ -55,9 +60,23 @@ export interface ExtensionManifest {
   readonly version: string;
   readonly hostApi: string;
   readonly runtime?: PluginRuntime;
+  /** A plugin-owned top-level WorkbenchApp. Its id must be extension-prefixed. */
+  readonly workbenchApp?: PluginWorkbenchApp;
   readonly targetApp?: AppTarget;
   readonly contributions: readonly ManifestContribution[];
   readonly permissions: Partial<Record<Zone, readonly string[]>>;
+}
+
+export interface PluginWorkbenchApp {
+  readonly id: WorkbenchAppId;
+  readonly apiVersion?: string;
+  readonly title: string;
+  readonly activityBarIcon: string;
+  readonly activityBarOrder?: number;
+  readonly surface: {
+    readonly entrypoint: string;
+    readonly bridgeVersion: string;
+  };
 }
 
 export type PluginStatus = 'registered' | 'active' | 'disabled' | 'failed';
@@ -81,6 +100,8 @@ interface PluginRecord {
   registeredMenus: MenuContribution[];
   registeredOverlays: OverlayDescriptor[];
   overlaySurfaceBindings: PluginOverlaySurfaceBinding[];
+  registeredAppId?: WorkbenchAppId;
+  appSurfaceBinding?: PluginAppSurfaceBinding;
   error?: string;
 }
 
@@ -94,6 +115,13 @@ export interface PluginViewSurfaceBinding {
 export interface PluginOverlaySurfaceBinding {
   readonly overlayId: string;
   readonly namespace: string;
+  readonly extensionId: string;
+  readonly surfaceId: string;
+  readonly surface: PluginSurfaceDescriptor;
+}
+
+export interface PluginAppSurfaceBinding {
+  readonly appId: WorkbenchAppId;
   readonly extensionId: string;
   readonly surfaceId: string;
   readonly surface: PluginSurfaceDescriptor;
@@ -145,9 +173,10 @@ export class PluginClient {
       );
     }
 
-    this.validateManifest(manifest);
+    const normalizedManifest = this.normalizeManifest(manifest);
+    this.validateManifest(normalizedManifest);
     this.records.set(manifest.id, {
-      manifest,
+      manifest: normalizedManifest,
       status: 'registered',
       registered: [],
       registeredViewContainers: [],
@@ -158,6 +187,8 @@ export class PluginClient {
       registeredMenus: [],
       registeredOverlays: [],
       overlaySurfaceBindings: [],
+      registeredAppId: undefined,
+      appSurfaceBinding: undefined,
     });
     this.notify();
   }
@@ -177,7 +208,15 @@ export class PluginClient {
     const registeredMenus: MenuContribution[] = [];
     const registeredOverlays: OverlayDescriptor[] = [];
     const overlaySurfaceBindings: PluginOverlaySurfaceBinding[] = [];
+    let registeredAppId: WorkbenchAppId | undefined;
+    let appSurfaceBinding: PluginAppSurfaceBinding | undefined;
     try {
+      if (record.manifest.workbenchApp) {
+        const app = this.toWorkbenchAppDescriptor(record.manifest);
+        this.appRegistry.register(app);
+        registeredAppId = app.id;
+      }
+
       const descriptors = record.manifest.contributions.map((contribution) =>
         this.toDescriptor(record.manifest, contribution),
       );
@@ -242,7 +281,7 @@ export class PluginClient {
       }
 
       for (const descriptor of descriptors) {
-        if (!descriptor.ui) {
+        if (!descriptor.ui || descriptor.kind === 'app-surface') {
           continue;
         }
 
@@ -268,6 +307,22 @@ export class PluginClient {
         }
       }
 
+      if (record.manifest.workbenchApp) {
+        const surface = this.toAppSurfaceDescriptor(record.manifest);
+        this.ui.register(surface);
+        registeredSurfaceIds.push(surface.id);
+        appSurfaceBinding = {
+          appId: record.manifest.workbenchApp.id,
+          extensionId: record.manifest.id,
+          surfaceId: surface.id,
+          surface,
+        };
+        this.appRegistry.bindSurfaceFactory(
+          record.manifest.workbenchApp.id,
+          (host) => this.createAppSurfaceLifecycle(record.manifest, host, surface),
+        );
+      }
+
       record.registered = registered;
       record.registeredViewContainers = registeredViewContainers;
       record.registeredViews = registeredViews;
@@ -277,11 +332,14 @@ export class PluginClient {
       record.registeredMenus = registeredMenus;
       record.registeredOverlays = registeredOverlays;
       record.overlaySurfaceBindings = overlaySurfaceBindings;
+      record.registeredAppId = registeredAppId;
+      record.appSurfaceBinding = appSurfaceBinding;
       record.status = 'active';
       record.error = undefined;
       this.notify();
     } catch (cause) {
       this.rollbackActivation(
+        extensionId,
         registered,
         registeredViewContainers,
         registeredViews,
@@ -290,6 +348,9 @@ export class PluginClient {
         registeredMenus,
         registeredOverlays,
       );
+      if (registeredAppId) {
+        this.appRegistry.remove(registeredAppId);
+      }
       record.registered = [];
       record.registeredViewContainers = [];
       record.registeredViews = [];
@@ -299,6 +360,8 @@ export class PluginClient {
       record.registeredMenus = [];
       record.registeredOverlays = [];
       record.overlaySurfaceBindings = [];
+      record.registeredAppId = undefined;
+      record.appSurfaceBinding = undefined;
       record.status = 'failed';
       record.error = cause instanceof Error ? cause.message : String(cause);
       this.notify();
@@ -315,6 +378,9 @@ export class PluginClient {
     _reason: 'user' | 'crash' | 'incompatible' = 'user',
   ): Promise<void> {
     const record = this.require(extensionId);
+    if (record.registeredAppId) {
+      await this.appRegistry.unregister(record.registeredAppId);
+    }
     for (const overlay of [...record.registeredOverlays].reverse()) {
       this.overlayRegistry?.unregister(overlay);
     }
@@ -343,6 +409,8 @@ export class PluginClient {
     record.registeredMenus = [];
     record.registeredOverlays = [];
     record.overlaySurfaceBindings = [];
+    record.registeredAppId = undefined;
+    record.appSurfaceBinding = undefined;
     this.commandHandlers.delete(extensionId);
     record.status = 'disabled';
     this.notify();
@@ -407,6 +475,12 @@ export class PluginClient {
       .flatMap((record) => record.overlaySurfaceBindings);
   }
 
+  public listAppSurfaceBindings(): readonly PluginAppSurfaceBinding[] {
+    return [...this.records.values()]
+      .filter((record) => record.status === 'active' && record.appSurfaceBinding)
+      .map((record) => record.appSurfaceBinding!);
+  }
+
   public subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
@@ -463,6 +537,35 @@ export class PluginClient {
         .filter((contribution) => contribution.kind === 'command')
         .map((contribution) => contribution.id),
     );
+    if (manifest.workbenchApp) {
+      if (
+        !isStableId(manifest.workbenchApp.id) ||
+        !manifest.workbenchApp.id.startsWith(`${manifest.id}.`)
+      ) {
+        throw new PluginLifecycleError(
+          `WorkbenchApp ${manifest.workbenchApp.id} must be owned by extension ${manifest.id}`,
+          manifest.id,
+        );
+      }
+      if (!manifest.workbenchApp.title || !manifest.workbenchApp.activityBarIcon) {
+        throw new PluginLifecycleError(
+          `WorkbenchApp ${manifest.workbenchApp.id} must declare title and Activity Bar icon metadata`,
+          manifest.id,
+        );
+      }
+      if (!manifest.workbenchApp.surface.entrypoint.trim()) {
+        throw new PluginLifecycleError(
+          `WorkbenchApp ${manifest.workbenchApp.id} must declare an AppSurface entrypoint`,
+          manifest.id,
+        );
+      }
+      if (!manifest.workbenchApp.surface.bridgeVersion.trim()) {
+        throw new PluginLifecycleError(
+          `WorkbenchApp ${manifest.workbenchApp.id} must declare an AppSurface bridge version`,
+          manifest.id,
+        );
+      }
+    }
     for (const contribution of manifest.contributions) {
       const expectedNamespace = namespaceFor(
         contribution.scope,
@@ -523,6 +626,15 @@ export class PluginClient {
           `Dialog ${contribution.id} must declare title metadata`,
           manifest.id,
         );
+      }
+
+      if (contribution.kind === 'app-surface') {
+        if (!contribution.title || !contribution.icon || !contribution.ui) {
+          throw new PluginLifecycleError(
+            `AppSurface ${contribution.id} must declare title, icon and UI metadata`,
+            manifest.id,
+          );
+        }
       }
 
       if (isViewContribution(contribution.kind)) {
@@ -594,6 +706,20 @@ export class PluginClient {
       );
     }
 
+    if (manifest.workbenchApp && appIds.size === 1 && !appIds.has(manifest.workbenchApp.id)) {
+      throw new PluginLifecycleError(
+        `Contribution namespace does not match contributed WorkbenchApp ${manifest.workbenchApp.id}`,
+        manifest.id,
+      );
+    }
+
+    if (manifest.workbenchApp && manifest.targetApp) {
+      throw new PluginLifecycleError(
+        'A full WorkbenchApp cannot also target another WorkbenchApp',
+        manifest.id,
+      );
+    }
+
     if (manifest.targetApp) {
       const app = this.appRegistry.get(manifest.targetApp.appId);
       if (!app) {
@@ -614,7 +740,7 @@ export class PluginClient {
           manifest.id,
         );
       }
-    } else if (appIds.size === 1) {
+    } else if (!manifest.workbenchApp && appIds.size === 1) {
       throw new PluginLifecycleError(
         'WorkbenchApp contributions require an explicit targetApp declaration',
         manifest.id,
@@ -643,6 +769,124 @@ export class PluginClient {
       ...descriptor,
       extensionId: manifest.id,
       namespace,
+    };
+  }
+
+  private normalizeManifest(manifest: ExtensionManifest): ExtensionManifest {
+    const appSurface = manifest.contributions.find(
+      (contribution) => contribution.kind === 'app-surface',
+    );
+    if (!appSurface) {
+      return manifest;
+    }
+    if (manifest.workbenchApp) {
+      throw new PluginLifecycleError(
+        'A WorkbenchApp cannot declare its AppSurface twice',
+        manifest.id,
+      );
+    }
+    if (
+      appSurface.scope !== 'workbench-app' ||
+      !appSurface.appId ||
+      !appSurface.title ||
+      !appSurface.icon ||
+      !appSurface.ui ||
+      appSurface.ui.kind !== 'app-surface'
+    ) {
+      throw new PluginLifecycleError(
+        `AppSurface ${appSurface.id} must declare a workbench-app id, title, icon and app-surface UI`,
+        manifest.id,
+      );
+    }
+
+    return {
+      ...manifest,
+      workbenchApp: {
+        id: appSurface.appId,
+        title: appSurface.title,
+        activityBarIcon: appSurface.icon,
+        surface: {
+          entrypoint: appSurface.ui.entrypoint,
+          bridgeVersion: appSurface.ui.bridgeVersion,
+        },
+      },
+    };
+  }
+
+  private toWorkbenchAppDescriptor(
+    manifest: ExtensionManifest,
+  ): WorkbenchAppDescriptor {
+    const app = manifest.workbenchApp!;
+    return {
+      id: app.id,
+      apiVersion: app.apiVersion ?? this.hostApiVersion,
+      title: app.title,
+      activityBarIcon: app.activityBarIcon,
+      activityBarOrder: app.activityBarOrder,
+      surface: {
+        trust: 'isolated',
+        entrypoint: app.surface.entrypoint,
+        bridgeVersion: app.surface.bridgeVersion,
+      },
+    };
+  }
+
+  private toAppSurfaceDescriptor(
+    manifest: ExtensionManifest,
+  ): PluginSurfaceDescriptor {
+    const app = manifest.workbenchApp!;
+    const contribution = manifest.contributions.find(
+      (candidate) => candidate.kind === 'app-surface',
+    );
+    return {
+      id: contribution?.id ?? appSurfaceId(app.id),
+      extensionId: manifest.id,
+      namespace: `workbench.app.${app.id}`,
+      kind: 'app-surface',
+      entrypoint: app.surface.entrypoint,
+      bridgeVersion: app.surface.bridgeVersion,
+      appId: app.id,
+    };
+  }
+
+  private createAppSurfaceLifecycle(
+    manifest: ExtensionManifest,
+    host: AppSurfaceHost,
+    surface: PluginSurfaceDescriptor,
+  ): AppSurfaceLifecycle {
+    const session = this.ui.createSession(manifest.id, surface.id);
+    const lifecycle = asAppSurfaceLifecycle(session, {
+      context: host.context.snapshot(),
+      theme: { scheme: 'dark', revision: 0, tokens: {} },
+      size: { width: 0, height: 0 },
+    } satisfies PluginSurfaceMountOptions);
+    let unsubscribe: (() => void) | undefined;
+    return {
+      mount: async () => {
+        unsubscribe = host.context.subscribe((snapshot) => {
+          if (
+            session.state === 'mounted' ||
+            session.state === 'active' ||
+            session.state === 'suspended'
+          ) {
+            session.updateContext(snapshot);
+          }
+        });
+        try {
+          await lifecycle.mount();
+        } catch (cause) {
+          unsubscribe?.();
+          unsubscribe = undefined;
+          throw cause;
+        }
+      },
+      activate: lifecycle.activate,
+      deactivate: lifecycle.deactivate,
+      dispose: async () => {
+        unsubscribe?.();
+        unsubscribe = undefined;
+        await lifecycle.dispose();
+      },
     };
   }
 
@@ -855,6 +1099,7 @@ export class PluginClient {
   }
 
   private rollbackActivation(
+    extensionId: string,
     registered: readonly ContributionDescriptor[],
     registeredViewContainers: readonly string[],
     registeredViews: readonly string[],
@@ -864,7 +1109,7 @@ export class PluginClient {
     registeredOverlays: readonly OverlayDescriptor[],
   ): void {
     for (const surfaceId of [...registeredSurfaceIds].reverse()) {
-      this.ui.unregister(registered[0]?.extensionId ?? '', surfaceId);
+      this.ui.unregister(extensionId, surfaceId);
     }
     for (const viewId of [...registeredViews].reverse()) {
       this.viewRegistry.unregister(viewId);
@@ -964,6 +1209,14 @@ function toViewScope(descriptor: ContributionDescriptor): ViewContainerScope {
 
 function contributedId(extensionId: string, contributionId: string): string {
   return `${extensionId}.${contributionId}`;
+}
+
+function appSurfaceId(appId: WorkbenchAppId): string {
+  return `${appId}.surface`;
+}
+
+function isStableId(value: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value);
 }
 
 function apiRangeMatches(range: string, version: string): boolean {

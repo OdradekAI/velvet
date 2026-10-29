@@ -32,6 +32,13 @@ When a package extends an existing `WorkbenchApp`, its contribution is
 resolved in that app's namespace and is not itself an additional app. The
 namespace and target app rules are defined in ADR-0012.
 
+A plugin that owns a full WorkbenchApp declares one extension-prefixed app id,
+Activity Bar metadata and an isolated AppSurface bridge entrypoint. The host
+derives the `workbench.app.<app-id>` namespace from that id; a manifest cannot
+claim another extension's prefix. `PluginClient` registers the app descriptor
+and bridge factory with `WorkbenchAppRegistry`, so the app projection and
+surface session share one activation and cleanup boundary.
+
 The host owns these containers:
 
 ```text
