@@ -72,9 +72,11 @@ Costs:
 
 The first UI Bridge implementation uses a versioned message channel with
 explicit mount, activate, suspend, focus, resize, theme, command, error and
-dispose messages. A failed surface transitions to an isolated failed state and
-is cleaned up without disabling the Workbench or unrelated extensions. The
-desktop adapter renders a sandboxed iframe for browser and local entrypoints;
+dispose messages. A failed surface transitions to an isolated failed state,
+is cleaned up without disabling the Workbench or unrelated extensions, and
+exposes a host-owned retry that creates a fresh session. Activation failures
+do not automatically retry in a loop. The desktop adapter renders a
+sandboxed iframe for browser and local entrypoints;
 in Tauri, HTTP or `tauri-webview://` entrypoints use a child WebView positioned
 over the WorkspaceArea host, while unsupported development schemes retain the
 iframe fallback. Host messages travel through `velvet-ui-bridge-host` and

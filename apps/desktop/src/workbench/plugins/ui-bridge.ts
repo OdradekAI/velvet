@@ -334,7 +334,11 @@ class PluginSurfaceSessionImpl implements PluginSurfaceSession {
         code: 'surface-mount-failed',
         message: cause instanceof Error ? cause.message : String(cause),
       });
-      throw new PluginUiBridgeError(`Plugin surface mount failed: ${this.surfaceId}`, this.surfaceId);
+      const detail = cause instanceof Error ? cause.message : String(cause);
+      throw new PluginUiBridgeError(
+        `Plugin surface mount failed: ${this.surfaceId}: ${detail}`,
+        this.surfaceId,
+      );
     }
   }
 

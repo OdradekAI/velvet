@@ -3,6 +3,7 @@ import {
   createPluginSurfaceAdapter,
 } from '/tmp/velvet-plugin-tests/workbench/plugins/surface-adapters.js';
 import {
+  PluginUiRegistry,
   UI_BRIDGE_HOST_EVENT,
   UI_BRIDGE_SURFACE_EVENT,
 } from '/tmp/velvet-plugin-tests/workbench/plugins/ui-bridge.js';
@@ -176,5 +177,96 @@ await adapter.unmount('unmount');
 assert.equal(lifecycle.at(-1), 'close');
 assert.equal(removedSurfaceListener, true);
 assert.equal(hostListeners.size, 0);
+
+const failureUi = new PluginUiRegistry();
+failureUi.register({
+  id: 'failure.surface',
+  extensionId: 'sample.failure-extension',
+  namespace: 'workbench',
+  kind: 'view',
+  entrypoint: 'https://plugin.example/failure',
+  bridgeVersion: '1',
+});
+let failureAttempts = 0;
+let failureClosed = 0;
+const failingRuntime = {
+  getCurrentWebview: () => ({ window: 'main-window' }),
+  createWebview: () => {
+    failureAttempts += 1;
+    const attempt = failureAttempts;
+    return {
+      async emit() {},
+      async listen() {
+        return () => undefined;
+      },
+      once(event, listener) {
+        queueMicrotask(() => {
+          if (event === 'tauri://error' && attempt === 1) {
+            listener({ payload: 'native boot failed' });
+          } else if (event === 'tauri://created' && attempt > 1) {
+            listener({ payload: undefined });
+          }
+        });
+      },
+      async show() {},
+      async hide() {},
+      async setFocus() {},
+      async setPosition() {},
+      async setSize() {},
+      async close() {
+        failureClosed += 1;
+      },
+    };
+  },
+  LogicalPosition,
+  LogicalSize,
+};
+failureUi.bindAdapter(
+  'sample.failure-extension',
+  'failure.surface',
+  createPluginSurfaceAdapter(
+    {
+      id: 'failure.surface',
+      extensionId: 'sample.failure-extension',
+      namespace: 'workbench',
+      kind: 'view',
+      entrypoint: 'https://plugin.example/failure',
+      bridgeVersion: '1',
+    },
+    host,
+    { tauriRuntime: failingRuntime },
+  ),
+);
+const failureSessionOptions = {
+  context: {
+    revision: 0,
+    activeAppId: 'asset-manager',
+    dataScope: null,
+    selection: [],
+    query: '',
+    filters: {},
+    sort: [],
+    handoff: null,
+  },
+  theme: { scheme: 'dark', revision: 0, tokens: {} },
+  size: { width: 640, height: 480 },
+};
+const failedSession = failureUi.createSession('sample.failure-extension', 'failure.surface');
+await assert.rejects(
+  () => failedSession.mount(failureSessionOptions, host),
+  /native boot failed/,
+);
+assert.equal(failedSession.state, 'failed');
+await failedSession.dispose('crash');
+assert.equal(failureClosed, 1);
+assert.equal(failureUi.getSession('sample.failure-extension', 'failure.surface'), undefined);
+
+const recoveredSession = failureUi.createSession('sample.failure-extension', 'failure.surface');
+await recoveredSession.mount(failureSessionOptions, host);
+recoveredSession.activate();
+assert.equal(recoveredSession.state, 'active');
+await recoveredSession.dispose('unmount');
+assert.equal(failureAttempts, 2);
+assert.equal(failureClosed, 2);
 
 console.log('Tauri native surface adapter tests passed.');

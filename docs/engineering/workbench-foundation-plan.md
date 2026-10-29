@@ -34,10 +34,11 @@ Arrow/Home/End keyboard behavior, stable Part ids and labeled contributed view
 regions. The DOM focus adapter observes target lifecycle changes and restores
 the previous host focus when a view or Part is hidden or unmounted. The pure
 keyboard resize contract is covered alongside the existing
-Activity Bar navigation tests. The native renderer gate is now covered by the
-ReactDOM contribution-panel regression suite below; the next implementation
-gate is native failure isolation and recovery when an app or contributed
-surface fails during activation. Plugin view
+Activity Bar navigation tests. The native renderer gate is covered by the
+ReactDOM contribution-panel regression suite below, including isolated
+activation failure, retry and cleanup. A failed app or contributed surface is
+kept inside its host with an explicit retry path; it does not trigger an
+automatic retry loop or replace the Workbench shell. Plugin view
 contributions now map to the framework-neutral `ViewRegistry` with stable
 extension-prefixed ids. A
 `view` contribution must name its local `ViewContainer` and isolated UI Bridge
@@ -95,9 +96,10 @@ The desktop regression suite now mounts `WorkbenchShell` through ReactDOM in a
 browser-like DOM and verifies contributed panel markup, focus restoration,
 resize keyboard commands, context-menu actions, isolated PluginSurfaceHost
 mount/dispose behavior and WorkbenchAppSurfaceHost app switching, suspension,
-reactivation and plugin deactivation cleanup. The native surface adapter also
-exposes a narrow Tauri runtime seam for regression tests covering child WebView
-creation, bounds updates, bridge events, focus races and cleanup.
+reactivation, activation failure isolation, retry and plugin deactivation
+cleanup. The native surface adapter also exposes a narrow Tauri runtime seam
+for regression tests covering child WebView creation, bounds updates, bridge
+events, focus races, failed creation cleanup and session restart recovery.
 
 The current shell slice also renders the accepted Part constraint table: fixed
 Parts use stable dimensions, resizable Parts enforce bounded sizes in Rust, and

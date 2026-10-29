@@ -45,6 +45,7 @@ export function PluginSurfaceHost({
   const [size, setSize] = useState<UiSurfaceSize>(INITIAL_SIZE);
   const [state, setState] = useState<PluginSurfaceState | 'waiting'>('waiting');
   const [error, setError] = useState<string>();
+  const [retryToken, setRetryToken] = useState(0);
 
   useLayoutEffect(() => {
     const host = hostRef.current;
@@ -143,7 +144,7 @@ export function PluginSurfaceHost({
         void session.dispose('unmount');
       }
     };
-  }, [context, extensionId, surfaceId, theme, ui]);
+  }, [context, extensionId, retryToken, surfaceId, theme, ui]);
 
   useEffect(() => {
     const session = sessionRef.current;
@@ -173,6 +174,13 @@ export function PluginSurfaceHost({
     '--velvet-plugin-surface-state': state,
   } as CSSProperties;
 
+  const retry = () => {
+    waitingForAdapterRef.current = true;
+    setError(undefined);
+    setState('waiting');
+    setRetryToken((token) => token + 1);
+  };
+
   return (
     <div
       aria-busy={state === 'waiting' || state === 'registered' || state === 'mounted'}
@@ -184,9 +192,21 @@ export function PluginSurfaceHost({
       tabIndex={-1}
     >
       <div className="velvet-plugin-surface-mount" ref={surfaceMountRef} />
-      {state === 'active' ? null : (
+      {error ? (
+        <div aria-live="polite" className="velvet-command-error" role="alert">
+          <span>Plugin surface failed: {error}</span>
+          <button
+            className="velvet-button velvet-button--quiet"
+            data-plugin-surface-retry
+            onClick={retry}
+            type="button"
+          >
+            Retry
+          </button>
+        </div>
+      ) : state === 'active' ? null : (
         <p className="velvet-view-placeholder">
-          {error ?? `Waiting for isolated surface adapter (${surfaceId}).`}
+          {`Waiting for isolated surface adapter (${surfaceId}).`}
         </p>
       )}
     </div>

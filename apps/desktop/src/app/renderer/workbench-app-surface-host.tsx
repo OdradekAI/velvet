@@ -45,6 +45,11 @@ export function WorkbenchAppSurfaceHost({
   const [size, setSize] = useState<UiSurfaceSize>(INITIAL_SIZE);
   const [surfaceState, setSurfaceState] = useState<PluginSurfaceState | 'waiting'>('waiting');
   const [error, setError] = useState<string>();
+  const [retryToken, setRetryToken] = useState(0);
+  // A failed activation stays latched until the host asks for a retry, which
+  // keeps a broken adapter from recursively reactivating through registry events.
+  const activationAttemptedRef = useRef(false);
+  const activationFailedRef = useRef(false);
   const dispatchRef = useRef(dispatch);
   dispatchRef.current = dispatch;
 
@@ -76,6 +81,8 @@ export function WorkbenchAppSurfaceHost({
       return undefined;
     }
 
+    activationAttemptedRef.current = false;
+    activationFailedRef.current = false;
     let disposed = false;
     let activating = false;
     const ensureAdapter = () => {
@@ -100,6 +107,7 @@ export function WorkbenchAppSurfaceHost({
       if (
         disposed ||
         activating ||
+        activationFailedRef.current ||
         runtimeState === 'active' ||
         runtimeState === 'mounted' ||
         runtimeState === 'registered'
@@ -109,6 +117,11 @@ export function WorkbenchAppSurfaceHost({
       activating = true;
       const binding = ensureAdapter();
       const host = surfaceMountRef.current;
+      if (!binding || !host) {
+        activating = false;
+        return;
+      }
+      activationAttemptedRef.current = true;
       const existingSession = binding && host
         ? plugins.ui.getSession(binding.extensionId, binding.surfaceId)
         : undefined;
@@ -122,6 +135,7 @@ export function WorkbenchAppSurfaceHost({
         .then(syncSession)
         .catch((reason: unknown) => {
         if (!disposed) {
+          activationFailedRef.current = true;
           setSurfaceState('failed');
           setError(reason instanceof Error ? reason.message : String(reason));
         }
@@ -143,7 +157,11 @@ export function WorkbenchAppSurfaceHost({
       if (next) {
         setError(undefined);
       }
-      if (binding && (!next || apps.getSurfaceState(appId) === 'suspended')) {
+      const runtimeState = apps.getSurfaceState(appId);
+      if (
+        binding &&
+        (runtimeState === 'suspended' || (!next && !activationAttemptedRef.current))
+      ) {
         activate();
       }
     };
@@ -159,7 +177,7 @@ export function WorkbenchAppSurfaceHost({
       unsubscribeUi();
       void apps.deactivateSurface(appId).catch(() => undefined);
     };
-  }, [appId, apps, context, descriptor?.surface.trust, plugins]);
+  }, [appId, apps, context, descriptor?.surface.trust, plugins, retryToken]);
 
   useEffect(() => {
     if (!session) {
@@ -198,6 +216,14 @@ export function WorkbenchAppSurfaceHost({
     '--velvet-app-surface-state': surfaceState,
   } as CSSProperties;
 
+  const retry = () => {
+    activationAttemptedRef.current = false;
+    activationFailedRef.current = false;
+    setError(undefined);
+    setSurfaceState('waiting');
+    setRetryToken((token) => token + 1);
+  };
+
   return (
     <div
       aria-label={`${descriptor.title} app surface`}
@@ -213,10 +239,11 @@ export function WorkbenchAppSurfaceHost({
           <span>App surface failed: {error}</span>
           <button
             className="velvet-button velvet-button--quiet"
-            onClick={() => setError(undefined)}
+            data-app-surface-retry
+            onClick={retry}
             type="button"
           >
-            Dismiss
+            Retry
           </button>
         </div>
       ) : null}
