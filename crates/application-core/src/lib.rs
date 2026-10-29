@@ -19,6 +19,7 @@ pub struct ApplicationCore {
     plugins: InMemoryPluginHost,
     previews: PreviewResolver,
     layout_store: Arc<dyn LayoutStateStore>,
+    plugin_directory: Option<std::path::PathBuf>,
 }
 
 impl Default for ApplicationCore {
@@ -42,9 +43,28 @@ impl ApplicationCore {
         Self::with_store_and_runtime(layout_store, runtime)
     }
 
+    pub fn with_store_and_plugin_directory(
+        layout_store: Arc<dyn LayoutStateStore>,
+        plugin_directory: impl Into<std::path::PathBuf>,
+    ) -> Self {
+        Self::with_store_and_runtime_and_plugin_directory(
+            layout_store,
+            Box::new(velvet_plugin_host::ProcessPluginRuntime),
+            Some(plugin_directory.into()),
+        )
+    }
+
     fn with_store_and_runtime(
         layout_store: Arc<dyn LayoutStateStore>,
         runtime: Box<dyn PluginRuntime>,
+    ) -> Self {
+        Self::with_store_and_runtime_and_plugin_directory(layout_store, runtime, None)
+    }
+
+    fn with_store_and_runtime_and_plugin_directory(
+        layout_store: Arc<dyn LayoutStateStore>,
+        runtime: Box<dyn PluginRuntime>,
+        plugin_directory: Option<std::path::PathBuf>,
     ) -> Self {
         let mut layout = InMemoryLayoutService::default();
         if let Ok(Some(state)) = layout_store.load() {
@@ -58,6 +78,7 @@ impl ApplicationCore {
             plugins: InMemoryPluginHost::with_runtime(runtime),
             previews: PreviewResolver::default(),
             layout_store,
+            plugin_directory,
         };
 
         core.previews.register(Arc::new(GenericFallbackProvider));
@@ -88,11 +109,39 @@ impl ApplicationCore {
         self.plugins.recover(id)
     }
 
+    pub fn discover_plugins(&self) -> Vec<velvet_plugin_api::ExtensionSummary> {
+        self.plugins.discover()
+    }
+
+    /// Starts manifests discovered during native application startup. Other
+    /// embedders may keep the host lazy and call `activate_plugin` explicitly.
+    pub fn activate_registered_plugins(&mut self) -> Vec<PluginError> {
+        self.plugins
+            .discover()
+            .into_iter()
+            .filter(|summary| summary.state == ExtensionState::Registered)
+            .filter_map(|summary| self.plugins.activate(&summary.id).err())
+            .collect()
+    }
+
     pub fn load_plugins_from_directory(
         &mut self,
         root: impl AsRef<std::path::Path>,
     ) -> Result<ManifestLoadReport, ManifestDiscoveryError> {
         JsonManifestDiscovery::new(root.as_ref()).load_into(&mut self.plugins)
+    }
+
+    pub fn install_plugin_from_directory(
+        &mut self,
+        source_dir: impl AsRef<std::path::Path>,
+    ) -> Result<velvet_plugin_api::ExtensionSummary, PluginError> {
+        let Some(plugin_directory) = self.plugin_directory.as_deref() else {
+            return Err(PluginError::InstallFailed(
+                "plugin installation is unavailable without an application plugin directory".into(),
+            ));
+        };
+        self.plugins
+            .install_from_directory(source_dir.as_ref(), plugin_directory)
     }
 
     pub fn dispatch(&mut self, request: Request) -> Result<Response, CoreError> {
@@ -128,6 +177,10 @@ impl ApplicationCore {
                 self.recover_plugin(&extension_id).map_err(plugin_error)?;
                 self.extension_response(&extension_id)
             }
+            Request::Command(Command::InstallPlugin { source_dir }) => self
+                .install_plugin_from_directory(source_dir)
+                .map(Response::Extension)
+                .map_err(plugin_error),
             Request::Command(Command::InvokePluginCommand {
                 extension_id,
                 command_id,
@@ -737,5 +790,45 @@ mod tests {
         }
 
         fs::remove_dir_all(root).expect("the plugin directory should be removed");
+    }
+
+    #[test]
+    fn application_core_installs_and_starts_a_plugin_after_restart() {
+        let layout_path = temporary_layout_path();
+        let plugin_root = layout_path.with_extension("plugins");
+        let source = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../examples/plugins/echo-sidecar");
+        let store = Arc::new(JsonFileLayoutStateStore::new(&layout_path));
+        let mut first_core =
+            ApplicationCore::with_store_and_plugin_directory(store.clone(), &plugin_root);
+        let installed = first_core
+            .install_plugin_from_directory(&source)
+            .expect("the application core should install the sample plugin");
+        assert_eq!(
+            installed.state,
+            velvet_plugin_api::ExtensionState::Registered
+        );
+        drop(first_core);
+
+        let mut restarted_core = ApplicationCore::with_store_and_plugin_directory(
+            Arc::new(JsonFileLayoutStateStore::new(&layout_path)),
+            &plugin_root,
+        );
+        let report = restarted_core
+            .load_plugins_from_directory(&plugin_root)
+            .expect("the restarted core should discover the installed package");
+        assert_eq!(report.failures, Vec::new());
+        assert_eq!(
+            restarted_core.discover_plugins()[0].state,
+            velvet_plugin_api::ExtensionState::Registered
+        );
+        assert!(restarted_core.activate_registered_plugins().is_empty());
+        assert_eq!(
+            restarted_core.discover_plugins()[0].state,
+            velvet_plugin_api::ExtensionState::Active
+        );
+
+        let _ = fs::remove_dir_all(plugin_root);
+        let _ = fs::remove_file(layout_path);
     }
 }

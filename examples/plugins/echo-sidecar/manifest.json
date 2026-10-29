@@ -19,6 +19,11 @@
       "title": "Echo Tools",
       "icon": "message-circle",
       "order": 20,
+      "activityBar": {
+        "title": "Echo Tools",
+        "icon": "message-circle",
+        "order": 20
+      },
       "defaultVisible": true
     },
     {

@@ -32,6 +32,9 @@ pub enum Command {
     RecoverPlugin {
         extension_id: ExtensionId,
     },
+    InstallPlugin {
+        source_dir: String,
+    },
     InvokePluginCommand {
         extension_id: ExtensionId,
         command_id: String,

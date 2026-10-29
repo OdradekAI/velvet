@@ -605,6 +605,16 @@ export class PluginClient {
     return summary;
   }
 
+  public async installInCore(sourceDir: string): Promise<CorePluginSummary> {
+    const summary = await this.requestCoreExtension({
+      protocolVersion: PROTOCOL_VERSION,
+      kind: 'install-plugin',
+      sourceDir,
+    });
+    await this.syncCoreProjectionState(summary);
+    return summary;
+  }
+
   public listVisible(activeAppId?: WorkbenchAppId): readonly ContributionDescriptor[] {
     const activeExtensions = new Set(
       [...this.records.values()]

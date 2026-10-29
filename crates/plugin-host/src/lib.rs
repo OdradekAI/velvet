@@ -45,6 +45,8 @@ pub enum PluginError {
         extension_id: ExtensionId,
         message: String,
     },
+    InstallFailed(String),
+    InstallConflict(ExtensionId),
     InvalidState {
         extension_id: ExtensionId,
         state: ExtensionState,
@@ -459,34 +461,15 @@ impl JsonManifestDiscovery {
         host: &mut H,
     ) -> Result<ManifestLoadReport, ManifestDiscoveryError> {
         let mut paths = Vec::new();
-        let entries = match fs::read_dir(&self.root) {
-            Ok(entries) => entries,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(ManifestLoadReport::default());
-            }
-            Err(error) => {
-                return Err(ManifestDiscoveryError::Unavailable {
-                    root: self.root.clone(),
-                    message: error.to_string(),
-                });
-            }
-        };
-
-        for entry in entries {
-            let entry = entry.map_err(|error| ManifestDiscoveryError::Unavailable {
+        if !self.root.exists() {
+            return Ok(ManifestLoadReport::default());
+        }
+        collect_manifest_paths(&self.root, &mut paths).map_err(|error| {
+            ManifestDiscoveryError::Unavailable {
                 root: self.root.clone(),
                 message: error.to_string(),
-            })?;
-            let path = entry.path();
-            if path.is_file()
-                && path
-                    .extension()
-                    .and_then(|extension| extension.to_str())
-                    .is_some_and(|extension| extension.eq_ignore_ascii_case("json"))
-            {
-                paths.push(path);
             }
-        }
+        })?;
         paths.sort();
 
         let mut report = ManifestLoadReport::default();
@@ -526,6 +509,25 @@ impl JsonManifestDiscovery {
     }
 }
 
+fn collect_manifest_paths(root: &Path, paths: &mut Vec<PathBuf>) -> std::io::Result<()> {
+    for entry in fs::read_dir(root)? {
+        let entry = entry?;
+        let path = entry.path();
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            collect_manifest_paths(&path, paths)?;
+        } else if file_type.is_file()
+            && path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("json"))
+        {
+            paths.push(path);
+        }
+    }
+    Ok(())
+}
+
 /// Package manifests may use `./` or `../` launch arguments for files shipped
 /// beside the manifest. Resolve only those explicitly relative arguments so
 /// executable names such as `node` and arbitrary user arguments retain their
@@ -543,6 +545,34 @@ fn resolve_relative_launch_args(manifest_path: &Path, manifest: &mut ExtensionMa
             *argument = base.join(&*argument).to_string_lossy().into_owned();
         }
     }
+}
+
+fn copy_directory(source: &Path, destination: &Path) -> std::io::Result<()> {
+    fs::create_dir_all(destination)?;
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let source_path = entry.path();
+        let destination_path = destination.join(entry.file_name());
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            copy_directory(&source_path, &destination_path)?;
+        } else if file_type.is_file() {
+            fs::copy(source_path, destination_path)?;
+        } else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "plugin packages cannot contain symbolic links or special files",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn is_safe_extension_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.chars().enumerate().all(|(index, character)| {
+            character.is_ascii_alphanumeric() || (matches!(character, '.' | '_' | '-') && index > 0)
+        })
 }
 
 pub trait PluginHost {
@@ -564,6 +594,11 @@ pub trait PluginHost {
         args: Value,
         context: Value,
     ) -> Result<PluginInvocationResult, PluginError>;
+    fn install_from_directory(
+        &mut self,
+        source_dir: &Path,
+        install_root: &Path,
+    ) -> Result<ExtensionSummary, PluginError>;
 }
 
 pub struct InMemoryPluginHost {
@@ -982,6 +1017,61 @@ impl PluginHost for InMemoryPluginHost {
                 })
             }
         }
+    }
+
+    fn install_from_directory(
+        &mut self,
+        source_dir: &Path,
+        install_root: &Path,
+    ) -> Result<ExtensionSummary, PluginError> {
+        let source_manifest_path = source_dir.join("manifest.json");
+        let bytes = fs::read(&source_manifest_path)
+            .map_err(|error| PluginError::InstallFailed(error.to_string()))?;
+        let mut manifest = serde_json::from_slice::<ExtensionManifest>(&bytes)
+            .map_err(|error| PluginError::InstallFailed(error.to_string()))?;
+        let id = manifest.id.clone();
+        if self.manifests.contains_key(&id) {
+            return Err(PluginError::InstallConflict(id));
+        }
+        if !is_safe_extension_id(&id.0) {
+            return Err(PluginError::InstallFailed(format!(
+                "extension id {} cannot be used as an installation directory",
+                id.0
+            )));
+        }
+
+        fs::create_dir_all(install_root)
+            .map_err(|error| PluginError::InstallFailed(error.to_string()))?;
+        let destination = install_root.join(&id.0);
+        if destination.exists() {
+            return Err(PluginError::InstallConflict(id));
+        }
+        let staging = install_root.join(format!(".{}.staging-{}", id.0, std::process::id()));
+        if staging.exists() {
+            fs::remove_dir_all(&staging)
+                .map_err(|error| PluginError::InstallFailed(error.to_string()))?;
+        }
+        if let Err(error) = copy_directory(source_dir, &staging) {
+            let _ = fs::remove_dir_all(&staging);
+            return Err(PluginError::InstallFailed(error.to_string()));
+        }
+
+        resolve_relative_launch_args(&destination.join("manifest.json"), &mut manifest);
+        if let Err(error) = self.validate_manifest(&manifest) {
+            let _ = fs::remove_dir_all(&staging);
+            return Err(error);
+        }
+        fs::rename(&staging, &destination)
+            .map_err(|error| PluginError::InstallFailed(error.to_string()))?;
+        if let Err(error) = self.register(manifest) {
+            let _ = fs::remove_dir_all(&destination);
+            return Err(error);
+        }
+
+        self.discover()
+            .into_iter()
+            .find(|summary| summary.id == id)
+            .ok_or_else(|| PluginError::InstallFailed("installed plugin disappeared".into()))
     }
 }
 
@@ -1700,5 +1790,43 @@ mod tests {
             .expect("the example should be stoppable");
 
         fs::remove_dir_all(root).expect("the temporary example directory should be removed");
+    }
+
+    #[test]
+    fn bundled_echo_sidecar_installs_and_is_rediscovered_after_restart() {
+        let source =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/plugins/echo-sidecar");
+        let root = temporary_manifest_dir();
+        let mut host = InMemoryPluginHost::default();
+        let installed = host
+            .install_from_directory(&source, &root)
+            .expect("the example package should install");
+
+        assert_eq!(installed.id.0, "velvet.example.echo");
+        assert_eq!(installed.state, ExtensionState::Registered);
+        assert!(root.join("velvet.example.echo/manifest.json").is_file());
+        assert!(root.join("velvet.example.echo/sidecar.mjs").is_file());
+
+        drop(host);
+        let mut restarted = InMemoryPluginHost::default();
+        let report = JsonManifestDiscovery::new(&root)
+            .load_into(&mut restarted)
+            .expect("the installed package should be found on restart");
+        assert_eq!(report.failures, Vec::new());
+        assert_eq!(report.loaded.len(), 1);
+        assert_eq!(restarted.discover()[0].state, ExtensionState::Registered);
+        restarted
+            .activate(&ExtensionId("velvet.example.echo".into()))
+            .expect("the first discovered startup should activate the sidecar");
+        restarted
+            .invoke_command(
+                &ExtensionId("velvet.example.echo".into()),
+                "echo.open".into(),
+                Value::Null,
+                Value::Null,
+            )
+            .expect("the first started sidecar should accept a command");
+
+        fs::remove_dir_all(root).expect("the temporary installation should be removed");
     }
 }

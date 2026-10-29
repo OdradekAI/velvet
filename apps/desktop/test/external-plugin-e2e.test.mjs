@@ -217,6 +217,10 @@ await act(async () => {
 });
 assert.ok(views.get('velvet.example.echo.echo.view'));
 assert.ok(ui.getDescriptor(manifest.id, 'echo.view'));
+assert.deepEqual(
+  views.listActivityBarEntries('asset-manager').map((entry) => entry.title),
+  ['Echo Tools'],
+);
 assert.equal(menus.list('context-menu', { anchor: 'asset' }).length, 1);
 
 await commands.execute(

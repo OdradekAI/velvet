@@ -20,3 +20,8 @@ To install it for local discovery, copy both files into the application's
 `plugins` data directory. Relative launch arguments beginning with `./` or
 `../` are resolved relative to the manifest directory during discovery, so the
 sidecar remains relocatable as a package.
+
+The host also exposes the package installation seam as the versioned
+`install-plugin` CoreTransport command. It validates and copies the directory
+atomically; the native Tauri startup then discovers and starts the registered
+extension on the next client launch.

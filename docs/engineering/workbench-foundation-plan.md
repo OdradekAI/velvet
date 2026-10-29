@@ -137,6 +137,10 @@ command JSONL invocation, UI metadata projection, intentional crash isolation
 and recovery. The desktop regression test consumes the same manifest, invokes
 the real Node sidecar, mounts its data URL through the UI Bridge, removes the
 surface on failure and remounts it after recovery.
+The native Tauri composition root now exposes package installation through
+CoreTransport, copies validated packages into `app_data_dir/plugins`, discovers
+them again after restart and activates registered extensions on first client
+startup.
 
 The current shell slice also renders the accepted Part constraint table: fixed
 Parts use stable dimensions, resizable Parts enforce bounded sizes in Rust, and

@@ -141,6 +141,12 @@ pub enum WireRequest {
         #[serde(rename = "extensionId")]
         extension_id: String,
     },
+    InstallPlugin {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        #[serde(rename = "sourceDir")]
+        source_dir: String,
+    },
     InvokePluginCommand {
         #[serde(rename = "protocolVersion")]
         protocol_version: u16,
@@ -236,6 +242,13 @@ impl WireRequest {
                 Ok(Request::Command(Command::RecoverPlugin {
                     extension_id: ExtensionId(extension_id),
                 }))
+            }
+            Self::InstallPlugin {
+                protocol_version,
+                source_dir,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Command(Command::InstallPlugin { source_dir }))
             }
             Self::InvokePluginCommand {
                 protocol_version,
@@ -792,10 +805,12 @@ pub fn run() {
                 .app_data_dir()
                 .expect("Velvet app data directory should be available");
             let layout_path = app_data_dir.join("workbench-layout.json");
-            let mut core = ApplicationCore::with_store(Arc::new(
-                JsonFileLayoutStateStore::new(layout_path),
-            ));
-            match core.load_plugins_from_directory(app_data_dir.join("plugins")) {
+            let plugin_directory = app_data_dir.join("plugins");
+            let mut core = ApplicationCore::with_store_and_plugin_directory(
+                Arc::new(JsonFileLayoutStateStore::new(layout_path)),
+                &plugin_directory,
+            );
+            match core.load_plugins_from_directory(&plugin_directory) {
                 Ok(report) if !report.failures.is_empty() => {
                     eprintln!(
                         "Velvet skipped {} invalid plugin manifest(s)",
@@ -806,6 +821,9 @@ pub fn run() {
                 Err(error) => {
                     eprintln!("Velvet could not scan plugin manifests: {error:?}");
                 }
+            }
+            for error in core.activate_registered_plugins() {
+                eprintln!("Velvet could not start a discovered plugin: {error:?}");
             }
             app.manage(AppState {
                 transport: Mutex::new(TauriTransport::with_event_sink(
@@ -1068,6 +1086,27 @@ mod tests {
                 extension_id,
                 reason: PluginDisableReason::User,
             }) if extension_id.0 == "sample.reader"
+        ));
+
+        let install: WireRequestEnvelope = serde_json::from_str(
+            r#"{
+                "protocolVersion": 1,
+                "requestId": 18,
+                "request": {
+                    "kind": "install-plugin",
+                    "protocolVersion": 1,
+                    "sourceDir": "/tmp/velvet-example-plugin"
+                }
+            }"#,
+        )
+        .expect("the plugin install request should deserialize");
+        assert!(matches!(
+            install
+                .request
+                .into_core(1)
+                .expect("the plugin install request should map"),
+            Request::Command(Command::InstallPlugin { source_dir })
+                if source_dir == "/tmp/velvet-example-plugin"
         ));
     }
 

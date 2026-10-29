@@ -76,8 +76,10 @@ extension's contributions while leaving the Workbench usable; recovery is an
 explicit host operation that starts a fresh process.
 
 The native app scans `app_data_dir/plugins` for JSON manifests on startup.
-Invalid files are isolated in the discovery report and do not block valid
-extensions from being registered.
+The `install-plugin` CoreTransport command copies a validated package into
+that directory, and the native composition root starts discovered registered
+extensions during the first client launch. Invalid files are isolated in the
+discovery report and do not block valid extensions.
 
 ## Architecture
 

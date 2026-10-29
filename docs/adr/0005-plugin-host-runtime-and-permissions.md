@@ -77,11 +77,16 @@ does not disable the Workbench or unrelated extensions.
 The native composition root scans the application data directory's `plugins`
 folder for JSON manifests at startup. Discovery is deterministic by filename,
 and each parse or registration failure is returned in a report while valid
-manifests remain registered for lazy activation. Installation, package
-updates, signing and marketplace policy remain outside this local discovery
-seam. Relative launch arguments beginning with `./` or `../` resolve from the
+manifests remain registered for activation. Package updates, signing and
+marketplace policy remain outside this local discovery seam. Relative launch
+arguments beginning with `./` or `../` resolve from the
 manifest directory, which lets a sidecar package move as one directory without
 embedding an absolute executable path.
+
+The local `install-plugin` command copies a validated package into this
+directory atomically. The native Tauri composition root activates newly
+discovered registered extensions during client startup; other embedders may
+retain lazy activation by calling the lifecycle commands explicitly.
 
 ## Alternatives considered
 
