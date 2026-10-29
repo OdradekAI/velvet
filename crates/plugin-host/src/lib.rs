@@ -12,7 +12,8 @@ use serde_json::Value;
 use velvet_layout_model::WorkbenchZone;
 use velvet_plugin_api::{
     AppTarget, ContributionKind, ContributionScope, ExtensionId, ExtensionInstallOperation,
-    ExtensionInstallPreview, ExtensionManifest, ExtensionProjection, ExtensionState,
+    ExtensionInstallPreview, ExtensionInstallRecovery, ExtensionInstallRecoveryAction,
+    ExtensionInstallRecoveryKind, ExtensionManifest, ExtensionProjection, ExtensionState,
     ExtensionSummary, HostContainer, Permission, RuntimeKind, VersionRange,
 };
 
@@ -581,6 +582,64 @@ fn is_safe_extension_id(id: &str) -> bool {
         })
 }
 
+fn scan_recovery_paths(
+    install_root: &Path,
+) -> Result<BTreeMap<ExtensionId, RecoveryPaths>, PluginError> {
+    let mut recoveries = BTreeMap::new();
+    if !install_root.exists() {
+        return Ok(recoveries);
+    }
+
+    for entry in
+        fs::read_dir(install_root).map_err(|error| PluginError::InstallFailed(error.to_string()))?
+    {
+        let entry = entry.map_err(|error| PluginError::InstallFailed(error.to_string()))?;
+        if !entry
+            .file_type()
+            .map_err(|error| PluginError::InstallFailed(error.to_string()))?
+            .is_dir()
+        {
+            continue;
+        }
+
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let Some(name) = name.strip_prefix('.') else {
+            continue;
+        };
+        let (id, kind) = if let Some((id, _nonce)) = name.split_once(".staging-") {
+            (id, ExtensionInstallRecoveryKind::Staging)
+        } else if let Some((id, _nonce)) = name.split_once(".rollback-") {
+            (id, ExtensionInstallRecoveryKind::Rollback)
+        } else {
+            continue;
+        };
+        if !is_safe_extension_id(id) {
+            continue;
+        }
+
+        let paths = recoveries.entry(ExtensionId(id.to_owned())).or_default();
+        match kind {
+            ExtensionInstallRecoveryKind::Staging => paths.staging.push(entry.path()),
+            ExtensionInstallRecoveryKind::Rollback => paths.rollback.push(entry.path()),
+        }
+    }
+
+    for paths in recoveries.values_mut() {
+        paths.staging.sort();
+        paths.rollback.sort();
+    }
+    Ok(recoveries)
+}
+
+fn recovery_manifest(path: &Path) -> Result<ExtensionManifest, String> {
+    let manifest_path = path.join("manifest.json");
+    let bytes = fs::read(&manifest_path).map_err(|error| error.to_string())?;
+    let mut manifest =
+        serde_json::from_slice::<ExtensionManifest>(&bytes).map_err(|error| error.to_string())?;
+    resolve_relative_launch_args(&manifest_path, &mut manifest);
+    Ok(manifest)
+}
+
 pub trait PluginHost {
     fn register(&mut self, manifest: ExtensionManifest) -> Result<(), PluginError>;
     fn discover(&self) -> Vec<ExtensionSummary>;
@@ -615,6 +674,16 @@ pub trait PluginHost {
         id: &ExtensionId,
         install_root: &Path,
     ) -> Result<(), PluginError>;
+    fn inspect_install_recoveries(
+        &self,
+        install_root: &Path,
+    ) -> Result<Vec<ExtensionInstallRecovery>, PluginError>;
+    fn resolve_install_recovery(
+        &mut self,
+        id: &ExtensionId,
+        action: ExtensionInstallRecoveryAction,
+        install_root: &Path,
+    ) -> Result<(), PluginError>;
     fn uninstall_from_directory(
         &mut self,
         id: &ExtensionId,
@@ -637,6 +706,12 @@ struct InstallBackup {
     previous_manifest: Option<ExtensionManifest>,
     previous_state: Option<ExtensionState>,
     backup_path: Option<PathBuf>,
+}
+
+#[derive(Default)]
+struct RecoveryPaths {
+    staging: Vec<PathBuf>,
+    rollback: Vec<PathBuf>,
 }
 
 impl Default for InMemoryPluginHost {
@@ -1273,6 +1348,282 @@ impl PluginHost for InMemoryPluginHost {
                     self.activate(id)?;
                 } else {
                     self.restore_state(id, previous_state);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn inspect_install_recoveries(
+        &self,
+        install_root: &Path,
+    ) -> Result<Vec<ExtensionInstallRecovery>, PluginError> {
+        let paths_by_id = scan_recovery_paths(install_root)?;
+        let summaries = self.discover();
+        let mut recoveries = Vec::new();
+
+        for (id, paths) in paths_by_id {
+            let current = summaries.iter().find(|summary| summary.id == id).cloned();
+            let destination = install_root.join(&id.0);
+
+            if let Some(staging_path) = paths.staging.last() {
+                let mut issues = Vec::new();
+                let candidate = match recovery_manifest(staging_path) {
+                    Ok(manifest) => {
+                        if manifest.id != id {
+                            issues.push(format!(
+                                "staging manifest id {} does not match {}",
+                                manifest.id.0, id.0
+                            ));
+                        }
+                        if let Err(error) = self.validate_manifest(&manifest) {
+                            issues.push(format!("staging manifest is invalid: {error:?}"));
+                        }
+                        Some(manifest)
+                    }
+                    Err(error) => {
+                        issues.push(format!("staging manifest cannot be read: {error}"));
+                        None
+                    }
+                };
+                if destination.exists() {
+                    issues.push("the installed destination already exists".into());
+                }
+                if paths.staging.len() > 1 {
+                    issues.push(
+                        "multiple staging directories were found; the newest is selected".into(),
+                    );
+                }
+                recoveries.push(ExtensionInstallRecovery {
+                    extension_id: id.clone(),
+                    kind: ExtensionInstallRecoveryKind::Staging,
+                    operation: if current.is_some() {
+                        ExtensionInstallOperation::Upgrade
+                    } else {
+                        ExtensionInstallOperation::Install
+                    },
+                    candidate_version: candidate.as_ref().map(|manifest| manifest.version.clone()),
+                    current: current.clone(),
+                    rollback_version: None,
+                    can_resume: !destination.exists()
+                        && current.is_none()
+                        && issues.is_empty()
+                        && paths.staging.len() == 1,
+                    can_commit: false,
+                    can_rollback: false,
+                    can_discard: true,
+                    issues,
+                });
+            }
+
+            if let Some(rollback_path) = paths.rollback.last() {
+                let mut issues = Vec::new();
+                let previous = match recovery_manifest(rollback_path) {
+                    Ok(manifest) => {
+                        if manifest.id != id {
+                            issues.push(format!(
+                                "rollback manifest id {} does not match {}",
+                                manifest.id.0, id.0
+                            ));
+                        }
+                        if let Err(error) = self.validate_manifest(&manifest) {
+                            issues.push(format!("rollback manifest is invalid: {error:?}"));
+                        }
+                        Some(manifest)
+                    }
+                    Err(error) => {
+                        issues.push(format!("rollback manifest cannot be read: {error}"));
+                        None
+                    }
+                };
+                let mut current_manifest_valid = false;
+                let current_manifest = if destination.exists() {
+                    match recovery_manifest(&destination) {
+                        Ok(manifest) => {
+                            match self.validate_manifest(&manifest) {
+                                Ok(()) => current_manifest_valid = true,
+                                Err(error) => {
+                                    issues.push(format!("current manifest is invalid: {error:?}"));
+                                }
+                            }
+                            Some(manifest)
+                        }
+                        Err(error) => {
+                            issues.push(format!("current manifest cannot be read: {error}"));
+                            None
+                        }
+                    }
+                } else {
+                    issues.push("the current installed destination is missing".into());
+                    None
+                };
+                if paths.rollback.len() > 1 {
+                    issues.push(
+                        "multiple rollback directories were found; the newest is selected".into(),
+                    );
+                }
+                recoveries.push(ExtensionInstallRecovery {
+                    extension_id: id.clone(),
+                    kind: ExtensionInstallRecoveryKind::Rollback,
+                    operation: ExtensionInstallOperation::Upgrade,
+                    candidate_version: current_manifest
+                        .as_ref()
+                        .map(|manifest| manifest.version.clone()),
+                    current: current.clone(),
+                    rollback_version: previous.as_ref().map(|manifest| manifest.version.clone()),
+                    can_resume: false,
+                    can_commit: current_manifest_valid && destination.exists(),
+                    can_rollback: previous.is_some()
+                        && !issues
+                            .iter()
+                            .any(|issue| issue.starts_with("rollback manifest")),
+                    can_discard: true,
+                    issues,
+                });
+            }
+        }
+
+        Ok(recoveries)
+    }
+
+    fn resolve_install_recovery(
+        &mut self,
+        id: &ExtensionId,
+        action: ExtensionInstallRecoveryAction,
+        install_root: &Path,
+    ) -> Result<(), PluginError> {
+        let paths_by_id = scan_recovery_paths(install_root)?;
+        let paths = paths_by_id
+            .get(id)
+            .ok_or_else(|| PluginError::InvalidState {
+                extension_id: id.clone(),
+                state: self
+                    .states
+                    .get(id)
+                    .cloned()
+                    .unwrap_or(ExtensionState::Registered),
+            })?;
+        let destination = install_root.join(&id.0);
+
+        match action {
+            ExtensionInstallRecoveryAction::Resume => {
+                let staging = paths
+                    .staging
+                    .last()
+                    .ok_or_else(|| PluginError::InvalidState {
+                        extension_id: id.clone(),
+                        state: ExtensionState::Registered,
+                    })?;
+                if destination.exists() || self.manifests.contains_key(id) {
+                    return Err(PluginError::InstallConflict(id.clone()));
+                }
+                let manifest = recovery_manifest(staging).map_err(PluginError::InstallFailed)?;
+                if manifest.id != *id {
+                    return Err(PluginError::InstallFailed(format!(
+                        "staging manifest id {} does not match {}",
+                        manifest.id.0, id.0
+                    )));
+                }
+                self.validate_manifest(&manifest)?;
+                fs::rename(staging, &destination)
+                    .map_err(|error| PluginError::InstallFailed(error.to_string()))?;
+                if let Err(error) = self.register(manifest) {
+                    let _ = fs::rename(&destination, staging);
+                    return Err(error);
+                }
+                for stale in paths.staging.iter().filter(|path| *path != staging) {
+                    let _ = fs::remove_dir_all(stale);
+                }
+            }
+            ExtensionInstallRecoveryAction::Commit => {
+                if paths.rollback.last().is_none() {
+                    return Err(PluginError::InvalidState {
+                        extension_id: id.clone(),
+                        state: ExtensionState::Registered,
+                    });
+                }
+                if !destination.exists() {
+                    return Err(PluginError::InstallFailed(
+                        "cannot keep an interrupted upgrade without its current package".into(),
+                    ));
+                }
+                let manifest =
+                    recovery_manifest(&destination).map_err(PluginError::InstallFailed)?;
+                self.validate_manifest(&manifest)?;
+                if !self.manifests.contains_key(id) {
+                    self.register(manifest)?;
+                }
+                for rollback_path in &paths.rollback {
+                    if rollback_path.exists() {
+                        fs::remove_dir_all(rollback_path)
+                            .map_err(|error| PluginError::InstallFailed(error.to_string()))?;
+                    }
+                }
+            }
+            ExtensionInstallRecoveryAction::Rollback => {
+                let rollback = paths
+                    .rollback
+                    .last()
+                    .ok_or_else(|| PluginError::InvalidState {
+                        extension_id: id.clone(),
+                        state: ExtensionState::Registered,
+                    })?;
+                let previous_manifest =
+                    recovery_manifest(rollback).map_err(PluginError::InstallFailed)?;
+                if previous_manifest.id != *id {
+                    return Err(PluginError::InstallFailed(format!(
+                        "rollback manifest id {} does not match {}",
+                        previous_manifest.id.0, id.0
+                    )));
+                }
+                self.validate_manifest(&previous_manifest)?;
+                if self.active.contains(id) {
+                    self.disable(id, DisableReason::Incompatible)?;
+                }
+                let current_backup =
+                    install_root.join(format!(".{}.recovery-current-{}", id.0, std::process::id()));
+                if current_backup.exists() {
+                    fs::remove_dir_all(&current_backup)
+                        .map_err(|error| PluginError::InstallFailed(error.to_string()))?;
+                }
+                if destination.exists() {
+                    fs::rename(&destination, &current_backup)
+                        .map_err(|error| PluginError::InstallFailed(error.to_string()))?;
+                }
+                if let Err(error) = fs::rename(rollback, &destination) {
+                    if current_backup.exists() {
+                        let _ = fs::rename(&current_backup, &destination);
+                    }
+                    return Err(PluginError::InstallFailed(error.to_string()));
+                }
+                self.remove_registration(id);
+                if let Err(error) = self.register(previous_manifest) {
+                    let _ = fs::remove_dir_all(&destination);
+                    if current_backup.exists() {
+                        let _ = fs::rename(&current_backup, &destination);
+                    }
+                    return Err(error);
+                }
+                if current_backup.exists() {
+                    fs::remove_dir_all(&current_backup)
+                        .map_err(|error| PluginError::InstallFailed(error.to_string()))?;
+                }
+                for stale in paths.rollback.iter().filter(|path| *path != rollback) {
+                    let _ = fs::remove_dir_all(stale);
+                }
+            }
+            ExtensionInstallRecoveryAction::Discard => {
+                for staging in &paths.staging {
+                    if staging.exists() {
+                        fs::remove_dir_all(staging)
+                            .map_err(|error| PluginError::InstallFailed(error.to_string()))?;
+                    }
+                }
+                for rollback in &paths.rollback {
+                    if rollback.exists() {
+                        fs::remove_dir_all(rollback)
+                            .map_err(|error| PluginError::InstallFailed(error.to_string()))?;
+                    }
                 }
             }
         }
@@ -2216,5 +2567,86 @@ mod tests {
         fs::remove_dir_all(root).expect("the transactional installation should be removed");
         fs::remove_dir_all(first_source).expect("the initial package should be removed");
         fs::remove_dir_all(upgrade_source).expect("the upgrade package should be removed");
+    }
+
+    #[test]
+    fn interrupted_install_recovery_is_discoverable_and_resolvable_after_restart() {
+        let root = temporary_manifest_dir();
+        let id = ExtensionId("recoverable.plugin".into());
+        let previous = ExtensionManifest {
+            id: id.clone(),
+            version: "0.1.0".into(),
+            host_api: VersionRange("^1".into()),
+            runtime: RuntimeKind::BuiltIn,
+            launch: None,
+            target_app: None,
+            contributions: Vec::new(),
+            permission_sets: Vec::new(),
+        };
+        let mut current = previous.clone();
+        current.version = "0.2.0".into();
+        fs::create_dir_all(root.join(&id.0)).expect("the current package should be writable");
+        write_package(&root.join(&id.0), &current);
+        let rollback = root.join(format!(".{}.rollback-crash", id.0));
+        write_package(&rollback, &previous);
+
+        let mut restarted = InMemoryPluginHost::default();
+        JsonManifestDiscovery::new(&root)
+            .load_into(&mut restarted)
+            .expect("the current package should be discovered");
+        let recoveries = restarted
+            .inspect_install_recoveries(&root)
+            .expect("the interrupted upgrade should be discoverable");
+        assert_eq!(recoveries.len(), 1);
+        assert_eq!(recoveries[0].kind, ExtensionInstallRecoveryKind::Rollback);
+        assert_eq!(recoveries[0].candidate_version.as_deref(), Some("0.2.0"));
+        assert_eq!(recoveries[0].rollback_version.as_deref(), Some("0.1.0"));
+        assert!(recoveries[0].can_commit);
+        assert!(recoveries[0].can_rollback);
+
+        restarted
+            .resolve_install_recovery(&id, ExtensionInstallRecoveryAction::Rollback, &root)
+            .expect("the previous package should be restorable after restart");
+        assert_eq!(restarted.discover()[0].version, "0.1.0");
+        assert_eq!(
+            restarted.inspect_install_recoveries(&root).unwrap(),
+            Vec::new()
+        );
+        assert_eq!(
+            serde_json::from_slice::<ExtensionManifest>(
+                &fs::read(root.join(&id.0).join("manifest.json")).unwrap(),
+            )
+            .unwrap()
+            .version,
+            "0.1.0"
+        );
+
+        let staged_id = ExtensionId("staged.plugin".into());
+        let staging = root.join(format!(".{}.staging-crash", staged_id.0));
+        let staged = ExtensionManifest {
+            id: staged_id.clone(),
+            version: "0.1.0".into(),
+            host_api: VersionRange("^1".into()),
+            runtime: RuntimeKind::BuiltIn,
+            launch: None,
+            target_app: None,
+            contributions: Vec::new(),
+            permission_sets: Vec::new(),
+        };
+        write_package(&staging, &staged);
+        let staged_recovery = restarted
+            .inspect_install_recoveries(&root)
+            .expect("the staged package should be discoverable")
+            .into_iter()
+            .find(|recovery| recovery.extension_id == staged_id)
+            .expect("the staged recovery should be listed");
+        assert!(staged_recovery.can_resume);
+        restarted
+            .resolve_install_recovery(&staged_id, ExtensionInstallRecoveryAction::Resume, &root)
+            .expect("the staged package should resume after restart");
+        assert_eq!(restarted.discover().len(), 2);
+        assert!(root.join(&staged_id.0).is_dir());
+
+        fs::remove_dir_all(root).expect("the recovery fixture should be removed");
     }
 }

@@ -69,6 +69,9 @@ const core = {
         ],
       };
     }
+    if (request.kind === 'query-plugin-install-recoveries') {
+      return { kind: 'plugin-install-recoveries', recoveries: [] };
+    }
     if (request.kind === 'install-plugin') {
       installed = true;
       installedState = 'registered';
@@ -187,9 +190,10 @@ await act(async () => {
 assert.match(document.body.textContent ?? '', /sample\.installed installed and activated/);
 assert.match(document.body.textContent ?? '', /sample\.installed/);
 assert.deepEqual(
-  requests.map((request) => request.kind),
+  requests.slice(0, 10).map((request) => request.kind),
   [
     'query-extensions',
+    'query-plugin-install-recoveries',
     'inspect-plugin',
     'install-plugin',
     'query-plugin-projection',
@@ -197,6 +201,7 @@ assert.deepEqual(
     'query-plugin-projection',
     'commit-plugin-install',
     'query-extensions',
+    'query-plugin-install-recoveries',
   ],
 );
 
@@ -228,9 +233,92 @@ await act(async () => {
 });
 assert.deepEqual(confirmCalls, ['sample.installed']);
 assert.equal(document.querySelector('[aria-label="Uninstall sample.installed"]'), null);
-assert.equal(requests.at(-1)?.kind, 'query-extensions');
+assert.equal(requests.at(-1)?.kind, 'query-plugin-install-recoveries');
 assert.equal(requests.find((request) => request.kind === 'install-plugin')?.sourceDir, '/tmp/native-plugin');
 
 await act(() => root.unmount());
+
+const recoveryRequests = [];
+let recoveryVisible = true;
+let recoveryState = 'registered';
+const recoverySummary = () => ({
+  id: 'sample.recovery',
+  version: recoveryState === 'active' ? '0.1.0' : '0.2.0',
+  active: recoveryState === 'active',
+  state: recoveryState,
+});
+const recoveryCore = {
+  request: async (request) => {
+    recoveryRequests.push(request);
+    if (request.kind === 'query-extensions') {
+      return { kind: 'extensions', extensions: [recoverySummary()] };
+    }
+    if (request.kind === 'query-plugin-install-recoveries') {
+      return {
+        kind: 'plugin-install-recoveries',
+        recoveries: recoveryVisible ? [{
+          extensionId: 'sample.recovery',
+          kind: 'rollback',
+          operation: 'upgrade',
+          candidateVersion: '0.2.0',
+          current: recoverySummary(),
+          rollbackVersion: '0.1.0',
+          canResume: false,
+          canCommit: true,
+          canRollback: true,
+          canDiscard: true,
+          issues: [],
+        }] : [],
+      };
+    }
+    if (request.kind === 'resolve-plugin-install-recovery') {
+      recoveryVisible = false;
+      recoveryState = 'registered';
+      return { kind: 'accepted' };
+    }
+    if (request.kind === 'activate-plugin') {
+      recoveryState = 'active';
+      return { kind: 'extension', extension: recoverySummary() };
+    }
+    if (request.kind === 'query-plugin-projection') {
+      return {
+        kind: 'plugin-projection',
+        projection: {
+          summary: recoverySummary(),
+          targetApp: null,
+          contributions: [],
+        },
+      };
+    }
+    return { kind: 'accepted' };
+  },
+  subscribe: () => () => {},
+};
+const recoveryClient = new PluginClient(recoveryCore);
+const recoveryRootElement = document.createElement('div');
+document.body.append(recoveryRootElement);
+const recoveryRoot = createRoot(recoveryRootElement);
+await act(async () => {
+  recoveryRoot.render(React.createElement(PluginManagerDialog, {
+    onOpenChange: () => undefined,
+    open: true,
+    plugins: recoveryClient,
+  }));
+  await new Promise((resolve) => setTimeout(resolve, 10));
+});
+assert.ok(document.querySelector('[data-plugin-install-recoveries]'));
+assert.match(document.body.textContent ?? '', /sample\.recovery/);
+const restoreButton = [...document.querySelectorAll('button')]
+  .find((button) => button.textContent === 'Restore previous');
+assert.ok(restoreButton);
+await act(async () => {
+  restoreButton.click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+});
+assert.match(document.body.textContent ?? '', /recovery resolved and activated/);
+assert.equal(document.querySelector('[data-plugin-install-recoveries]'), null);
+assert.ok(recoveryRequests.some((request) => request.kind === 'resolve-plugin-install-recovery'));
+await act(() => recoveryRoot.unmount());
 console.log('Plugin manager dialog tests passed.');
 

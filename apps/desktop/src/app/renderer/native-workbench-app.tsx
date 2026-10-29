@@ -41,6 +41,10 @@ export function NativeWorkbenchApp() {
           void app.workbench.plugins
             .queryCoreExtensions()
             .then(async (extensions) => {
+              const recoveries = await app.workbench.plugins.queryCoreInstallRecoveries();
+              if (recoveries.length > 0) {
+                setPluginManagerOpen(true);
+              }
               const activeExtensions = extensions.filter((extension) => extension.state === 'active');
               const results = await Promise.allSettled(
                 activeExtensions.map(async (extension) => {

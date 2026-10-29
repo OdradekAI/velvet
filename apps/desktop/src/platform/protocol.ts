@@ -106,6 +106,10 @@ export type CoreRequest =
   | { readonly protocolVersion: ProtocolVersion; readonly kind: 'query-extensions' }
   | {
       readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'query-plugin-install-recoveries';
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
       readonly kind: 'query-plugin-projection';
       readonly extensionId: string;
     }
@@ -157,6 +161,12 @@ export type CoreRequest =
     }
   | {
       readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'resolve-plugin-install-recovery';
+      readonly extensionId: string;
+      readonly action: CorePluginInstallRecoveryAction;
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
       readonly kind: 'uninstall-plugin';
       readonly extensionId: string;
     }
@@ -189,6 +199,10 @@ export type CoreResponse =
   | { readonly kind: 'extensions'; readonly extensions: readonly CorePluginSummary[] }
   | { readonly kind: 'extension'; readonly extension: CorePluginSummary }
   | { readonly kind: 'plugin-install-preview'; readonly preview: CorePluginInstallPreview }
+  | {
+      readonly kind: 'plugin-install-recoveries';
+      readonly recoveries: readonly CorePluginInstallRecovery[];
+    }
   | { readonly kind: 'plugin-projection'; readonly projection: CorePluginProjection }
   | { readonly kind: 'accepted' };
 
@@ -318,6 +332,23 @@ export interface CorePluginInstallPreview {
   readonly operation: 'install' | 'upgrade';
   readonly compatible: boolean;
   readonly canInstall: boolean;
+  readonly issues: readonly string[];
+}
+
+export type CorePluginInstallRecoveryKind = 'staging' | 'rollback';
+export type CorePluginInstallRecoveryAction = 'resume' | 'commit' | 'rollback' | 'discard';
+
+export interface CorePluginInstallRecovery {
+  readonly extensionId: string;
+  readonly kind: CorePluginInstallRecoveryKind;
+  readonly operation: 'install' | 'upgrade';
+  readonly candidateVersion: string | null;
+  readonly current: CorePluginSummary | null;
+  readonly rollbackVersion: string | null;
+  readonly canResume: boolean;
+  readonly canCommit: boolean;
+  readonly canRollback: boolean;
+  readonly canDiscard: boolean;
   readonly issues: readonly string[];
 }
 

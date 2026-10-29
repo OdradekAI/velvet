@@ -2,6 +2,8 @@ import {
   PROTOCOL_VERSION,
   type CorePluginContribution,
   type CorePluginInstallPreview,
+  type CorePluginInstallRecovery,
+  type CorePluginInstallRecoveryAction,
   type CorePluginProjection,
   type CorePluginDisableReason,
   type CorePluginManifest,
@@ -484,6 +486,20 @@ export class PluginClient {
     return response.extensions;
   }
 
+  public async queryCoreInstallRecoveries(): Promise<readonly CorePluginInstallRecovery[]> {
+    const response = await this.core.request({
+      protocolVersion: PROTOCOL_VERSION,
+      kind: 'query-plugin-install-recoveries',
+    });
+    if (response.kind !== 'plugin-install-recoveries') {
+      throw new PluginLifecycleError(
+        `Expected plugin install recoveries, received ${response.kind}`,
+        'core',
+      );
+    }
+    return response.recoveries;
+  }
+
   public getCoreSummary(extensionId: string): CorePluginSummary | undefined {
     return this.coreSummaries.get(extensionId);
   }
@@ -734,6 +750,38 @@ export class PluginClient {
     this.coreProjections.delete(extensionId);
     this.coreSummaries.delete(extensionId);
     this.notify();
+  }
+
+  public async resolveCoreInstallRecovery(
+    extensionId: string,
+    action: CorePluginInstallRecoveryAction,
+  ): Promise<CorePluginSummary | undefined> {
+    const response = await this.core.request({
+      protocolVersion: PROTOCOL_VERSION,
+      kind: 'resolve-plugin-install-recovery',
+      extensionId,
+      action,
+    });
+    if (response.kind !== 'accepted') {
+      throw new PluginLifecycleError(
+        `Expected an accepted response for resolving ${extensionId}, received ${response.kind}`,
+        extensionId,
+      );
+    }
+
+    const extensions = await this.queryCoreExtensions();
+    const summary = extensions.find((extension) => extension.id === extensionId);
+    if (!summary) {
+      await this.unregister(extensionId);
+      this.coreProjections.delete(extensionId);
+      this.coreSummaries.delete(extensionId);
+      this.notify();
+      return undefined;
+    }
+
+    const projection = await this.queryCoreProjection(extensionId);
+    await this.applyCoreProjection(projection);
+    return summary;
   }
 
   public listVisible(activeAppId?: WorkbenchAppId): readonly ContributionDescriptor[] {

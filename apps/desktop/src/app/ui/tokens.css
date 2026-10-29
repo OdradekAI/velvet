@@ -531,6 +531,28 @@ button {
   font-size: 12px;
 }
 
+.velvet-plugin-manager__recoveries {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.velvet-plugin-manager__recovery {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 9px;
+  border: 1px solid color-mix(in srgb, var(--velvet-accent) 42%, var(--velvet-border-strong));
+  border-radius: var(--velvet-radius-sm);
+  background: color-mix(in srgb, var(--velvet-accent) 7%, var(--velvet-surface-panel));
+}
+
+.velvet-plugin-manager__recovery-hint {
+  color: var(--velvet-text-muted);
+  font-size: 10px;
+}
+
 .velvet-plugin-manager__preview {
   display: flex;
   flex-direction: column;

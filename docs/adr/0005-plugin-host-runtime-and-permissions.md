@@ -92,8 +92,10 @@ backup until the client has projected and activated the new extension, then
 `commit-plugin-install` removes the backup. `rollback-plugin-install` removes a
 new package or restores the previous package and runtime state. The native
 Tauri composition root activates committed registered extensions during client
-startup; other embedders may retain lazy activation by calling the lifecycle
-commands explicitly.
+startup. It scans for abandoned `.staging-*` and `.rollback-*` directories left
+by a client crash and holds affected extensions inactive until the host presents
+resume, commit, rollback or discard actions. Other embedders may retain lazy
+activation by calling the lifecycle commands explicitly.
 
 ## Alternatives considered
 

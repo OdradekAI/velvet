@@ -9,7 +9,9 @@ use velvet_application_core::ApplicationCore;
 use velvet_layout_model::{
     LayoutCommand, LayoutState, ViewContainerState, ViewState, WorkbenchAppId, WorkbenchPart,
 };
-use velvet_plugin_api::{ExtensionId, ExtensionManifest};
+use velvet_plugin_api::{
+    ExtensionId, ExtensionInstallRecoveryAction, ExtensionManifest,
+};
 use velvet_persistence::JsonFileLayoutStateStore;
 use velvet_preview_core::{PreviewIntent, PreviewSurface, ResolvedPreview};
 use velvet_tauri_adapter::{CoreEventSink, TauriTransport};
@@ -105,6 +107,10 @@ pub enum WireRequest {
         #[serde(rename = "protocolVersion")]
         protocol_version: u16,
     },
+    QueryPluginInstallRecoveries {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+    },
     QueryPluginProjection {
         #[serde(rename = "protocolVersion")]
         protocol_version: u16,
@@ -171,6 +177,13 @@ pub enum WireRequest {
         #[serde(rename = "extensionId")]
         extension_id: String,
     },
+    ResolvePluginInstallRecovery {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        #[serde(rename = "extensionId")]
+        extension_id: String,
+        action: ExtensionInstallRecoveryAction,
+    },
     InvokePluginCommand {
         #[serde(rename = "protocolVersion")]
         protocol_version: u16,
@@ -210,6 +223,12 @@ impl WireRequest {
             Self::QueryExtensions { protocol_version } => {
                 validate_inner_protocol(outer_protocol_version, protocol_version)?;
                 Ok(Request::Query(velvet_workbench_protocol::Query::Extensions))
+            }
+            Self::QueryPluginInstallRecoveries { protocol_version } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Query(
+                    velvet_workbench_protocol::Query::PluginInstallRecoveries,
+                ))
             }
             Self::QueryPluginProjection {
                 protocol_version,
@@ -306,6 +325,17 @@ impl WireRequest {
                 validate_inner_protocol(outer_protocol_version, protocol_version)?;
                 Ok(Request::Command(Command::RollbackPluginInstall {
                     extension_id: ExtensionId(extension_id),
+                }))
+            }
+            Self::ResolvePluginInstallRecovery {
+                protocol_version,
+                extension_id,
+                action,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Command(Command::ResolvePluginInstallRecovery {
+                    extension_id: ExtensionId(extension_id),
+                    action,
                 }))
             }
             Self::InvokePluginCommand {
@@ -550,6 +580,9 @@ enum WireResponse {
     PluginInstallPreview {
         preview: velvet_plugin_api::ExtensionInstallPreview,
     },
+    PluginInstallRecoveries {
+        recoveries: Vec<velvet_plugin_api::ExtensionInstallRecovery>,
+    },
     PluginProjection {
         projection: velvet_plugin_api::ExtensionProjection,
     },
@@ -578,6 +611,9 @@ impl WireResponseEnvelope {
             },
             Response::PluginInstallPreview(preview) => {
                 WireResponse::PluginInstallPreview { preview }
+            }
+            Response::PluginInstallRecoveries(recoveries) => {
+                WireResponse::PluginInstallRecoveries { recoveries }
             }
             Response::PluginProjection(projection) => WireResponse::PluginProjection { projection },
             Response::Preview(preview) => WireResponse::Preview {
@@ -1093,6 +1129,34 @@ mod tests {
         );
         let value = serde_json::to_value(response).expect("extension state should serialize");
         assert_eq!(value["response"]["extensions"][0]["state"], "failed");
+
+        let recovery_response = WireResponseEnvelope::from_core(
+            velvet_workbench_protocol::ResponseEnvelope {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: RequestId(25),
+                response: Response::PluginInstallRecoveries(vec![
+                    velvet_plugin_api::ExtensionInstallRecovery {
+                        extension_id: velvet_plugin_api::ExtensionId("sample.reader".into()),
+                        kind: velvet_plugin_api::ExtensionInstallRecoveryKind::Rollback,
+                        operation: velvet_plugin_api::ExtensionInstallOperation::Upgrade,
+                        candidate_version: Some("1.1.0".into()),
+                        current: None,
+                        rollback_version: Some("1.0.0".into()),
+                        can_resume: false,
+                        can_commit: true,
+                        can_rollback: true,
+                        can_discard: true,
+                        issues: Vec::new(),
+                    },
+                ]),
+            },
+        );
+        let recovery_value =
+            serde_json::to_value(recovery_response).expect("plugin recovery should serialize");
+        assert_eq!(
+            recovery_value["response"]["recoveries"][0]["kind"],
+            "rollback"
+        );
     }
 
     #[test]
@@ -1195,6 +1259,25 @@ mod tests {
                 if source_dir == "/tmp/velvet-example-plugin"
         ));
 
+        let recoveries: WireRequestEnvelope = serde_json::from_str(
+            r#"{
+                "protocolVersion": 1,
+                "requestId": 23,
+                "request": {
+                    "kind": "query-plugin-install-recoveries",
+                    "protocolVersion": 1
+                }
+            }"#,
+        )
+        .expect("the plugin recovery query should deserialize");
+        assert!(matches!(
+            recoveries
+                .request
+                .into_core(1)
+                .expect("the plugin recovery query should map"),
+            Request::Query(velvet_workbench_protocol::Query::PluginInstallRecoveries)
+        ));
+
         for (kind, request_id, expected) in [
             ("commit-plugin-install", 21, "commit"),
             ("rollback-plugin-install", 22, "rollback"),
@@ -1225,6 +1308,30 @@ mod tests {
                 _ => panic!("the plugin transaction request mapped to an unexpected command"),
             }
         }
+
+        let resolve: WireRequestEnvelope = serde_json::from_str(
+            r#"{
+                "protocolVersion": 1,
+                "requestId": 24,
+                "request": {
+                    "kind": "resolve-plugin-install-recovery",
+                    "protocolVersion": 1,
+                    "extensionId": "velvet.example.echo",
+                    "action": "rollback"
+                }
+            }"#,
+        )
+        .expect("the plugin recovery resolution should deserialize");
+        assert!(matches!(
+            resolve
+                .request
+                .into_core(1)
+                .expect("the plugin recovery resolution should map"),
+            Request::Command(Command::ResolvePluginInstallRecovery {
+                extension_id,
+                action: velvet_plugin_api::ExtensionInstallRecoveryAction::Rollback,
+            }) if extension_id.0 == "velvet.example.echo"
+        ));
 
         let uninstall: WireRequestEnvelope = serde_json::from_str(
             r#"{

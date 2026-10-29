@@ -3,7 +3,10 @@ use std::sync::{Arc, Mutex};
 use velvet_asset_core::ContentKindId;
 use velvet_layout_model::{InMemoryLayoutService, LayoutService};
 use velvet_persistence::{InMemoryLayoutStateStore, LayoutStateStore};
-use velvet_plugin_api::{ExtensionId, ExtensionInstallPreview, ExtensionManifest, ExtensionState};
+use velvet_plugin_api::{
+    ExtensionId, ExtensionInstallPreview, ExtensionInstallRecovery, ExtensionInstallRecoveryAction,
+    ExtensionManifest, ExtensionState,
+};
 use velvet_plugin_host::{
     DisableReason, InMemoryPluginHost, JsonManifestDiscovery, ManifestDiscoveryError,
     ManifestLoadReport, PluginError, PluginHost, PluginRuntime,
@@ -116,10 +119,17 @@ impl ApplicationCore {
     /// Starts manifests discovered during native application startup. Other
     /// embedders may keep the host lazy and call `activate_plugin` explicitly.
     pub fn activate_registered_plugins(&mut self) -> Vec<PluginError> {
+        let recovery_ids = self
+            .inspect_plugin_install_recoveries()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|recovery| recovery.extension_id)
+            .collect::<Vec<_>>();
         self.plugins
             .discover()
             .into_iter()
             .filter(|summary| summary.state == ExtensionState::Registered)
+            .filter(|summary| !recovery_ids.contains(&summary.id))
             .filter_map(|summary| self.plugins.activate(&summary.id).err())
             .collect()
     }
@@ -167,6 +177,29 @@ impl ApplicationCore {
             ));
         };
         self.plugins.rollback_install(id, plugin_directory)
+    }
+
+    pub fn inspect_plugin_install_recoveries(
+        &self,
+    ) -> Result<Vec<ExtensionInstallRecovery>, PluginError> {
+        let Some(plugin_directory) = self.plugin_directory.as_deref() else {
+            return Ok(Vec::new());
+        };
+        self.plugins.inspect_install_recoveries(plugin_directory)
+    }
+
+    pub fn resolve_plugin_install_recovery(
+        &mut self,
+        id: &ExtensionId,
+        action: ExtensionInstallRecoveryAction,
+    ) -> Result<(), PluginError> {
+        let Some(plugin_directory) = self.plugin_directory.as_deref() else {
+            return Err(PluginError::InstallFailed(
+                "plugin installation recovery is unavailable without an application plugin directory".into(),
+            ));
+        };
+        self.plugins
+            .resolve_install_recovery(id, action, plugin_directory)
     }
 
     pub fn uninstall_plugin(&mut self, id: &ExtensionId) -> Result<(), PluginError> {
@@ -230,6 +263,14 @@ impl ApplicationCore {
                     .map_err(plugin_error)?;
                 Ok(Response::Accepted)
             }
+            Request::Command(Command::ResolvePluginInstallRecovery {
+                extension_id,
+                action,
+            }) => {
+                self.resolve_plugin_install_recovery(&extension_id, action)
+                    .map_err(plugin_error)?;
+                Ok(Response::Accepted)
+            }
             Request::Command(Command::UninstallPlugin { extension_id }) => {
                 self.uninstall_plugin(&extension_id).map_err(plugin_error)?;
                 Ok(Response::Accepted)
@@ -247,6 +288,10 @@ impl ApplicationCore {
             }
             Request::Query(Query::Layout) => Ok(Response::Layout(self.layout.snapshot())),
             Request::Query(Query::Extensions) => Ok(Response::Extensions(self.plugins.discover())),
+            Request::Query(Query::PluginInstallRecoveries) => self
+                .inspect_plugin_install_recoveries()
+                .map(Response::PluginInstallRecoveries)
+                .map_err(plugin_error),
             Request::Query(Query::PluginProjection { extension_id }) => self
                 .plugins
                 .projection(&extension_id)
@@ -843,6 +888,72 @@ mod tests {
         }
 
         fs::remove_dir_all(root).expect("the plugin directory should be removed");
+    }
+
+    #[test]
+    fn application_core_holds_recovered_plugins_until_the_user_resolves_them() {
+        let root = temporary_layout_path().with_extension("recovery-plugins");
+        let id = ExtensionId("recovery.core".into());
+        let current = ExtensionManifest {
+            id: id.clone(),
+            version: "0.2.0".into(),
+            host_api: VersionRange("^1".into()),
+            runtime: RuntimeKind::BuiltIn,
+            launch: None,
+            target_app: None,
+            contributions: vec![],
+            permission_sets: vec![],
+        };
+        let mut previous = current.clone();
+        previous.version = "0.1.0".into();
+        fs::create_dir_all(root.join(&id.0)).expect("the current package should be writable");
+        fs::write(
+            root.join(&id.0).join("manifest.json"),
+            serde_json::to_vec(&current).expect("the current manifest should serialize"),
+        )
+        .expect("the current manifest should be written");
+        fs::create_dir_all(root.join(format!(".{}.rollback-crash", id.0)))
+            .expect("the rollback package should be writable");
+        fs::write(
+            root.join(format!(".{}.rollback-crash", id.0))
+                .join("manifest.json"),
+            serde_json::to_vec(&previous).expect("the previous manifest should serialize"),
+        )
+        .expect("the previous manifest should be written");
+
+        let mut core = ApplicationCore::with_store_and_plugin_directory(
+            Arc::new(InMemoryLayoutStateStore::default()),
+            &root,
+        );
+        core.load_plugins_from_directory(&root)
+            .expect("the current package should be discovered");
+        assert!(core.activate_registered_plugins().is_empty());
+        assert_eq!(core.discover_plugins()[0].state, ExtensionState::Registered);
+        match core
+            .dispatch(Request::Query(Query::PluginInstallRecoveries))
+            .expect("recovery query should succeed")
+        {
+            Response::PluginInstallRecoveries(recoveries) => {
+                assert_eq!(recoveries.len(), 1);
+                assert!(recoveries[0].can_rollback);
+            }
+            other => panic!("expected plugin recovery response, got {other:?}"),
+        }
+
+        core.dispatch(Request::Command(Command::ResolvePluginInstallRecovery {
+            extension_id: id.clone(),
+            action: ExtensionInstallRecoveryAction::Rollback,
+        }))
+        .expect("the previous package should be restored");
+        assert!(core.activate_registered_plugins().is_empty());
+        assert_eq!(core.discover_plugins()[0].state, ExtensionState::Active);
+        assert!(matches!(
+            core.dispatch(Request::Query(Query::PluginInstallRecoveries))
+                .expect("recovery query should be empty"),
+            Response::PluginInstallRecoveries(recoveries) if recoveries.is_empty()
+        ));
+
+        fs::remove_dir_all(root).expect("the recovery package should be removed");
     }
 
     #[test]

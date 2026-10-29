@@ -199,6 +199,22 @@ pub enum ExtensionInstallOperation {
     Upgrade,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ExtensionInstallRecoveryKind {
+    Staging,
+    Rollback,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ExtensionInstallRecoveryAction {
+    Resume,
+    Commit,
+    Rollback,
+    Discard,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ExtensionState {
@@ -226,6 +242,22 @@ pub struct ExtensionInstallPreview {
     pub operation: ExtensionInstallOperation,
     pub compatible: bool,
     pub can_install: bool,
+    pub issues: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtensionInstallRecovery {
+    pub extension_id: ExtensionId,
+    pub kind: ExtensionInstallRecoveryKind,
+    pub operation: ExtensionInstallOperation,
+    pub candidate_version: Option<String>,
+    pub current: Option<ExtensionSummary>,
+    pub rollback_version: Option<String>,
+    pub can_resume: bool,
+    pub can_commit: bool,
+    pub can_rollback: bool,
+    pub can_discard: bool,
     pub issues: Vec<String>,
 }
 

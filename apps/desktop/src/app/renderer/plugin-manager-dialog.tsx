@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import type {
+  CorePluginInstallRecovery,
+  CorePluginInstallRecoveryAction,
   CorePluginInstallPreview,
   CorePluginSummary,
 } from '../../platform/protocol.js';
@@ -23,6 +25,7 @@ export function PluginManagerDialog({
   plugins,
 }: PluginManagerDialogProps) {
   const [extensions, setExtensions] = useState<readonly CorePluginSummary[]>([]);
+  const [recoveries, setRecoveries] = useState<readonly CorePluginInstallRecovery[]>([]);
   const [sourceDir, setSourceDir] = useState('');
   const [preview, setPreview] = useState<CorePluginInstallPreview>();
   const [previewSource, setPreviewSource] = useState<string>();
@@ -36,7 +39,10 @@ export function PluginManagerDialog({
     setLoading(true);
     setError(undefined);
     try {
-      setExtensions(await plugins.queryCoreExtensions());
+      const nextExtensions = await plugins.queryCoreExtensions();
+      const nextRecoveries = await plugins.queryCoreInstallRecoveries();
+      setExtensions(nextExtensions);
+      setRecoveries(nextRecoveries);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -178,6 +184,31 @@ export function PluginManagerDialog({
     }
   };
 
+  const resolveRecovery = async (
+    recovery: CorePluginInstallRecovery,
+    action: CorePluginInstallRecoveryAction,
+  ) => {
+    setBusyExtensionId(recovery.extensionId);
+    setError(undefined);
+    setMessage(undefined);
+    try {
+      const summary = await plugins.resolveCoreInstallRecovery(recovery.extensionId, action);
+      if (summary && summary.state !== 'active') {
+        const activated = await plugins.activateInCore(recovery.extensionId);
+        setMessage(`${activated.id} recovery resolved and activated.`);
+      } else if (summary) {
+        setMessage(`${summary.id} recovery resolved.`);
+      } else {
+        setMessage(`${recovery.extensionId} recovery discarded.`);
+      }
+      await refresh();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setBusyExtensionId(undefined);
+    }
+  };
+
   return (
     <VelvetDialog
       description="Install a local extension package and inspect its host-owned runtime state."
@@ -249,6 +280,70 @@ export function PluginManagerDialog({
             </div>
           ))}
         </div>
+        {recoveries.length > 0 ? (
+          <div className="velvet-plugin-manager__recoveries" data-plugin-install-recoveries>
+            <div className="velvet-plugin-manager__toolbar">
+              <span className="velvet-plugin-manager__eyebrow">Interrupted installs</span>
+              <span className="velvet-plugin-manager__recovery-hint">Review before activation</span>
+            </div>
+            {recoveries.map((recovery) => (
+              <div className="velvet-plugin-manager__recovery" key={`${recovery.extensionId}-${recovery.kind}`}>
+                <div className="velvet-plugin-manager__identity">
+                  <strong>{recovery.extensionId}</strong>
+                  <span>
+                    {recovery.kind === 'rollback' ? 'upgrade interrupted' : 'staged install'}
+                    {recovery.candidateVersion ? ` · v${recovery.candidateVersion}` : ''}
+                  </span>
+                </div>
+                {recovery.issues.length > 0 ? (
+                  <p className="velvet-command-error" role="alert">{recovery.issues.join(' ')}</p>
+                ) : null}
+                <div className="velvet-plugin-manager__controls">
+                  {recovery.canResume ? (
+                    <button
+                      className="velvet-button velvet-button--quiet"
+                      disabled={busyExtensionId !== undefined || installing}
+                      onClick={() => void resolveRecovery(recovery, 'resume')}
+                      type="button"
+                    >
+                      Resume and activate
+                    </button>
+                  ) : null}
+                  {recovery.canCommit ? (
+                    <button
+                      className="velvet-button velvet-button--quiet"
+                      disabled={busyExtensionId !== undefined || installing}
+                      onClick={() => void resolveRecovery(recovery, 'commit')}
+                      type="button"
+                    >
+                      Keep new
+                    </button>
+                  ) : null}
+                  {recovery.canRollback ? (
+                    <button
+                      className="velvet-button velvet-button--quiet"
+                      disabled={busyExtensionId !== undefined || installing}
+                      onClick={() => void resolveRecovery(recovery, 'rollback')}
+                      type="button"
+                    >
+                      Restore previous
+                    </button>
+                  ) : null}
+                  {recovery.canDiscard ? (
+                    <button
+                      className="velvet-button velvet-button--quiet velvet-button--danger"
+                      disabled={busyExtensionId !== undefined || installing}
+                      onClick={() => void resolveRecovery(recovery, 'discard')}
+                      type="button"
+                    >
+                      Discard
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : null}
         <form className="velvet-plugin-manager__install" onSubmit={(event) => void install(event)}>
           <label htmlFor="velvet-plugin-source">Plugin package directory</label>
           <div className="velvet-plugin-manager__install-row">

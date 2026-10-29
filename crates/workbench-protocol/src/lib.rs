@@ -2,7 +2,8 @@ use serde_json::Value;
 use velvet_asset_core::AssetId;
 use velvet_layout_model::{LayoutCommand, LayoutState};
 use velvet_plugin_api::{
-    ExtensionId, ExtensionInstallPreview, ExtensionManifest, ExtensionProjection, ExtensionSummary,
+    ExtensionId, ExtensionInstallPreview, ExtensionInstallRecovery, ExtensionInstallRecoveryAction,
+    ExtensionManifest, ExtensionProjection, ExtensionSummary,
 };
 use velvet_preview_core::{PreviewIntent, PreviewSurface, ResolvedPreview};
 
@@ -46,6 +47,10 @@ pub enum Command {
     RollbackPluginInstall {
         extension_id: ExtensionId,
     },
+    ResolvePluginInstallRecovery {
+        extension_id: ExtensionId,
+        action: ExtensionInstallRecoveryAction,
+    },
     UninstallPlugin {
         extension_id: ExtensionId,
     },
@@ -77,6 +82,7 @@ pub enum Query {
         intent: PreviewIntent,
         surface: PreviewSurface,
     },
+    PluginInstallRecoveries,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -91,6 +97,7 @@ pub enum Response {
     Extensions(Vec<ExtensionSummary>),
     Extension(ExtensionSummary),
     PluginInstallPreview(ExtensionInstallPreview),
+    PluginInstallRecoveries(Vec<ExtensionInstallRecovery>),
     PluginProjection(ExtensionProjection),
     Preview(ResolvedPreview),
     Accepted,

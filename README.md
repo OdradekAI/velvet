@@ -87,7 +87,10 @@ upgrade. Activation and frontend projection complete the transaction with
 package and runtime state. Invalid files are isolated in the discovery report
 and do not block valid extensions. Each installed extension can be enabled,
 disabled, recovered after a failure, or uninstalled with a native confirmation;
-uninstall stops its runtime and removes its installed package directory.
+uninstall stops its runtime and removes its installed package directory. On
+startup the host scans for abandoned `.staging-*` and `.rollback-*` directories
+left by a client crash. Affected extensions stay inactive until the Extensions
+dialog offers resume, keep new, restore previous or discard actions.
 
 ## Architecture
 
