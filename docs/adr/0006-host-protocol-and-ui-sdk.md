@@ -40,6 +40,15 @@ native global shortcut plugin feeds `velvet_keybinding` events into the same
 renderer `KeybindingRegistry`; it does not own command resolution or layout
 state.
 
+Plugin lifecycle uses the same versioned request envelope. The protocol exposes
+manifest registration plus activate, disable, health-check and recovery
+commands, each returning the authoritative Rust `ExtensionSummary`. The
+desktop `PluginClient` keeps this runtime projection separate from its local
+contribution registries; UI registration and isolated surface mounting remain
+explicit renderer actions. A plugin inventory query is best-effort during
+native startup so a runtime or transport failure cannot block the Workbench
+shell.
+
 The UI SDK exposes host concepts rather than Vue or React component types:
 
 ```text

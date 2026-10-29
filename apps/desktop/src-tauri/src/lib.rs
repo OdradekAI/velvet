@@ -9,12 +9,13 @@ use velvet_application_core::ApplicationCore;
 use velvet_layout_model::{
     LayoutCommand, LayoutState, ViewContainerState, ViewState, WorkbenchAppId, WorkbenchPart,
 };
+use velvet_plugin_api::{ExtensionId, ExtensionManifest};
 use velvet_persistence::JsonFileLayoutStateStore;
 use velvet_preview_core::{PreviewIntent, PreviewSurface, ResolvedPreview};
 use velvet_tauri_adapter::{CoreEventSink, TauriTransport};
 use velvet_workbench_protocol::{
-    Command, CoreError, CoreTransport, Event, Request, RequestEnvelope, RequestId, Response,
-    PROTOCOL_VERSION,
+    Command, CoreError, CoreTransport, Event, PluginDisableReason, Request, RequestEnvelope,
+    RequestId, Response, PROTOCOL_VERSION,
 };
 
 const CORE_EVENT_NAME: &str = "velvet_core_event";
@@ -94,6 +95,36 @@ pub enum WireRequest {
         #[serde(rename = "protocolVersion")]
         protocol_version: u16,
     },
+    RegisterPlugin {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        manifest: ExtensionManifest,
+    },
+    ActivatePlugin {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        #[serde(rename = "extensionId")]
+        extension_id: String,
+    },
+    DisablePlugin {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        #[serde(rename = "extensionId")]
+        extension_id: String,
+        reason: String,
+    },
+    CheckPluginHealth {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        #[serde(rename = "extensionId")]
+        extension_id: String,
+    },
+    RecoverPlugin {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        #[serde(rename = "extensionId")]
+        extension_id: String,
+    },
     LayoutCommand {
         #[serde(rename = "protocolVersion")]
         protocol_version: u16,
@@ -123,6 +154,51 @@ impl WireRequest {
             Self::QueryExtensions { protocol_version } => {
                 validate_inner_protocol(outer_protocol_version, protocol_version)?;
                 Ok(Request::Query(velvet_workbench_protocol::Query::Extensions))
+            }
+            Self::RegisterPlugin {
+                protocol_version,
+                manifest,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Command(Command::RegisterPlugin { manifest }))
+            }
+            Self::ActivatePlugin {
+                protocol_version,
+                extension_id,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Command(Command::ActivatePlugin {
+                    extension_id: ExtensionId(extension_id),
+                }))
+            }
+            Self::DisablePlugin {
+                protocol_version,
+                extension_id,
+                reason,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Command(Command::DisablePlugin {
+                    extension_id: ExtensionId(extension_id),
+                    reason: parse_disable_reason(&reason)?,
+                }))
+            }
+            Self::CheckPluginHealth {
+                protocol_version,
+                extension_id,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Command(Command::CheckPluginHealth {
+                    extension_id: ExtensionId(extension_id),
+                }))
+            }
+            Self::RecoverPlugin {
+                protocol_version,
+                extension_id,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Command(Command::RecoverPlugin {
+                    extension_id: ExtensionId(extension_id),
+                }))
             }
             Self::LayoutCommand {
                 protocol_version,
@@ -345,6 +421,9 @@ enum WireResponse {
     Extensions {
         extensions: Vec<WireExtensionSummary>,
     },
+    Extension {
+        extension: WireExtensionSummary,
+    },
     Preview {
         preview: WireResolvedPreview,
     },
@@ -364,6 +443,9 @@ impl WireResponseEnvelope {
                     .into_iter()
                     .map(WireExtensionSummary::from)
                     .collect(),
+            },
+            Response::Extension(extension) => WireResponse::Extension {
+                extension: WireExtensionSummary::from(extension),
             },
             Response::Preview(preview) => WireResponse::Preview {
                 preview: WireResolvedPreview::from(preview),
@@ -695,6 +777,15 @@ fn validate_inner_protocol(outer: u16, inner: u16) -> Result<(), WireError> {
     Ok(())
 }
 
+fn parse_disable_reason(value: &str) -> Result<PluginDisableReason, WireError> {
+    match value {
+        "user" => Ok(PluginDisableReason::User),
+        "crash" => Ok(PluginDisableReason::Crash),
+        "incompatible" => Ok(PluginDisableReason::Incompatible),
+        _ => Err(invalid_wire_value("plugin disable reason", value)),
+    }
+}
+
 fn parse_app(value: &str) -> Result<WorkbenchAppId, WireError> {
     if value.is_empty()
         || !value.chars().enumerate().all(|(index, character)| {
@@ -863,6 +954,86 @@ mod tests {
         );
         let value = serde_json::to_value(response).expect("extension state should serialize");
         assert_eq!(value["response"]["extensions"][0]["state"], "failed");
+    }
+
+    #[test]
+    fn wire_plugin_lifecycle_requests_map_to_versioned_core_commands() {
+        let register: WireRequestEnvelope = serde_json::from_str(
+            r#"{
+                "protocolVersion": 1,
+                "requestId": 13,
+                "request": {
+                    "kind": "register-plugin",
+                    "protocolVersion": 1,
+                    "manifest": {
+                        "id": "sample.reader",
+                        "version": "1.0.0",
+                        "hostApi": "^1",
+                        "runtime": "built-in",
+                        "launch": null,
+                        "targetApp": null,
+                        "contributions": [],
+                        "permissionSets": []
+                    }
+                }
+            }"#,
+        )
+        .expect("the plugin registration request should deserialize");
+
+        assert!(matches!(
+            register
+                .request
+                .into_core(1)
+                .expect("the plugin registration request should map"),
+            Request::Command(Command::RegisterPlugin { manifest })
+                if manifest.id.0 == "sample.reader"
+        ));
+
+        let disable: WireRequestEnvelope = serde_json::from_str(
+            r#"{
+                "protocolVersion": 1,
+                "requestId": 14,
+                "request": {
+                    "kind": "disable-plugin",
+                    "protocolVersion": 1,
+                    "extensionId": "sample.reader",
+                    "reason": "user"
+                }
+            }"#,
+        )
+        .expect("the plugin disable request should deserialize");
+
+        assert!(matches!(
+            disable
+                .request
+                .into_core(1)
+                .expect("the plugin disable request should map"),
+            Request::Command(Command::DisablePlugin {
+                extension_id,
+                reason: PluginDisableReason::User,
+            }) if extension_id.0 == "sample.reader"
+        ));
+    }
+
+    #[test]
+    fn wire_plugin_lifecycle_response_uses_extension_summary_shape() {
+        let response = WireResponseEnvelope::from_core(
+            velvet_workbench_protocol::ResponseEnvelope {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: RequestId(15),
+                response: Response::Extension(velvet_plugin_api::ExtensionSummary {
+                    id: velvet_plugin_api::ExtensionId("sample.reader".into()),
+                    version: "1.0.0".into(),
+                    active: true,
+                    state: velvet_plugin_api::ExtensionState::Active,
+                }),
+            },
+        );
+        let value = serde_json::to_value(response).expect("extension response should serialize");
+
+        assert_eq!(value["response"]["kind"], "extension");
+        assert_eq!(value["response"]["extension"]["id"], "sample.reader");
+        assert_eq!(value["response"]["extension"]["state"], "active");
     }
 
     #[test]

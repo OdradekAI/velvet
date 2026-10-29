@@ -1,4 +1,12 @@
-import type { CoreTransport, Part, Zone } from '../protocol.js';
+import {
+  PROTOCOL_VERSION,
+  type CorePluginDisableReason,
+  type CorePluginManifest,
+  type CorePluginSummary,
+  type CoreTransport,
+  type Part,
+  type Zone,
+} from '../../platform/protocol.js';
 import {
   ContributionRegistry,
   namespaceFor,
@@ -146,11 +154,12 @@ export class PluginLifecycleError extends Error {
 
 export class PluginClient {
   private readonly records = new Map<string, PluginRecord>();
+  private readonly coreSummaries = new Map<string, CorePluginSummary>();
   private readonly commandHandlers = new Map<string, PluginCommandHandler>();
   public readonly ui: PluginUiRegistry;
 
   public constructor(
-    private readonly _core: CoreTransport,
+    private readonly core: CoreTransport,
     private readonly contributionRegistry: ContributionRegistry = new ContributionRegistry(),
     private readonly appRegistry: WorkbenchAppRegistry = new WorkbenchAppRegistry(),
     private readonly hostApiVersion = '1',
@@ -444,6 +453,75 @@ export class PluginClient {
 
   public discover(): readonly PluginSummary[] {
     return [...this.records.values()].map((record) => this.summary(record));
+  }
+
+  /** Queries the Rust-owned plugin inventory without importing runtime state into the UI registry. */
+  public async queryCoreExtensions(): Promise<readonly CorePluginSummary[]> {
+    const response = await this.core.request({
+      protocolVersion: PROTOCOL_VERSION,
+      kind: 'query-extensions',
+    });
+    if (response.kind !== 'extensions') {
+      throw new PluginLifecycleError(
+        `Expected an extension list response, received ${response.kind}`,
+        'core',
+      );
+    }
+    this.coreSummaries.clear();
+    for (const summary of response.extensions) {
+      this.coreSummaries.set(summary.id, summary);
+    }
+    this.notify();
+    return response.extensions;
+  }
+
+  public getCoreSummary(extensionId: string): CorePluginSummary | undefined {
+    return this.coreSummaries.get(extensionId);
+  }
+
+  /** Registers a manifest with the Rust PluginHost; local UI contributions remain explicit. */
+  public async registerInCore(manifest: CorePluginManifest): Promise<CorePluginSummary> {
+    return this.requestCoreExtension({
+      protocolVersion: PROTOCOL_VERSION,
+      kind: 'register-plugin',
+      manifest,
+    });
+  }
+
+  public async activateInCore(extensionId: string): Promise<CorePluginSummary> {
+    return this.requestCoreExtension({
+      protocolVersion: PROTOCOL_VERSION,
+      kind: 'activate-plugin',
+      extensionId,
+    });
+  }
+
+  public async disableInCore(
+    extensionId: string,
+    reason: CorePluginDisableReason = 'user',
+  ): Promise<CorePluginSummary> {
+    return this.requestCoreExtension({
+      protocolVersion: PROTOCOL_VERSION,
+      kind: 'disable-plugin',
+      extensionId,
+      reason,
+    });
+  }
+
+  public async checkCoreHealth(extensionId: string): Promise<CorePluginSummary> {
+    return this.requestCoreExtension({
+      protocolVersion: PROTOCOL_VERSION,
+      kind: 'check-plugin-health',
+      extensionId,
+    });
+  }
+
+  public async recoverInCore(extensionId: string): Promise<CorePluginSummary> {
+    return this.requestCoreExtension({
+      protocolVersion: PROTOCOL_VERSION,
+      kind: 'recover-plugin',
+      extensionId,
+    });
   }
 
   public listVisible(activeAppId?: WorkbenchAppId): readonly ContributionDescriptor[] {
@@ -1160,6 +1238,19 @@ export class PluginClient {
       status: record.status,
       ...(record.error ? { error: record.error } : {}),
     };
+  }
+
+  private async requestCoreExtension(request: Parameters<CoreTransport['request']>[0]): Promise<CorePluginSummary> {
+    const response = await this.core.request(request);
+    if (response.kind !== 'extension') {
+      throw new PluginLifecycleError(
+        `Expected an extension response, received ${response.kind}`,
+        'core',
+      );
+    }
+    this.coreSummaries.set(response.extension.id, response.extension);
+    this.notify();
+    return response.extension;
   }
 }
 

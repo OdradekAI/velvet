@@ -111,6 +111,11 @@ The Tauri setup scans `app_data_dir/plugins` for JSON manifests at startup and
 registers valid manifests lazily; malformed or rejected files are reported
 individually without blocking the other plugins. The Tauri response exposes
 the same runtime state through the extension query.
+The versioned CoreTransport now exposes plugin manifest registration, activation,
+disable, health-check and recovery commands. `PluginClient` keeps the
+authoritative Rust extension summary in a separate runtime projection and the
+native renderer performs a best-effort inventory query during startup, leaving
+local contribution and UI-bridge registration explicit.
 
 The current shell slice also renders the accepted Part constraint table: fixed
 Parts use stable dimensions, resizable Parts enforce bounded sizes in Rust, and

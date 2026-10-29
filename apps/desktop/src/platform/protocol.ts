@@ -101,6 +101,32 @@ export type CoreRequest =
   | { readonly protocolVersion: ProtocolVersion; readonly kind: 'query-extensions' }
   | {
       readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'register-plugin';
+      readonly manifest: CorePluginManifest;
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'activate-plugin';
+      readonly extensionId: string;
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'disable-plugin';
+      readonly extensionId: string;
+      readonly reason: CorePluginDisableReason;
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'check-plugin-health';
+      readonly extensionId: string;
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'recover-plugin';
+      readonly extensionId: string;
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
       readonly kind: 'layout-command';
       readonly command: LayoutCommand;
       readonly expectedRevision?: number;
@@ -117,12 +143,89 @@ export type CoreRequest =
 export type CoreResponse =
   | { readonly kind: 'layout'; readonly state: LayoutSnapshot }
   | { readonly kind: 'preview'; readonly preview: unknown }
-  | { readonly kind: 'extensions'; readonly extensions: readonly PluginSummary[] }
+  | { readonly kind: 'extensions'; readonly extensions: readonly CorePluginSummary[] }
+  | { readonly kind: 'extension'; readonly extension: CorePluginSummary }
   | { readonly kind: 'accepted' };
 
 export type PluginState = 'registered' | 'starting' | 'active' | 'disabled' | 'failed';
 
 export interface PluginSummary {
+  readonly id: string;
+  readonly version: string;
+  readonly active: boolean;
+  readonly state: PluginState;
+}
+
+export type CorePluginRuntime = 'built-in' | 'wasm' | 'sidecar';
+export type CorePluginDisableReason = 'user' | 'crash' | 'incompatible';
+export type CorePluginPermission =
+  | 'workspace-open'
+  | 'library-read'
+  | 'source-connect'
+  | 'asset-read'
+  | 'metadata-read'
+  | 'metadata-write'
+  | 'preview-render'
+  | 'jobs-create'
+  | 'jobs-read'
+  | 'logs-read'
+  | 'external-process'
+  | 'network';
+export type CorePluginContributionKind =
+  | 'activity-bar-entry'
+  | 'companion-view'
+  | 'operation-view'
+  | 'view-container'
+  | 'view'
+  | 'dialog'
+  | 'context-menu'
+  | 'preview-provider'
+  | 'preview-augmentation'
+  | 'inspector'
+  | 'command'
+  | 'job';
+export type CorePluginContributionScope =
+  | { readonly kind: 'workbench' }
+  | { readonly kind: 'workbench-app'; readonly appId: string }
+  | { readonly kind: 'capability' };
+export type CorePluginHostContainer =
+  | 'activity-bar'
+  | 'title-bar'
+  | 'workspace-area'
+  | 'primary-sidebar'
+  | 'auxiliary-sidebar'
+  | 'operations-panel'
+  | 'status-bar'
+  | 'overlay-layer'
+  | 'context-menu'
+  | 'command-palette';
+
+export interface CorePluginContribution {
+  readonly id: string;
+  readonly kind: CorePluginContributionKind;
+  readonly scope: CorePluginContributionScope;
+  readonly namespace: string;
+  readonly container: CorePluginHostContainer | null;
+  readonly zone: Zone | null;
+}
+
+export interface CorePluginPermissionSet {
+  readonly zone: Zone;
+  readonly permissions: readonly CorePluginPermission[];
+}
+
+export interface CorePluginManifest {
+  readonly id: string;
+  readonly version: string;
+  readonly hostApi: string;
+  readonly runtime: CorePluginRuntime;
+  readonly launch: { readonly program: string; readonly args: readonly string[] } | null;
+  readonly targetApp: { readonly appId: string; readonly api: string } | null;
+  readonly contributions: readonly CorePluginContribution[];
+  readonly permissionSets: readonly CorePluginPermissionSet[];
+}
+
+export interface CorePluginSummary {
   readonly id: string;
   readonly version: string;
   readonly active: boolean;

@@ -33,6 +33,10 @@ export function NativeWorkbenchApp() {
           app.workbench.context.apply({ kind: 'activate-app', appId: layout.activeApp });
           app.workbench.focus.focus({ kind: 'part', part: 'workspace-area' });
           setState({ app, layout });
+          void app.workbench.plugins.queryCoreExtensions().catch((reason: unknown) => {
+            // Plugin inventory is recoverable and must not prevent the shell from starting.
+            console.error('Velvet could not query native plugin inventory', reason);
+          });
         }
       })
       .catch((reason: unknown) => {

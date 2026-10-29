@@ -10,8 +10,8 @@ use velvet_plugin_host::{
 };
 use velvet_preview_core::{GenericFallbackProvider, PreviewContext, PreviewResolver};
 use velvet_workbench_protocol::{
-    Command, CoreError, CoreTransport, Query, Request, RequestEnvelope, RequestId, Response,
-    ResponseEnvelope, PROTOCOL_VERSION,
+    Command, CoreError, CoreTransport, PluginDisableReason, Query, Request, RequestEnvelope,
+    RequestId, Response, ResponseEnvelope, PROTOCOL_VERSION,
 };
 
 pub struct ApplicationCore {
@@ -102,6 +102,32 @@ impl ApplicationCore {
                 expected_revision,
                 command,
             }) => self.apply_layout(expected_revision, command),
+            Request::Command(Command::RegisterPlugin { manifest }) => {
+                let id = manifest.id.clone();
+                self.register_plugin(manifest).map_err(plugin_error)?;
+                self.extension_response(&id)
+            }
+            Request::Command(Command::ActivatePlugin { extension_id }) => {
+                self.activate_plugin(&extension_id).map_err(plugin_error)?;
+                self.extension_response(&extension_id)
+            }
+            Request::Command(Command::DisablePlugin {
+                extension_id,
+                reason,
+            }) => {
+                self.disable_plugin(&extension_id, disable_reason(reason))
+                    .map_err(plugin_error)?;
+                self.extension_response(&extension_id)
+            }
+            Request::Command(Command::CheckPluginHealth { extension_id }) => {
+                self.check_plugin_health(&extension_id)
+                    .map_err(plugin_error)?;
+                self.extension_response(&extension_id)
+            }
+            Request::Command(Command::RecoverPlugin { extension_id }) => {
+                self.recover_plugin(&extension_id).map_err(plugin_error)?;
+                self.extension_response(&extension_id)
+            }
             Request::Query(Query::Layout) => Ok(Response::Layout(self.layout.snapshot())),
             Request::Query(Query::Extensions) => Ok(Response::Extensions(self.plugins.discover())),
             Request::Query(Query::ResolvePreview {
@@ -122,6 +148,15 @@ impl ApplicationCore {
                 .map(Response::Preview)
                 .map_err(|error| CoreError::InvalidCommand(format!("{error:?}"))),
         }
+    }
+
+    fn extension_response(&self, id: &ExtensionId) -> Result<Response, CoreError> {
+        self.plugins
+            .discover()
+            .into_iter()
+            .find(|summary| &summary.id == id)
+            .map(Response::Extension)
+            .ok_or_else(|| CoreError::Plugin(format!("extension disappeared: {}", id.0)))
     }
 
     pub fn dispatch_envelope(
@@ -169,6 +204,18 @@ impl ApplicationCore {
         self.layout = next_layout;
         Ok(Response::Layout(state))
     }
+}
+
+fn disable_reason(reason: PluginDisableReason) -> DisableReason {
+    match reason {
+        PluginDisableReason::User => DisableReason::User,
+        PluginDisableReason::Crash => DisableReason::Crash,
+        PluginDisableReason::Incompatible => DisableReason::Incompatible,
+    }
+}
+
+fn plugin_error(error: PluginError) -> CoreError {
+    CoreError::Plugin(format!("{error:?}"))
 }
 
 #[derive(Clone)]
@@ -450,6 +497,54 @@ mod tests {
             }
             other => panic!("expected extension response, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn plugin_lifecycle_commands_return_authoritative_extension_state() {
+        let mut core = ApplicationCore::default();
+        let manifest = ExtensionManifest {
+            id: ExtensionId("command.reader".into()),
+            version: "1.0.0".into(),
+            host_api: VersionRange("^1".into()),
+            runtime: RuntimeKind::BuiltIn,
+            launch: None,
+            target_app: None,
+            contributions: vec![],
+            permission_sets: vec![],
+        };
+        let id = manifest.id.clone();
+
+        let registered = core
+            .dispatch(Request::Command(Command::RegisterPlugin { manifest }))
+            .expect("register command should succeed");
+        assert!(matches!(
+            registered,
+            Response::Extension(summary)
+                if summary.id == id && summary.state == velvet_plugin_api::ExtensionState::Registered
+        ));
+
+        let activated = core
+            .dispatch(Request::Command(Command::ActivatePlugin {
+                extension_id: id.clone(),
+            }))
+            .expect("activate command should succeed");
+        assert!(matches!(
+            activated,
+            Response::Extension(summary)
+                if summary.id == id && summary.state == velvet_plugin_api::ExtensionState::Active
+        ));
+
+        let disabled = core
+            .dispatch(Request::Command(Command::DisablePlugin {
+                extension_id: id.clone(),
+                reason: PluginDisableReason::User,
+            }))
+            .expect("disable command should succeed");
+        assert!(matches!(
+            disabled,
+            Response::Extension(summary)
+                if summary.id == id && summary.state == velvet_plugin_api::ExtensionState::Disabled
+        ));
     }
 
     #[test]

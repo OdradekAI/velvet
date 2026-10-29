@@ -1,5 +1,15 @@
 /** Compatibility export for workbench modules and future SDK consumers. */
 export type {
+  CorePluginContribution,
+  CorePluginContributionKind,
+  CorePluginContributionScope,
+  CorePluginDisableReason,
+  CorePluginHostContainer,
+  CorePluginManifest,
+  CorePluginPermission,
+  CorePluginPermissionSet,
+  CorePluginRuntime,
+  CorePluginSummary,
   CoreEvent,
   CoreError,
   CoreRequest,

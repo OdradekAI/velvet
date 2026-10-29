@@ -1,6 +1,6 @@
 use velvet_asset_core::AssetId;
 use velvet_layout_model::{LayoutCommand, LayoutState};
-use velvet_plugin_api::ExtensionSummary;
+use velvet_plugin_api::{ExtensionId, ExtensionManifest, ExtensionSummary};
 use velvet_preview_core::{PreviewIntent, PreviewSurface, ResolvedPreview};
 
 pub const PROTOCOL_VERSION: u16 = 1;
@@ -15,6 +15,29 @@ pub enum Command {
         expected_revision: Option<u64>,
         command: LayoutCommand,
     },
+    RegisterPlugin {
+        manifest: ExtensionManifest,
+    },
+    ActivatePlugin {
+        extension_id: ExtensionId,
+    },
+    DisablePlugin {
+        extension_id: ExtensionId,
+        reason: PluginDisableReason,
+    },
+    CheckPluginHealth {
+        extension_id: ExtensionId,
+    },
+    RecoverPlugin {
+        extension_id: ExtensionId,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PluginDisableReason {
+    User,
+    Crash,
+    Incompatible,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -39,6 +62,7 @@ pub enum Request {
 pub enum Response {
     Layout(LayoutState),
     Extensions(Vec<ExtensionSummary>),
+    Extension(ExtensionSummary),
     Preview(ResolvedPreview),
     Accepted,
 }
