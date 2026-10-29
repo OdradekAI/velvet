@@ -33,10 +33,26 @@ export function NativeWorkbenchApp() {
           app.workbench.context.apply({ kind: 'activate-app', appId: layout.activeApp });
           app.workbench.focus.focus({ kind: 'part', part: 'workspace-area' });
           setState({ app, layout });
-          void app.workbench.plugins.queryCoreExtensions().catch((reason: unknown) => {
-            // Plugin inventory is recoverable and must not prevent the shell from starting.
-            console.error('Velvet could not query native plugin inventory', reason);
-          });
+          void app.workbench.plugins
+            .queryCoreExtensions()
+            .then(async (extensions) => {
+              const activeExtensions = extensions.filter((extension) => extension.state === 'active');
+              const results = await Promise.allSettled(
+                activeExtensions.map(async (extension) => {
+                  const projection = await app.workbench.plugins.queryCoreProjection(extension.id);
+                  await app.workbench.plugins.applyCoreProjection(projection);
+                }),
+              );
+              for (const result of results) {
+                if (result.status === 'rejected') {
+                  console.error('Velvet could not project a native plugin contribution', result.reason);
+                }
+              }
+            })
+            .catch((reason: unknown) => {
+              // Plugin inventory is recoverable and must not prevent the shell from starting.
+              console.error('Velvet could not query native plugin inventory', reason);
+            });
         }
       })
       .catch((reason: unknown) => {

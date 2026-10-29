@@ -49,6 +49,13 @@ explicit renderer actions. A plugin inventory query is best-effort during
 native startup so a runtime or transport failure cannot block the Workbench
 shell.
 
+Active extension projections can also be queried with their declared
+ViewContainer/View metadata and isolated UI Bridge descriptors. The desktop
+adapter validates the returned namespace and reuses `ViewRegistry` and
+`PluginUiRegistry` for registration and cleanup. The projection is filtered by
+the Rust lifecycle state, so a disabled or failed extension cannot leave active
+views or surface sessions behind; recovery reuses the same projection path.
+
 The UI SDK exposes host concepts rather than Vue or React component types:
 
 ```text

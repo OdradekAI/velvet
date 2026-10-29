@@ -1,5 +1,7 @@
 import {
   PROTOCOL_VERSION,
+  type CorePluginContribution,
+  type CorePluginProjection,
   type CorePluginDisableReason,
   type CorePluginManifest,
   type CorePluginSummary,
@@ -155,6 +157,7 @@ export class PluginLifecycleError extends Error {
 export class PluginClient {
   private readonly records = new Map<string, PluginRecord>();
   private readonly coreSummaries = new Map<string, CorePluginSummary>();
+  private readonly coreProjections = new Map<string, CorePluginProjection>();
   private readonly commandHandlers = new Map<string, PluginCommandHandler>();
   public readonly ui: PluginUiRegistry;
 
@@ -479,49 +482,122 @@ export class PluginClient {
     return this.coreSummaries.get(extensionId);
   }
 
+  public getCoreProjection(extensionId: string): CorePluginProjection | undefined {
+    return this.coreProjections.get(extensionId);
+  }
+
+  /** Reads the Rust-declared contributions for one extension without mutating UI registries. */
+  public async queryCoreProjection(extensionId: string): Promise<CorePluginProjection> {
+    const response = await this.core.request({
+      protocolVersion: PROTOCOL_VERSION,
+      kind: 'query-plugin-projection',
+      extensionId,
+    });
+    if (response.kind !== 'plugin-projection') {
+      throw new PluginLifecycleError(
+        `Expected a plugin projection response, received ${response.kind}`,
+        extensionId,
+      );
+    }
+    this.coreProjections.set(extensionId, response.projection);
+    this.coreSummaries.set(extensionId, response.projection.summary);
+    this.notify();
+    return response.projection;
+  }
+
+  /** Projects Rust-declared views and UI surfaces through the same host registries as local plugins. */
+  public async applyCoreProjection(projection: CorePluginProjection): Promise<void> {
+    const manifest = manifestFromCoreProjection(projection);
+    const existing = this.records.get(projection.summary.id);
+    if (!existing) {
+      this.register(manifest);
+    }
+
+    this.coreProjections.set(projection.summary.id, projection);
+    this.coreSummaries.set(projection.summary.id, projection.summary);
+
+    if (projection.summary.state === 'active') {
+      if (this.records.get(projection.summary.id)?.status !== 'active') {
+        this.activate(projection.summary.id);
+      }
+      return;
+    }
+
+    const record = this.records.get(projection.summary.id);
+    if (record?.status === 'active') {
+      await this.deactivate(
+        projection.summary.id,
+        projection.summary.state === 'failed' ? 'crash' : 'user',
+      );
+    }
+    if (record && projection.summary.state === 'failed') {
+      record.status = 'failed';
+      record.error = `Rust extension state: ${projection.summary.state}`;
+      this.notify();
+    } else if (record && projection.summary.state === 'disabled') {
+      record.status = 'disabled';
+      record.error = undefined;
+      this.notify();
+    } else if (record && projection.summary.state === 'registered') {
+      record.status = 'registered';
+      record.error = undefined;
+      this.notify();
+    }
+  }
+
   /** Registers a manifest with the Rust PluginHost; local UI contributions remain explicit. */
   public async registerInCore(manifest: CorePluginManifest): Promise<CorePluginSummary> {
-    return this.requestCoreExtension({
+    const summary = await this.requestCoreExtension({
       protocolVersion: PROTOCOL_VERSION,
       kind: 'register-plugin',
       manifest,
     });
+    await this.syncCoreProjectionState(summary);
+    return summary;
   }
 
   public async activateInCore(extensionId: string): Promise<CorePluginSummary> {
-    return this.requestCoreExtension({
+    const summary = await this.requestCoreExtension({
       protocolVersion: PROTOCOL_VERSION,
       kind: 'activate-plugin',
       extensionId,
     });
+    await this.syncCoreProjectionState(summary);
+    return summary;
   }
 
   public async disableInCore(
     extensionId: string,
     reason: CorePluginDisableReason = 'user',
   ): Promise<CorePluginSummary> {
-    return this.requestCoreExtension({
+    const summary = await this.requestCoreExtension({
       protocolVersion: PROTOCOL_VERSION,
       kind: 'disable-plugin',
       extensionId,
       reason,
     });
+    await this.syncCoreProjectionState(summary);
+    return summary;
   }
 
   public async checkCoreHealth(extensionId: string): Promise<CorePluginSummary> {
-    return this.requestCoreExtension({
+    const summary = await this.requestCoreExtension({
       protocolVersion: PROTOCOL_VERSION,
       kind: 'check-plugin-health',
       extensionId,
     });
+    await this.syncCoreProjectionState(summary);
+    return summary;
   }
 
   public async recoverInCore(extensionId: string): Promise<CorePluginSummary> {
-    return this.requestCoreExtension({
+    const summary = await this.requestCoreExtension({
       protocolVersion: PROTOCOL_VERSION,
       kind: 'recover-plugin',
       extensionId,
     });
+    await this.syncCoreProjectionState(summary);
+    return summary;
   }
 
   public listVisible(activeAppId?: WorkbenchAppId): readonly ContributionDescriptor[] {
@@ -1251,6 +1327,100 @@ export class PluginClient {
     this.coreSummaries.set(response.extension.id, response.extension);
     this.notify();
     return response.extension;
+  }
+
+  private async syncCoreProjectionState(summary: CorePluginSummary): Promise<void> {
+    let projection = this.coreProjections.get(summary.id);
+    if (summary.state === 'disabled' || summary.state === 'failed') {
+      if (projection) {
+        await this.applyCoreProjection({ ...projection, summary });
+      } else if (this.records.get(summary.id)?.status === 'active') {
+        await this.deactivate(summary.id, summary.state === 'failed' ? 'crash' : 'user');
+      }
+      return;
+    }
+
+    if (!projection || summary.state === 'active') {
+      projection = await this.queryCoreProjection(summary.id);
+    } else {
+      projection = { ...projection, summary };
+    }
+    await this.applyCoreProjection(projection);
+  }
+}
+
+function manifestFromCoreProjection(projection: CorePluginProjection): ExtensionManifest {
+  return {
+    id: projection.summary.id,
+    version: projection.summary.version,
+    hostApi: '1',
+    runtime: 'builtin',
+    targetApp: projection.targetApp
+      ? { appId: projection.targetApp.appId, apiRange: projection.targetApp.api }
+      : undefined,
+    contributions: projection.contributions
+      .filter(isRenderableCoreContribution)
+      .map(coreContributionToManifest),
+    permissions: {},
+  };
+}
+
+function isRenderableCoreContribution(contribution: CorePluginContribution): boolean {
+  return (
+    contribution.kind === 'view-container' ||
+    contribution.kind === 'view' ||
+    contribution.kind === 'companion-view' ||
+    contribution.kind === 'operation-view' ||
+    contribution.kind === 'dialog'
+  );
+}
+
+function coreContributionToManifest(contribution: CorePluginContribution): ManifestContribution {
+  const scope = contribution.scope.kind === 'workbench-app' ? 'workbench-app' : contribution.scope.kind;
+  const appId = contribution.scope.kind === 'workbench-app'
+    ? contribution.scope.appId
+    : undefined;
+  const ui = contribution.ui
+    ? {
+        kind: contribution.ui.kind,
+        entrypoint: contribution.ui.entrypoint,
+        bridgeVersion: contribution.ui.bridgeVersion,
+      }
+    : undefined;
+
+  return {
+    id: contribution.id,
+    scope,
+    appId,
+    kind: coreContributionKind(contribution.kind),
+    namespace: contribution.namespace,
+    container: contribution.container ?? undefined,
+    zone: contribution.zone ?? undefined,
+    title: contribution.title ?? contribution.id,
+    titleKey: contribution.titleKey ?? undefined,
+    icon: contribution.icon ?? 'extension',
+    order: contribution.order ?? undefined,
+    defaultVisible: contribution.defaultVisible ?? undefined,
+    viewContainerId: contribution.viewContainerId ?? undefined,
+    activityBar: contribution.activityBar
+      ? {
+          title: contribution.activityBar.title,
+          icon: contribution.activityBar.icon,
+          order: contribution.activityBar.order ?? undefined,
+        }
+      : undefined,
+    ui,
+  };
+}
+
+function coreContributionKind(
+  kind: CorePluginContribution['kind'],
+): ManifestContribution['kind'] {
+  switch (kind) {
+    case 'inspector':
+      return 'inspector-section';
+    default:
+      return kind;
   }
 }
 

@@ -5,8 +5,9 @@ use std::process::{Child, Command, Stdio};
 
 use velvet_layout_model::WorkbenchZone;
 use velvet_plugin_api::{
-    AppTarget, ContributionKind, ContributionScope, ExtensionId, ExtensionManifest, ExtensionState,
-    ExtensionSummary, HostContainer, Permission, RuntimeKind, VersionRange,
+    AppTarget, ContributionKind, ContributionScope, ExtensionId, ExtensionManifest,
+    ExtensionProjection, ExtensionState, ExtensionSummary, HostContainer, Permission, RuntimeKind,
+    VersionRange,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -304,6 +305,7 @@ impl JsonManifestDiscovery {
 pub trait PluginHost {
     fn register(&mut self, manifest: ExtensionManifest) -> Result<(), PluginError>;
     fn discover(&self) -> Vec<ExtensionSummary>;
+    fn projection(&self, id: &ExtensionId) -> Result<ExtensionProjection, PluginError>;
     fn activate(&mut self, id: &ExtensionId) -> Result<(), PluginError>;
     fn disable(&mut self, id: &ExtensionId, reason: DisableReason) -> Result<(), PluginError>;
     fn active_contributions(
@@ -527,6 +529,23 @@ impl PluginHost for InMemoryPluginHost {
             .collect()
     }
 
+    fn projection(&self, id: &ExtensionId) -> Result<ExtensionProjection, PluginError> {
+        let Some(manifest) = self.manifests.get(id) else {
+            return Err(PluginError::NotFound(id.clone()));
+        };
+
+        let summary = self
+            .discover()
+            .into_iter()
+            .find(|candidate| &candidate.id == id)
+            .ok_or_else(|| PluginError::NotFound(id.clone()))?;
+        Ok(ExtensionProjection {
+            summary,
+            target_app: manifest.target_app.clone(),
+            contributions: manifest.contributions.clone(),
+        })
+    }
+
     fn activate(&mut self, id: &ExtensionId) -> Result<(), PluginError> {
         let Some(manifest) = self.manifests.get(id).cloned() else {
             return Err(PluginError::NotFound(id.clone()));
@@ -725,7 +744,8 @@ mod tests {
     use super::*;
     use velvet_layout_model::WorkbenchZone;
     use velvet_plugin_api::{
-        ContributionDescriptor, Permission, RuntimeKind, RuntimeLaunchSpec, ZonePermissionSet,
+        ContributionDescriptor, Permission, RuntimeKind, RuntimeLaunchSpec, UiSurfaceDescriptor,
+        UiSurfaceKind, ZonePermissionSet,
     };
 
     enum StartPlan {
@@ -808,6 +828,14 @@ mod tests {
                 namespace: "workbench".into(),
                 container: Some(HostContainer::PrimarySidebar),
                 zone,
+                title: Some("Example view".into()),
+                title_key: None,
+                icon: Some("document".into()),
+                order: None,
+                default_visible: Some(true),
+                view_container_id: None,
+                activity_bar: None,
+                ui: None,
             }],
             permission_sets: vec![],
         }
@@ -845,6 +873,43 @@ mod tests {
     }
 
     #[test]
+    fn projections_preserve_declared_ui_metadata_and_namespace() {
+        let mut host = InMemoryPluginHost::default();
+        let mut manifest = view_manifest(Some(WorkbenchZone::Navigation));
+        manifest.contributions[0].ui = Some(UiSurfaceDescriptor {
+            kind: UiSurfaceKind::View,
+            entrypoint: "wasm://example/view".into(),
+            bridge_version: "1".into(),
+        });
+        host.register(manifest).unwrap();
+        host.activate(&ExtensionId("example".into())).unwrap();
+
+        let projection = host
+            .projection(&ExtensionId("example".into()))
+            .expect("active plugin projection should be available");
+        assert_eq!(projection.summary.state, ExtensionState::Active);
+        assert_eq!(projection.contributions[0].namespace, "workbench");
+        assert_eq!(
+            projection.contributions[0]
+                .ui
+                .as_ref()
+                .expect("view UI metadata should be preserved")
+                .entrypoint,
+            "wasm://example/view"
+        );
+
+        host.disable(&ExtensionId("example".into()), DisableReason::User)
+            .unwrap();
+        assert_eq!(
+            host.projection(&ExtensionId("example".into()))
+                .unwrap()
+                .summary
+                .state,
+            ExtensionState::Disabled
+        );
+    }
+
+    #[test]
     fn app_namespace_requires_a_matching_installed_target() {
         let manifest = ExtensionManifest {
             id: ExtensionId("feed-tools".into()),
@@ -865,6 +930,14 @@ mod tests {
                 namespace: "workbench.app.feed-workbench".into(),
                 container: Some(HostContainer::ContextMenu),
                 zone: Some(WorkbenchZone::Navigation),
+                title: Some("Open feed tool".into()),
+                title_key: None,
+                icon: Some("command".into()),
+                order: None,
+                default_visible: Some(true),
+                view_container_id: None,
+                activity_bar: None,
+                ui: None,
             }],
             permission_sets: vec![],
         };

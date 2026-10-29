@@ -101,6 +101,11 @@ export type CoreRequest =
   | { readonly protocolVersion: ProtocolVersion; readonly kind: 'query-extensions' }
   | {
       readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'query-plugin-projection';
+      readonly extensionId: string;
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
       readonly kind: 'register-plugin';
       readonly manifest: CorePluginManifest;
     }
@@ -145,6 +150,7 @@ export type CoreResponse =
   | { readonly kind: 'preview'; readonly preview: unknown }
   | { readonly kind: 'extensions'; readonly extensions: readonly CorePluginSummary[] }
   | { readonly kind: 'extension'; readonly extension: CorePluginSummary }
+  | { readonly kind: 'plugin-projection'; readonly projection: CorePluginProjection }
   | { readonly kind: 'accepted' };
 
 export type PluginState = 'registered' | 'starting' | 'active' | 'disabled' | 'failed';
@@ -199,6 +205,12 @@ export type CorePluginHostContainer =
   | 'overlay-layer'
   | 'context-menu'
   | 'command-palette';
+export type CorePluginUiSurfaceKind =
+  | 'app-surface'
+  | 'view'
+  | 'dialog'
+  | 'popover'
+  | 'inspector';
 
 export interface CorePluginContribution {
   readonly id: string;
@@ -207,6 +219,22 @@ export interface CorePluginContribution {
   readonly namespace: string;
   readonly container: CorePluginHostContainer | null;
   readonly zone: Zone | null;
+  readonly title: string | null;
+  readonly titleKey: string | null;
+  readonly icon: string | null;
+  readonly order: number | null;
+  readonly defaultVisible: boolean | null;
+  readonly viewContainerId: string | null;
+  readonly activityBar: {
+    readonly title: string;
+    readonly icon: string;
+    readonly order: number | null;
+  } | null;
+  readonly ui: {
+    readonly kind: CorePluginUiSurfaceKind;
+    readonly entrypoint: string;
+    readonly bridgeVersion: string;
+  } | null;
 }
 
 export interface CorePluginPermissionSet {
@@ -230,6 +258,12 @@ export interface CorePluginSummary {
   readonly version: string;
   readonly active: boolean;
   readonly state: PluginState;
+}
+
+export interface CorePluginProjection {
+  readonly summary: CorePluginSummary;
+  readonly targetApp: { readonly appId: string; readonly api: string } | null;
+  readonly contributions: readonly CorePluginContribution[];
 }
 
 export interface CoreError {

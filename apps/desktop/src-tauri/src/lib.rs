@@ -95,6 +95,12 @@ pub enum WireRequest {
         #[serde(rename = "protocolVersion")]
         protocol_version: u16,
     },
+    QueryPluginProjection {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        #[serde(rename = "extensionId")]
+        extension_id: String,
+    },
     RegisterPlugin {
         #[serde(rename = "protocolVersion")]
         protocol_version: u16,
@@ -154,6 +160,17 @@ impl WireRequest {
             Self::QueryExtensions { protocol_version } => {
                 validate_inner_protocol(outer_protocol_version, protocol_version)?;
                 Ok(Request::Query(velvet_workbench_protocol::Query::Extensions))
+            }
+            Self::QueryPluginProjection {
+                protocol_version,
+                extension_id,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Query(
+                    velvet_workbench_protocol::Query::PluginProjection {
+                        extension_id: ExtensionId(extension_id),
+                    },
+                ))
             }
             Self::RegisterPlugin {
                 protocol_version,
@@ -424,6 +441,9 @@ enum WireResponse {
     Extension {
         extension: WireExtensionSummary,
     },
+    PluginProjection {
+        projection: velvet_plugin_api::ExtensionProjection,
+    },
     Preview {
         preview: WireResolvedPreview,
     },
@@ -447,6 +467,7 @@ impl WireResponseEnvelope {
             Response::Extension(extension) => WireResponse::Extension {
                 extension: WireExtensionSummary::from(extension),
             },
+            Response::PluginProjection(projection) => WireResponse::PluginProjection { projection },
             Response::Preview(preview) => WireResponse::Preview {
                 preview: WireResolvedPreview::from(preview),
             },
@@ -1013,6 +1034,79 @@ mod tests {
                 reason: PluginDisableReason::User,
             }) if extension_id.0 == "sample.reader"
         ));
+    }
+
+    #[test]
+    fn wire_plugin_projection_query_and_response_preserve_ui_metadata() {
+        let envelope: WireRequestEnvelope = serde_json::from_str(
+            r#"{
+                "protocolVersion": 1,
+                "requestId": 16,
+                "request": {
+                    "kind": "query-plugin-projection",
+                    "protocolVersion": 1,
+                    "extensionId": "sample.reader"
+                }
+            }"#,
+        )
+        .expect("the plugin projection query should deserialize");
+
+        assert!(matches!(
+            envelope
+                .request
+                .into_core(1)
+                .expect("the plugin projection query should map"),
+            Request::Query(velvet_workbench_protocol::Query::PluginProjection {
+                extension_id
+            }) if extension_id.0 == "sample.reader"
+        ));
+
+        let response = WireResponseEnvelope::from_core(
+            velvet_workbench_protocol::ResponseEnvelope {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: RequestId(16),
+                response: Response::PluginProjection(velvet_plugin_api::ExtensionProjection {
+                    summary: velvet_plugin_api::ExtensionSummary {
+                        id: velvet_plugin_api::ExtensionId("sample.reader".into()),
+                        version: "1.0.0".into(),
+                        active: true,
+                        state: velvet_plugin_api::ExtensionState::Active,
+                    },
+                    target_app: None,
+                    contributions: vec![velvet_plugin_api::ContributionDescriptor {
+                        id: "sample.reader.view".into(),
+                        kind: velvet_plugin_api::ContributionKind::View,
+                        scope: velvet_plugin_api::ContributionScope::Workbench,
+                        namespace: "workbench".into(),
+                        container: Some(velvet_plugin_api::HostContainer::PrimarySidebar),
+                        zone: Some(velvet_layout_model::WorkbenchZone::Navigation),
+                        title: Some("Reader".into()),
+                        title_key: None,
+                        icon: Some("book".into()),
+                        order: Some(1),
+                        default_visible: Some(true),
+                        view_container_id: None,
+                        activity_bar: None,
+                        ui: Some(velvet_plugin_api::UiSurfaceDescriptor {
+                            kind: velvet_plugin_api::UiSurfaceKind::View,
+                            entrypoint: "wasm://sample/reader".into(),
+                            bridge_version: "1".into(),
+                        }),
+                    }],
+                }),
+            },
+        );
+        let value = serde_json::to_value(response).expect("plugin projection should serialize");
+
+        assert_eq!(value["response"]["kind"], "plugin-projection");
+        assert_eq!(
+            value["response"]["projection"]["contributions"][0]["ui"]["entrypoint"],
+            "wasm://sample/reader"
+        );
+        assert_eq!(
+            value["response"]["projection"]["contributions"][0]["namespace"],
+            "workbench"
+        );
     }
 
     #[test]

@@ -1,6 +1,6 @@
 use velvet_asset_core::AssetId;
 use velvet_layout_model::{LayoutCommand, LayoutState};
-use velvet_plugin_api::{ExtensionId, ExtensionManifest, ExtensionSummary};
+use velvet_plugin_api::{ExtensionId, ExtensionManifest, ExtensionProjection, ExtensionSummary};
 use velvet_preview_core::{PreviewIntent, PreviewSurface, ResolvedPreview};
 
 pub const PROTOCOL_VERSION: u16 = 1;
@@ -44,6 +44,9 @@ pub enum PluginDisableReason {
 pub enum Query {
     Layout,
     Extensions,
+    PluginProjection {
+        extension_id: ExtensionId,
+    },
     ResolvePreview {
         asset_id: AssetId,
         content_kind: String,
@@ -63,6 +66,7 @@ pub enum Response {
     Layout(LayoutState),
     Extensions(Vec<ExtensionSummary>),
     Extension(ExtensionSummary),
+    PluginProjection(ExtensionProjection),
     Preview(ResolvedPreview),
     Accepted,
 }

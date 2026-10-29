@@ -130,6 +130,11 @@ impl ApplicationCore {
             }
             Request::Query(Query::Layout) => Ok(Response::Layout(self.layout.snapshot())),
             Request::Query(Query::Extensions) => Ok(Response::Extensions(self.plugins.discover())),
+            Request::Query(Query::PluginProjection { extension_id }) => self
+                .plugins
+                .projection(&extension_id)
+                .map(Response::PluginProjection)
+                .map_err(plugin_error),
             Request::Query(Query::ResolvePreview {
                 asset_id,
                 content_kind,
@@ -248,9 +253,13 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
-    use velvet_layout_model::{LayoutCommand, WorkbenchPart};
+    use velvet_layout_model::{LayoutCommand, WorkbenchPart, WorkbenchZone};
     use velvet_persistence::JsonFileLayoutStateStore;
-    use velvet_plugin_api::{ExtensionId, ExtensionManifest, RuntimeKind, VersionRange};
+    use velvet_plugin_api::{
+        ContributionDescriptor, ContributionKind, ContributionScope, ExtensionId,
+        ExtensionManifest, HostContainer, RuntimeKind, UiSurfaceDescriptor, UiSurfaceKind,
+        VersionRange,
+    };
 
     static NEXT_TEST_FILE: AtomicU64 = AtomicU64::new(0);
 
@@ -544,6 +553,63 @@ mod tests {
             disabled,
             Response::Extension(summary)
                 if summary.id == id && summary.state == velvet_plugin_api::ExtensionState::Disabled
+        ));
+    }
+
+    #[test]
+    fn plugin_projection_query_returns_active_view_and_ui_bridge_metadata() {
+        let mut core = ApplicationCore::default();
+        let manifest = ExtensionManifest {
+            id: ExtensionId("projection.reader".into()),
+            version: "1.0.0".into(),
+            host_api: VersionRange("^1".into()),
+            runtime: RuntimeKind::BuiltIn,
+            launch: None,
+            target_app: None,
+            contributions: vec![ContributionDescriptor {
+                id: "reader.view".into(),
+                kind: ContributionKind::View,
+                scope: ContributionScope::Workbench,
+                namespace: "workbench".into(),
+                container: Some(HostContainer::PrimarySidebar),
+                zone: Some(WorkbenchZone::Navigation),
+                title: Some("Reader".into()),
+                title_key: None,
+                icon: Some("book".into()),
+                order: Some(2),
+                default_visible: Some(true),
+                view_container_id: None,
+                activity_bar: None,
+                ui: Some(UiSurfaceDescriptor {
+                    kind: UiSurfaceKind::View,
+                    entrypoint: "wasm://projection/reader".into(),
+                    bridge_version: "1".into(),
+                }),
+            }],
+            permission_sets: vec![],
+        };
+        let id = manifest.id.clone();
+
+        core.dispatch(Request::Command(Command::RegisterPlugin { manifest }))
+            .expect("projection plugin should register");
+        core.dispatch(Request::Command(Command::ActivatePlugin {
+            extension_id: id.clone(),
+        }))
+        .expect("projection plugin should activate");
+
+        let response = core
+            .dispatch(Request::Query(Query::PluginProjection { extension_id: id }))
+            .expect("plugin projection query should succeed");
+        assert!(matches!(
+            response,
+            Response::PluginProjection(projection)
+                if projection.summary.state == velvet_plugin_api::ExtensionState::Active
+                    && projection.contributions[0].namespace == "workbench"
+                    && projection.contributions[0]
+                        .ui
+                        .as_ref()
+                        .expect("projection should include UI metadata")
+                        .entrypoint == "wasm://projection/reader"
         ));
     }
 

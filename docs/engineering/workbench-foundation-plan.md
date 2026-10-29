@@ -116,6 +116,12 @@ disable, health-check and recovery commands. `PluginClient` keeps the
 authoritative Rust extension summary in a separate runtime projection and the
 native renderer performs a best-effort inventory query during startup, leaving
 local contribution and UI-bridge registration explicit.
+Rust-discovered active contributions now have a projection query carrying
+ViewContainer/View metadata, namespaces and UI Bridge entrypoints. The native
+renderer reuses `PluginClient` to project those entries into `ViewRegistry` and
+`PluginUiRegistry`; disable/failure removes them and recovery re-registers the
+same validated projection. Invalid namespaces remain isolated at the frontend
+validation boundary.
 
 The current shell slice also renders the accepted Part constraint table: fixed
 Parts use stable dimensions, resizable Parts enforce bounded sizes in Rust, and

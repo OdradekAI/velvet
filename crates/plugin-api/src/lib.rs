@@ -88,14 +88,58 @@ pub enum ContributionKind {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum UiSurfaceKind {
+    AppSurface,
+    View,
+    Dialog,
+    Popover,
+    Inspector,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiSurfaceDescriptor {
+    pub kind: UiSurfaceKind,
+    pub entrypoint: String,
+    pub bridge_version: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivityBarDescriptor {
+    pub title: String,
+    pub icon: String,
+    pub order: Option<u32>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ContributionDescriptor {
     pub id: String,
     pub kind: ContributionKind,
     pub scope: ContributionScope,
     pub namespace: String,
+    #[serde(default)]
     pub container: Option<HostContainer>,
+    #[serde(default)]
     pub zone: Option<WorkbenchZone>,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub title_key: Option<String>,
+    #[serde(default)]
+    pub icon: Option<String>,
+    #[serde(default)]
+    pub order: Option<u32>,
+    #[serde(default)]
+    pub default_visible: Option<bool>,
+    #[serde(default)]
+    pub view_container_id: Option<String>,
+    #[serde(default)]
+    pub activity_bar: Option<ActivityBarDescriptor>,
+    #[serde(default)]
+    pub ui: Option<UiSurfaceDescriptor>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -142,4 +186,12 @@ pub struct ExtensionSummary {
     pub version: String,
     pub active: bool,
     pub state: ExtensionState,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtensionProjection {
+    pub summary: ExtensionSummary,
+    pub target_app: Option<AppTarget>,
+    pub contributions: Vec<ContributionDescriptor>,
 }
