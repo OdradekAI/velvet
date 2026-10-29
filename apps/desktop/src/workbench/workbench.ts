@@ -43,6 +43,11 @@ export class Workbench {
   public constructor(core: CoreTransport) {
     this.layout = new LayoutService(core);
     this.preview = new PreviewHost(core);
+    this.contextKeys = new ContextKeyService();
+    this.commands = new CommandRegistry(this.contextKeys);
+    this.keybindings = new KeybindingRegistry(this.commands, this.contextKeys);
+    this.menus = new MenuRegistry(this.commands, this.contextKeys);
+    this.overlays = new OverlayRegistry(this.contextKeys);
     this.plugins = new PluginClient(
       core,
       this.contributions,
@@ -50,12 +55,10 @@ export class Workbench {
       '1',
       new PluginUiRegistry(),
       this.views,
+      this.commands,
+      this.menus,
+      this.overlays,
     );
-    this.contextKeys = new ContextKeyService();
-    this.commands = new CommandRegistry(this.contextKeys);
-    this.keybindings = new KeybindingRegistry(this.commands, this.contextKeys);
-    this.menus = new MenuRegistry(this.commands, this.contextKeys);
-    this.overlays = new OverlayRegistry(this.contextKeys);
     this.pluginUi = this.plugins.ui;
     this.registerWorkbenchViews();
     this.registerBuiltInLayoutCommands();

@@ -20,6 +20,21 @@ import {
   type ViewContainerScope,
   type ViewDescriptor,
 } from '../views/view-registry.js';
+import {
+  CommandRegistry,
+  type CommandDescriptor,
+  type CommandExecutionContext,
+  type CommandScope,
+} from '../commands/command-registry.js';
+import {
+  MenuRegistry,
+  type MenuContribution,
+  type MenuLocation,
+} from '../commands/menu-registry.js';
+import {
+  OverlayRegistry,
+  type OverlayDescriptor,
+} from '../overlays/overlay-registry.js';
 
 export type PluginRuntime = 'builtin' | 'wasm' | 'sidecar';
 
@@ -62,6 +77,10 @@ interface PluginRecord {
   registeredViews: string[];
   registeredSurfaceIds: string[];
   viewSurfaceBindings: PluginViewSurfaceBinding[];
+  registeredCommands: CommandDescriptor[];
+  registeredMenus: MenuContribution[];
+  registeredOverlays: OverlayDescriptor[];
+  overlaySurfaceBindings: PluginOverlaySurfaceBinding[];
   error?: string;
 }
 
@@ -71,6 +90,20 @@ export interface PluginViewSurfaceBinding {
   readonly surfaceId: string;
   readonly surface: PluginSurfaceDescriptor;
 }
+
+export interface PluginOverlaySurfaceBinding {
+  readonly overlayId: string;
+  readonly namespace: string;
+  readonly extensionId: string;
+  readonly surfaceId: string;
+  readonly surface: PluginSurfaceDescriptor;
+}
+
+export type PluginCommandHandler = (
+  commandId: string,
+  args: unknown,
+  context: CommandExecutionContext,
+) => void | Promise<void>;
 
 export class PluginLifecycleError extends Error {
   public constructor(
@@ -85,6 +118,7 @@ export class PluginLifecycleError extends Error {
 
 export class PluginClient {
   private readonly records = new Map<string, PluginRecord>();
+  private readonly commandHandlers = new Map<string, PluginCommandHandler>();
   public readonly ui: PluginUiRegistry;
 
   public constructor(
@@ -94,6 +128,9 @@ export class PluginClient {
     private readonly hostApiVersion = '1',
     ui: PluginUiRegistry = new PluginUiRegistry(),
     private readonly viewRegistry: ViewRegistry = new ViewRegistry(),
+    private readonly commandRegistry?: CommandRegistry,
+    private readonly menuRegistry?: MenuRegistry,
+    private readonly overlayRegistry?: OverlayRegistry,
   ) {
     this.ui = ui;
   }
@@ -117,6 +154,10 @@ export class PluginClient {
       registeredViews: [],
       registeredSurfaceIds: [],
       viewSurfaceBindings: [],
+      registeredCommands: [],
+      registeredMenus: [],
+      registeredOverlays: [],
+      overlaySurfaceBindings: [],
     });
     this.notify();
   }
@@ -132,6 +173,10 @@ export class PluginClient {
     const registeredViews: string[] = [];
     const registeredSurfaceIds: string[] = [];
     const viewSurfaceBindings: PluginViewSurfaceBinding[] = [];
+    const registeredCommands: CommandDescriptor[] = [];
+    const registeredMenus: MenuContribution[] = [];
+    const registeredOverlays: OverlayDescriptor[] = [];
+    const overlaySurfaceBindings: PluginOverlaySurfaceBinding[] = [];
     try {
       const descriptors = record.manifest.contributions.map((contribution) =>
         this.toDescriptor(record.manifest, contribution),
@@ -160,6 +205,42 @@ export class PluginClient {
         registeredViews.push(view.id);
       }
 
+      for (const descriptor of descriptors.filter((candidate) => candidate.kind === 'command')) {
+        if (!this.commandRegistry) {
+          throw new PluginLifecycleError(
+            `Command registry is unavailable for ${descriptor.id}`,
+            descriptor.extensionId,
+          );
+        }
+        const command = this.toCommandDescriptor(descriptor);
+        this.commandRegistry.register(command);
+        registeredCommands.push(command);
+      }
+
+      for (const descriptor of descriptors.filter(isMenuContribution)) {
+        if (!this.menuRegistry) {
+          throw new PluginLifecycleError(
+            `Menu registry is unavailable for ${descriptor.id}`,
+            descriptor.extensionId,
+          );
+        }
+        const menu = this.toMenuContribution(descriptor);
+        this.menuRegistry.register(menu);
+        registeredMenus.push(menu);
+      }
+
+      for (const descriptor of descriptors.filter((candidate) => candidate.kind === 'dialog')) {
+        if (!this.overlayRegistry) {
+          throw new PluginLifecycleError(
+            `Overlay registry is unavailable for ${descriptor.id}`,
+            descriptor.extensionId,
+          );
+        }
+        const overlay = this.toOverlayDescriptor(descriptor);
+        this.overlayRegistry.register(overlay);
+        registeredOverlays.push(overlay);
+      }
+
       for (const descriptor of descriptors) {
         if (!descriptor.ui) {
           continue;
@@ -176,6 +257,15 @@ export class PluginClient {
             surface,
           });
         }
+        if (descriptor.kind === 'dialog' && surface.kind === 'dialog') {
+          overlaySurfaceBindings.push({
+            overlayId: descriptor.id,
+            namespace: descriptor.namespace,
+            extensionId: descriptor.extensionId,
+            surfaceId: surface.id,
+            surface,
+          });
+        }
       }
 
       record.registered = registered;
@@ -183,6 +273,10 @@ export class PluginClient {
       record.registeredViews = registeredViews;
       record.registeredSurfaceIds = registeredSurfaceIds;
       record.viewSurfaceBindings = viewSurfaceBindings;
+      record.registeredCommands = registeredCommands;
+      record.registeredMenus = registeredMenus;
+      record.registeredOverlays = registeredOverlays;
+      record.overlaySurfaceBindings = overlaySurfaceBindings;
       record.status = 'active';
       record.error = undefined;
       this.notify();
@@ -192,12 +286,19 @@ export class PluginClient {
         registeredViewContainers,
         registeredViews,
         registeredSurfaceIds,
+        registeredCommands,
+        registeredMenus,
+        registeredOverlays,
       );
       record.registered = [];
       record.registeredViewContainers = [];
       record.registeredViews = [];
       record.registeredSurfaceIds = [];
       record.viewSurfaceBindings = [];
+      record.registeredCommands = [];
+      record.registeredMenus = [];
+      record.registeredOverlays = [];
+      record.overlaySurfaceBindings = [];
       record.status = 'failed';
       record.error = cause instanceof Error ? cause.message : String(cause);
       this.notify();
@@ -214,6 +315,9 @@ export class PluginClient {
     _reason: 'user' | 'crash' | 'incompatible' = 'user',
   ): Promise<void> {
     const record = this.require(extensionId);
+    for (const overlay of [...record.registeredOverlays].reverse()) {
+      this.overlayRegistry?.unregister(overlay);
+    }
     await this.ui.disposeExtension(extensionId, _reason === 'user' ? 'unmount' : _reason);
     for (const viewId of [...record.registeredViews].reverse()) {
       this.viewRegistry.unregister(viewId);
@@ -224,11 +328,22 @@ export class PluginClient {
     for (const contribution of [...record.registered].reverse()) {
       this.contributionRegistry.unregister(contribution);
     }
+    for (const menu of [...record.registeredMenus].reverse()) {
+      this.menuRegistry?.unregister(menu);
+    }
+    for (const command of [...record.registeredCommands].reverse()) {
+      this.commandRegistry?.unregister(command);
+    }
     record.registered = [];
     record.registeredViewContainers = [];
     record.registeredViews = [];
     record.registeredSurfaceIds = [];
     record.viewSurfaceBindings = [];
+    record.registeredCommands = [];
+    record.registeredMenus = [];
+    record.registeredOverlays = [];
+    record.overlaySurfaceBindings = [];
+    this.commandHandlers.delete(extensionId);
     record.status = 'disabled';
     this.notify();
   }
@@ -244,6 +359,7 @@ export class PluginClient {
     }
     const removed = this.records.delete(extensionId);
     if (removed) {
+      this.commandHandlers.delete(extensionId);
       this.notify();
     }
     return removed;
@@ -285,9 +401,29 @@ export class PluginClient {
       .flatMap((record) => record.viewSurfaceBindings);
   }
 
+  public listOverlaySurfaceBindings(): readonly PluginOverlaySurfaceBinding[] {
+    return [...this.records.values()]
+      .filter((record) => record.status === 'active')
+      .flatMap((record) => record.overlaySurfaceBindings);
+  }
+
   public subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  /** Binds the isolated runtime handler used when a host menu invokes a plugin command. */
+  public bindCommandHandler(
+    extensionId: string,
+    handler: PluginCommandHandler,
+  ): () => void {
+    this.require(extensionId);
+    this.commandHandlers.set(extensionId, handler);
+    return () => {
+      if (this.commandHandlers.get(extensionId) === handler) {
+        this.commandHandlers.delete(extensionId);
+      }
+    };
   }
 
   /** Compatibility check retained for the original zone-only skeleton. */
@@ -322,7 +458,24 @@ export class PluginClient {
     this.validateZone(manifest);
     const appIds = new Set<WorkbenchAppId>();
     const viewContainerIds = new Set<string>();
+    const commandIds = new Set(
+      manifest.contributions
+        .filter((contribution) => contribution.kind === 'command')
+        .map((contribution) => contribution.id),
+    );
     for (const contribution of manifest.contributions) {
+      const expectedNamespace = namespaceFor(
+        contribution.scope,
+        contribution.appId,
+        manifest.id,
+      );
+      if (contribution.namespace && contribution.namespace !== expectedNamespace) {
+        throw new PluginLifecycleError(
+          `Contribution ${contribution.id} declares an invalid namespace`,
+          manifest.id,
+        );
+      }
+
       if (contribution.scope === 'workbench-app') {
         if (!contribution.appId) {
           throw new PluginLifecycleError(
@@ -341,6 +494,35 @@ export class PluginClient {
           );
         }
         viewContainerIds.add(contribution.id);
+      }
+
+      if (contribution.kind === 'command' && !contribution.title) {
+        throw new PluginLifecycleError(
+          `Command ${contribution.id} must declare title metadata`,
+          manifest.id,
+        );
+      }
+
+      if (isMenuContribution(contribution)) {
+        if (!contribution.label && !contribution.title) {
+          throw new PluginLifecycleError(
+            `Menu ${contribution.id} must declare label metadata`,
+            manifest.id,
+          );
+        }
+        if (!contribution.commandId || !commandIds.has(contribution.commandId)) {
+          throw new PluginLifecycleError(
+            `Menu ${contribution.id} must reference a command from the same extension`,
+            manifest.id,
+          );
+        }
+      }
+
+      if (contribution.kind === 'dialog' && !contribution.title) {
+        throw new PluginLifecycleError(
+          `Dialog ${contribution.id} must declare title metadata`,
+          manifest.id,
+        );
       }
 
       if (isViewContribution(contribution.kind)) {
@@ -544,6 +726,82 @@ export class PluginClient {
     };
   }
 
+  private toCommandDescriptor(descriptor: ContributionDescriptor): CommandDescriptor {
+    if (descriptor.kind !== 'command') {
+      throw new PluginLifecycleError(
+        `Contribution ${descriptor.id} is not a command`,
+        descriptor.extensionId,
+      );
+    }
+
+    return {
+      id: descriptor.id,
+      title: descriptor.title!,
+      titleKey: descriptor.titleKey,
+      scope: descriptor.scope as CommandScope,
+      namespace: descriptor.namespace,
+      appId: descriptor.appId,
+      when: descriptor.when,
+      order: descriptor.order,
+      execute: async (args, context) => {
+        const handler = this.commandHandlers.get(descriptor.extensionId);
+        if (!handler) {
+          throw new PluginLifecycleError(
+            `Plugin command handler is not bound: ${descriptor.id}`,
+            descriptor.extensionId,
+          );
+        }
+        await handler(descriptor.id, args, context);
+      },
+    };
+  }
+
+  private toMenuContribution(descriptor: ContributionDescriptor): MenuContribution {
+    if (!isMenuContribution(descriptor)) {
+      throw new PluginLifecycleError(
+        `Contribution ${descriptor.id} is not a context menu`,
+        descriptor.extensionId,
+      );
+    }
+
+    return {
+      id: descriptor.id,
+      label: descriptor.label ?? descriptor.title!,
+      labelKey: descriptor.labelKey ?? descriptor.titleKey,
+      location: 'context-menu' satisfies MenuLocation,
+      commandId: descriptor.commandId!,
+      scope: descriptor.scope as CommandScope,
+      namespace: descriptor.namespace,
+      appId: descriptor.appId,
+      group: descriptor.group,
+      order: descriptor.order,
+      when: descriptor.when,
+      anchor: descriptor.anchor,
+    };
+  }
+
+  private toOverlayDescriptor(descriptor: ContributionDescriptor): OverlayDescriptor {
+    if (descriptor.kind !== 'dialog') {
+      throw new PluginLifecycleError(
+        `Contribution ${descriptor.id} is not a dialog`,
+        descriptor.extensionId,
+      );
+    }
+
+    return {
+      id: descriptor.id,
+      title: descriptor.title!,
+      kind: 'dialog',
+      scope: descriptor.scope as OverlayDescriptor['scope'],
+      namespace: descriptor.namespace,
+      appId: descriptor.appId,
+      modal: true,
+      dismissOnEscape: true,
+      restoreFocus: true,
+      when: descriptor.when,
+    };
+  }
+
   private toSurfaceDescriptor(descriptor: ContributionDescriptor): PluginSurfaceDescriptor {
     const ui = descriptor.ui!;
     return {
@@ -601,6 +859,9 @@ export class PluginClient {
     registeredViewContainers: readonly string[],
     registeredViews: readonly string[],
     registeredSurfaceIds: readonly string[],
+    registeredCommands: readonly CommandDescriptor[],
+    registeredMenus: readonly MenuContribution[],
+    registeredOverlays: readonly OverlayDescriptor[],
   ): void {
     for (const surfaceId of [...registeredSurfaceIds].reverse()) {
       this.ui.unregister(registered[0]?.extensionId ?? '', surfaceId);
@@ -610,6 +871,15 @@ export class PluginClient {
     }
     for (const containerId of [...registeredViewContainers].reverse()) {
       this.viewRegistry.unregisterContainer(containerId);
+    }
+    for (const overlay of [...registeredOverlays].reverse()) {
+      this.overlayRegistry?.unregister(overlay);
+    }
+    for (const menu of [...registeredMenus].reverse()) {
+      this.menuRegistry?.unregister(menu);
+    }
+    for (const command of [...registeredCommands].reverse()) {
+      this.commandRegistry?.unregister(command);
     }
     for (const contribution of [...registered].reverse()) {
       this.contributionRegistry.unregister(contribution);
@@ -652,6 +922,12 @@ function isViewContribution(
   kind: ContributionDescriptor['kind'],
 ): boolean {
   return kind === 'view' || kind === 'companion-view' || kind === 'operation-view';
+}
+
+function isMenuContribution(
+  contribution: Pick<ContributionDescriptor, 'kind'>,
+): boolean {
+  return contribution.kind === 'context-menu' || contribution.kind === 'app-context-menu';
 }
 
 function expectedSurfaceKind(

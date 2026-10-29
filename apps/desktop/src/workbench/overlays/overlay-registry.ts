@@ -36,12 +36,14 @@ export interface OverlayInvocation {
 export interface OverlayInstance {
   readonly instanceId: string;
   readonly descriptorId: string;
+  readonly namespace: string;
   readonly focusToken?: string;
 }
 
 export class OverlayRegistry {
   private readonly descriptors = new Map<string, OverlayDescriptor>();
   private readonly instances: OverlayInstance[] = [];
+  private readonly listeners = new Set<() => void>();
   private sequence = 0;
 
   public constructor(private readonly contextKeys: ContextKeyService) {}
@@ -54,6 +56,29 @@ export class OverlayRegistry {
     }
 
     this.descriptors.set(key, descriptor);
+    this.notify();
+  }
+
+  public get(
+    namespace: string,
+    descriptorId: string,
+  ): OverlayDescriptor | undefined {
+    return this.descriptors.get(keyFor(namespace, descriptorId));
+  }
+
+  public unregister(descriptor: Pick<OverlayDescriptor, 'namespace' | 'id'>): boolean {
+    const key = keyFor(descriptor.namespace, descriptor.id);
+    const removed = this.descriptors.delete(key);
+    for (let index = this.instances.length - 1; index >= 0; index -= 1) {
+      const instance = this.instances[index];
+      if (instance.namespace === descriptor.namespace && instance.descriptorId === descriptor.id) {
+        this.instances.splice(index, 1);
+      }
+    }
+    if (removed) {
+      this.notify();
+    }
+    return removed;
   }
 
   public open(descriptorId: string, invocation: OverlayInvocation = {}): OverlayInstance {
@@ -71,9 +96,11 @@ export class OverlayRegistry {
     const instance: OverlayInstance = {
       instanceId: `${descriptorId}:${++this.sequence}`,
       descriptorId,
+      namespace: descriptor.namespace,
       focusToken: invocation.focusToken,
     };
     this.instances.push(instance);
+    this.notify();
     return instance;
   }
 
@@ -83,15 +110,26 @@ export class OverlayRegistry {
       return undefined;
     }
 
-    return this.instances.splice(index, 1)[0];
+    const instance = this.instances.splice(index, 1)[0];
+    this.notify();
+    return instance;
   }
 
   public closeTop(): OverlayInstance | undefined {
-    return this.instances.pop();
+    const instance = this.instances.pop();
+    if (instance) {
+      this.notify();
+    }
+    return instance;
   }
 
   public active(): readonly OverlayInstance[] {
     return [...this.instances];
+  }
+
+  public subscribe(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
   }
 
   private validate(descriptor: OverlayDescriptor): void {
@@ -119,6 +157,16 @@ export class OverlayRegistry {
     }
 
     return this.descriptors.get(keyFor('workbench', descriptorId));
+  }
+
+  private notify(): void {
+    for (const listener of this.listeners) {
+      try {
+        listener();
+      } catch {
+        // One overlay projection must not prevent other host projections from updating.
+      }
+    }
   }
 }
 

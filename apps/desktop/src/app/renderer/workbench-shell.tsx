@@ -14,6 +14,9 @@ import type {
 import { PARTS } from '../../workbench/parts/part-registry.js';
 import type { WorkbenchAppDescriptor } from '../../workbench/apps/workbench-app.js';
 import { focusTargetId, type FocusService } from '../../workbench/focus/focus-service.js';
+import { CommandRegistry } from '../../workbench/commands/command-registry.js';
+import { ContextKeyService } from '../../workbench/commands/context-key-service.js';
+import { MenuRegistry } from '../../workbench/commands/menu-registry.js';
 import { ViewRegistry } from '../../workbench/views/view-registry.js';
 import { VelvetContextMenu, VelvetPanel } from '../ui/velvet-ui.js';
 import { useFocusDomAdapter } from './focus-dom-adapter.js';
@@ -27,6 +30,9 @@ export interface WorkbenchShellProps {
   readonly onActivateApp: (appId: WorkbenchAppId) => void;
   readonly onLayoutCommand?: (command: LayoutCommand) => void;
   readonly focusService?: FocusService;
+  readonly commandRegistry?: CommandRegistry;
+  readonly contextKeys?: ContextKeyService;
+  readonly menuRegistry?: MenuRegistry;
   readonly viewRegistry?: ViewRegistry;
   readonly viewRenderers?: ViewRendererRegistry;
   readonly children?: ReactNode;
@@ -213,6 +219,9 @@ export function WorkbenchShell({
   onActivateApp,
   onLayoutCommand,
   focusService,
+  commandRegistry,
+  contextKeys,
+  menuRegistry,
   viewRegistry,
   viewRenderers,
   children,
@@ -226,6 +235,12 @@ export function WorkbenchShell({
     }
     return viewRegistry.subscribe(() => rerender((value) => value + 1));
   }, [viewRegistry]);
+  useEffect(() => {
+    if (!menuRegistry) {
+      return undefined;
+    }
+    return menuRegistry.subscribe(() => rerender((value) => value + 1));
+  }, [menuRegistry]);
 
   const activeApp = apps.find(
     (workspace) => workspace.id === layout.activeApp,
@@ -296,6 +311,26 @@ export function WorkbenchShell({
     }
     focusService?.focus({ kind: 'part', part: 'primary-sidebar' });
   }
+
+  const contextMenuActions = menuRegistry
+    ?.list('context-menu', {
+      activeAppId: layout.activeApp,
+      anchor: 'background',
+      keys: contextKeys?.snapshot(),
+    })
+    .map((menu) => ({
+      id: menu.id,
+      label: menu.label,
+      onSelect: () => {
+        if (!commandRegistry) {
+          return;
+        }
+        void commandRegistry.execute(menu.commandId, undefined, {
+          activeAppId: layout.activeApp,
+          keys: contextKeys?.snapshot() ?? {},
+        }).catch(() => undefined);
+      },
+    })) ?? [];
   const layoutActions = [
     {
       id: 'toggle-title-bar',
@@ -479,6 +514,7 @@ export function WorkbenchShell({
                 label: 'Inspect asset',
                 onSelect: () => undefined,
               },
+              ...contextMenuActions,
               ...layoutActions,
             ]}
           >

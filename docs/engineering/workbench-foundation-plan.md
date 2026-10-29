@@ -59,6 +59,10 @@ active WorkbenchApp. Selecting one reveals its persisted container and the
 Primary Sidebar, moves focus to that Part and uses roving keyboard navigation;
 selection itself remains transient so restart recovery stays owned by the Rust
 layout snapshot.
+Context-menu and dialog contributions now use the host `MenuRegistry` and
+`OverlayRegistry`; dialog surfaces are mounted through the isolated UI Bridge
+only while an overlay is open, command handlers bind through the plugin
+runtime seam, and namespace/lifecycle cleanup is tested.
 
 The current shell slice also renders the accepted Part constraint table: fixed
 Parts use stable dimensions, resizable Parts enforce bounded sizes in Rust, and

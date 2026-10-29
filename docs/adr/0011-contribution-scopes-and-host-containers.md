@@ -79,6 +79,16 @@ extension id, while `viewContainerId` remains a local manifest reference. This
 keeps persisted layout keys stable without allowing one extension to target
 another extension's container.
 
+`context-menu` and `app-context-menu` contributions require a command from the
+same extension and are registered in `MenuRegistry` under the derived
+namespace. The isolated runtime binds the extension's command handler after
+activation; until then the menu remains registered but invocation fails with a
+typed lifecycle error. `dialog` contributions are registered in `OverlayRegistry` with
+host-owned modal, escape and focus-restoration behavior. When a dialog declares
+an isolated UI surface, the corresponding `PluginSurfaceSession` is mounted
+only for an open overlay. Deactivation closes the overlay and disposes its
+session before removing the menu, command and contribution descriptors.
+
 Context menus are host-owned composition points. A contribution declares its
 target context (`asset`, `feed-item`, `collection`, `selection`, `view` or
 `background`), label, ordering group, enablement predicate and command. The

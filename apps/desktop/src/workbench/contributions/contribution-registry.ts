@@ -96,6 +96,8 @@ export interface ContributionDescriptor {
   /** Display metadata for ViewContainer/View contributions. */
   readonly title?: string;
   readonly titleKey?: string;
+  readonly label?: string;
+  readonly labelKey?: string;
   readonly icon?: string;
   readonly defaultVisible?: boolean;
   readonly enablement?: string;
@@ -104,6 +106,9 @@ export interface ContributionDescriptor {
   /** Local contribution id of the ViewContainer owned by this extension. */
   readonly viewContainerId?: string;
   readonly activityBar?: ContributionActivityBarEntry;
+  readonly commandId?: string;
+  readonly group?: string;
+  readonly when?: string;
   /** Optional isolated UI surface bound to this contribution. */
   readonly ui?: PluginUiContribution;
 }

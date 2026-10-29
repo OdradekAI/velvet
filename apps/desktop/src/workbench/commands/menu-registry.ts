@@ -36,6 +36,7 @@ export interface MenuContext {
 
 export class MenuRegistry {
   private readonly menus = new Map<string, MenuContribution>();
+  private readonly listeners = new Set<() => void>();
 
   public constructor(
     private readonly commands: CommandRegistry,
@@ -50,10 +51,20 @@ export class MenuRegistry {
     }
 
     this.menus.set(key, menu);
+    this.notify();
   }
 
   public unregister(menu: Pick<MenuContribution, 'namespace' | 'id'>): boolean {
-    return this.menus.delete(keyFor(menu.namespace, menu.id));
+    const removed = this.menus.delete(keyFor(menu.namespace, menu.id));
+    if (removed) {
+      this.notify();
+    }
+    return removed;
+  }
+
+  public subscribe(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
   }
 
   public list(location: MenuLocation, context: MenuContext = {}): readonly MenuContribution[] {
@@ -86,6 +97,16 @@ export class MenuRegistry {
     }
     if (menu.location === 'context-menu' && !menu.anchor) {
       throw new Error(`Context menu ${menu.id} must declare an anchor`);
+    }
+  }
+
+  private notify(): void {
+    for (const listener of this.listeners) {
+      try {
+        listener();
+      } catch {
+        // One menu projection must not prevent other host projections from updating.
+      }
     }
   }
 

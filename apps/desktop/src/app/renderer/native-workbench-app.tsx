@@ -4,6 +4,7 @@ import type { LayoutCommand, LayoutSnapshot, WorkbenchAppId } from '../../platfo
 import { WorkbenchShell } from './workbench-shell.js';
 import { ViewRendererRegistry } from './view-renderer-registry.js';
 import { createPluginViewRenderer } from './plugin-view-renderer.js';
+import { PluginOverlayHost } from './plugin-overlay-host.js';
 
 interface NativeWorkbenchState {
   readonly app: DesktopApp;
@@ -129,8 +130,11 @@ export function NativeWorkbenchApp() {
   return (
     <WorkbenchShell
       apps={currentState.app.workbench.apps.list()}
+      commandRegistry={currentState.app.workbench.commands}
+      contextKeys={currentState.app.workbench.contextKeys}
       focusService={currentState.app.workbench.focus}
       layout={currentState.layout}
+      menuRegistry={currentState.app.workbench.menus}
       onActivateApp={activateApp}
       onLayoutCommand={dispatchLayout}
       viewRegistry={currentState.app.workbench.views}
@@ -158,6 +162,11 @@ export function NativeWorkbenchApp() {
             <p>Rust-owned layout and native keybindings are active.</p>
           </div>
         </div>
+        <PluginOverlayHost
+          context={currentState.app.workbench.context}
+          overlays={currentState.app.workbench.overlays}
+          plugins={currentState.app.workbench.plugins}
+        />
       </div>
     </WorkbenchShell>
   );
