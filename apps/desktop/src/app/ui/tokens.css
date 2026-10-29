@@ -259,6 +259,7 @@ button {
 }
 
 .velvet-plugin-surface {
+  position: relative;
   min-height: 32px;
   width: 100%;
 }
