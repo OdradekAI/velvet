@@ -31,7 +31,9 @@ into the host keybinding registry. The React renderer selects this composition
 root inside Tauri and keeps the browser DemoApp as a local fallback. The shell
 now exposes roving Activity Bar focus, semantic resize separators with bounded
 Arrow/Home/End keyboard behavior, stable Part ids and labeled contributed view
-regions. The pure keyboard resize contract is covered alongside the existing
+regions. The DOM focus adapter observes target lifecycle changes and restores
+the previous host focus when a view or Part is hidden or unmounted. The pure
+keyboard resize contract is covered alongside the existing
 Activity Bar navigation tests. The next implementation gate is native renderer
 coverage for these semantics around contributed panels. Plugin view
 contributions now map to the framework-neutral `ViewRegistry` with stable

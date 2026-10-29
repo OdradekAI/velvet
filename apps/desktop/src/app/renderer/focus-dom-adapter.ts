@@ -13,6 +13,8 @@ export class FocusDomAdapter {
   private readonly unsubscribe: () => void;
   private readonly onFocusInBound = (event: Event) => this.onFocusIn(event);
   private applyingTargetId: string | undefined;
+  private readonly observer?: MutationObserver;
+  private resolvedTargetId: string | undefined;
 
   public constructor(
     private readonly service: FocusService,
@@ -25,6 +27,16 @@ export class FocusDomAdapter {
       }
     });
 
+    if (typeof MutationObserver !== 'undefined') {
+      this.observer = new MutationObserver(() => this.reconcileCurrentTarget());
+      this.observer.observe(this.root, {
+        attributes: true,
+        attributeFilter: ['aria-hidden', 'data-velvet-focus-target', 'hidden'],
+        childList: true,
+        subtree: true,
+      });
+    }
+
     const current = service.snapshot().current;
     if (current) {
       this.focusTarget(current);
@@ -33,8 +45,10 @@ export class FocusDomAdapter {
 
   public dispose(): void {
     this.unsubscribe();
+    this.observer?.disconnect();
     this.root.removeEventListener('focusin', this.onFocusInBound);
     this.applyingTargetId = undefined;
+    this.resolvedTargetId = undefined;
   }
 
   private onFocusIn(event: Event): void {
@@ -60,10 +74,15 @@ export class FocusDomAdapter {
   private focusTarget(target: FocusTarget): void {
     const targetId = focusTargetId(target);
     const element = this.findTarget(targetId);
+    if (!element) {
+      return;
+    }
+
+    this.resolvedTargetId = targetId;
     const activeElement = this.root instanceof Document
       ? this.root.activeElement
       : this.root.ownerDocument?.activeElement;
-    if (!element || element === activeElement) {
+    if (element === activeElement) {
       return;
     }
 
@@ -72,9 +91,31 @@ export class FocusDomAdapter {
   }
 
   private findTarget(targetId: string): HTMLElement | undefined {
-    return Array.from(
+    const element = Array.from(
       this.root.querySelectorAll<HTMLElement>('[data-velvet-focus-target]'),
     ).find((element) => element.dataset.velvetFocusTarget === targetId);
+    if (!element || element.hidden || element.closest('[hidden], [aria-hidden="true"]')) {
+      return undefined;
+    }
+    return element;
+  }
+
+  private reconcileCurrentTarget(): void {
+    const current = this.service.snapshot().current;
+    if (!current) {
+      return;
+    }
+
+    const currentId = focusTargetId(current);
+    if (this.findTarget(currentId)) {
+      this.resolvedTargetId = currentId;
+      return;
+    }
+
+    if (this.resolvedTargetId === currentId) {
+      this.resolvedTargetId = undefined;
+      this.service.restore();
+    }
   }
 }
 
