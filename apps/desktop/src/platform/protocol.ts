@@ -28,6 +28,7 @@ export type LayoutCommandId =
   | 'workbench.maximize-part'
   | 'workbench.upsert-view-container'
   | 'workbench.set-view-container-visibility'
+  | 'workbench.set-view-visibility'
   | 'workbench.move-view'
   | 'workbench.reorder-view-container'
   | 'workbench.remove-view-container'
@@ -63,6 +64,11 @@ export type LayoutCommand =
   | {
       readonly id: 'workbench.set-view-container-visibility';
       readonly containerId: string;
+      readonly visible: boolean;
+    }
+  | {
+      readonly id: 'workbench.set-view-visibility';
+      readonly viewId: string;
       readonly visible: boolean;
     }
   | { readonly id: 'workbench.maximize-part'; readonly part: Part }

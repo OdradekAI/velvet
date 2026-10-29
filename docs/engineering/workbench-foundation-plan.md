@@ -63,6 +63,10 @@ active WorkbenchApp. Selecting one reveals its persisted container and the
 Primary Sidebar, moves focus to that Part and uses roving keyboard navigation;
 selection itself remains transient so restart recovery stays owned by the Rust
 layout snapshot.
+Contributed ViewContainers and Views now expose host-owned right-click actions
+for visibility and within-zone ordering. Those actions dispatch the existing
+revisioned layout commands, so hidden or reordered contributions remain owned by
+the Rust layout service and recover through the same persistence path.
 Context-menu and dialog contributions now use the host `MenuRegistry` and
 `OverlayRegistry`; dialog surfaces are mounted through the isolated UI Bridge
 only while an overlay is open, command handlers bind through the plugin

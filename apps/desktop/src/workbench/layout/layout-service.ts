@@ -76,6 +76,13 @@ export class LayoutService {
     });
   }
 
+  public async setViewVisibility(
+    viewId: string,
+    visible: boolean,
+  ): Promise<LayoutSnapshot> {
+    return this.apply({ id: 'workbench.set-view-visibility', viewId, visible });
+  }
+
   public async upsertViewContainer(
     containerId: string,
     visible: boolean,

@@ -75,6 +75,18 @@ function applyDemoLayoutCommand(
           },
         },
       };
+    case 'workbench.set-view-visibility':
+      return {
+        ...current,
+        revision,
+        views: {
+          ...current.views,
+          [command.viewId]: {
+            ...current.views[command.viewId],
+            visible: command.visible,
+          },
+        },
+      };
     case 'workbench.remove-view-container': {
       const { [command.containerId]: _removed, ...containers } = current.containers;
       return { ...current, revision, containers };

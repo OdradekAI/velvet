@@ -521,6 +521,7 @@ export function WorkbenchShell({
                 renderers={viewRenderers}
                 scope="workbench-app"
                 activeContainerId={selectedContainerId}
+                onLayoutCommand={onLayoutCommand}
                 zone="navigation"
               />
             ) : (
@@ -571,6 +572,7 @@ export function WorkbenchShell({
                   registry={viewRegistry}
                   renderers={viewRenderers}
                   scope="workbench-app"
+                  onLayoutCommand={onLayoutCommand}
                   zone="contextual"
                 />
               ) : null}
@@ -583,6 +585,7 @@ export function WorkbenchShell({
                   registry={viewRegistry}
                   renderers={viewRenderers}
                   scope="workbench-app"
+                  onLayoutCommand={onLayoutCommand}
                   zone="operations"
                 />
               ) : null}
@@ -609,6 +612,7 @@ export function WorkbenchShell({
                 registry={viewRegistry}
                 renderers={viewRenderers}
                 scope="workbench"
+                onLayoutCommand={onLayoutCommand}
                 zone="contextual"
               />
             ) : <p>Inspectors and preview augmentations appear here.</p>}
@@ -640,6 +644,7 @@ export function WorkbenchShell({
                 registry={viewRegistry}
                 renderers={viewRenderers}
                 scope="workbench"
+                onLayoutCommand={onLayoutCommand}
                 zone="operations"
               />
             ) : <p>Jobs, logs and operational tools appear here.</p>}

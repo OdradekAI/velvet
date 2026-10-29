@@ -1,6 +1,12 @@
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import type { LayoutSnapshot, Part, WorkbenchAppId, Zone } from '../../platform/protocol.js';
+import type {
+  LayoutCommand,
+  LayoutSnapshot,
+  Part,
+  WorkbenchAppId,
+  Zone,
+} from '../../platform/protocol.js';
 import { focusTargetId, type FocusService } from '../../workbench/focus/focus-service.js';
 import {
   type ViewContainerDescriptor,
@@ -8,7 +14,7 @@ import {
   type ViewContainerScope,
   ViewRegistry,
 } from '../../workbench/views/view-registry.js';
-import { VelvetPanel } from '../ui/velvet-ui.js';
+import { VelvetContextMenu, VelvetPanel } from '../ui/velvet-ui.js';
 import { ViewRendererRegistry } from './view-renderer-registry.js';
 
 export interface WorkbenchViewHostProps {
@@ -21,6 +27,7 @@ export interface WorkbenchViewHostProps {
   readonly appId?: WorkbenchAppId;
   readonly activeContainerId?: string;
   readonly focusService?: FocusService;
+  readonly onLayoutCommand?: (command: LayoutCommand) => void;
 }
 
 function isScopeMatch(
@@ -79,6 +86,7 @@ export function WorkbenchViewHost({
   appId,
   activeContainerId,
   focusService,
+  onLayoutCommand,
 }: WorkbenchViewHostProps) {
   const [, rerender] = useState(0);
 
@@ -100,6 +108,7 @@ export function WorkbenchViewHost({
         isScopeMatch(container.scope, scope, appId),
     )
     .sort((left, right) => containerOrder(layout, left) - containerOrder(layout, right));
+  const visibleContainers = containers.filter((container) => isContainerVisible(layout, container));
 
   return (
     <div
@@ -113,6 +122,45 @@ export function WorkbenchViewHost({
           return null;
         }
 
+        const containerIndex = visibleContainers.findIndex(
+          (candidate) => candidate.id === container.id,
+        );
+        const previousContainer = visibleContainers[containerIndex - 1];
+        const nextContainer = visibleContainers[containerIndex + 1];
+        const containerActions = [
+          ...(previousContainer
+            ? [{
+                id: 'move-container-up',
+                label: 'Move panel up',
+                onSelect: () => onLayoutCommand?.({
+                  id: 'workbench.reorder-view-container',
+                  containerId: container.id,
+                  anchor: { position: 'before', id: previousContainer.id },
+                }),
+              }]
+            : []),
+          ...(nextContainer
+            ? [{
+                id: 'move-container-down',
+                label: 'Move panel down',
+                onSelect: () => onLayoutCommand?.({
+                  id: 'workbench.reorder-view-container',
+                  containerId: container.id,
+                  anchor: { position: 'after', id: nextContainer.id },
+                }),
+              }]
+            : []),
+          {
+            id: 'hide-container',
+            label: `Hide ${container.title}`,
+            onSelect: () => onLayoutCommand?.({
+              id: 'workbench.set-view-container-visibility',
+              containerId: container.id,
+              visible: false,
+            }),
+          },
+        ];
+
         const views = registry
           .list(zone, appId)
           .filter(
@@ -124,36 +172,76 @@ export function WorkbenchViewHost({
           .sort((left, right) => viewOrder(layout, left) - viewOrder(layout, right));
 
         return (
-          <VelvetPanel
-            ariaLabel={`${container.title} views`}
-            className="velvet-view-container"
-            id={viewContainerDomId(container.id)}
-            key={container.id}
-            title={container.title}
-          >
-            {views.length === 0 ? (
-              <p className="velvet-view-placeholder">No views are active in this container.</p>
-            ) : (
-              views.map((view) => {
-                const renderer = renderers?.get(view.id);
-                const viewContent = renderer ? renderer(view) : renderFallback(view);
-                return (
-                  <div
-                    aria-label={view.title}
-                    className="velvet-view"
-                    data-velvet-focus-target={focusService
-                      ? focusTargetId({ kind: 'view', viewId: view.id })
-                      : undefined}
-                    key={view.id}
-                    role="region"
-                    tabIndex={focusService ? -1 : undefined}
-                  >
-                    {viewContent}
-                  </div>
-                );
-              })
-            )}
-          </VelvetPanel>
+          <VelvetContextMenu actions={containerActions} key={container.id}>
+            <VelvetPanel
+              ariaLabel={`${container.title} views`}
+              className="velvet-view-container"
+              id={viewContainerDomId(container.id)}
+              title={container.title}
+            >
+              {views.length === 0 ? (
+                <p className="velvet-view-placeholder">No views are active in this container.</p>
+              ) : (
+                views.map((view, viewIndex) => {
+                  const renderer = renderers?.get(view.id);
+                  const viewContent = renderer ? renderer(view) : renderFallback(view);
+                  const previousView = views[viewIndex - 1];
+                  const nextView = views[viewIndex + 1];
+                  const viewActions = [
+                    ...(previousView
+                      ? [{
+                          id: 'move-view-up',
+                          label: 'Move view up',
+                          onSelect: () => onLayoutCommand?.({
+                            id: 'workbench.move-view',
+                            viewId: view.id,
+                            targetContainerId: container.id,
+                            anchor: { position: 'before', id: previousView.id },
+                          }),
+                        }]
+                      : []),
+                    ...(nextView
+                      ? [{
+                          id: 'move-view-down',
+                          label: 'Move view down',
+                          onSelect: () => onLayoutCommand?.({
+                            id: 'workbench.move-view',
+                            viewId: view.id,
+                            targetContainerId: container.id,
+                            anchor: { position: 'after', id: nextView.id },
+                          }),
+                        }]
+                      : []),
+                    {
+                      id: 'hide-view',
+                      label: `Hide ${view.title}`,
+                      onSelect: () => onLayoutCommand?.({
+                        id: 'workbench.set-view-visibility',
+                        viewId: view.id,
+                        visible: false,
+                      }),
+                    },
+                  ];
+
+                  return (
+                    <VelvetContextMenu actions={viewActions} key={view.id}>
+                      <div
+                        aria-label={view.title}
+                        className="velvet-view"
+                        data-velvet-focus-target={focusService
+                          ? focusTargetId({ kind: 'view', viewId: view.id })
+                          : undefined}
+                        role="region"
+                        tabIndex={focusService ? -1 : undefined}
+                      >
+                        {viewContent}
+                      </div>
+                    </VelvetContextMenu>
+                  );
+                })
+              )}
+            </VelvetPanel>
+          </VelvetContextMenu>
         );
       })}
     </div>
