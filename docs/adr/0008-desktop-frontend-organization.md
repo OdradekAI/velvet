@@ -84,6 +84,13 @@ The first-party UI layer may later be extracted as `@velvet/ui-react` after a
 second consumer justifies an independently versioned package. Until then it
 stays inside the single desktop composition root.
 
+The renderer owns `ViewRendererRegistry` and `WorkbenchViewHost` as the React
+adapter for framework-neutral ViewContainer/View descriptors. A descriptor
+controls scope, zone, preferred Part, order and default visibility; a renderer
+implementation is optional and falls back to a host placeholder until a
+trusted adapter or isolated UI bridge is mounted. This keeps React component
+types out of the Workbench registry and lets plugin surfaces fail independently.
+
 At the repository level, `CLAUDE.md` is a symlink to `AGENTS.md`. `.claude/skills` is a symlink to the repository-local `.agent/skills` directory, which may contain intentional skill definitions. Generated skill state remains ignored; the links provide one discoverable entrypoint without duplicating instructions.
 
 ## Alternatives considered

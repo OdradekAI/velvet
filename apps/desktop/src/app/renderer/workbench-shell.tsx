@@ -13,8 +13,11 @@ import type {
 import { PARTS } from '../../workbench/parts/part-registry.js';
 import type { WorkbenchAppDescriptor } from '../../workbench/apps/workbench-app.js';
 import { focusTargetId, type FocusService } from '../../workbench/focus/focus-service.js';
+import { ViewRegistry } from '../../workbench/views/view-registry.js';
 import { VelvetContextMenu, VelvetPanel } from '../ui/velvet-ui.js';
 import { useFocusDomAdapter } from './focus-dom-adapter.js';
+import { ViewRendererRegistry } from './view-renderer-registry.js';
+import { WorkbenchViewHost } from './workbench-view-host.js';
 
 export interface WorkbenchShellProps {
   readonly layout: LayoutSnapshot;
@@ -22,6 +25,8 @@ export interface WorkbenchShellProps {
   readonly onActivateApp: (appId: WorkbenchAppId) => void;
   readonly onLayoutCommand?: (command: LayoutCommand) => void;
   readonly focusService?: FocusService;
+  readonly viewRegistry?: ViewRegistry;
+  readonly viewRenderers?: ViewRendererRegistry;
   readonly children?: ReactNode;
 }
 
@@ -176,6 +181,8 @@ export function WorkbenchShell({
   onActivateApp,
   onLayoutCommand,
   focusService,
+  viewRegistry,
+  viewRenderers,
   children,
 }: WorkbenchShellProps) {
   useFocusDomAdapter(focusService);
@@ -295,8 +302,23 @@ export function WorkbenchShell({
           tabIndex={-1}
         >
           <VelvetPanel title="Navigation">
-            <p>{activeApp?.title ?? 'Workbench'}</p>
-            <p>Views registered in the navigation zone appear here.</p>
+            {viewRegistry ? (
+              <WorkbenchViewHost
+                appId={layout.activeApp}
+                focusService={focusService}
+                layout={layout}
+                part="primary-sidebar"
+                registry={viewRegistry}
+                renderers={viewRenderers}
+                scope="workbench-app"
+                zone="navigation"
+              />
+            ) : (
+              <>
+                <p>{activeApp?.title ?? 'Workbench'}</p>
+                <p>Views registered in the navigation zone appear here.</p>
+              </>
+            )}
           </VelvetPanel>
           <PartResizeHandle
             layout={layout}
@@ -326,7 +348,33 @@ export function WorkbenchShell({
               ...layoutActions,
             ]}
           >
-            {children ?? <div className="velvet-empty-state">Workspace area</div>}
+            <div className="velvet-workspace-content">
+              {children ?? <div className="velvet-empty-state">Workspace area</div>}
+              {viewRegistry ? (
+                <WorkbenchViewHost
+                  appId={layout.activeApp}
+                  focusService={focusService}
+                  layout={layout}
+                  part="workspace-area"
+                  registry={viewRegistry}
+                  renderers={viewRenderers}
+                  scope="workbench-app"
+                  zone="contextual"
+                />
+              ) : null}
+              {viewRegistry ? (
+                <WorkbenchViewHost
+                  appId={layout.activeApp}
+                  focusService={focusService}
+                  layout={layout}
+                  part="workspace-area"
+                  registry={viewRegistry}
+                  renderers={viewRenderers}
+                  scope="workbench-app"
+                  zone="operations"
+                />
+              ) : null}
+            </div>
           </VelvetContextMenu>
         </section>
 
@@ -340,7 +388,17 @@ export function WorkbenchShell({
           tabIndex={-1}
         >
           <VelvetPanel title="Auxiliary">
-            <p>Inspectors and preview augmentations appear here.</p>
+            {viewRegistry ? (
+              <WorkbenchViewHost
+                focusService={focusService}
+                layout={layout}
+                part="auxiliary-sidebar"
+                registry={viewRegistry}
+                renderers={viewRenderers}
+                scope="workbench"
+                zone="contextual"
+              />
+            ) : <p>Inspectors and preview augmentations appear here.</p>}
           </VelvetPanel>
           <PartResizeHandle
             layout={layout}
@@ -360,7 +418,17 @@ export function WorkbenchShell({
           tabIndex={-1}
         >
           <VelvetPanel title="Operations">
-            <p>Jobs, logs and operational tools appear here.</p>
+            {viewRegistry ? (
+              <WorkbenchViewHost
+                focusService={focusService}
+                layout={layout}
+                part="operations-panel"
+                registry={viewRegistry}
+                renderers={viewRenderers}
+                scope="workbench"
+                zone="operations"
+              />
+            ) : <p>Jobs, logs and operational tools appear here.</p>}
           </VelvetPanel>
           <PartResizeHandle
             layout={layout}

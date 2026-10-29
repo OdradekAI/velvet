@@ -50,7 +50,19 @@ export class Workbench {
     this.menus = new MenuRegistry(this.commands, this.contextKeys);
     this.overlays = new OverlayRegistry(this.contextKeys);
     this.pluginUi = this.plugins.ui;
+    this.registerWorkbenchViews();
     this.registerBuiltInLayoutCommands();
+  }
+
+  private registerWorkbenchViews(): void {
+    for (const app of this.apps.list()) {
+      for (const container of app.viewContainers ?? []) {
+        this.views.registerContainer(container);
+      }
+      for (const view of app.views ?? []) {
+        this.views.register(view);
+      }
+    }
   }
 
   private registerBuiltInLayoutCommands(): void {

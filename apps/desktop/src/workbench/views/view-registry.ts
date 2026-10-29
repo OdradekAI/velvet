@@ -66,6 +66,7 @@ const APP_ZONE_PARTS: Record<Zone, readonly Part[]> = {
 export class ViewRegistry {
   private readonly containers = new Map<string, ViewContainerDescriptor>();
   private readonly views = new Map<string, ViewDescriptor>();
+  private readonly listeners = new Set<() => void>();
 
   public registerContainer(container: ViewContainerDescriptor): void {
     if (this.containers.has(container.id)) {
@@ -74,6 +75,7 @@ export class ViewRegistry {
 
     validateViewContainer(container);
     this.containers.set(container.id, container);
+    this.notify();
   }
 
   public getContainer(id: string): ViewContainerDescriptor | undefined {
@@ -104,6 +106,7 @@ export class ViewRegistry {
 
     validateView(view, container);
     this.views.set(view.id, view);
+    this.notify();
   }
 
   public get(id: string): ViewDescriptor | undefined {
@@ -130,6 +133,21 @@ export class ViewRegistry {
     }
 
     return isCompatibleContainer(view, container);
+  }
+
+  public subscribe(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  private notify(): void {
+    for (const listener of this.listeners) {
+      try {
+        listener();
+      } catch {
+        // One renderer projection must not prevent other view projections from updating.
+      }
+    }
   }
 }
 

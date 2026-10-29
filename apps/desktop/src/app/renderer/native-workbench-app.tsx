@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { createNativeTauriDesktopApp, type DesktopApp } from '../desktop-app.js';
 import type { LayoutCommand, LayoutSnapshot, WorkbenchAppId } from '../../platform/protocol.js';
-import { BUILTIN_WORKBENCH_APPS } from '../../workspaces/index.js';
 import { WorkbenchShell } from './workbench-shell.js';
+import { ViewRendererRegistry } from './view-renderer-registry.js';
 
 interface NativeWorkbenchState {
   readonly app: DesktopApp;
@@ -14,6 +14,7 @@ export function NativeWorkbenchApp() {
   const [state, setState] = useState<NativeWorkbenchState>();
   const [startupError, setStartupError] = useState<unknown>();
   const [commandError, setCommandError] = useState<unknown>();
+  const [viewRenderers] = useState(() => new ViewRendererRegistry());
 
   useEffect(() => {
     const app = createNativeTauriDesktopApp();
@@ -82,11 +83,13 @@ export function NativeWorkbenchApp() {
 
   return (
     <WorkbenchShell
-      apps={BUILTIN_WORKBENCH_APPS}
+      apps={currentState.app.workbench.apps.list()}
       focusService={currentState.app.workbench.focus}
       layout={currentState.layout}
       onActivateApp={activateApp}
       onLayoutCommand={dispatchLayout}
+      viewRegistry={currentState.app.workbench.views}
+      viewRenderers={viewRenderers}
     >
       <div className="velvet-native-workspace">
         {commandError ? (

@@ -2,7 +2,7 @@ import type {
   WorkspaceContext,
   WorkspaceContextCommand,
 } from '../services/workspace-context.js';
-import type { ViewContainerDescriptor } from '../views/view-registry.js';
+import type { ViewContainerDescriptor, ViewDescriptor } from '../views/view-registry.js';
 import type { WorkbenchAppId } from '../../platform/protocol.js';
 
 /** Stable identity for a selectable product surface inside the Workbench. */
@@ -27,6 +27,7 @@ export interface WorkbenchAppDescriptor {
   readonly activityBarOrder?: number;
   readonly surface: AppSurfaceDescriptor;
   readonly viewContainers?: readonly ViewContainerDescriptor[];
+  readonly views?: readonly ViewDescriptor[];
 }
 
 export interface AppSurfaceHost {

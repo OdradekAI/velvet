@@ -208,6 +208,51 @@ button {
   overflow: auto;
 }
 
+.velvet-view-host {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.velvet-view-container {
+  height: auto;
+  min-height: 74px;
+  border: 1px solid var(--velvet-border-subtle);
+  border-radius: var(--velvet-radius-sm);
+  background: var(--velvet-surface-raised);
+}
+
+.velvet-view-container .velvet-panel__header {
+  height: 28px;
+  font-size: 10px;
+}
+
+.velvet-view-container .velvet-panel__body {
+  padding: 8px;
+}
+
+.velvet-view {
+  min-height: 32px;
+  padding: 6px 4px;
+  border-radius: 3px;
+}
+
+.velvet-view:focus-visible {
+  outline: 2px solid var(--velvet-focus);
+  outline-offset: 1px;
+}
+
+.velvet-view-placeholder {
+  margin: 0;
+  color: var(--velvet-text-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.velvet-workspace-content {
+  min-height: 100%;
+}
+
 .velvet-button {
   min-height: var(--velvet-control-height);
   padding: 0 10px;

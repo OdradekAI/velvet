@@ -41,6 +41,10 @@ Runtime layout command failures now stay inside the mounted Workbench as an
 announced, dismissible error; the renderer refreshes from the Rust snapshot
 after a failed mutation instead of replacing the whole shell with a startup
 failure page.
+The React shell now mounts registered ViewContainers and Views by semantic Zone
+and Scope, uses persisted order/visibility when present and falls back to the
+descriptor defaults. Trusted React renderers have a separate adapter registry;
+isolated plugin surfaces remain behind the UI bridge.
 
 The current shell slice also renders the accepted Part constraint table: fixed
 Parts use stable dimensions, resizable Parts enforce bounded sizes in Rust, and
@@ -387,7 +391,7 @@ export interface CommandDescriptor {
 2. **Protocol types**: implement `workbench-protocol`, `layout-model`, `asset-core` and error envelopes without a UI. **Done for the current layout slice; native wire fixtures cover the Tauri mapping.**
 3. **Layout service**: implement versioned layout state, migrations, fixed zones and persistence tests. **Done for the current file-backed Tauri store and restart recovery slice.**
 4. **Workbench parts**: render ActivityBar, Resource Manager, Feed Workbench, PrimarySidebar, WorkspaceArea, AuxiliarySidebar, OperationsPanel and StatusBar with placeholder views. **Initial renderer slice done.**
-5. **View registry**: add built-in views and one example external view per zone. Verify that cross-zone registration is rejected. **Host registry and rejection tests done; renderer mounting remains.**
+5. **View registry**: add built-in views and one example external view per zone. Verify that cross-zone registration is rejected. **Host registry and rejection tests done; the React shell now mounts registered ViewContainers/Views with a renderer adapter seam.**
 6. **Preview core**: implement generic image/file fallback, `PreviewResolver`, Quick/Inspect/Analyze intents and a fake provider used by contract tests.
 7. **Plugin host**: load manifests, validate permissions, activate lazily, isolate failures and expose the UI SDK boundary.
 8. **Jobs and facets**: implement one thumbnail job, one metadata facet and one cancellable analysis job.
