@@ -51,10 +51,16 @@ const ReactModule = await import('react');
 const React = ReactModule.default;
 const { act } = ReactModule;
 const { createRoot } = await import('react-dom/client');
+const { WorkbenchAppSurfaceHost } = await import('/tmp/velvet-plugin-tests/app/renderer/workbench-app-surface-host.js');
 const { WorkbenchShell } = await import('/tmp/velvet-plugin-tests/app/renderer/workbench-shell.js');
+const { PluginSurfaceHost } = await import('/tmp/velvet-plugin-tests/app/renderer/plugin-surface-host.js');
 const { defaultLayoutState } = await import('/tmp/velvet-plugin-tests/workbench/layout/layout-state.js');
 const { FocusService } = await import('/tmp/velvet-plugin-tests/workbench/focus/focus-service.js');
+const { PluginUiRegistry } = await import('/tmp/velvet-plugin-tests/workbench/plugins/ui-bridge.js');
+const { InMemoryWorkspaceContext } = await import('/tmp/velvet-plugin-tests/workbench/services/workspace-context.js');
 const { ViewRegistry } = await import('/tmp/velvet-plugin-tests/workbench/views/view-registry.js');
+const { PluginClient } = await import('/tmp/velvet-plugin-tests/workbench/plugins/plugin-client.js');
+const { WorkbenchAppRegistry } = await import('/tmp/velvet-plugin-tests/workbench/apps/workbench-app.js');
 
 const layout = defaultLayoutState();
 layout.containers['sample.global.tools'] = { visible: true, order: 0 };
@@ -117,6 +123,14 @@ async function render(nextLayout) {
 
 function tick() {
   return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+async function settle(count = 2) {
+  await act(async () => {
+    for (let index = 0; index < count; index += 1) {
+      await tick();
+    }
+  });
 }
 
 await render(layout);
@@ -182,4 +196,118 @@ assert.ok(
 
 await act(() => root.unmount());
 await tick();
+
+const surfaceUi = new PluginUiRegistry();
+surfaceUi.register({
+  id: 'sample.reader.surface',
+  extensionId: 'sample.extension',
+  namespace: 'workbench',
+  kind: 'view',
+  entrypoint: 'https://plugin.example/reader',
+  bridgeVersion: '1',
+});
+const surfaceContext = new InMemoryWorkspaceContext();
+const surfaceRootElement = document.createElement('div');
+document.body.append(surfaceRootElement);
+const surfaceRoot = createRoot(surfaceRootElement);
+await act(() => {
+  surfaceRoot.render(React.createElement(PluginSurfaceHost, {
+    context: surfaceContext,
+    extensionId: 'sample.extension',
+    surfaceId: 'sample.reader.surface',
+    ui: surfaceUi,
+  }));
+});
+await tick();
+await tick();
+assert.equal(surfaceRootElement.querySelector('iframe')?.src, 'https://plugin.example/reader');
+assert.equal(surfaceRootElement.querySelector('[data-plugin-surface-state="active"]') !== null, true);
+assert.equal(surfaceUi.getSession('sample.extension', 'sample.reader.surface')?.state, 'active');
+
+await act(() => surfaceRoot.unmount());
+await tick();
+await tick();
+assert.equal(surfaceUi.getSession('sample.extension', 'sample.reader.surface'), undefined);
+assert.equal(surfaceRootElement.querySelector('iframe'), null);
+
+const appRegistry = new WorkbenchAppRegistry([{
+  id: 'asset-manager',
+  title: 'Resource Manager',
+  activityBarIcon: 'library',
+  surface: { trust: 'trusted', entrypoint: 'builtin://asset-manager' },
+}]);
+const appUi = new PluginUiRegistry();
+const appPlugins = new PluginClient(
+  { request: async () => ({ kind: 'accepted' }), subscribe: () => () => {} },
+  undefined,
+  appRegistry,
+  '1',
+  appUi,
+);
+const appManifest = {
+  id: 'sample.app-extension',
+  version: '1.0.0',
+  hostApi: '1',
+  permissions: {},
+  workbenchApp: {
+    id: 'sample.app-extension.research',
+    apiVersion: '1',
+    title: 'Research App',
+    activityBarIcon: 'search',
+    surface: {
+      entrypoint: 'https://plugin.example/research-app',
+      bridgeVersion: '1',
+    },
+  },
+  contributions: [],
+};
+appPlugins.register(appManifest);
+appPlugins.activate(appManifest.id);
+const appContext = new InMemoryWorkspaceContext();
+const appRootElement = document.createElement('div');
+document.body.append(appRootElement);
+const appRoot = createRoot(appRootElement);
+const renderAppSurface = (appId) => appRoot.render(React.createElement(WorkbenchAppSurfaceHost, {
+  appId,
+  apps: appRegistry,
+  context: appContext,
+  dispatch: () => undefined,
+  fallback: React.createElement('div', { className: 'fallback-surface' }, 'Fallback'),
+  plugins: appPlugins,
+}));
+
+await act(() => renderAppSurface('sample.app-extension.research'));
+await settle();
+assert.equal(appRootElement.querySelector('iframe')?.src, 'https://plugin.example/research-app');
+assert.equal(
+  appRegistry.getSurfaceState('sample.app-extension.research'),
+  'active',
+);
+
+await act(() => renderAppSurface('asset-manager'));
+await settle();
+assert.equal(appRootElement.querySelector('.fallback-surface')?.textContent, 'Fallback');
+assert.equal(
+  appRegistry.getSurfaceState('sample.app-extension.research'),
+  'suspended',
+);
+
+await act(() => renderAppSurface('sample.app-extension.research'));
+await settle();
+assert.equal(appRootElement.querySelector('iframe')?.src, 'https://plugin.example/research-app');
+assert.equal(
+  appRegistry.getSurfaceState('sample.app-extension.research'),
+  'active',
+);
+
+await act(async () => {
+  await appPlugins.deactivate(appManifest.id);
+  await tick();
+  await tick();
+});
+assert.equal(appRegistry.get('sample.app-extension.research'), undefined);
+assert.equal(appUi.getSession('sample.app-extension', 'sample.app-extension.research.surface'), undefined);
+assert.equal(appRootElement.querySelector('iframe'), null);
+await act(() => appRoot.unmount());
+
 console.log('Workbench real DOM regression tests passed.');
