@@ -79,7 +79,10 @@ The native app scans `app_data_dir/plugins` for JSON manifests on startup.
 The `install-plugin` CoreTransport command copies a validated package into
 that directory, and the native composition root starts discovered registered
 extensions during the first client launch. Invalid files are isolated in the
-discovery report and do not block valid extensions.
+discovery report and do not block valid extensions. The native Workbench exposes
+the same operation through its `Extensions` dialog: it lists Rust-owned plugin
+state, installs a local package directory and activates the new extension after
+the install response has been projected.
 
 ## Architecture
 

@@ -606,13 +606,26 @@ export class PluginClient {
   }
 
   public async installInCore(sourceDir: string): Promise<CorePluginSummary> {
-    const summary = await this.requestCoreExtension({
+    const installed = await this.requestCoreExtension({
       protocolVersion: PROTOCOL_VERSION,
       kind: 'install-plugin',
       sourceDir,
     });
-    await this.syncCoreProjectionState(summary);
-    return summary;
+    await this.syncCoreProjectionState(installed);
+    if (installed.state !== 'registered') {
+      return installed;
+    }
+
+    // Installation leaves the package registered so invalid or incompatible
+    // packages never start implicitly. The explicit host UI completes the
+    // first activation after the install response has been projected.
+    const activated = await this.requestCoreExtension({
+      protocolVersion: PROTOCOL_VERSION,
+      kind: 'activate-plugin',
+      extensionId: installed.id,
+    });
+    await this.syncCoreProjectionState(activated);
+    return activated;
   }
 
   public listVisible(activeAppId?: WorkbenchAppId): readonly ContributionDescriptor[] {

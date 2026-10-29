@@ -116,6 +116,32 @@ button {
   letter-spacing: 0.02em;
 }
 
+.velvet-title__actions {
+  display: flex;
+  align-items: center;
+  margin-left: 12px;
+}
+
+.velvet-title__action {
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--velvet-border-subtle);
+  border-radius: var(--velvet-radius-sm);
+  background: var(--velvet-surface-raised);
+  color: var(--velvet-text-secondary);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.velvet-title__action:hover {
+  border-color: var(--velvet-border-strong);
+  background: var(--velvet-surface-active);
+  color: var(--velvet-text-primary);
+}
+
 .velvet-part--activity {
   grid-area: activity;
   display: flex;
@@ -335,6 +361,23 @@ button {
   color: var(--velvet-text-secondary);
 }
 
+.velvet-input {
+  min-width: 0;
+  min-height: var(--velvet-control-height);
+  flex: 1;
+  padding: 0 9px;
+  border: 1px solid var(--velvet-border-strong);
+  border-radius: var(--velvet-radius-sm);
+  background: var(--velvet-surface-panel);
+  color: var(--velvet-text-primary);
+  font-size: 12px;
+}
+
+.velvet-input:focus-visible {
+  outline: 2px solid var(--velvet-focus);
+  outline-offset: 2px;
+}
+
 .velvet-dialog__overlay {
   position: fixed;
   inset: 0;
@@ -375,6 +418,102 @@ button {
   color: var(--velvet-text-secondary);
   font-size: 13px;
   line-height: 1.5;
+}
+
+.velvet-plugin-manager {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.velvet-plugin-manager__toolbar,
+.velvet-plugin-manager__install-row,
+.velvet-plugin-manager__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.velvet-plugin-manager__toolbar {
+  justify-content: space-between;
+}
+
+.velvet-plugin-manager__eyebrow,
+.velvet-plugin-manager__install label {
+  color: var(--velvet-text-secondary);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.velvet-plugin-manager__list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.velvet-plugin-manager__item {
+  justify-content: space-between;
+  min-height: 48px;
+  padding: 8px 10px;
+  border: 1px solid var(--velvet-border-subtle);
+  border-radius: var(--velvet-radius-sm);
+  background: var(--velvet-surface-panel);
+}
+
+.velvet-plugin-manager__item > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.velvet-plugin-manager__item strong {
+  overflow: hidden;
+  color: var(--velvet-text-primary);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.velvet-plugin-manager__item span {
+  color: var(--velvet-text-muted);
+  font-size: 10px;
+}
+
+.velvet-plugin-manager__status {
+  flex: 0 0 auto;
+  padding: 3px 6px;
+  border: 1px solid var(--velvet-border-subtle);
+  border-radius: 999px;
+  color: var(--velvet-text-secondary) !important;
+  font-size: 10px !important;
+  text-transform: uppercase;
+}
+
+.velvet-plugin-manager__status--active {
+  border-color: color-mix(in srgb, #80d6a0 55%, var(--velvet-border-strong));
+  color: #9ce0b3 !important;
+}
+
+.velvet-plugin-manager__status--failed {
+  border-color: color-mix(in srgb, var(--velvet-danger) 55%, var(--velvet-border-strong));
+  color: var(--velvet-danger) !important;
+}
+
+.velvet-plugin-manager__install {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.velvet-plugin-manager__success {
+  margin: 0;
+  color: #9ce0b3;
+  font-size: 12px;
 }
 
 .velvet-context-target {

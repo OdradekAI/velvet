@@ -140,7 +140,9 @@ surface on failure and remounts it after recovery.
 The native Tauri composition root now exposes package installation through
 CoreTransport, copies validated packages into `app_data_dir/plugins`, discovers
 them again after restart and activates registered extensions on first client
-startup.
+startup. The native Workbench `Extensions` dialog lists the Rust-owned plugin
+inventory and runs the same install, projection and activation sequence from a
+user-visible entry point.
 
 The current shell slice also renders the accepted Part constraint table: fixed
 Parts use stable dimensions, resizable Parts enforce bounded sizes in Rust, and

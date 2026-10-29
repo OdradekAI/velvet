@@ -10,6 +10,7 @@ import { WorkbenchAppRegistry } from '/tmp/velvet-plugin-tests/workbench/apps/wo
 
 const requests = [];
 let runtimeState = 'registered';
+let installed = false;
 const projection = (state, id = 'sample.reader') => ({
   summary: {
     id,
@@ -128,11 +129,34 @@ const core = {
     if (request.kind === 'query-extensions') {
       return {
         kind: 'extensions',
-        extensions: [projection(runtimeState).summary],
+        extensions: [
+          projection(runtimeState).summary,
+          ...(installed ? [
+            {
+              id: 'sample.installed',
+              version: '0.1.0',
+              active: runtimeState === 'active',
+              state: runtimeState,
+            },
+          ] : []),
+        ],
       };
     }
     if (request.kind === 'query-plugin-projection') {
       return { kind: 'plugin-projection', projection: projection(runtimeState, request.extensionId) };
+    }
+    if (request.kind === 'install-plugin') {
+      installed = true;
+      runtimeState = 'registered';
+      return {
+        kind: 'extension',
+        extension: {
+          id: 'sample.installed',
+          version: '0.1.0',
+          active: false,
+          state: 'registered',
+        },
+      };
     }
     if (request.kind === 'invoke-plugin-command') {
       return { kind: 'accepted' };
@@ -229,6 +253,15 @@ assert.ok(commands.get('workbench.app.asset-manager', 'open-reader'));
 assert.equal((await client.queryCoreExtensions())[0].id, 'sample.reader');
 assert.equal(client.getCoreSummary('sample.reader')?.state, 'active');
 
+const installedSummary = await client.installInCore('/tmp/sample-plugin');
+assert.equal(installedSummary.id, 'sample.installed');
+assert.equal(installedSummary.state, 'active');
+assert.deepEqual(
+  requests.slice(-4).map((request) => request.kind),
+  ['install-plugin', 'query-plugin-projection', 'activate-plugin', 'query-plugin-projection'],
+);
+assert.ok((await client.queryCoreExtensions()).some((summary) => summary.id === 'sample.installed'));
+
 await assert.rejects(
   () => client.applyCoreProjection({
     ...projection('active', 'foreign.reader'),
@@ -249,6 +282,11 @@ assert.deepEqual(
     'query-plugin-projection',
     'disable-plugin',
     'recover-plugin',
+    'query-plugin-projection',
+    'query-extensions',
+    'install-plugin',
+    'query-plugin-projection',
+    'activate-plugin',
     'query-plugin-projection',
     'query-extensions',
   ],

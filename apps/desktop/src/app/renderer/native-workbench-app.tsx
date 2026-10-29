@@ -6,6 +6,7 @@ import { ViewRendererRegistry } from './view-renderer-registry.js';
 import { createPluginViewRenderer } from './plugin-view-renderer.js';
 import { PluginOverlayHost } from './plugin-overlay-host.js';
 import { WorkbenchAppSurfaceHost } from './workbench-app-surface-host.js';
+import { PluginManagerDialog } from './plugin-manager-dialog.js';
 
 interface NativeWorkbenchState {
   readonly app: DesktopApp;
@@ -17,6 +18,7 @@ export function NativeWorkbenchApp() {
   const [state, setState] = useState<NativeWorkbenchState>();
   const [startupError, setStartupError] = useState<unknown>();
   const [commandError, setCommandError] = useState<unknown>();
+  const [pluginManagerOpen, setPluginManagerOpen] = useState(false);
   const [appRevision, setAppRevision] = useState(0);
   const [viewRenderers] = useState(() => new ViewRendererRegistry());
 
@@ -188,10 +190,25 @@ export function NativeWorkbenchApp() {
       menuRegistry={currentState.app.workbench.menus}
       onActivateApp={activateApp}
       onLayoutCommand={dispatchLayout}
+      titleActions={
+        <button
+          aria-label="Open Extensions"
+          className="velvet-title__action"
+          onClick={() => setPluginManagerOpen(true)}
+          type="button"
+        >
+          Extensions
+        </button>
+      }
       viewRegistry={currentState.app.workbench.views}
       viewRenderers={viewRenderers}
     >
       <div className="velvet-native-workspace">
+        <PluginManagerDialog
+          onOpenChange={setPluginManagerOpen}
+          open={pluginManagerOpen}
+          plugins={currentState.app.workbench.plugins}
+        />
         {commandError ? (
           <div aria-live="polite" className="velvet-command-error" role="alert">
             <span>

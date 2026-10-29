@@ -30,6 +30,7 @@ export interface WorkbenchShellProps {
   readonly apps: readonly WorkbenchAppDescriptor[];
   readonly onActivateApp: (appId: WorkbenchAppId) => void;
   readonly onLayoutCommand?: (command: LayoutCommand) => void;
+  readonly titleActions?: ReactNode;
   readonly focusService?: FocusService;
   readonly commandRegistry?: CommandRegistry;
   readonly contextKeys?: ContextKeyService;
@@ -222,6 +223,7 @@ export function WorkbenchShell({
   apps,
   onActivateApp,
   onLayoutCommand,
+  titleActions,
   focusService,
   commandRegistry,
   contextKeys,
@@ -439,6 +441,7 @@ export function WorkbenchShell({
         >
           <span>Velvet / {activeApp?.title ?? 'Workbench'}</span>
           <span className="velvet-title__hint">Right-click workspace for layout</span>
+          {titleActions ? <div className="velvet-title__actions">{titleActions}</div> : null}
         </header>
 
         <nav
