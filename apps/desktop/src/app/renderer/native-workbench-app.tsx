@@ -5,6 +5,7 @@ import { WorkbenchShell } from './workbench-shell.js';
 import { ViewRendererRegistry } from './view-renderer-registry.js';
 import { createPluginViewRenderer } from './plugin-view-renderer.js';
 import { PluginOverlayHost } from './plugin-overlay-host.js';
+import { WorkbenchAppSurfaceHost } from './workbench-app-surface-host.js';
 
 interface NativeWorkbenchState {
   readonly app: DesktopApp;
@@ -16,7 +17,6 @@ export function NativeWorkbenchApp() {
   const [state, setState] = useState<NativeWorkbenchState>();
   const [startupError, setStartupError] = useState<unknown>();
   const [commandError, setCommandError] = useState<unknown>();
-  const [surfaceError, setSurfaceError] = useState<unknown>();
   const [appRevision, setAppRevision] = useState(0);
   const [viewRenderers] = useState(() => new ViewRendererRegistry());
 
@@ -110,39 +110,6 @@ export function NativeWorkbenchApp() {
     });
   }, [state?.app]);
 
-  useEffect(() => {
-    const workbench = state?.app.workbench;
-    const appId = state?.layout.activeApp;
-    if (!workbench || !appId) {
-      return undefined;
-    }
-
-    const descriptor = workbench.apps.get(appId);
-    if (!descriptor || descriptor.surface.trust !== 'isolated') {
-      setSurfaceError(undefined);
-      return undefined;
-    }
-
-    let disposed = false;
-    setSurfaceError(undefined);
-    void workbench.apps.activateSurface(appId, {
-      appId,
-      context: workbench.context,
-      dispatch: (command) => {
-        workbench.context.apply(command);
-      },
-    }).catch((reason: unknown) => {
-      if (!disposed) {
-        setSurfaceError(reason);
-      }
-    });
-
-    return () => {
-      disposed = true;
-      void workbench.apps.deactivateSurface(appId).catch(() => undefined);
-    };
-  }, [state?.app, state?.layout.activeApp]);
-
   if (startupError) {
     return (
       <main className="velvet-empty-state">
@@ -215,26 +182,22 @@ export function NativeWorkbenchApp() {
             </button>
           </div>
         ) : null}
-        {surfaceError ? (
-          <div aria-live="polite" className="velvet-command-error" role="alert">
-            <span>
-              App surface failed:{' '}
-              {surfaceError instanceof Error ? surfaceError.message : String(surfaceError)}
-            </span>
-            <button
-              className="velvet-button velvet-button--quiet"
-              onClick={() => setSurfaceError(undefined)}
-              type="button"
-            >
-              Dismiss
-            </button>
-          </div>
-        ) : null}
-        <div className="velvet-empty-state" data-app-revision={appRevision}>
-          <div>
-            <p>{currentState.layout.activeApp} workspace</p>
-            <p>Rust-owned layout and native keybindings are active.</p>
-          </div>
+        <div data-app-revision={appRevision}>
+          <WorkbenchAppSurfaceHost
+            appId={currentState.layout.activeApp}
+            apps={currentState.app.workbench.apps}
+            context={currentState.app.workbench.context}
+            dispatch={(command) => currentState.app.workbench.context.apply(command)}
+            fallback={
+              <div className="velvet-empty-state">
+                <div>
+                  <p>{currentState.layout.activeApp} workspace</p>
+                  <p>Rust-owned layout and native keybindings are active.</p>
+                </div>
+              </div>
+            }
+            plugins={currentState.app.workbench.plugins}
+          />
         </div>
         <PluginOverlayHost
           context={currentState.app.workbench.context}

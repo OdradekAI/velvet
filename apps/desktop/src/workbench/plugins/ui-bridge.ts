@@ -162,6 +162,13 @@ export class PluginUiRegistry {
     return this.descriptors.get(surfaceKey(extensionId, surfaceId));
   }
 
+  public getSession(
+    extensionId: string,
+    surfaceId: string,
+  ): PluginSurfaceSession | undefined {
+    return this.sessions.get(surfaceKey(extensionId, surfaceId));
+  }
+
   /** Removes an unmounted surface descriptor during activation rollback. */
   public unregister(extensionId: string, surfaceId: string): boolean {
     const key = surfaceKey(extensionId, surfaceId);

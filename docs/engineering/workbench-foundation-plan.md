@@ -68,7 +68,10 @@ descriptors in `WorkbenchAppRegistry`. Their Activity Bar entries are projected
 through the same registry as built-in apps, while the selected AppSurface is
 created as an isolated UI Bridge session, suspended on app switch and disposed
 before deactivation removes the app namespace. Namespace ownership and full
-app cleanup are covered by the plugin lifecycle tests.
+app cleanup are covered by the plugin lifecycle tests. The native WorkspaceArea
+now renders a real AppSurface host, including measured resize/context
+forwarding, app-switch suspension/reactivation, disabled-app fallback and
+UI-Bridge session restart coverage.
 
 The current shell slice also renders the accepted Part constraint table: fixed
 Parts use stable dimensions, resizable Parts enforce bounded sizes in Rust, and

@@ -93,8 +93,11 @@ AppSurface bridge in `WorkbenchAppRegistry` as one activation unit. The
 registry projects the app into the Activity Bar, lazily creates a bridge
 session when the app becomes active, suspends it when another app is selected,
 and disposes it before extension deactivation removes the Activity Bar entry.
-This keeps the central surface lifecycle host-owned while allowing the bridge
-adapter to be bound by the isolated runtime.
+`WorkbenchAppSurfaceHost` renders the active session in the WorkspaceArea and
+forwards measured geometry and context updates without taking over lifecycle
+ownership. Late adapter binding retries mount; a disposed session can be
+created again from the retained descriptor and adapter, which is the restart
+recovery path for an isolated app surface.
 
 Keep these ownership layers separate:
 

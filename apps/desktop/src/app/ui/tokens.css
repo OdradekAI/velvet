@@ -272,6 +272,21 @@ button {
   outline-offset: 1px;
 }
 
+.velvet-app-surface-host {
+  position: relative;
+  min-height: 100%;
+  width: 100%;
+}
+
+.velvet-app-surface-host[data-surface-state="active"] {
+  min-height: 100%;
+}
+
+.velvet-app-surface-host:focus-visible {
+  outline: 2px solid var(--velvet-focus);
+  outline-offset: -2px;
+}
+
 .velvet-workspace-content {
   min-height: 100%;
 }

@@ -105,6 +105,14 @@ missing or late adapter leaves a recoverable waiting placeholder, while plugin
 deactivation disposes sessions before removing view descriptors and generic
 contributions.
 
+The native composition root uses `WorkbenchAppSurfaceHost` for the active
+isolated WorkbenchApp. This adapter renders a real host node in `WorkspaceArea`
+and forwards its measured size and shared context to the session created by
+`WorkbenchAppRegistry`; it does not create a second lifecycle owner. Switching
+apps suspends the previous session and reactivates it when selected again. If a
+plugin is disabled while selected, the registry disposes the session and the
+renderer falls back to an available built-in app.
+
 At the repository level, `CLAUDE.md` is a symlink to `AGENTS.md`. `.claude/skills` is a symlink to the repository-local `.agent/skills` directory, which may contain intentional skill definitions. Generated skill state remains ignored; the links provide one discoverable entrypoint without duplicating instructions.
 
 ## Alternatives considered
