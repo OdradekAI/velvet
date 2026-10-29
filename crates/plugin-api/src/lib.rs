@@ -192,6 +192,13 @@ pub struct ExtensionManifest {
     pub permission_sets: Vec<ZonePermissionSet>,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ExtensionInstallOperation {
+    Install,
+    Upgrade,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ExtensionState {
@@ -209,6 +216,17 @@ pub struct ExtensionSummary {
     pub version: String,
     pub active: bool,
     pub state: ExtensionState,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtensionInstallPreview {
+    pub manifest: ExtensionManifest,
+    pub existing: Option<ExtensionSummary>,
+    pub operation: ExtensionInstallOperation,
+    pub compatible: bool,
+    pub can_install: bool,
+    pub issues: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

@@ -158,6 +158,12 @@ const core = {
         },
       };
     }
+    if (request.kind === 'commit-plugin-install') {
+      return { kind: 'accepted' };
+    }
+    if (request.kind === 'rollback-plugin-install') {
+      return { kind: 'accepted' };
+    }
     if (request.kind === 'invoke-plugin-command') {
       return { kind: 'accepted' };
     }
@@ -258,9 +264,21 @@ assert.equal(installedSummary.id, 'sample.installed');
 assert.equal(installedSummary.state, 'active');
 assert.deepEqual(
   requests.slice(-4).map((request) => request.kind),
-  ['install-plugin', 'query-plugin-projection', 'activate-plugin', 'query-plugin-projection'],
+  ['query-plugin-projection', 'activate-plugin', 'query-plugin-projection', 'commit-plugin-install'],
 );
 assert.ok((await client.queryCoreExtensions()).some((summary) => summary.id === 'sample.installed'));
+
+await client.applyCoreProjection({
+  ...projection('active', 'sample.installed'),
+  summary: {
+    id: 'sample.installed',
+    version: '0.2.0',
+    active: true,
+    state: 'active',
+  },
+});
+assert.equal(client.getCoreSummary('sample.installed')?.version, '0.2.0');
+assert.ok(commands.get('workbench.app.asset-manager', 'open-reader'));
 
 await assert.rejects(
   () => client.applyCoreProjection({
@@ -288,6 +306,7 @@ assert.deepEqual(
     'query-plugin-projection',
     'activate-plugin',
     'query-plugin-projection',
+    'commit-plugin-install',
     'query-extensions',
   ],
 );
@@ -296,6 +315,7 @@ assert.equal(requests[7].reason, 'user');
 
 const failedInstallRequests = [];
 let failedInstallState = 'registered';
+let failedInstallRolledBack = false;
 const duplicateCommand = projection('active').contributions.find(
   (contribution) => contribution.kind === 'command',
 );
@@ -338,6 +358,17 @@ const failedInstallCore = {
             state: failedInstallState,
           },
         },
+      };
+    }
+    if (request.kind === 'rollback-plugin-install') {
+      failedInstallRolledBack = true;
+      failedInstallState = 'disabled';
+      return { kind: 'accepted' };
+    }
+    if (request.kind === 'query-extensions') {
+      return {
+        kind: 'extensions',
+        extensions: failedInstallRolledBack ? [] : [failedInstallProjection.summary],
       };
     }
     if (request.kind === 'activate-plugin') {
@@ -391,7 +422,7 @@ await assert.rejects(
   /Extension activation failed: sample\.failed-install/,
 );
 assert.equal(failedInstallState, 'disabled');
-assert.equal(failedInstallClient.getCoreSummary('sample.failed-install')?.state, 'disabled');
+assert.equal(failedInstallClient.getCoreSummary('sample.failed-install'), undefined);
 assert.equal(
   failedInstallCommands.get('workbench.app.asset-manager', 'duplicate-command'),
   undefined,
@@ -403,7 +434,8 @@ assert.deepEqual(
     'query-plugin-projection',
     'activate-plugin',
     'query-plugin-projection',
-    'disable-plugin',
+    'rollback-plugin-install',
+    'query-extensions',
   ],
 );
 

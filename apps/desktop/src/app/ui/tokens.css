@@ -531,6 +531,79 @@ button {
   font-size: 12px;
 }
 
+.velvet-plugin-manager__preview {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--velvet-border-strong);
+  border-radius: var(--velvet-radius-sm);
+  background: var(--velvet-surface-panel);
+}
+
+.velvet-plugin-manager__preview-header,
+.velvet-plugin-manager__preview-grid,
+.velvet-plugin-manager__permissions {
+  display: flex;
+  gap: 7px;
+}
+
+.velvet-plugin-manager__preview-header {
+  align-items: center;
+  justify-content: space-between;
+  color: var(--velvet-text-primary);
+  font-size: 12px;
+}
+
+.velvet-plugin-manager__preview-header span {
+  color: var(--velvet-accent);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.velvet-plugin-manager__preview-grid {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  font-size: 11px;
+}
+
+.velvet-plugin-manager__preview-grid span,
+.velvet-plugin-manager__permissions > span {
+  color: var(--velvet-text-muted);
+}
+
+.velvet-plugin-manager__preview-grid strong {
+  overflow: hidden;
+  color: var(--velvet-text-primary);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.velvet-plugin-manager__permissions {
+  flex-direction: column;
+  gap: 5px;
+  font-size: 11px;
+}
+
+.velvet-plugin-manager__permissions > div {
+  display: flex;
+  gap: 7px;
+}
+
+.velvet-plugin-manager__permissions strong {
+  min-width: 72px;
+  color: var(--velvet-text-secondary);
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.velvet-plugin-manager__permissions div span,
+.velvet-plugin-manager__permissions em {
+  color: var(--velvet-text-primary);
+  font-style: normal;
+}
+
 .velvet-context-target {
   display: block;
   height: 100%;

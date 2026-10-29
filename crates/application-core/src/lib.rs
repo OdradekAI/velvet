@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use velvet_asset_core::ContentKindId;
 use velvet_layout_model::{InMemoryLayoutService, LayoutService};
 use velvet_persistence::{InMemoryLayoutStateStore, LayoutStateStore};
-use velvet_plugin_api::{ExtensionId, ExtensionManifest, ExtensionState};
+use velvet_plugin_api::{ExtensionId, ExtensionInstallPreview, ExtensionManifest, ExtensionState};
 use velvet_plugin_host::{
     DisableReason, InMemoryPluginHost, JsonManifestDiscovery, ManifestDiscoveryError,
     ManifestLoadReport, PluginError, PluginHost, PluginRuntime,
@@ -144,6 +144,31 @@ impl ApplicationCore {
             .install_from_directory(source_dir.as_ref(), plugin_directory)
     }
 
+    pub fn inspect_plugin_from_directory(
+        &self,
+        source_dir: impl AsRef<std::path::Path>,
+    ) -> Result<ExtensionInstallPreview, PluginError> {
+        self.plugins.inspect_from_directory(source_dir.as_ref())
+    }
+
+    pub fn commit_plugin_install(&mut self, id: &ExtensionId) -> Result<(), PluginError> {
+        let Some(plugin_directory) = self.plugin_directory.as_deref() else {
+            return Err(PluginError::InstallFailed(
+                "plugin installation is unavailable without an application plugin directory".into(),
+            ));
+        };
+        self.plugins.commit_install(id, plugin_directory)
+    }
+
+    pub fn rollback_plugin_install(&mut self, id: &ExtensionId) -> Result<(), PluginError> {
+        let Some(plugin_directory) = self.plugin_directory.as_deref() else {
+            return Err(PluginError::InstallFailed(
+                "plugin installation is unavailable without an application plugin directory".into(),
+            ));
+        };
+        self.plugins.rollback_install(id, plugin_directory)
+    }
+
     pub fn uninstall_plugin(&mut self, id: &ExtensionId) -> Result<(), PluginError> {
         let Some(plugin_directory) = self.plugin_directory.as_deref() else {
             return Err(PluginError::UninstallFailed(
@@ -191,6 +216,20 @@ impl ApplicationCore {
                 .install_plugin_from_directory(source_dir)
                 .map(Response::Extension)
                 .map_err(plugin_error),
+            Request::Command(Command::InspectPlugin { source_dir }) => self
+                .inspect_plugin_from_directory(source_dir)
+                .map(Response::PluginInstallPreview)
+                .map_err(plugin_error),
+            Request::Command(Command::CommitPluginInstall { extension_id }) => {
+                self.commit_plugin_install(&extension_id)
+                    .map_err(plugin_error)?;
+                Ok(Response::Accepted)
+            }
+            Request::Command(Command::RollbackPluginInstall { extension_id }) => {
+                self.rollback_plugin_install(&extension_id)
+                    .map_err(plugin_error)?;
+                Ok(Response::Accepted)
+            }
             Request::Command(Command::UninstallPlugin { extension_id }) => {
                 self.uninstall_plugin(&extension_id).map_err(plugin_error)?;
                 Ok(Response::Accepted)

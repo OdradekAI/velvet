@@ -76,16 +76,18 @@ extension's contributions while leaving the Workbench usable; recovery is an
 explicit host operation that starts a fresh process.
 
 The native app scans `app_data_dir/plugins` for JSON manifests on startup.
-The `install-plugin` CoreTransport command copies a validated package into
-that directory, and the native composition root starts discovered registered
-extensions during the first client launch. Invalid files are isolated in the
-discovery report and do not block valid extensions. The native Workbench exposes
-the same operation through its `Extensions` dialog: it lists Rust-owned plugin
-state, opens a native directory picker for a local package, and activates the
-new extension after the install response has been projected. Each installed
-extension can be enabled, disabled, recovered after a failure, or uninstalled
-with a native confirmation; uninstall stops its runtime and removes its
-installed package directory.
+The `inspect-plugin` CoreTransport command parses a package before any files
+are copied. The native Workbench shows its manifest, requested zone
+permissions, target app, runtime and host API compatibility in the `Extensions`
+dialog. A compatible package then goes through the `install-plugin` transaction;
+an existing extension must provide a newer numeric version and is staged as an
+upgrade. Activation and frontend projection complete the transaction with
+`commit-plugin-install`; any activation or projection failure calls
+`rollback-plugin-install` to remove a new package or restore the previous
+package and runtime state. Invalid files are isolated in the discovery report
+and do not block valid extensions. Each installed extension can be enabled,
+disabled, recovered after a failure, or uninstalled with a native confirmation;
+uninstall stops its runtime and removes its installed package directory.
 
 ## Architecture
 

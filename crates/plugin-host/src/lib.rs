@@ -11,9 +11,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use velvet_layout_model::WorkbenchZone;
 use velvet_plugin_api::{
-    AppTarget, ContributionKind, ContributionScope, ExtensionId, ExtensionManifest,
-    ExtensionProjection, ExtensionState, ExtensionSummary, HostContainer, Permission, RuntimeKind,
-    VersionRange,
+    AppTarget, ContributionKind, ContributionScope, ExtensionId, ExtensionInstallOperation,
+    ExtensionInstallPreview, ExtensionManifest, ExtensionProjection, ExtensionState,
+    ExtensionSummary, HostContainer, Permission, RuntimeKind, VersionRange,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -47,6 +47,11 @@ pub enum PluginError {
     },
     InstallFailed(String),
     InstallConflict(ExtensionId),
+    VersionConflict {
+        extension_id: ExtensionId,
+        installed: String,
+        requested: String,
+    },
     UninstallFailed(String),
     InvalidState {
         extension_id: ExtensionId,
@@ -515,7 +520,7 @@ fn collect_manifest_paths(root: &Path, paths: &mut Vec<PathBuf>) -> std::io::Res
         let entry = entry?;
         let path = entry.path();
         let file_type = entry.file_type()?;
-        if file_type.is_dir() {
+        if file_type.is_dir() && !entry.file_name().to_string_lossy().starts_with('.') {
             collect_manifest_paths(&path, paths)?;
         } else if file_type.is_file()
             && path
@@ -600,6 +605,16 @@ pub trait PluginHost {
         source_dir: &Path,
         install_root: &Path,
     ) -> Result<ExtensionSummary, PluginError>;
+    fn inspect_from_directory(
+        &self,
+        source_dir: &Path,
+    ) -> Result<ExtensionInstallPreview, PluginError>;
+    fn commit_install(&mut self, id: &ExtensionId, install_root: &Path) -> Result<(), PluginError>;
+    fn rollback_install(
+        &mut self,
+        id: &ExtensionId,
+        install_root: &Path,
+    ) -> Result<(), PluginError>;
     fn uninstall_from_directory(
         &mut self,
         id: &ExtensionId,
@@ -615,6 +630,13 @@ pub struct InMemoryPluginHost {
     runtime: Box<dyn PluginRuntime>,
     host_api: VersionRange,
     apps: BTreeMap<String, VersionRange>,
+    pending_installs: BTreeMap<ExtensionId, InstallBackup>,
+}
+
+struct InstallBackup {
+    previous_manifest: Option<ExtensionManifest>,
+    previous_state: Option<ExtensionState>,
+    backup_path: Option<PathBuf>,
 }
 
 impl Default for InMemoryPluginHost {
@@ -631,6 +653,7 @@ impl Default for InMemoryPluginHost {
             runtime: Box::new(ProcessPluginRuntime),
             host_api: VersionRange("1".into()),
             apps,
+            pending_installs: BTreeMap::new(),
         }
     }
 }
@@ -788,6 +811,19 @@ impl InMemoryPluginHost {
         }
 
         Ok(())
+    }
+
+    fn remove_registration(&mut self, id: &ExtensionId) {
+        self.manifests.remove(id);
+        self.active.remove(id);
+        self.states.remove(id);
+        self.processes.remove(id);
+    }
+
+    fn restore_state(&mut self, id: &ExtensionId, state: ExtensionState) {
+        if state != ExtensionState::Active {
+            self.states.insert(id.clone(), state);
+        }
     }
 }
 
@@ -1025,6 +1061,60 @@ impl PluginHost for InMemoryPluginHost {
         }
     }
 
+    fn inspect_from_directory(
+        &self,
+        source_dir: &Path,
+    ) -> Result<ExtensionInstallPreview, PluginError> {
+        let source_manifest_path = source_dir.join("manifest.json");
+        let bytes = fs::read(&source_manifest_path)
+            .map_err(|error| PluginError::InstallFailed(error.to_string()))?;
+        let manifest = serde_json::from_slice::<ExtensionManifest>(&bytes)
+            .map_err(|error| PluginError::InstallFailed(error.to_string()))?;
+        if !is_safe_extension_id(&manifest.id.0) {
+            return Err(PluginError::InstallFailed(format!(
+                "extension id {} cannot be used as an installation directory",
+                manifest.id.0
+            )));
+        }
+        let compatible = api_compatible(&manifest.host_api, &self.host_api);
+        let mut issues = Vec::new();
+        if !compatible {
+            issues.push(format!(
+                "host API {} is incompatible with host {}",
+                manifest.host_api.0, self.host_api.0
+            ));
+        } else {
+            self.validate_manifest(&manifest)?;
+        }
+
+        let existing = self
+            .discover()
+            .into_iter()
+            .find(|summary| summary.id == manifest.id);
+        let operation = if existing.is_some() {
+            ExtensionInstallOperation::Upgrade
+        } else {
+            ExtensionInstallOperation::Install
+        };
+        if let Some(current) = &existing {
+            if !version_is_newer(&manifest.version, &current.version) {
+                issues.push(format!(
+                    "version {} must be newer than installed version {}",
+                    manifest.version, current.version
+                ));
+            }
+        }
+
+        Ok(ExtensionInstallPreview {
+            manifest,
+            existing,
+            operation,
+            compatible,
+            can_install: compatible && issues.is_empty(),
+            issues,
+        })
+    }
+
     fn install_from_directory(
         &mut self,
         source_dir: &Path,
@@ -1036,12 +1126,17 @@ impl PluginHost for InMemoryPluginHost {
         let mut manifest = serde_json::from_slice::<ExtensionManifest>(&bytes)
             .map_err(|error| PluginError::InstallFailed(error.to_string()))?;
         let id = manifest.id.clone();
-        if self.manifests.contains_key(&id) {
-            return Err(PluginError::InstallConflict(id));
-        }
         if !is_safe_extension_id(&id.0) {
             return Err(PluginError::InstallFailed(format!(
                 "extension id {} cannot be used as an installation directory",
+                id.0
+            )));
+        }
+        let previous_manifest = self.manifests.get(&id).cloned();
+        let previous_state = self.states.get(&id).cloned();
+        if self.pending_installs.contains_key(&id) {
+            return Err(PluginError::InstallFailed(format!(
+                "extension {} already has a pending installation",
                 id.0
             )));
         }
@@ -1049,8 +1144,17 @@ impl PluginHost for InMemoryPluginHost {
         fs::create_dir_all(install_root)
             .map_err(|error| PluginError::InstallFailed(error.to_string()))?;
         let destination = install_root.join(&id.0);
-        if destination.exists() {
+        if previous_manifest.is_none() && destination.exists() {
             return Err(PluginError::InstallConflict(id));
+        }
+        if let Some(current) = self.discover().into_iter().find(|summary| summary.id == id) {
+            if !version_is_newer(&manifest.version, &current.version) {
+                return Err(PluginError::VersionConflict {
+                    extension_id: id,
+                    installed: current.version,
+                    requested: manifest.version,
+                });
+            }
         }
         let staging = install_root.join(format!(".{}.staging-{}", id.0, std::process::id()));
         if staging.exists() {
@@ -1067,17 +1171,112 @@ impl PluginHost for InMemoryPluginHost {
             let _ = fs::remove_dir_all(&staging);
             return Err(error);
         }
-        fs::rename(&staging, &destination)
-            .map_err(|error| PluginError::InstallFailed(error.to_string()))?;
+
+        let backup_path = previous_manifest
+            .as_ref()
+            .map(|_| install_root.join(format!(".{}.rollback-{}", id.0, std::process::id())));
+        if let Some(backup_path) = &backup_path {
+            if backup_path.exists() {
+                fs::remove_dir_all(backup_path)
+                    .map_err(|error| PluginError::InstallFailed(error.to_string()))?;
+            }
+            if self.active.contains(&id) {
+                self.disable(&id, DisableReason::User)?;
+            }
+            fs::rename(&destination, backup_path)
+                .map_err(|error| PluginError::InstallFailed(error.to_string()))?;
+            self.remove_registration(&id);
+        }
+        if let Err(error) = fs::rename(&staging, &destination) {
+            if let Some(backup_path) = &backup_path {
+                let _ = fs::rename(backup_path, &destination);
+            }
+            return Err(PluginError::InstallFailed(error.to_string()));
+        }
         if let Err(error) = self.register(manifest) {
             let _ = fs::remove_dir_all(&destination);
+            if let Some(backup_path) = &backup_path {
+                let _ = fs::rename(backup_path, &destination);
+                if let Some(previous_manifest) = previous_manifest {
+                    let _ = self.register(previous_manifest);
+                    if let Some(state) = previous_state {
+                        self.restore_state(&id, state);
+                    }
+                }
+            }
             return Err(error);
         }
+
+        self.pending_installs.insert(
+            id.clone(),
+            InstallBackup {
+                previous_manifest,
+                previous_state,
+                backup_path,
+            },
+        );
 
         self.discover()
             .into_iter()
             .find(|summary| summary.id == id)
             .ok_or_else(|| PluginError::InstallFailed("installed plugin disappeared".into()))
+    }
+
+    fn commit_install(
+        &mut self,
+        id: &ExtensionId,
+        _install_root: &Path,
+    ) -> Result<(), PluginError> {
+        let Some(backup) = self.pending_installs.remove(id) else {
+            return Ok(());
+        };
+        if let Some(backup_path) = backup.backup_path {
+            fs::remove_dir_all(&backup_path)
+                .map_err(|error| PluginError::InstallFailed(error.to_string()))?;
+        }
+        Ok(())
+    }
+
+    fn rollback_install(
+        &mut self,
+        id: &ExtensionId,
+        install_root: &Path,
+    ) -> Result<(), PluginError> {
+        let backup = self
+            .pending_installs
+            .remove(id)
+            .ok_or_else(|| PluginError::InvalidState {
+                extension_id: id.clone(),
+                state: self
+                    .states
+                    .get(id)
+                    .cloned()
+                    .unwrap_or(ExtensionState::Registered),
+            })?;
+        if self.active.contains(id) {
+            self.disable(id, DisableReason::Incompatible)?;
+        }
+        let destination = install_root.join(&id.0);
+        if destination.exists() {
+            fs::remove_dir_all(&destination)
+                .map_err(|error| PluginError::InstallFailed(error.to_string()))?;
+        }
+        self.remove_registration(id);
+        if let Some(backup_path) = backup.backup_path {
+            fs::rename(&backup_path, &destination)
+                .map_err(|error| PluginError::InstallFailed(error.to_string()))?;
+        }
+        if let Some(previous_manifest) = backup.previous_manifest {
+            self.register(previous_manifest)?;
+            if let Some(previous_state) = backup.previous_state {
+                if previous_state == ExtensionState::Active {
+                    self.activate(id)?;
+                } else {
+                    self.restore_state(id, previous_state);
+                }
+            }
+        }
+        Ok(())
     }
 
     fn uninstall_from_directory(
@@ -1191,11 +1390,25 @@ fn api_compatible(required: &VersionRange, provided: &VersionRange) -> bool {
         == provided.0.split('.').next()
 }
 
+fn version_is_newer(requested: &str, installed: &str) -> bool {
+    let parse = |value: &str| {
+        value
+            .split('.')
+            .map(|part| part.parse::<u64>().ok())
+            .collect::<Option<Vec<_>>>()
+    };
+    match (parse(requested), parse(installed)) {
+        (Some(requested), Some(installed)) => requested > installed,
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::VecDeque;
     use std::fs;
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -1205,6 +1418,8 @@ mod tests {
         ContextAnchor, ContributionDescriptor, Permission, RuntimeKind, RuntimeLaunchSpec,
         UiSurfaceDescriptor, UiSurfaceKind, ZonePermissionSet,
     };
+
+    static TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     enum StartPlan {
         Fail(String),
@@ -1229,10 +1444,20 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("system time should be after the Unix epoch")
             .as_nanos();
+        let sequence = TEMP_DIR_COUNTER.fetch_add(1, Ordering::Relaxed);
         std::env::temp_dir().join(format!(
-            "velvet-plugin-manifests-{}-{nonce}",
-            std::process::id()
+            "velvet-plugin-manifests-{}-{nonce}-{sequence}",
+            std::process::id(),
         ))
+    }
+
+    fn write_package(root: &PathBuf, manifest: &ExtensionManifest) {
+        fs::create_dir_all(root).expect("the package directory should be writable");
+        fs::write(
+            root.join("manifest.json"),
+            serde_json::to_vec_pretty(manifest).expect("the manifest should serialize"),
+        )
+        .expect("the manifest should be written");
     }
 
     impl RuntimeProcess for FakeProcess {
@@ -1558,6 +1783,38 @@ mod tests {
     }
 
     #[test]
+    fn install_preview_exposes_permissions_and_rejects_incompatible_hosts() {
+        let source = temporary_manifest_dir();
+        let mut manifest = view_manifest(Some(WorkbenchZone::Navigation));
+        manifest.id = ExtensionId("preview.permissions".into());
+        manifest.permission_sets = vec![ZonePermissionSet {
+            zone: WorkbenchZone::Navigation,
+            permissions: vec![Permission::LibraryRead, Permission::SourceConnect],
+        }];
+        write_package(&source, &manifest);
+
+        let host = InMemoryPluginHost::default();
+        let preview = host
+            .inspect_from_directory(&source)
+            .expect("a valid package should produce an install preview");
+        assert_eq!(preview.operation, ExtensionInstallOperation::Install);
+        assert!(preview.compatible);
+        assert!(preview.can_install);
+        assert_eq!(preview.manifest.permission_sets[0].permissions.len(), 2);
+
+        manifest.host_api = VersionRange("^2".into());
+        write_package(&source, &manifest);
+        let incompatible = host
+            .inspect_from_directory(&source)
+            .expect("an incompatible package should still produce a review");
+        assert!(!incompatible.compatible);
+        assert!(!incompatible.can_install);
+        assert!(incompatible.issues[0].contains("incompatible"));
+
+        fs::remove_dir_all(source).expect("the preview package should be removed");
+    }
+
+    #[test]
     fn external_runtime_start_failure_is_isolated_and_recoverable() {
         let grants = Arc::new(Mutex::new(Vec::new()));
         let shutdowns = Arc::new(Mutex::new(0));
@@ -1871,5 +2128,93 @@ mod tests {
         assert!(!root.join("velvet.example.echo").exists());
 
         fs::remove_dir_all(root).expect("the temporary installation should be removed");
+    }
+
+    #[test]
+    fn plugin_upgrade_can_be_previewed_committed_or_rolled_back() {
+        let root = temporary_manifest_dir();
+        let first_source = temporary_manifest_dir();
+        let upgrade_source = temporary_manifest_dir();
+        let mut first = ExtensionManifest {
+            id: ExtensionId("transactional.plugin".into()),
+            version: "0.1.0".into(),
+            host_api: VersionRange("^1".into()),
+            runtime: RuntimeKind::BuiltIn,
+            launch: None,
+            target_app: None,
+            contributions: Vec::new(),
+            permission_sets: Vec::new(),
+        };
+        write_package(&first_source, &first);
+        let mut host = InMemoryPluginHost::default();
+        host.install_from_directory(&first_source, &root)
+            .expect("the initial package should install");
+        host.commit_install(&first.id, &root)
+            .expect("the initial package should be committed");
+        host.activate(&first.id)
+            .expect("the initial package should activate");
+
+        let conflict = host
+            .inspect_from_directory(&first_source)
+            .expect("an installed package should still produce a version review");
+        assert_eq!(conflict.operation, ExtensionInstallOperation::Upgrade);
+        assert!(!conflict.can_install);
+        assert!(conflict.issues[0].contains("must be newer"));
+
+        first.version = "0.2.0".into();
+        write_package(&upgrade_source, &first);
+        let preview = host
+            .inspect_from_directory(&upgrade_source)
+            .expect("the newer package should produce an upgrade preview");
+        assert_eq!(preview.operation, ExtensionInstallOperation::Upgrade);
+        assert!(preview.can_install);
+        assert_eq!(
+            preview
+                .existing
+                .expect("the installed package should be shown")
+                .version,
+            "0.1.0"
+        );
+
+        host.install_from_directory(&upgrade_source, &root)
+            .expect("the upgrade should be staged");
+        assert_eq!(host.projection(&first.id).unwrap().summary.version, "0.2.0");
+        assert!(
+            root.join(".transactional.plugin.rollback").exists()
+                || root
+                    .read_dir()
+                    .expect("the install root should be readable")
+                    .any(|entry| entry
+                        .expect("the rollback entry should be readable")
+                        .file_name()
+                        .to_string_lossy()
+                        .starts_with(".transactional.plugin.rollback-"))
+        );
+
+        host.rollback_install(&first.id, &root)
+            .expect("the staged upgrade should be reversible");
+        let restored = host
+            .projection(&first.id)
+            .expect("the previous package should be restored");
+        assert_eq!(restored.summary.version, "0.1.0");
+        assert_eq!(restored.summary.state, ExtensionState::Active);
+
+        host.install_from_directory(&upgrade_source, &root)
+            .expect("the upgrade should be stageable again");
+        host.commit_install(&first.id, &root)
+            .expect("the upgrade should be committed");
+        assert_eq!(host.projection(&first.id).unwrap().summary.version, "0.2.0");
+        assert!(!root
+            .read_dir()
+            .expect("the install root should be readable")
+            .any(|entry| entry
+                .expect("the rollback entry should be readable")
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".transactional.plugin.rollback-")));
+
+        fs::remove_dir_all(root).expect("the transactional installation should be removed");
+        fs::remove_dir_all(first_source).expect("the initial package should be removed");
+        fs::remove_dir_all(upgrade_source).expect("the upgrade package should be removed");
     }
 }

@@ -13,6 +13,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Added host-owned commands, menus, context expressions, overlays and the versioned UI bridge.
 - Added revisioned layout transport with visibility, collapse, bounded resize, ViewContainer ordering and View movement.
 - Added keyboard and pointer layout resizing plus workspace context-menu controls for Part visibility and collapse.
+- Added the native Extensions manager with manifest and permission preflight, host API compatibility checks, versioned upgrades and transactional rollback.
 
 ### Changed
 

@@ -1,7 +1,9 @@
 use serde_json::Value;
 use velvet_asset_core::AssetId;
 use velvet_layout_model::{LayoutCommand, LayoutState};
-use velvet_plugin_api::{ExtensionId, ExtensionManifest, ExtensionProjection, ExtensionSummary};
+use velvet_plugin_api::{
+    ExtensionId, ExtensionInstallPreview, ExtensionManifest, ExtensionProjection, ExtensionSummary,
+};
 use velvet_preview_core::{PreviewIntent, PreviewSurface, ResolvedPreview};
 
 pub const PROTOCOL_VERSION: u16 = 1;
@@ -34,6 +36,15 @@ pub enum Command {
     },
     InstallPlugin {
         source_dir: String,
+    },
+    InspectPlugin {
+        source_dir: String,
+    },
+    CommitPluginInstall {
+        extension_id: ExtensionId,
+    },
+    RollbackPluginInstall {
+        extension_id: ExtensionId,
     },
     UninstallPlugin {
         extension_id: ExtensionId,
@@ -79,6 +90,7 @@ pub enum Response {
     Layout(LayoutState),
     Extensions(Vec<ExtensionSummary>),
     Extension(ExtensionSummary),
+    PluginInstallPreview(ExtensionInstallPreview),
     PluginProjection(ExtensionProjection),
     Preview(ResolvedPreview),
     Accepted,

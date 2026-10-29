@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
-import type { CorePluginSummary } from '../../platform/protocol.js';
+import type {
+  CorePluginInstallPreview,
+  CorePluginSummary,
+} from '../../platform/protocol.js';
 import type { PluginClient } from '../../workbench/plugins/plugin-client.js';
 import { VelvetDialog } from '../ui/velvet-ui.js';
 
@@ -21,6 +24,8 @@ export function PluginManagerDialog({
 }: PluginManagerDialogProps) {
   const [extensions, setExtensions] = useState<readonly CorePluginSummary[]>([]);
   const [sourceDir, setSourceDir] = useState('');
+  const [preview, setPreview] = useState<CorePluginInstallPreview>();
+  const [previewSource, setPreviewSource] = useState<string>();
   const [loading, setLoading] = useState(false);
   const [installing, setInstalling] = useState(false);
   const [busyExtensionId, setBusyExtensionId] = useState<string>();
@@ -60,18 +65,43 @@ export function PluginManagerDialog({
       return;
     }
 
-    setInstalling(true);
     setError(undefined);
     setMessage(undefined);
+    if (!preview || previewSource !== directory) {
+      await inspectDirectory(directory);
+      return;
+    }
+    if (!preview.canInstall) {
+      setError(preview.issues.join(' '));
+      return;
+    }
+
+    setInstalling(true);
     try {
       const summary = await plugins.installInCore(directory);
       setSourceDir('');
+      setPreview(undefined);
+      setPreviewSource(undefined);
       setMessage(`${summary.id} installed and activated.`);
       await refresh();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
       setInstalling(false);
+    }
+  };
+
+  const inspectDirectory = async (directory: string) => {
+    setError(undefined);
+    setMessage(undefined);
+    try {
+      const nextPreview = await plugins.inspectInCore(directory);
+      setPreview(nextPreview);
+      setPreviewSource(directory);
+    } catch (reason) {
+      setPreview(undefined);
+      setPreviewSource(undefined);
+      setError(reason instanceof Error ? reason.message : String(reason));
     }
   };
 
@@ -84,7 +114,7 @@ export function PluginManagerDialog({
       const directory = await pickDirectory();
       if (directory) {
         setSourceDir(directory);
-        setMessage(undefined);
+        await inspectDirectory(directory);
       }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
@@ -226,7 +256,11 @@ export function PluginManagerDialog({
               aria-label="Plugin package directory"
               className="velvet-input"
               id="velvet-plugin-source"
-              onChange={(event) => setSourceDir(event.target.value)}
+              onChange={(event) => {
+                setSourceDir(event.target.value);
+                setPreview(undefined);
+                setPreviewSource(undefined);
+              }}
               placeholder="/path/to/plugin-package"
               value={sourceDir}
             />
@@ -245,10 +279,46 @@ export function PluginManagerDialog({
               disabled={installing || busyExtensionId !== undefined}
               type="submit"
             >
-              {installing ? 'Installing…' : 'Install and activate'}
+              {installing
+                ? 'Installing…'
+                : preview?.operation === 'upgrade' ? 'Upgrade and activate' : 'Review manifest'}
             </button>
           </div>
         </form>
+        {preview ? (
+          <div className="velvet-plugin-manager__preview" data-plugin-install-preview>
+            <div className="velvet-plugin-manager__preview-header">
+              <strong>Manifest review</strong>
+              <span>{preview.operation === 'upgrade' ? 'Upgrade' : 'New install'}</span>
+            </div>
+            <div className="velvet-plugin-manager__preview-grid">
+              <span>Extension</span><strong>{preview.manifest.id}</strong>
+              <span>Version</span><strong>v{preview.manifest.version}</strong>
+              <span>Runtime</span><strong>{preview.manifest.runtime}</strong>
+              <span>Host API</span>
+              <strong>
+                {preview.manifest.hostApi} · {preview.compatible ? 'compatible' : 'incompatible'}
+              </strong>
+              {preview.manifest.targetApp ? (
+                <><span>Target app</span><strong>{preview.manifest.targetApp.appId}</strong></>
+              ) : null}
+            </div>
+            <div className="velvet-plugin-manager__permissions">
+              <span>Requested permissions</span>
+              {preview.manifest.permissionSets.length === 0 ? (
+                <em>None</em>
+              ) : preview.manifest.permissionSets.map((permissionSet) => (
+                <div key={permissionSet.zone}>
+                  <strong>{permissionSet.zone}</strong>
+                  <span>{permissionSet.permissions.map(formatPermission).join(', ')}</span>
+                </div>
+              ))}
+            </div>
+            {preview.issues.length > 0 ? (
+              <p className="velvet-command-error" role="alert">{preview.issues.join(' ')}</p>
+            ) : null}
+          </div>
+        ) : null}
         {message ? <p className="velvet-plugin-manager__success">{message}</p> : null}
         {error ? (
           <p aria-live="assertive" className="velvet-command-error" role="alert">
@@ -258,5 +328,9 @@ export function PluginManagerDialog({
       </div>
     </VelvetDialog>
   );
+}
+
+function formatPermission(permission: string): string {
+  return permission.replaceAll('-', ' ').replaceAll('.', ' ');
 }
 

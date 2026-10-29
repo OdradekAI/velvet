@@ -1,6 +1,7 @@
 import {
   PROTOCOL_VERSION,
   type CorePluginContribution,
+  type CorePluginInstallPreview,
   type CorePluginProjection,
   type CorePluginDisableReason,
   type CorePluginManifest,
@@ -99,7 +100,7 @@ export interface PluginSummary {
 }
 
 interface PluginRecord {
-  readonly manifest: ExtensionManifest;
+  manifest: ExtensionManifest;
   status: PluginStatus;
   registered: ContributionDescriptor[];
   registeredViewContainers: string[];
@@ -516,6 +517,17 @@ export class PluginClient {
     const existing = this.records.get(projection.summary.id);
     if (!existing) {
       this.register(manifest);
+    } else if (existing.manifest.version !== manifest.version) {
+      if (existing.status === 'active') {
+        await this.deactivate(
+          projection.summary.id,
+          projection.summary.state === 'failed' ? 'crash' : 'incompatible',
+        );
+      }
+      const record = this.records.get(projection.summary.id);
+      if (record) {
+        record.manifest = manifest;
+      }
     }
 
     this.coreProjections.set(projection.summary.id, projection);
@@ -606,11 +618,13 @@ export class PluginClient {
   }
 
   public async installInCore(sourceDir: string): Promise<CorePluginSummary> {
+    const previousSummaries = new Map(this.coreSummaries);
     const installed = await this.requestCoreExtension({
       protocolVersion: PROTOCOL_VERSION,
       kind: 'install-plugin',
       sourceDir,
     });
+    const previousSummary = previousSummaries.get(installed.id);
     const cleanupRequired = installed.state === 'registered' || installed.state === 'active';
 
     try {
@@ -628,20 +642,79 @@ export class PluginClient {
         extensionId: installed.id,
       });
       await this.syncCoreProjectionState(activated);
+      await this.commitInstallInCore(installed.id);
       return activated;
     } catch (cause) {
       if (cleanupRequired) {
-        // Rust may have already started the runtime when the browser-side
-        // projection fails. Best-effort disable keeps the host registries and
-        // the sidecar lifecycle aligned without masking the original error.
+        // Rust may have already replaced or started the runtime when the
+        // browser-side projection fails. Restore the previous package (or
+        // remove a new package) without masking the original error.
         try {
-          await this.disableInCore(installed.id, 'incompatible');
+          await this.rollbackInstallInCore(installed.id);
         } catch {
-          // Preserve the projection or activation error for the caller.
+          if (previousSummary) {
+            this.coreSummaries.set(installed.id, previousSummary);
+          }
         }
       }
       throw cause;
     }
+  }
+
+  public async inspectInCore(sourceDir: string): Promise<CorePluginInstallPreview> {
+    const response = await this.core.request({
+      protocolVersion: PROTOCOL_VERSION,
+      kind: 'inspect-plugin',
+      sourceDir,
+    });
+    if (response.kind !== 'plugin-install-preview') {
+      throw new PluginLifecycleError(
+        `Expected a plugin install preview, received ${response.kind}`,
+        'core',
+      );
+    }
+    return response.preview;
+  }
+
+  private async commitInstallInCore(extensionId: string): Promise<void> {
+    const response = await this.core.request({
+      protocolVersion: PROTOCOL_VERSION,
+      kind: 'commit-plugin-install',
+      extensionId,
+    });
+    if (response.kind !== 'accepted') {
+      throw new PluginLifecycleError(
+        `Expected an accepted response for committing ${extensionId}, received ${response.kind}`,
+        extensionId,
+      );
+    }
+  }
+
+  private async rollbackInstallInCore(extensionId: string): Promise<void> {
+    const response = await this.core.request({
+      protocolVersion: PROTOCOL_VERSION,
+      kind: 'rollback-plugin-install',
+      extensionId,
+    });
+    if (response.kind !== 'accepted') {
+      throw new PluginLifecycleError(
+        `Expected an accepted response for rolling back ${extensionId}, received ${response.kind}`,
+        extensionId,
+      );
+    }
+
+    const extensions = await this.queryCoreExtensions();
+    const restored = extensions.find((extension) => extension.id === extensionId);
+    if (!restored) {
+      await this.unregister(extensionId);
+      this.coreProjections.delete(extensionId);
+      this.coreSummaries.delete(extensionId);
+      this.notify();
+      return;
+    }
+
+    const projection = await this.queryCoreProjection(extensionId);
+    await this.applyCoreProjection(projection);
   }
 
   public async uninstallInCore(extensionId: string): Promise<void> {

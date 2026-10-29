@@ -74,6 +74,31 @@ const core = {
       installedState = 'registered';
       return { kind: 'extension', extension: summary('sample.installed', 'registered') };
     }
+    if (request.kind === 'inspect-plugin') {
+      return {
+        kind: 'plugin-install-preview',
+        preview: {
+          manifest: {
+            id: 'sample.installed',
+            version: '0.1.0',
+            hostApi: '1',
+            runtime: 'sidecar',
+            launch: { program: 'sample-sidecar', args: [] },
+            targetApp: null,
+            contributions: [],
+            permissionSets: [{ zone: 'navigation', permissions: ['library-read', 'asset-read'] }],
+          },
+          existing: null,
+          operation: 'install',
+          compatible: true,
+          canInstall: true,
+          issues: [],
+        },
+      };
+    }
+    if (request.kind === 'commit-plugin-install') {
+      return { kind: 'accepted' };
+    }
     if (request.kind === 'activate-plugin') {
       installedState = 'active';
       return { kind: 'extension', extension: summary(request.extensionId, 'active') };
@@ -148,9 +173,11 @@ await act(async () => {
   await new Promise((resolve) => setTimeout(resolve, 0));
 });
 assert.equal(input?.value, '/tmp/native-plugin');
+assert.ok(document.querySelector('[data-plugin-install-preview]'));
+assert.match(document.body.textContent ?? '', /library read, asset read/);
 
 const installButton = [...document.querySelectorAll('button')]
-  .find((button) => button.textContent === 'Install and activate');
+  .find((button) => button.textContent === 'Review manifest');
 assert.ok(installButton);
 await act(async () => {
   installButton.click();
@@ -161,7 +188,16 @@ assert.match(document.body.textContent ?? '', /sample\.installed installed and a
 assert.match(document.body.textContent ?? '', /sample\.installed/);
 assert.deepEqual(
   requests.map((request) => request.kind),
-  ['query-extensions', 'install-plugin', 'query-plugin-projection', 'activate-plugin', 'query-plugin-projection', 'query-extensions'],
+  [
+    'query-extensions',
+    'inspect-plugin',
+    'install-plugin',
+    'query-plugin-projection',
+    'activate-plugin',
+    'query-plugin-projection',
+    'commit-plugin-install',
+    'query-extensions',
+  ],
 );
 
 const disableButton = document.querySelector('[aria-label="Disable sample.installed"]');

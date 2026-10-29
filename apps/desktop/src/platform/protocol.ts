@@ -142,6 +142,21 @@ export type CoreRequest =
     }
   | {
       readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'inspect-plugin';
+      readonly sourceDir: string;
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'commit-plugin-install';
+      readonly extensionId: string;
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'rollback-plugin-install';
+      readonly extensionId: string;
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
       readonly kind: 'uninstall-plugin';
       readonly extensionId: string;
     }
@@ -173,6 +188,7 @@ export type CoreResponse =
   | { readonly kind: 'preview'; readonly preview: unknown }
   | { readonly kind: 'extensions'; readonly extensions: readonly CorePluginSummary[] }
   | { readonly kind: 'extension'; readonly extension: CorePluginSummary }
+  | { readonly kind: 'plugin-install-preview'; readonly preview: CorePluginInstallPreview }
   | { readonly kind: 'plugin-projection'; readonly projection: CorePluginProjection }
   | { readonly kind: 'accepted' };
 
@@ -294,6 +310,15 @@ export interface CorePluginSummary {
   readonly version: string;
   readonly active: boolean;
   readonly state: PluginState;
+}
+
+export interface CorePluginInstallPreview {
+  readonly manifest: CorePluginManifest;
+  readonly existing: CorePluginSummary | null;
+  readonly operation: 'install' | 'upgrade';
+  readonly compatible: boolean;
+  readonly canInstall: boolean;
+  readonly issues: readonly string[];
 }
 
 export interface CorePluginProjection {

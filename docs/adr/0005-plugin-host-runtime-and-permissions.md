@@ -83,10 +83,17 @@ arguments beginning with `./` or `../` resolve from the
 manifest directory, which lets a sidecar package move as one directory without
 embedding an absolute executable path.
 
-The local `install-plugin` command copies a validated package into this
-directory atomically. The native Tauri composition root activates newly
-discovered registered extensions during client startup; other embedders may
-retain lazy activation by calling the lifecycle commands explicitly.
+The local install flow is a two-phase transaction. `inspect-plugin` parses the
+manifest and returns the requested permissions, target app, runtime and host API
+compatibility before any files are copied. `install-plugin` stages the package
+under this directory; an existing extension is accepted only when its numeric
+version increases. The host keeps the previous package as a hidden rollback
+backup until the client has projected and activated the new extension, then
+`commit-plugin-install` removes the backup. `rollback-plugin-install` removes a
+new package or restores the previous package and runtime state. The native
+Tauri composition root activates committed registered extensions during client
+startup; other embedders may retain lazy activation by calling the lifecycle
+commands explicitly.
 
 ## Alternatives considered
 

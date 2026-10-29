@@ -153,6 +153,24 @@ pub enum WireRequest {
         #[serde(rename = "extensionId")]
         extension_id: String,
     },
+    InspectPlugin {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        #[serde(rename = "sourceDir")]
+        source_dir: String,
+    },
+    CommitPluginInstall {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        #[serde(rename = "extensionId")]
+        extension_id: String,
+    },
+    RollbackPluginInstall {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        #[serde(rename = "extensionId")]
+        extension_id: String,
+    },
     InvokePluginCommand {
         #[serde(rename = "protocolVersion")]
         protocol_version: u16,
@@ -262,6 +280,31 @@ impl WireRequest {
             } => {
                 validate_inner_protocol(outer_protocol_version, protocol_version)?;
                 Ok(Request::Command(Command::UninstallPlugin {
+                    extension_id: ExtensionId(extension_id),
+                }))
+            }
+            Self::InspectPlugin {
+                protocol_version,
+                source_dir,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Command(Command::InspectPlugin { source_dir }))
+            }
+            Self::CommitPluginInstall {
+                protocol_version,
+                extension_id,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Command(Command::CommitPluginInstall {
+                    extension_id: ExtensionId(extension_id),
+                }))
+            }
+            Self::RollbackPluginInstall {
+                protocol_version,
+                extension_id,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Command(Command::RollbackPluginInstall {
                     extension_id: ExtensionId(extension_id),
                 }))
             }
@@ -504,6 +547,9 @@ enum WireResponse {
     Extension {
         extension: WireExtensionSummary,
     },
+    PluginInstallPreview {
+        preview: velvet_plugin_api::ExtensionInstallPreview,
+    },
     PluginProjection {
         projection: velvet_plugin_api::ExtensionProjection,
     },
@@ -530,6 +576,9 @@ impl WireResponseEnvelope {
             Response::Extension(extension) => WireResponse::Extension {
                 extension: WireExtensionSummary::from(extension),
             },
+            Response::PluginInstallPreview(preview) => {
+                WireResponse::PluginInstallPreview { preview }
+            }
             Response::PluginProjection(projection) => WireResponse::PluginProjection { projection },
             Response::Preview(preview) => WireResponse::Preview {
                 preview: WireResolvedPreview::from(preview),
@@ -1124,6 +1173,58 @@ mod tests {
             Request::Command(Command::InstallPlugin { source_dir })
                 if source_dir == "/tmp/velvet-example-plugin"
         ));
+
+        let inspect: WireRequestEnvelope = serde_json::from_str(
+            r#"{
+                "protocolVersion": 1,
+                "requestId": 20,
+                "request": {
+                    "kind": "inspect-plugin",
+                    "protocolVersion": 1,
+                    "sourceDir": "/tmp/velvet-example-plugin"
+                }
+            }"#,
+        )
+        .expect("the plugin inspect request should deserialize");
+        assert!(matches!(
+            inspect
+                .request
+                .into_core(1)
+                .expect("the plugin inspect request should map"),
+            Request::Command(Command::InspectPlugin { source_dir })
+                if source_dir == "/tmp/velvet-example-plugin"
+        ));
+
+        for (kind, request_id, expected) in [
+            ("commit-plugin-install", 21, "commit"),
+            ("rollback-plugin-install", 22, "rollback"),
+        ] {
+            let request: WireRequestEnvelope = serde_json::from_value(serde_json::json!({
+                "protocolVersion": 1,
+                "requestId": request_id,
+                "request": {
+                    "kind": kind,
+                    "protocolVersion": 1,
+                    "extensionId": "velvet.example.echo"
+                }
+            }))
+            .expect("the plugin transaction request should deserialize");
+            let mapped = request
+                .request
+                .into_core(1)
+                .expect("the plugin transaction request should map");
+            match (expected, mapped) {
+                (
+                    "commit",
+                    Request::Command(Command::CommitPluginInstall { extension_id }),
+                )
+                | (
+                    "rollback",
+                    Request::Command(Command::RollbackPluginInstall { extension_id }),
+                ) if extension_id.0 == "velvet.example.echo" => {}
+                _ => panic!("the plugin transaction request mapped to an unexpected command"),
+            }
+        }
 
         let uninstall: WireRequestEnvelope = serde_json::from_str(
             r#"{
