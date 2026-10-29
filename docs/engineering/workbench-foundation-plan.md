@@ -89,6 +89,11 @@ UI-Bridge session restart coverage.
 The default surface adapter now mounts a sandboxed iframe in browser mode and
 uses a positioned Tauri child WebView for HTTP/`tauri-webview://` entrypoints,
 with explicit capability permissions and cleanup on deactivation.
+The desktop regression suite now mounts `WorkbenchShell` through ReactDOM in a
+browser-like DOM and verifies contributed panel markup, focus restoration,
+resize keyboard commands and context-menu actions. The native surface adapter
+also exposes a narrow Tauri runtime seam for regression tests covering child
+WebView creation, bounds updates, bridge events, focus races and cleanup.
 
 The current shell slice also renders the accepted Part constraint table: fixed
 Parts use stable dimensions, resizable Parts enforce bounded sizes in Rust, and

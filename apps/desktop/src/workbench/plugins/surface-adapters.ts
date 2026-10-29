@@ -4,19 +4,56 @@ import type {
   SurfaceToHostMessage,
   UiBridgeEndpoint,
 } from './ui-bridge.js';
-import type { Webview } from '@tauri-apps/api/webview';
 import {
   UI_BRIDGE_HOST_EVENT,
   UI_BRIDGE_SURFACE_EVENT,
 } from './ui-bridge.js';
 
+export interface TauriSurfaceWebview {
+  emit(event: string, payload: unknown): Promise<unknown>;
+  listen<T>(event: string, listener: (event: { payload: T }) => void): Promise<() => void>;
+  once<T>(event: string, listener: (event: { payload: T }) => void): unknown;
+  show(): Promise<void>;
+  hide(): Promise<void>;
+  setFocus(): Promise<void>;
+  setPosition(position: unknown): Promise<void>;
+  setSize(size: unknown): Promise<void>;
+  close(): Promise<void>;
+}
+
+export interface TauriSurfaceWebviewOptions {
+  readonly url: string;
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+  readonly focus: boolean;
+  readonly dragDropEnabled: boolean;
+}
+
+export interface TauriSurfaceRuntime {
+  getCurrentWebview(): { readonly window: unknown };
+  createWebview(
+    window: unknown,
+    label: string,
+    options: TauriSurfaceWebviewOptions,
+  ): TauriSurfaceWebview;
+  LogicalPosition: new (x: number, y: number) => unknown;
+  LogicalSize: new (width: number, height: number) => unknown;
+}
+
+export interface PluginSurfaceAdapterOptions {
+  readonly tauriRuntime?: TauriSurfaceRuntime;
+}
+
 /** Selects a native Tauri child WebView for remote/native entrypoints and an iframe elsewhere. */
 export function createPluginSurfaceAdapter(
   descriptor: PluginSurfaceDescriptor,
   host: HTMLElement,
+  options: PluginSurfaceAdapterOptions = {},
 ): PluginSurfaceAdapter {
   if (isTauriRuntime() && isTauriWebviewEntrypoint(descriptor.entrypoint)) {
-    return new TauriWebviewSurfaceAdapter(descriptor, host);
+    return new TauriWebviewSurfaceAdapter(descriptor, host, options.tauriRuntime);
   }
 
   return new IframeSurfaceAdapter(descriptor, host);
@@ -87,25 +124,31 @@ class IframeSurfaceAdapter implements PluginSurfaceAdapter {
 }
 
 class TauriWebviewSurfaceAdapter implements PluginSurfaceAdapter {
-  private webview: Webview | undefined;
+  private webview: TauriSurfaceWebview | undefined;
   private removeHostSubscription: (() => void) | undefined;
   private removeSurfaceListener: (() => void) | undefined;
+  private runtime: TauriSurfaceRuntime | undefined;
+  private focusRequest = 0;
 
   public constructor(
     private readonly descriptor: PluginSurfaceDescriptor,
     private host: HTMLElement,
-  ) {}
+    runtime?: TauriSurfaceRuntime,
+  ) {
+    this.runtime = runtime;
+  }
 
   public async mount(endpoint: UiBridgeEndpoint): Promise<void> {
     if (this.webview) {
       throw new Error(`Surface is already mounted: ${this.descriptor.id}`);
     }
 
-    const { getCurrentWebview, Webview } = await import('@tauri-apps/api/webview');
-    const current = getCurrentWebview();
+    const runtime = this.runtime ?? await loadTauriSurfaceRuntime();
+    this.runtime = runtime;
+    const current = runtime.getCurrentWebview();
     const label = surfaceLabel(this.descriptor);
     const bounds = this.bounds();
-    const webview = new Webview(current.window, label, {
+    const webview = runtime.createWebview(current.window, label, {
       url: resolveTauriUrl(this.descriptor.entrypoint),
       ...bounds,
       focus: false,
@@ -118,9 +161,14 @@ class TauriWebviewSurfaceAdapter implements PluginSurfaceAdapter {
         void this.setBounds();
       }
       if (message.type === 'host.focus') {
-        void (message.focused
-          ? webview.show().then(() => webview.setFocus())
-          : webview.hide()).catch(() => undefined);
+        const request = ++this.focusRequest;
+        if (message.focused) {
+          void webview.show()
+            .then(() => request === this.focusRequest ? webview.setFocus() : undefined)
+            .catch(() => undefined);
+        } else {
+          void webview.hide().catch(() => undefined);
+        }
       }
       void webview.emit(UI_BRIDGE_HOST_EVENT, message).catch(() => undefined);
     });
@@ -141,6 +189,7 @@ class TauriWebviewSurfaceAdapter implements PluginSurfaceAdapter {
   }
 
   public async unmount(_reason: 'unmount' | 'crash' | 'incompatible'): Promise<void> {
+    this.focusRequest += 1;
     this.removeHostSubscription?.();
     this.removeHostSubscription = undefined;
     this.removeSurfaceListener?.();
@@ -158,9 +207,10 @@ class TauriWebviewSurfaceAdapter implements PluginSurfaceAdapter {
       return;
     }
     const bounds = this.bounds();
-    const { LogicalPosition, LogicalSize } = await import('@tauri-apps/api/dpi');
-    await webview.setPosition(new LogicalPosition(bounds.x, bounds.y));
-    await webview.setSize(new LogicalSize(bounds.width, bounds.height));
+    const runtime = this.runtime ?? await loadTauriSurfaceRuntime();
+    this.runtime = runtime;
+    await webview.setPosition(new runtime.LogicalPosition(bounds.x, bounds.y));
+    await webview.setSize(new runtime.LogicalSize(bounds.width, bounds.height));
   }
 
   private bounds(): { x: number; y: number; width: number; height: number } {
@@ -172,6 +222,24 @@ class TauriWebviewSurfaceAdapter implements PluginSurfaceAdapter {
       height: Math.max(1, Math.round(rect.height)),
     };
   }
+}
+
+async function loadTauriSurfaceRuntime(): Promise<TauriSurfaceRuntime> {
+  const [{ getCurrentWebview, Webview }, { LogicalPosition, LogicalSize }] = await Promise.all([
+    import('@tauri-apps/api/webview'),
+    import('@tauri-apps/api/dpi'),
+  ]);
+
+  return {
+    getCurrentWebview: () => getCurrentWebview() as unknown as { readonly window: unknown },
+    createWebview: (window, label, options) => new Webview(
+      window as ConstructorParameters<typeof Webview>[0],
+      label,
+      options as ConstructorParameters<typeof Webview>[2],
+    ) as unknown as TauriSurfaceWebview,
+    LogicalPosition: LogicalPosition as unknown as new (x: number, y: number) => unknown,
+    LogicalSize: LogicalSize as unknown as new (width: number, height: number) => unknown,
+  };
 }
 
 function isTauriWebviewEntrypoint(entrypoint: string): boolean {
@@ -215,7 +283,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
-async function waitForWebviewCreated(webview: Webview): Promise<void> {
+async function waitForWebviewCreated(webview: TauriSurfaceWebview): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     void webview.once('tauri://created', () => resolve());
     void webview.once<string>('tauri://error', (event) => {

@@ -7,8 +7,8 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
-    "test:compile": "tsc --target ES2022 --module ESNext --moduleResolution Bundler --skipLibCheck --rootDir src --outDir /tmp/velvet-plugin-tests --noEmit false src/workbench/plugins/plugin-client.ts src/workbench/plugins/surface-adapters.ts src/workbench/workbench.ts",
-    "test": "npm run test:compile && node --experimental-strip-types test/activity-bar-navigation.test.mjs && node --experimental-strip-types test/part-resize-navigation.test.mjs && node --experimental-strip-types test/focus-service.test.mjs && node test/workbench-layout-sync.test.mjs && node test/plugin-contribution-lifecycle.test.mjs && node test/plugin-surface-adapter.test.mjs"
+    "test:compile": "tsc --target ES2022 --module ESNext --moduleResolution Bundler --jsx react-jsx --skipLibCheck --rootDir src --outDir /tmp/velvet-plugin-tests --noEmit false src/app/renderer/workbench-shell.tsx src/workbench/plugins/plugin-client.ts src/workbench/plugins/surface-adapters.ts src/workbench/workbench.ts",
+    "test": "npm run test:compile && node --experimental-strip-types test/activity-bar-navigation.test.mjs && node --experimental-strip-types test/part-resize-navigation.test.mjs && node --experimental-strip-types test/focus-service.test.mjs && node test/workbench-dom-regression.test.mjs && node test/workbench-layout-sync.test.mjs && node test/plugin-contribution-lifecycle.test.mjs && node test/plugin-surface-adapter.test.mjs && node test/tauri-surface-adapter.test.mjs"
   },
   "dependencies": {
     "@radix-ui/react-context-menu": "^2.2.16",
@@ -22,6 +22,7 @@
     "@types/react": "^19.1.13",
     "@types/react-dom": "^19.1.9",
     "@vitejs/plugin-react": "^5.0.4",
+    "happy-dom": "^20.14.6",
     "tailwindcss": "^4.1.14",
     "typescript": "^5.7.0",
     "vite": "^7.1.9"
