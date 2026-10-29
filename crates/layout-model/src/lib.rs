@@ -259,6 +259,12 @@ pub enum LayoutCommand {
         visible: bool,
         order: u32,
     },
+    UpsertView {
+        view_id: String,
+        container_id: String,
+        visible: bool,
+        order: u32,
+    },
     SetViewContainerVisibility {
         container_id: String,
         visible: bool,
@@ -399,6 +405,21 @@ impl LayoutService for InMemoryLayoutService {
                 self.state
                     .containers
                     .insert(container_id, ViewContainerState { visible, order });
+            }
+            LayoutCommand::UpsertView {
+                view_id,
+                container_id,
+                visible,
+                order,
+            } => {
+                if !self.state.containers.contains_key(&container_id) {
+                    return Err(LayoutError::UnknownContainer(container_id));
+                }
+                self.state.views.entry(view_id).or_insert(ViewState {
+                    visible,
+                    order,
+                    container_id: Some(container_id),
+                });
             }
             LayoutCommand::SetViewContainerVisibility {
                 container_id,
@@ -796,6 +817,64 @@ mod tests {
                 .container_id,
             None
         );
+    }
+
+    #[test]
+    fn upsert_view_registers_missing_views_without_overwriting_user_state() {
+        let mut state = LayoutState::default();
+        state.containers.insert(
+            "library".into(),
+            ViewContainerState {
+                visible: true,
+                order: 0,
+            },
+        );
+        state.views.insert(
+            "asset-list".into(),
+            ViewState {
+                visible: false,
+                order: 4,
+                container_id: Some("library".into()),
+            },
+        );
+        let mut service = InMemoryLayoutService::from_state(state);
+
+        service
+            .apply(LayoutCommand::UpsertView {
+                view_id: "asset-list".into(),
+                container_id: "library".into(),
+                visible: true,
+                order: 0,
+            })
+            .unwrap();
+        service
+            .apply(LayoutCommand::UpsertView {
+                view_id: "asset-details".into(),
+                container_id: "library".into(),
+                visible: true,
+                order: 1,
+            })
+            .unwrap();
+
+        let snapshot = service.snapshot();
+        assert!(!snapshot.views["asset-list"].visible);
+        assert_eq!(snapshot.views["asset-list"].order, 4);
+        assert_eq!(snapshot.views["asset-details"].order, 1);
+    }
+
+    #[test]
+    fn upsert_view_requires_a_registered_container() {
+        let mut service = InMemoryLayoutService::default();
+        let error = service
+            .apply(LayoutCommand::UpsertView {
+                view_id: "asset-list".into(),
+                container_id: "missing".into(),
+                visible: true,
+                order: 0,
+            })
+            .expect_err("views cannot outlive their host container");
+
+        assert_eq!(error, LayoutError::UnknownContainer("missing".into()));
     }
 
     #[test]

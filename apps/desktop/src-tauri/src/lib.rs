@@ -171,6 +171,15 @@ pub enum WireLayoutCommand {
         visible: bool,
         order: u32,
     },
+    #[serde(rename = "workbench.upsert-view")]
+    UpsertView {
+        #[serde(rename = "viewId")]
+        view_id: String,
+        #[serde(rename = "containerId")]
+        container_id: String,
+        visible: bool,
+        order: u32,
+    },
     #[serde(rename = "workbench.set-view-container-visibility")]
     SetViewContainerVisibility {
         #[serde(rename = "containerId")]
@@ -245,6 +254,17 @@ impl WireLayoutCommand {
                 visible,
                 order,
             } => Ok(LayoutCommand::UpsertViewContainer {
+                container_id,
+                visible,
+                order,
+            }),
+            Self::UpsertView {
+                view_id,
+                container_id,
+                visible,
+                order,
+            } => Ok(LayoutCommand::UpsertView {
+                view_id,
                 container_id,
                 visible,
                 order,
@@ -771,6 +791,45 @@ mod tests {
                     part: WorkbenchPart::PrimarySidebar
                 }
             })
+        ));
+    }
+
+    #[test]
+    fn wire_view_registration_maps_to_layout_command() {
+        let envelope: WireRequestEnvelope = serde_json::from_str(
+            r#"{
+                "protocolVersion": 1,
+                "requestId": 11,
+                "request": {
+                    "kind": "layout-command",
+                    "protocolVersion": 1,
+                    "command": {
+                        "id": "workbench.upsert-view",
+                        "viewId": "sample.extension.asset-list",
+                        "containerId": "sample.extension.library",
+                        "visible": true,
+                        "order": 2
+                    }
+                }
+            }"#,
+        )
+        .expect("the view registration request should deserialize");
+
+        assert!(matches!(
+            envelope
+                .request
+                .into_core(1)
+                .expect("the view registration command should map"),
+            Request::Command(Command::LayoutAt {
+                command: LayoutCommand::UpsertView {
+                    view_id,
+                    container_id,
+                    visible: true,
+                    order: 2,
+                },
+                ..
+            }) if view_id == "sample.extension.asset-list"
+                && container_id == "sample.extension.library"
         ));
     }
 

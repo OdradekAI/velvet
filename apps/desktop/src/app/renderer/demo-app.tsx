@@ -63,6 +63,19 @@ function applyDemoLayoutCommand(
           [command.containerId]: { visible: command.visible, order: command.order },
         },
       };
+    case 'workbench.upsert-view':
+      return {
+        ...current,
+        revision,
+        views: {
+          ...current.views,
+          [command.viewId]: current.views[command.viewId] ?? {
+            visible: command.visible,
+            order: command.order,
+            containerId: command.containerId,
+          },
+        },
+      };
     case 'workbench.set-view-container-visibility':
       return {
         ...current,

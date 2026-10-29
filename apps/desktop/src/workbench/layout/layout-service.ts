@@ -96,6 +96,21 @@ export class LayoutService {
     });
   }
 
+  public async upsertView(
+    viewId: string,
+    containerId: string,
+    visible: boolean,
+    order: number,
+  ): Promise<LayoutSnapshot> {
+    return this.apply({
+      id: 'workbench.upsert-view',
+      viewId,
+      containerId,
+      visible,
+      order,
+    });
+  }
+
   public async reorderViewContainer(
     containerId: string,
     anchor?: LayoutOrderAnchor,

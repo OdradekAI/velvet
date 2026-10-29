@@ -84,7 +84,8 @@ leaves the previous snapshot usable and returns a typed layout error.
 The first command surface names these operations explicitly:
 `workbench.toggle-part`, `workbench.focus-part`, `workbench.resize-part`,
 `workbench.collapse-part`, `workbench.maximize-part`, `workbench.move-view`,
-`workbench.upsert-view-container`, `workbench.set-view-container-visibility`,
+`workbench.upsert-view-container`, `workbench.upsert-view`,
+`workbench.set-view-container-visibility`,
 `workbench.reorder-view-container`, `workbench.remove-view-container`,
 `workbench.reset-layout`,
 `workbench.reset-app-layout` and `workbench.reset-view-layout`.

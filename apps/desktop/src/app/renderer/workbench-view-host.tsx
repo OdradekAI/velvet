@@ -64,6 +64,22 @@ function isViewVisible(layout: LayoutSnapshot, descriptor: ViewDescriptor): bool
   return layout.views[descriptor.id]?.visible ?? descriptor.defaultVisible !== false;
 }
 
+function effectiveViewContainerId(
+  layout: LayoutSnapshot,
+  registry: ViewRegistry,
+  descriptor: ViewDescriptor,
+): string {
+  const persistedContainerId = layout.views[descriptor.id]?.containerId;
+  if (
+    persistedContainerId &&
+    persistedContainerId !== descriptor.containerId &&
+    registry.canMoveView(descriptor.id, persistedContainerId)
+  ) {
+    return persistedContainerId;
+  }
+  return descriptor.containerId;
+}
+
 function renderFallback(view: ViewDescriptor): ReactNode {
   return (
     <p className="velvet-view-placeholder">
@@ -165,7 +181,7 @@ export function WorkbenchViewHost({
           .list(zone, appId)
           .filter(
             (view) =>
-              view.containerId === container.id &&
+              effectiveViewContainerId(layout, registry, view) === container.id &&
               isScopeMatch(view.scope, scope, appId) &&
               isViewVisible(layout, view),
           )

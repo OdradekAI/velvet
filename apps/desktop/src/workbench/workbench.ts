@@ -39,6 +39,8 @@ export class Workbench {
   public readonly pluginUi: PluginUiRegistry;
   public readonly parts = PARTS;
   public readonly workspaces = BUILTIN_WORKBENCH_APPS;
+  private layoutSyncScheduled = false;
+  private layoutSyncPromise: Promise<void> = Promise.resolve();
 
   public constructor(core: CoreTransport) {
     this.layout = new LayoutService(core);
@@ -62,6 +64,8 @@ export class Workbench {
     this.pluginUi = this.plugins.ui;
     this.registerWorkbenchViews();
     this.registerBuiltInLayoutCommands();
+    this.layout.subscribe(() => this.scheduleLayoutContributionSync());
+    this.views.subscribe(() => this.scheduleLayoutContributionSync());
   }
 
   private registerWorkbenchViews(): void {
@@ -108,6 +112,57 @@ export class Workbench {
         scope: 'workbench',
         namespace: 'workbench',
       });
+    }
+  }
+
+  /**
+   * Registers descriptor defaults with Rust after a layout snapshot exists.
+   * Existing entries are left untouched so user visibility, ordering and moves
+   * remain durable even when a renderer or extension is restarted.
+   */
+  private scheduleLayoutContributionSync(): void {
+    if (this.layoutSyncScheduled) {
+      return;
+    }
+    this.layoutSyncScheduled = true;
+    queueMicrotask(() => {
+      this.layoutSyncScheduled = false;
+      this.layoutSyncPromise = this.layoutSyncPromise
+        .then(() => this.syncLayoutContributions())
+        .catch(() => undefined);
+    });
+  }
+
+  private async syncLayoutContributions(): Promise<void> {
+    let snapshot = this.layout.snapshot();
+    if (!snapshot) {
+      return;
+    }
+
+    for (const container of this.views.listContainers()) {
+      if (snapshot.containers[container.id]) {
+        continue;
+      }
+      snapshot = await this.layout.upsertViewContainer(
+        container.id,
+        container.defaultVisible !== false,
+        container.order ?? 0,
+      );
+    }
+
+    for (const view of this.views.list()) {
+      if (snapshot.views[view.id]) {
+        continue;
+      }
+      if (!snapshot.containers[view.containerId]) {
+        continue;
+      }
+      snapshot = await this.layout.upsertView(
+        view.id,
+        view.containerId,
+        view.defaultVisible !== false,
+        view.order ?? 0,
+      );
     }
   }
 }

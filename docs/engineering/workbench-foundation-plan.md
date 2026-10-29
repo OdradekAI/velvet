@@ -58,6 +58,10 @@ The React shell now mounts registered ViewContainers and Views by semantic Zone
 and Scope, uses persisted order/visibility when present and falls back to the
 descriptor defaults. Trusted React renderers have a separate adapter registry;
 isolated plugin surfaces remain behind the UI bridge.
+After a layout snapshot is loaded, the Workbench idempotently registers missing
+ViewContainers and Views with Rust through `upsert` commands. Existing layout
+entries are preserved, so plugin activation or renderer restart does not reset
+user visibility, order or compatible View moves.
 The Activity Bar now projects contributed navigation ViewContainers for the
 active WorkbenchApp. Selecting one reveals its persisted container and the
 Primary Sidebar, moves focus to that Part and uses roving keyboard navigation;

@@ -81,7 +81,8 @@ Layout actions use stable command identifiers (`workbench.toggle-part`,
 `workbench.focus-part`, `workbench.resize-part`, `workbench.collapse-part`,
 `workbench.maximize-part`, `workbench.move-view`,
 `workbench.upsert-view-container`,
-`workbench.set-view-container-visibility`, `workbench.reorder-view-container`,
+`workbench.upsert-view`, `workbench.set-view-container-visibility`,
+`workbench.reorder-view-container`,
 `workbench.remove-view-container`, `workbench.reset-layout`,
 `workbench.reset-app-layout` and `workbench.reset-view-layout`). Their typed
 payloads are adapted to the Rust `LayoutService` rather than persisted by the
