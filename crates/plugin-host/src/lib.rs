@@ -744,8 +744,8 @@ mod tests {
     use super::*;
     use velvet_layout_model::WorkbenchZone;
     use velvet_plugin_api::{
-        ContributionDescriptor, Permission, RuntimeKind, RuntimeLaunchSpec, UiSurfaceDescriptor,
-        UiSurfaceKind, ZonePermissionSet,
+        ContextAnchor, ContributionDescriptor, Permission, RuntimeKind, RuntimeLaunchSpec,
+        UiSurfaceDescriptor, UiSurfaceKind, ZonePermissionSet,
     };
 
     enum StartPlan {
@@ -835,6 +835,12 @@ mod tests {
                 default_visible: Some(true),
                 view_container_id: None,
                 activity_bar: None,
+                label: None,
+                label_key: None,
+                command_id: None,
+                group: None,
+                when: None,
+                anchor: None,
                 ui: None,
             }],
             permission_sets: vec![],
@@ -937,6 +943,12 @@ mod tests {
                 default_visible: Some(true),
                 view_container_id: None,
                 activity_bar: None,
+                label: Some("Open feed tool".into()),
+                label_key: None,
+                command_id: Some("feed-tools.menu".into()),
+                group: None,
+                when: None,
+                anchor: Some(ContextAnchor::Asset),
                 ui: None,
             }],
             permission_sets: vec![],

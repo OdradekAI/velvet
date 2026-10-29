@@ -545,7 +545,7 @@ export class PluginClient {
     }
   }
 
-  /** Registers a manifest with the Rust PluginHost; local UI contributions remain explicit. */
+  /** Registers a manifest with Rust and synchronizes its host-owned projection. */
   public async registerInCore(manifest: CorePluginManifest): Promise<CorePluginSummary> {
     const summary = await this.requestCoreExtension({
       protocolVersion: PROTOCOL_VERSION,
@@ -1371,7 +1371,9 @@ function isRenderableCoreContribution(contribution: CorePluginContribution): boo
     contribution.kind === 'view' ||
     contribution.kind === 'companion-view' ||
     contribution.kind === 'operation-view' ||
-    contribution.kind === 'dialog'
+    contribution.kind === 'dialog' ||
+    contribution.kind === 'command' ||
+    contribution.kind === 'context-menu'
   );
 }
 
@@ -1392,7 +1394,7 @@ function coreContributionToManifest(contribution: CorePluginContribution): Manif
     id: contribution.id,
     scope,
     appId,
-    kind: coreContributionKind(contribution.kind),
+    kind: coreContributionKind(contribution),
     namespace: contribution.namespace,
     container: contribution.container ?? undefined,
     zone: contribution.zone ?? undefined,
@@ -1409,18 +1411,26 @@ function coreContributionToManifest(contribution: CorePluginContribution): Manif
           order: contribution.activityBar.order ?? undefined,
         }
       : undefined,
+    label: contribution.label ?? undefined,
+    labelKey: contribution.labelKey ?? undefined,
+    commandId: contribution.commandId ?? undefined,
+    group: contribution.group ?? undefined,
+    when: contribution.when ?? undefined,
+    anchor: contribution.anchor ?? undefined,
     ui,
   };
 }
 
 function coreContributionKind(
-  kind: CorePluginContribution['kind'],
+  contribution: CorePluginContribution,
 ): ManifestContribution['kind'] {
-  switch (kind) {
+  switch (contribution.kind) {
+    case 'context-menu':
+      return contribution.scope.kind === 'workbench-app' ? 'app-context-menu' : 'context-menu';
     case 'inspector':
       return 'inspector-section';
     default:
-      return kind;
+      return contribution.kind;
   }
 }
 

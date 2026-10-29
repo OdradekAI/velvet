@@ -3,6 +3,7 @@ export type {
   CorePluginContribution,
   CorePluginContributionKind,
   CorePluginContributionScope,
+  CorePluginContextAnchor,
   CorePluginDisableReason,
   CorePluginHostContainer,
   CorePluginManifest,

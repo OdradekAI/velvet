@@ -1,4 +1,8 @@
 import assert from 'node:assert/strict';
+import { CommandRegistry } from '/tmp/velvet-plugin-tests/workbench/commands/command-registry.js';
+import { ContextKeyService } from '/tmp/velvet-plugin-tests/workbench/commands/context-key-service.js';
+import { MenuRegistry } from '/tmp/velvet-plugin-tests/workbench/commands/menu-registry.js';
+import { OverlayRegistry } from '/tmp/velvet-plugin-tests/workbench/overlays/overlay-registry.js';
 import { PluginClient } from '/tmp/velvet-plugin-tests/workbench/plugins/plugin-client.js';
 import { PluginUiRegistry } from '/tmp/velvet-plugin-tests/workbench/plugins/ui-bridge.js';
 import { ViewRegistry } from '/tmp/velvet-plugin-tests/workbench/views/view-registry.js';
@@ -48,6 +52,72 @@ const projection = (state, id = 'sample.reader') => ({
           activityBar: null,
           ui: { kind: 'view', entrypoint: 'wasm://sample/reader', bridgeVersion: '1' },
         },
+        {
+          id: 'open-reader',
+          kind: 'command',
+          scope: { kind: 'workbench-app', appId: 'asset-manager' },
+          namespace: 'workbench.app.asset-manager',
+          container: null,
+          zone: null,
+          title: 'Open Reader',
+          titleKey: null,
+          icon: null,
+          order: null,
+          defaultVisible: null,
+          viewContainerId: null,
+          activityBar: null,
+          label: null,
+          labelKey: null,
+          commandId: null,
+          group: null,
+          when: null,
+          anchor: null,
+          ui: null,
+        },
+        {
+          id: 'reader-menu',
+          kind: 'context-menu',
+          scope: { kind: 'workbench-app', appId: 'asset-manager' },
+          namespace: 'workbench.app.asset-manager',
+          container: 'context-menu',
+          zone: 'navigation',
+          title: 'Open Reader',
+          titleKey: null,
+          icon: null,
+          order: 1,
+          defaultVisible: null,
+          viewContainerId: null,
+          activityBar: null,
+          label: 'Open Reader',
+          labelKey: null,
+          commandId: 'open-reader',
+          group: 'reader',
+          when: null,
+          anchor: 'asset',
+          ui: null,
+        },
+        {
+          id: 'reader-dialog',
+          kind: 'dialog',
+          scope: { kind: 'workbench-app', appId: 'asset-manager' },
+          namespace: 'workbench.app.asset-manager',
+          container: 'overlay-layer',
+          zone: null,
+          title: 'Reader dialog',
+          titleKey: null,
+          icon: null,
+          order: null,
+          defaultVisible: null,
+          viewContainerId: null,
+          activityBar: null,
+          label: null,
+          labelKey: null,
+          commandId: null,
+          group: null,
+          when: null,
+          anchor: null,
+          ui: { kind: 'dialog', entrypoint: 'wasm://sample/dialog', bridgeVersion: '1' },
+        },
       ]
     : [],
 });
@@ -92,6 +162,10 @@ const core = {
 
 const views = new ViewRegistry();
 const ui = new PluginUiRegistry();
+const contextKeys = new ContextKeyService();
+const commands = new CommandRegistry(contextKeys);
+const menus = new MenuRegistry(commands, contextKeys);
+const overlays = new OverlayRegistry(contextKeys);
 const apps = new WorkbenchAppRegistry([{
   id: 'asset-manager',
   title: 'Resource Manager',
@@ -99,7 +173,7 @@ const apps = new WorkbenchAppRegistry([{
   apiVersion: '1',
   surface: { trust: 'trusted', entrypoint: 'builtin://resource-manager' },
 }]);
-const client = new PluginClient(core, undefined, apps, '1', ui, views);
+const client = new PluginClient(core, undefined, apps, '1', ui, views, commands, menus, overlays);
 const manifest = {
   id: 'sample.reader',
   version: '1.0.0',
@@ -117,12 +191,27 @@ assert.equal((await client.activateInCore('sample.reader')).state, 'active');
 assert.ok(views.getContainer('sample.reader.library'));
 assert.ok(views.get('sample.reader.reader-view'));
 assert.equal(ui.getDescriptor('sample.reader', 'reader-view')?.namespace, 'workbench.app.asset-manager');
+assert.ok(commands.get('workbench.app.asset-manager', 'open-reader'));
+assert.equal(
+  menus.list('context-menu', { activeAppId: 'asset-manager', anchor: 'asset' }).length,
+  1,
+);
+assert.ok(overlays.get('workbench.app.asset-manager', 'reader-dialog'));
+assert.equal(ui.getDescriptor('sample.reader', 'reader-dialog')?.namespace, 'workbench.app.asset-manager');
 assert.equal((await client.checkCoreHealth('sample.reader')).state, 'active');
 assert.equal((await client.disableInCore('sample.reader')).state, 'disabled');
 assert.equal(views.get('sample.reader.reader-view'), undefined);
 assert.equal(ui.getDescriptor('sample.reader', 'reader-view'), undefined);
+assert.equal(commands.get('workbench.app.asset-manager', 'open-reader'), undefined);
+assert.equal(
+  menus.list('context-menu', { activeAppId: 'asset-manager', anchor: 'asset' }).length,
+  0,
+);
+assert.equal(overlays.get('workbench.app.asset-manager', 'reader-dialog'), undefined);
+assert.equal(ui.getDescriptor('sample.reader', 'reader-dialog'), undefined);
 assert.equal((await client.recoverInCore('sample.reader')).state, 'active');
 assert.ok(views.get('sample.reader.reader-view'));
+assert.ok(commands.get('workbench.app.asset-manager', 'open-reader'));
 assert.equal((await client.queryCoreExtensions())[0].id, 'sample.reader');
 assert.equal(client.getCoreSummary('sample.reader')?.state, 'active');
 

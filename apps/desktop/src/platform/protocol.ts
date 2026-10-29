@@ -205,6 +205,13 @@ export type CorePluginHostContainer =
   | 'overlay-layer'
   | 'context-menu'
   | 'command-palette';
+export type CorePluginContextAnchor =
+  | 'asset'
+  | 'feed-item'
+  | 'collection'
+  | 'selection'
+  | 'view'
+  | 'background';
 export type CorePluginUiSurfaceKind =
   | 'app-surface'
   | 'view'
@@ -230,6 +237,12 @@ export interface CorePluginContribution {
     readonly icon: string;
     readonly order: number | null;
   } | null;
+  readonly label: string | null;
+  readonly labelKey: string | null;
+  readonly commandId: string | null;
+  readonly group: string | null;
+  readonly when: string | null;
+  readonly anchor: CorePluginContextAnchor | null;
   readonly ui: {
     readonly kind: CorePluginUiSurfaceKind;
     readonly entrypoint: string;

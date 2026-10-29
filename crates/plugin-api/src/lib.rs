@@ -89,6 +89,17 @@ pub enum ContributionKind {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
+pub enum ContextAnchor {
+    Asset,
+    FeedItem,
+    Collection,
+    Selection,
+    View,
+    Background,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum UiSurfaceKind {
     AppSurface,
     View,
@@ -138,6 +149,18 @@ pub struct ContributionDescriptor {
     pub view_container_id: Option<String>,
     #[serde(default)]
     pub activity_bar: Option<ActivityBarDescriptor>,
+    #[serde(default)]
+    pub label: Option<String>,
+    #[serde(default)]
+    pub label_key: Option<String>,
+    #[serde(default)]
+    pub command_id: Option<String>,
+    #[serde(default)]
+    pub group: Option<String>,
+    #[serde(default)]
+    pub when: Option<String>,
+    #[serde(default)]
+    pub anchor: Option<ContextAnchor>,
     #[serde(default)]
     pub ui: Option<UiSurfaceDescriptor>,
 }

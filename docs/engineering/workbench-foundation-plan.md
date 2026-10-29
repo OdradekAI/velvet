@@ -122,6 +122,10 @@ renderer reuses `PluginClient` to project those entries into `ViewRegistry` and
 `PluginUiRegistry`; disable/failure removes them and recovery re-registers the
 same validated projection. Invalid namespaces remain isolated at the frontend
 validation boundary.
+Command, context-menu and dialog contributions use the same projection and
+cleanup boundary, entering `CommandRegistry`, `MenuRegistry` and
+`OverlayRegistry`; external command execution still requires the runtime
+handler/IPC capability seam.
 
 The current shell slice also renders the accepted Part constraint table: fixed
 Parts use stable dimensions, resizable Parts enforce bounded sizes in Rust, and

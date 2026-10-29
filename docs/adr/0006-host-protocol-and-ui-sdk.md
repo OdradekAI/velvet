@@ -55,6 +55,10 @@ adapter validates the returned namespace and reuses `ViewRegistry` and
 `PluginUiRegistry` for registration and cleanup. The projection is filtered by
 the Rust lifecycle state, so a disabled or failed extension cannot leave active
 views or surface sessions behind; recovery reuses the same projection path.
+The same projection carries command, context-menu and dialog metadata. The
+desktop adapter registers those entries through `CommandRegistry`,
+`MenuRegistry` and `OverlayRegistry`, while command execution remains behind
+the plugin runtime handler seam.
 
 The UI SDK exposes host concepts rather than Vue or React component types:
 

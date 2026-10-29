@@ -1087,6 +1087,12 @@ mod tests {
                         default_visible: Some(true),
                         view_container_id: None,
                         activity_bar: None,
+                        label: None,
+                        label_key: None,
+                        command_id: None,
+                        group: None,
+                        when: None,
+                        anchor: None,
                         ui: Some(velvet_plugin_api::UiSurfaceDescriptor {
                             kind: velvet_plugin_api::UiSurfaceKind::View,
                             entrypoint: "wasm://sample/reader".into(),
