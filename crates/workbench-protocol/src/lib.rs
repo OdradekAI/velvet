@@ -1,3 +1,4 @@
+use serde_json::Value;
 use velvet_asset_core::AssetId;
 use velvet_layout_model::{LayoutCommand, LayoutState};
 use velvet_plugin_api::{ExtensionId, ExtensionManifest, ExtensionProjection, ExtensionSummary};
@@ -30,6 +31,12 @@ pub enum Command {
     },
     RecoverPlugin {
         extension_id: ExtensionId,
+    },
+    InvokePluginCommand {
+        extension_id: ExtensionId,
+        command_id: String,
+        args: Value,
+        context: Value,
     },
 }
 

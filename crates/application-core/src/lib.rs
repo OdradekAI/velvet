@@ -128,6 +128,17 @@ impl ApplicationCore {
                 self.recover_plugin(&extension_id).map_err(plugin_error)?;
                 self.extension_response(&extension_id)
             }
+            Request::Command(Command::InvokePluginCommand {
+                extension_id,
+                command_id,
+                args,
+                context,
+            }) => {
+                self.plugins
+                    .invoke_command(&extension_id, command_id, args, context)
+                    .map_err(plugin_error)?;
+                Ok(Response::Accepted)
+            }
             Request::Query(Query::Layout) => Ok(Response::Layout(self.layout.snapshot())),
             Request::Query(Query::Extensions) => Ok(Response::Extensions(self.plugins.discover())),
             Request::Query(Query::PluginProjection { extension_id }) => self
@@ -554,6 +565,63 @@ mod tests {
             Response::Extension(summary)
                 if summary.id == id && summary.state == velvet_plugin_api::ExtensionState::Disabled
         ));
+    }
+
+    #[test]
+    fn plugin_command_dispatch_reaches_the_active_runtime() {
+        let mut core = ApplicationCore::default();
+        let manifest = ExtensionManifest {
+            id: ExtensionId("command.runtime".into()),
+            version: "1.0.0".into(),
+            host_api: VersionRange("^1".into()),
+            runtime: RuntimeKind::BuiltIn,
+            launch: None,
+            target_app: None,
+            contributions: vec![ContributionDescriptor {
+                id: "command.runtime.open".into(),
+                kind: ContributionKind::Command,
+                scope: ContributionScope::Workbench,
+                namespace: "workbench".into(),
+                container: None,
+                zone: None,
+                title: Some("Open runtime command".into()),
+                title_key: None,
+                icon: None,
+                order: None,
+                default_visible: None,
+                view_container_id: None,
+                activity_bar: None,
+                label: None,
+                label_key: None,
+                command_id: None,
+                group: None,
+                when: None,
+                anchor: None,
+                ui: None,
+            }],
+            permission_sets: vec![],
+        };
+        let id = manifest.id.clone();
+
+        core.dispatch(Request::Command(Command::RegisterPlugin { manifest }))
+            .expect("command plugin should register");
+        core.dispatch(Request::Command(Command::ActivatePlugin {
+            extension_id: id.clone(),
+        }))
+        .expect("command plugin should activate");
+
+        let response = core
+            .dispatch(Request::Command(Command::InvokePluginCommand {
+                extension_id: id,
+                command_id: "command.runtime.open".into(),
+                args: serde_json::json!({ "source": "test" }),
+                context: serde_json::json!({
+                    "activeAppId": "asset-manager",
+                    "keys": { "resourceKind": "asset" }
+                }),
+            }))
+            .expect("the active command should be accepted by the runtime");
+        assert_eq!(response, Response::Accepted);
     }
 
     #[test]

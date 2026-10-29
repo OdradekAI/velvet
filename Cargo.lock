@@ -142,6 +142,7 @@ dependencies = [
 name = "velvet-plugin-host"
 version = "0.0.2"
 dependencies = [
+ "serde",
  "serde_json",
  "velvet-layout-model",
  "velvet-plugin-api",
@@ -168,6 +169,7 @@ dependencies = [
 name = "velvet-workbench-protocol"
 version = "0.0.2"
 dependencies = [
+ "serde_json",
  "velvet-asset-core",
  "velvet-layout-model",
  "velvet-plugin-api",

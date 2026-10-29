@@ -96,6 +96,11 @@ export type LayoutCommand =
   | { readonly id: 'workbench.reset-app-layout'; readonly appId: WorkbenchAppId }
   | { readonly id: 'workbench.reset-view-layout'; readonly viewId?: string };
 
+export interface CorePluginCommandContext {
+  readonly activeAppId: WorkbenchAppId | null;
+  readonly keys: Readonly<Record<string, string | number | boolean | null>>;
+}
+
 export type CoreRequest =
   | { readonly protocolVersion: ProtocolVersion; readonly kind: 'query-layout' }
   | { readonly protocolVersion: ProtocolVersion; readonly kind: 'query-extensions' }
@@ -129,6 +134,14 @@ export type CoreRequest =
       readonly protocolVersion: ProtocolVersion;
       readonly kind: 'recover-plugin';
       readonly extensionId: string;
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'invoke-plugin-command';
+      readonly extensionId: string;
+      readonly commandId: string;
+      readonly args: unknown;
+      readonly context: CorePluginCommandContext;
     }
   | {
       readonly protocolVersion: ProtocolVersion;

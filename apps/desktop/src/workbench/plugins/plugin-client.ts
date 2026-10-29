@@ -1143,13 +1143,20 @@ export class PluginClient {
       order: descriptor.order,
       execute: async (args, context) => {
         const handler = this.commandHandlers.get(descriptor.extensionId);
-        if (!handler) {
-          throw new PluginLifecycleError(
-            `Plugin command handler is not bound: ${descriptor.id}`,
-            descriptor.extensionId,
-          );
+        if (handler) {
+          await handler(descriptor.id, args, context);
+          return;
         }
-        await handler(descriptor.id, args, context);
+
+        if (this.coreProjections.has(descriptor.extensionId)) {
+          await this.invokeCoreCommand(descriptor.extensionId, descriptor.id, args, context);
+          return;
+        }
+
+        throw new PluginLifecycleError(
+          `Plugin command handler is not bound: ${descriptor.id}`,
+          descriptor.extensionId,
+        );
       },
     };
   }
@@ -1327,6 +1334,31 @@ export class PluginClient {
     this.coreSummaries.set(response.extension.id, response.extension);
     this.notify();
     return response.extension;
+  }
+
+  private async invokeCoreCommand(
+    extensionId: string,
+    commandId: string,
+    args: unknown,
+    context: CommandExecutionContext,
+  ): Promise<void> {
+    const response = await this.core.request({
+      protocolVersion: PROTOCOL_VERSION,
+      kind: 'invoke-plugin-command',
+      extensionId,
+      commandId,
+      args,
+      context: {
+        activeAppId: context.activeAppId ?? null,
+        keys: context.keys,
+      },
+    });
+    if (response.kind !== 'accepted') {
+      throw new PluginLifecycleError(
+        `Expected an accepted response for plugin command ${commandId}, received ${response.kind}`,
+        extensionId,
+      );
+    }
   }
 
   private async syncCoreProjectionState(summary: CorePluginSummary): Promise<void> {

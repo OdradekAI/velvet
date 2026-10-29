@@ -131,6 +131,16 @@ pub enum WireRequest {
         #[serde(rename = "extensionId")]
         extension_id: String,
     },
+    InvokePluginCommand {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        #[serde(rename = "extensionId")]
+        extension_id: String,
+        #[serde(rename = "commandId")]
+        command_id: String,
+        args: serde_json::Value,
+        context: serde_json::Value,
+    },
     LayoutCommand {
         #[serde(rename = "protocolVersion")]
         protocol_version: u16,
@@ -215,6 +225,21 @@ impl WireRequest {
                 validate_inner_protocol(outer_protocol_version, protocol_version)?;
                 Ok(Request::Command(Command::RecoverPlugin {
                     extension_id: ExtensionId(extension_id),
+                }))
+            }
+            Self::InvokePluginCommand {
+                protocol_version,
+                extension_id,
+                command_id,
+                args,
+                context,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Command(Command::InvokePluginCommand {
+                    extension_id: ExtensionId(extension_id),
+                    command_id,
+                    args,
+                    context,
                 }))
             }
             Self::LayoutCommand {
@@ -1033,6 +1058,41 @@ mod tests {
                 extension_id,
                 reason: PluginDisableReason::User,
             }) if extension_id.0 == "sample.reader"
+        ));
+    }
+
+    #[test]
+    fn wire_plugin_command_invocation_preserves_payload_and_context() {
+        let envelope: WireRequestEnvelope = serde_json::from_str(
+            r#"{
+                "protocolVersion": 1,
+                "requestId": 17,
+                "request": {
+                    "kind": "invoke-plugin-command",
+                    "protocolVersion": 1,
+                    "extensionId": "sample.reader",
+                    "commandId": "sample.reader.open",
+                    "args": {"source": "context-menu"},
+                    "context": {"activeAppId": "asset-manager", "keys": {"kind": "asset"}}
+                }
+            }"#,
+        )
+        .expect("the plugin command invocation should deserialize");
+
+        assert!(matches!(
+            envelope
+                .request
+                .into_core(1)
+                .expect("the plugin command invocation should map"),
+            Request::Command(Command::InvokePluginCommand {
+                extension_id,
+                command_id,
+                args,
+                context,
+            }) if extension_id.0 == "sample.reader"
+                && command_id == "sample.reader.open"
+                && args["source"] == "context-menu"
+                && context["activeAppId"] == "asset-manager"
         ));
     }
 

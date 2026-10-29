@@ -134,6 +134,9 @@ const core = {
     if (request.kind === 'query-plugin-projection') {
       return { kind: 'plugin-projection', projection: projection(runtimeState, request.extensionId) };
     }
+    if (request.kind === 'invoke-plugin-command') {
+      return { kind: 'accepted' };
+    }
 
     const extensionId = request.kind === 'register-plugin'
       ? request.manifest.id
@@ -192,6 +195,17 @@ assert.ok(views.getContainer('sample.reader.library'));
 assert.ok(views.get('sample.reader.reader-view'));
 assert.equal(ui.getDescriptor('sample.reader', 'reader-view')?.namespace, 'workbench.app.asset-manager');
 assert.ok(commands.get('workbench.app.asset-manager', 'open-reader'));
+await commands.execute(
+  'open-reader',
+  { source: 'test' },
+  { activeAppId: 'asset-manager', keys: { resourceKind: 'asset' } },
+);
+assert.equal(requests[4].kind, 'invoke-plugin-command');
+assert.equal(requests[4].commandId, 'open-reader');
+assert.deepEqual(requests[4].context, {
+  activeAppId: 'asset-manager',
+  keys: { resourceKind: 'asset' },
+});
 assert.equal(
   menus.list('context-menu', { activeAppId: 'asset-manager', anchor: 'asset' }).length,
   1,
@@ -230,6 +244,7 @@ assert.deepEqual(
     'query-plugin-projection',
     'activate-plugin',
     'query-plugin-projection',
+    'invoke-plugin-command',
     'check-plugin-health',
     'query-plugin-projection',
     'disable-plugin',
@@ -239,6 +254,6 @@ assert.deepEqual(
   ],
 );
 assert.equal(requests[0].manifest.runtime, 'built-in');
-assert.equal(requests[6].reason, 'user');
+assert.equal(requests[7].reason, 'user');
 
 console.log('Plugin core lifecycle bridge tests passed.');

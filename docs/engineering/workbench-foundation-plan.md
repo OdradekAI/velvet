@@ -124,8 +124,12 @@ same validated projection. Invalid namespaces remain isolated at the frontend
 validation boundary.
 Command, context-menu and dialog contributions use the same projection and
 cleanup boundary, entering `CommandRegistry`, `MenuRegistry` and
-`OverlayRegistry`; external command execution still requires the runtime
-handler/IPC capability seam.
+`OverlayRegistry`. Projected command execution now returns through the
+versioned CoreTransport as `invoke-plugin-command`; Rust validates the active
+extension and declared command before forwarding a versioned JSONL request to
+the isolated runtime. Runtime rejection stays local to the command, while a
+closed, malformed or timed-out runtime is failed and recoverable without
+removing unrelated extensions.
 
 The current shell slice also renders the accepted Part constraint table: fixed
 Parts use stable dimensions, resizable Parts enforce bounded sizes in Rust, and

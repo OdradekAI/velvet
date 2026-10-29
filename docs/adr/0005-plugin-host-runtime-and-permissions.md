@@ -54,11 +54,19 @@ Every extension identifier, contribution identifier and persisted facet schema i
 
 The first runtime integration keeps the process boundary behind two host-owned
 interfaces: `PluginRuntime` starts an extension with an explicit
-`RuntimeLaunchSpec` and `RuntimeProcess` reports health and shutdown. The
-production adapter uses a child process with a null standard IO surface and
-passes only the extension id and the validated permission grant as environment
-metadata. Built-in extensions use the same lifecycle through a no-op process;
-WASM extensions provide their declared WASM runner as the launch program.
+`RuntimeLaunchSpec` and `RuntimeProcess` reports health, shutdown and command
+invocation. The production adapter uses a child process with a versioned JSONL
+stdin/stdout channel and passes only the extension id and the validated
+permission grant as environment metadata. Built-in extensions use the same
+lifecycle through a no-op process; WASM extensions provide their declared WASM
+runner as the launch program. Invocation requests carry the extension id,
+command id, opaque arguments and a context snapshot; responses carry the
+runtime protocol version, success flag, result and optional error.
+
+The host applies a bounded invocation timeout. A plugin-level rejection is
+returned to the caller while the extension stays active. A closed or crashed
+runtime, malformed response or timeout tears down only that process, marks the
+extension failed and leaves it recoverable through the normal lifecycle path.
 
 Permission sets are checked against the declared semantic zone before a
 manifest is registered. Startup failure marks only that extension as failed;

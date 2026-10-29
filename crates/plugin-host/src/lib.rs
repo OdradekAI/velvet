@@ -1,8 +1,14 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use velvet_layout_model::WorkbenchZone;
 use velvet_plugin_api::{
     AppTarget, ContributionKind, ContributionScope, ExtensionId, ExtensionManifest,
@@ -35,6 +41,10 @@ pub enum PluginError {
         extension_id: ExtensionId,
         message: String,
     },
+    RuntimeInvocation {
+        extension_id: ExtensionId,
+        message: String,
+    },
     InvalidState {
         extension_id: ExtensionId,
         state: ExtensionState,
@@ -54,6 +64,9 @@ pub enum RuntimeError {
     InvalidLaunchSpec(ExtensionId),
     StartFailed(String),
     ShutdownFailed(String),
+    InvocationFailed(String),
+    InvocationTimeout,
+    InvocationRejected(String),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -62,9 +75,30 @@ pub enum RuntimeHealth {
     Crashed(String),
 }
 
+const RUNTIME_PROTOCOL_VERSION: u16 = 1;
+const RUNTIME_INVOCATION_TIMEOUT: Duration = Duration::from_secs(5);
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct PluginInvocation {
+    pub extension_id: ExtensionId,
+    pub command_id: String,
+    pub args: Value,
+    pub context: Value,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct PluginInvocationResult {
+    pub result: Option<Value>,
+    pub error: Option<String>,
+}
+
 pub trait RuntimeProcess: Send {
     fn poll(&mut self) -> RuntimeHealth;
     fn shutdown(&mut self) -> Result<(), RuntimeError>;
+    fn invoke(
+        &mut self,
+        invocation: &PluginInvocation,
+    ) -> Result<PluginInvocationResult, RuntimeError>;
 }
 
 pub trait PluginRuntime: Send {
@@ -137,19 +171,66 @@ impl PluginRuntime for ProcessPluginRuntime {
             .args(&spec.args)
             .env("VELVET_EXTENSION_ID", &manifest.id.0)
             .env("VELVET_PLUGIN_PERMISSIONS", permissions.as_env_value())
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
             .stderr(Stdio::null());
-        let child = command
+        let mut child = command
             .spawn()
             .map_err(|error| RuntimeError::StartFailed(error.to_string()))?;
 
-        Ok(Box::new(ChildRuntimeProcess { child }))
+        let stdin = match child.stdin.take() {
+            Some(stdin) => stdin,
+            None => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(RuntimeError::StartFailed(
+                    "external runtime did not expose stdin".into(),
+                ));
+            }
+        };
+        let stdout = match child.stdout.take() {
+            Some(stdout) => stdout,
+            None => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(RuntimeError::StartFailed(
+                    "external runtime did not expose stdout".into(),
+                ));
+            }
+        };
+        let (requests, receiver) = mpsc::channel();
+        let worker = match thread::Builder::new()
+            .name(format!("velvet-plugin-{}", manifest.id.0))
+            .spawn(move || runtime_io_loop(stdin, stdout, receiver))
+        {
+            Ok(worker) => worker,
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(RuntimeError::StartFailed(error.to_string()));
+            }
+        };
+
+        Ok(Box::new(ChildRuntimeProcess {
+            child,
+            requests: Some(requests),
+            worker: Some(worker),
+        }))
     }
+}
+
+enum RuntimeIoRequest {
+    Invoke {
+        line: String,
+        response: Sender<Result<String, RuntimeError>>,
+    },
+    Stop,
 }
 
 struct ChildRuntimeProcess {
     child: Child,
+    requests: Option<Sender<RuntimeIoRequest>>,
+    worker: Option<JoinHandle<()>>,
 }
 
 impl RuntimeProcess for ChildRuntimeProcess {
@@ -162,7 +243,11 @@ impl RuntimeProcess for ChildRuntimeProcess {
     }
 
     fn shutdown(&mut self) -> Result<(), RuntimeError> {
-        match self.child.try_wait() {
+        if let Some(requests) = self.requests.take() {
+            let _ = requests.send(RuntimeIoRequest::Stop);
+        }
+
+        let shutdown_result = match self.child.try_wait() {
             Ok(Some(_)) => Ok(()),
             Ok(None) => {
                 self.child
@@ -174,7 +259,81 @@ impl RuntimeProcess for ChildRuntimeProcess {
                     .map_err(|error| RuntimeError::ShutdownFailed(error.to_string()))
             }
             Err(error) => Err(RuntimeError::ShutdownFailed(error.to_string())),
+        };
+
+        if let Some(worker) = self.worker.take() {
+            if worker.join().is_err() && shutdown_result.is_ok() {
+                return Err(RuntimeError::ShutdownFailed(
+                    "runtime I/O worker panicked".into(),
+                ));
+            }
         }
+
+        shutdown_result
+    }
+
+    fn invoke(
+        &mut self,
+        invocation: &PluginInvocation,
+    ) -> Result<PluginInvocationResult, RuntimeError> {
+        match self.child.try_wait() {
+            Ok(Some(status)) => {
+                return Err(RuntimeError::InvocationFailed(format!(
+                    "runtime exited before invocation with {status}"
+                )))
+            }
+            Ok(None) => {}
+            Err(error) => return Err(RuntimeError::InvocationFailed(error.to_string())),
+        }
+
+        let request = RuntimeInvocationRequest {
+            protocol_version: RUNTIME_PROTOCOL_VERSION,
+            kind: "invoke-command",
+            extension_id: &invocation.extension_id.0,
+            command_id: &invocation.command_id,
+            args: &invocation.args,
+            context: &invocation.context,
+        };
+        let line = serde_json::to_string(&request)
+            .map_err(|error| RuntimeError::InvocationFailed(error.to_string()))?;
+        let (response_sender, response_receiver) = mpsc::channel();
+        self.requests
+            .as_ref()
+            .ok_or_else(|| RuntimeError::InvocationFailed("runtime is shut down".into()))?
+            .send(RuntimeIoRequest::Invoke {
+                line,
+                response: response_sender,
+            })
+            .map_err(|_| RuntimeError::InvocationFailed("runtime I/O worker stopped".into()))?;
+
+        let response = response_receiver
+            .recv_timeout(RUNTIME_INVOCATION_TIMEOUT)
+            .map_err(|error| match error {
+                mpsc::RecvTimeoutError::Timeout => RuntimeError::InvocationTimeout,
+                mpsc::RecvTimeoutError::Disconnected => {
+                    RuntimeError::InvocationFailed("runtime I/O worker disconnected".into())
+                }
+            })??;
+        let response = serde_json::from_str::<RuntimeInvocationResponse>(&response)
+            .map_err(|error| RuntimeError::InvocationFailed(error.to_string()))?;
+        if response.protocol_version != RUNTIME_PROTOCOL_VERSION {
+            return Err(RuntimeError::InvocationFailed(format!(
+                "runtime protocol version {} is incompatible with {}",
+                response.protocol_version, RUNTIME_PROTOCOL_VERSION
+            )));
+        }
+        if !response.ok {
+            return Err(RuntimeError::InvocationRejected(
+                response
+                    .error
+                    .unwrap_or_else(|| "plugin rejected the command".into()),
+            ));
+        }
+
+        Ok(PluginInvocationResult {
+            result: response.result,
+            error: response.error,
+        })
     }
 }
 
@@ -187,6 +346,70 @@ impl RuntimeProcess for NoopRuntimeProcess {
 
     fn shutdown(&mut self) -> Result<(), RuntimeError> {
         Ok(())
+    }
+
+    fn invoke(
+        &mut self,
+        _invocation: &PluginInvocation,
+    ) -> Result<PluginInvocationResult, RuntimeError> {
+        Ok(PluginInvocationResult {
+            result: Some(serde_json::json!({ "accepted": true })),
+            error: None,
+        })
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RuntimeInvocationRequest<'a> {
+    protocol_version: u16,
+    kind: &'static str,
+    extension_id: &'a str,
+    command_id: &'a str,
+    args: &'a Value,
+    context: &'a Value,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RuntimeInvocationResponse {
+    protocol_version: u16,
+    ok: bool,
+    result: Option<Value>,
+    error: Option<String>,
+}
+
+fn runtime_io_loop(
+    stdin: std::process::ChildStdin,
+    stdout: std::process::ChildStdout,
+    receiver: Receiver<RuntimeIoRequest>,
+) {
+    let mut stdin = stdin;
+    let mut stdout = BufReader::new(stdout);
+    while let Ok(request) = receiver.recv() {
+        match request {
+            RuntimeIoRequest::Stop => break,
+            RuntimeIoRequest::Invoke { line, response } => {
+                let result = (|| {
+                    stdin
+                        .write_all(line.as_bytes())
+                        .and_then(|_| stdin.write_all(b"\n"))
+                        .and_then(|_| stdin.flush())
+                        .map_err(|error| RuntimeError::InvocationFailed(error.to_string()))?;
+                    let mut response_line = String::new();
+                    let read = stdout
+                        .read_line(&mut response_line)
+                        .map_err(|error| RuntimeError::InvocationFailed(error.to_string()))?;
+                    if read == 0 {
+                        return Err(RuntimeError::InvocationFailed(
+                            "runtime closed stdout without a response".into(),
+                        ));
+                    }
+                    Ok(response_line)
+                })();
+                let _ = response.send(result);
+            }
+        }
     }
 }
 
@@ -314,6 +537,13 @@ pub trait PluginHost {
     ) -> Result<Vec<velvet_plugin_api::ContributionDescriptor>, PluginError>;
     fn check_health(&mut self, id: &ExtensionId) -> Result<ExtensionState, PluginError>;
     fn recover(&mut self, id: &ExtensionId) -> Result<(), PluginError>;
+    fn invoke_command(
+        &mut self,
+        id: &ExtensionId,
+        command_id: String,
+        args: Value,
+        context: Value,
+    ) -> Result<PluginInvocationResult, PluginError>;
 }
 
 pub struct InMemoryPluginHost {
@@ -625,7 +855,9 @@ impl PluginHost for InMemoryPluginHost {
         match process.poll() {
             RuntimeHealth::Running => Ok(ExtensionState::Active),
             RuntimeHealth::Crashed(message) => {
-                self.processes.remove(id);
+                if let Some(mut process) = self.processes.remove(id) {
+                    let _ = process.shutdown();
+                }
                 self.active.remove(id);
                 self.states.insert(id.clone(), ExtensionState::Failed);
                 Err(PluginError::RuntimeCrashed {
@@ -653,6 +885,82 @@ impl PluginHost for InMemoryPluginHost {
                 extension_id: id.clone(),
                 state,
             }),
+        }
+    }
+
+    fn invoke_command(
+        &mut self,
+        id: &ExtensionId,
+        command_id: String,
+        args: Value,
+        context: Value,
+    ) -> Result<PluginInvocationResult, PluginError> {
+        let state = self
+            .states
+            .get(id)
+            .cloned()
+            .ok_or_else(|| PluginError::NotFound(id.clone()))?;
+        if !self.active.contains(id) {
+            return Err(PluginError::InvalidState {
+                extension_id: id.clone(),
+                state,
+            });
+        }
+
+        let manifest = self
+            .manifests
+            .get(id)
+            .ok_or_else(|| PluginError::NotFound(id.clone()))?;
+        if !manifest.contributions.iter().any(|contribution| {
+            contribution.id == command_id && contribution.kind == ContributionKind::Command
+        }) {
+            return Err(PluginError::InvalidContribution(format!(
+                "command {} is not declared by extension {}",
+                command_id, id.0
+            )));
+        }
+
+        let invocation = PluginInvocation {
+            extension_id: id.clone(),
+            command_id,
+            args,
+            context,
+        };
+        let result = self
+            .processes
+            .get_mut(id)
+            .ok_or_else(|| PluginError::InvalidState {
+                extension_id: id.clone(),
+                state: ExtensionState::Failed,
+            })?
+            .invoke(&invocation);
+
+        match result {
+            Ok(result) => {
+                if let Some(error) = &result.error {
+                    return Err(PluginError::RuntimeInvocation {
+                        extension_id: id.clone(),
+                        message: error.clone(),
+                    });
+                }
+                Ok(result)
+            }
+            Err(RuntimeError::InvocationRejected(message)) => Err(PluginError::RuntimeInvocation {
+                extension_id: id.clone(),
+                message,
+            }),
+            Err(error) => {
+                let message = runtime_error_message(error);
+                if let Some(mut process) = self.processes.remove(id) {
+                    let _ = process.shutdown();
+                }
+                self.active.remove(id);
+                self.states.insert(id.clone(), ExtensionState::Failed);
+                Err(PluginError::RuntimeInvocation {
+                    extension_id: id.clone(),
+                    message,
+                })
+            }
         }
     }
 }
@@ -718,6 +1026,9 @@ fn runtime_error_message(error: RuntimeError) -> String {
             )
         }
         RuntimeError::StartFailed(message) | RuntimeError::ShutdownFailed(message) => message,
+        RuntimeError::InvocationFailed(message) => message,
+        RuntimeError::InvocationTimeout => "plugin command invocation timed out".into(),
+        RuntimeError::InvocationRejected(message) => message,
     }
 }
 
@@ -751,6 +1062,7 @@ mod tests {
     enum StartPlan {
         Fail(String),
         Process(Vec<RuntimeHealth>),
+        ProcessWithInvocation(Vec<RuntimeHealth>, RuntimeError),
     }
 
     struct FakeRuntime {
@@ -762,6 +1074,7 @@ mod tests {
     struct FakeProcess {
         health: VecDeque<RuntimeHealth>,
         shutdowns: Arc<Mutex<usize>>,
+        invocation_error: Option<RuntimeError>,
     }
 
     fn temporary_manifest_dir() -> PathBuf {
@@ -787,6 +1100,19 @@ mod tests {
                 .expect("shutdown counter should not be poisoned") += 1;
             Ok(())
         }
+
+        fn invoke(
+            &mut self,
+            _invocation: &PluginInvocation,
+        ) -> Result<PluginInvocationResult, RuntimeError> {
+            if let Some(error) = self.invocation_error.clone() {
+                return Err(error);
+            }
+            Ok(PluginInvocationResult {
+                result: Some(serde_json::json!({ "accepted": true })),
+                error: None,
+            })
+        }
     }
 
     impl PluginRuntime for FakeRuntime {
@@ -808,6 +1134,12 @@ mod tests {
                 StartPlan::Process(health) => Ok(Box::new(FakeProcess {
                     health: health.into(),
                     shutdowns: self.shutdowns.clone(),
+                    invocation_error: None,
+                })),
+                StartPlan::ProcessWithInvocation(health, error) => Ok(Box::new(FakeProcess {
+                    health: health.into(),
+                    shutdowns: self.shutdowns.clone(),
+                    invocation_error: Some(error),
                 })),
             }
         }
@@ -876,6 +1208,100 @@ mod tests {
             .active_contributions(&ExtensionId("example".into()))
             .unwrap()
             .is_empty());
+    }
+
+    #[test]
+    fn active_declared_commands_are_invoked_through_the_runtime_boundary() {
+        let mut manifest = view_manifest(Some(WorkbenchZone::Navigation));
+        let command = &mut manifest.contributions[0];
+        command.id = "example.open".into();
+        command.kind = ContributionKind::Command;
+        command.container = None;
+        command.zone = None;
+        command.icon = None;
+        command.default_visible = None;
+        let id = manifest.id.clone();
+
+        let mut host = InMemoryPluginHost::default();
+        host.register(manifest).unwrap();
+        host.activate(&id).unwrap();
+
+        let result = host
+            .invoke_command(
+                &id,
+                "example.open".into(),
+                serde_json::json!({ "source": "test" }),
+                serde_json::json!({ "activeAppId": null }),
+            )
+            .expect("an active declared command should reach the runtime");
+        assert_eq!(result.error, None);
+        assert_eq!(result.result, Some(serde_json::json!({ "accepted": true })));
+
+        assert!(matches!(
+            host.invoke_command(&id, "example.missing".into(), Value::Null, Value::Null),
+            Err(PluginError::InvalidContribution(_))
+        ));
+
+        host.disable(&id, DisableReason::User).unwrap();
+        assert!(matches!(
+            host.invoke_command(&id, "example.open".into(), Value::Null, Value::Null),
+            Err(PluginError::InvalidState {
+                state: ExtensionState::Disabled,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn invocation_failure_isolated_to_one_extension_and_recoverable() {
+        let grants = Arc::new(Mutex::new(Vec::new()));
+        let shutdowns = Arc::new(Mutex::new(0));
+        let runtime = FakeRuntime {
+            plans: VecDeque::from([
+                StartPlan::ProcessWithInvocation(
+                    vec![RuntimeHealth::Running],
+                    RuntimeError::InvocationTimeout,
+                ),
+                StartPlan::Process(vec![RuntimeHealth::Running]),
+            ]),
+            grants,
+            shutdowns: shutdowns.clone(),
+        };
+        let mut host = InMemoryPluginHost::with_runtime(Box::new(runtime));
+        let mut manifest = view_manifest(Some(WorkbenchZone::Navigation));
+        manifest.id = ExtensionId("timed-out.command".into());
+        manifest.contributions[0].id = "timed-out.command.run".into();
+        manifest.contributions[0].kind = ContributionKind::Command;
+        manifest.contributions[0].container = None;
+        manifest.contributions[0].zone = None;
+        manifest.contributions[0].icon = None;
+        manifest.contributions[0].default_visible = None;
+        let id = manifest.id.clone();
+        host.register(manifest).unwrap();
+        host.activate(&id).unwrap();
+
+        let error = host
+            .invoke_command(
+                &id,
+                "timed-out.command.run".into(),
+                Value::Null,
+                Value::Null,
+            )
+            .expect_err("a timed-out runtime should reject the invocation");
+        assert!(matches!(error, PluginError::RuntimeInvocation { .. }));
+        assert_eq!(host.discover()[0].state, ExtensionState::Failed);
+        assert!(host.active_contributions(&id).unwrap().is_empty());
+
+        host.recover(&id)
+            .expect("the extension should be restartable");
+        host.invoke_command(
+            &id,
+            "timed-out.command.run".into(),
+            Value::Null,
+            Value::Null,
+        )
+        .expect("a recovered runtime should accept the command");
+        assert_eq!(*shutdowns.lock().unwrap(), 1);
     }
 
     #[test]
@@ -1073,7 +1499,7 @@ mod tests {
         host.recover(&id).unwrap();
         assert_eq!(host.discover()[0].state, ExtensionState::Active);
         host.disable(&id, DisableReason::User).unwrap();
-        assert_eq!(*shutdowns.lock().unwrap(), 1);
+        assert_eq!(*shutdowns.lock().unwrap(), 2);
     }
 
     #[test]
@@ -1102,6 +1528,44 @@ mod tests {
         process
             .shutdown()
             .expect("the external process should be stoppable");
+    }
+
+    #[test]
+    fn process_runtime_invokes_a_versioned_jsonl_command() {
+        let mut runtime = ProcessPluginRuntime;
+        let manifest = ExtensionManifest {
+            id: ExtensionId("process.invocation".into()),
+            version: "1.0.0".into(),
+            host_api: VersionRange("^1".into()),
+            runtime: RuntimeKind::Sidecar,
+            launch: Some(RuntimeLaunchSpec {
+                program: "sh".into(),
+                args: vec![
+                    "-c".into(),
+                    "IFS= read -r line; if printf '%s' \"$line\" | grep -q 'process.invocation.open'; then printf '%s\\n' '{\"protocolVersion\":1,\"ok\":true,\"result\":{\"accepted\":true}}'; else printf '%s\\n' '{\"protocolVersion\":1,\"ok\":false,\"error\":\"unexpected command\"}'; fi; sleep 5".into(),
+                ],
+            }),
+            target_app: None,
+            contributions: vec![],
+            permission_sets: vec![],
+        };
+
+        let mut process = runtime
+            .start(&manifest, &PermissionGrant::default())
+            .expect("the declared sidecar should start");
+        let result = process
+            .invoke(&PluginInvocation {
+                extension_id: manifest.id.clone(),
+                command_id: "process.invocation.open".into(),
+                args: serde_json::json!({ "source": "test" }),
+                context: serde_json::json!({ "activeAppId": null }),
+            })
+            .expect("the sidecar should answer the JSONL invocation");
+        assert_eq!(result.error, None);
+        assert_eq!(result.result, Some(serde_json::json!({ "accepted": true })));
+        process
+            .shutdown()
+            .expect("the sidecar should be stoppable after invocation");
     }
 
     #[test]

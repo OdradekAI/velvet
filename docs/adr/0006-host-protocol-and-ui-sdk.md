@@ -57,8 +57,11 @@ the Rust lifecycle state, so a disabled or failed extension cannot leave active
 views or surface sessions behind; recovery reuses the same projection path.
 The same projection carries command, context-menu and dialog metadata. The
 desktop adapter registers those entries through `CommandRegistry`,
-`MenuRegistry` and `OverlayRegistry`, while command execution remains behind
-the plugin runtime handler seam.
+`MenuRegistry` and `OverlayRegistry`. A projected command is sent back through
+the versioned CoreTransport as an `invoke-plugin-command` request; Rust checks
+that the command belongs to the active extension and forwards it through the
+runtime's versioned JSONL channel. Local trusted handlers remain an adapter for
+built-in integrations, while external execution never bypasses the host.
 
 The UI SDK exposes host concepts rather than Vue or React component types:
 
