@@ -41,6 +41,8 @@ export function PluginSurfaceHost({
   const hostRef = useRef<HTMLDivElement>(null);
   const surfaceMountRef = useRef<HTMLDivElement>(null);
   const sessionRef = useRef<PluginSurfaceSession | undefined>(undefined);
+  const mountPromiseRef = useRef<Promise<void> | undefined>(undefined);
+  const lifecycleRef = useRef(0);
   const waitingForAdapterRef = useRef(true);
   const [size, setSize] = useState<UiSurfaceSize>(INITIAL_SIZE);
   const [state, setState] = useState<PluginSurfaceState | 'waiting'>('waiting');
@@ -72,7 +74,34 @@ export function PluginSurfaceHost({
   }, []);
 
   useEffect(() => {
+    const lifecycle = lifecycleRef.current + 1;
+    lifecycleRef.current = lifecycle;
     let disposed = false;
+
+    const observeSession = (session: PluginSurfaceSession) => {
+      setState(session.state);
+      const pendingMount = mountPromiseRef.current;
+      if (!pendingMount) {
+        return;
+      }
+
+      void pendingMount
+        .then(() => {
+          if (disposed || sessionRef.current !== session) {
+            return;
+          }
+          if (session.state === 'mounted') {
+            session.activate();
+          }
+          setState(session.state);
+        })
+        .catch((reason: unknown) => {
+          if (!disposed && sessionRef.current === session) {
+            setState('failed');
+            setError(reason instanceof Error ? reason.message : String(reason));
+          }
+        });
+    };
 
     const mount = () => {
       const registeredSession = ui.getSession(extensionId, surfaceId);
@@ -85,7 +114,14 @@ export function PluginSurfaceHost({
         sessionRef.current = undefined;
         waitingForAdapterRef.current = true;
       }
-      if (disposed || !waitingForAdapterRef.current || sessionRef.current) {
+      if (disposed) {
+        return;
+      }
+      if (sessionRef.current) {
+        observeSession(sessionRef.current);
+        return;
+      }
+      if (!waitingForAdapterRef.current) {
         return;
       }
       const host = hostRef.current;
@@ -116,19 +152,18 @@ export function PluginSurfaceHost({
       sessionRef.current = session;
       waitingForAdapterRef.current = false;
       setError(undefined);
-      setState(session.state);
-      void session
+      const mountPromise = session
         .mount({
           context: context.snapshot(),
           theme,
           size,
         }, surfaceMount)
-        .then(() => {
+      mountPromiseRef.current = mountPromise;
+      void mountPromise.then(() => {
           if (disposed) {
             return;
           }
-          session.activate();
-          setState(session.state);
+          observeSession(session);
         })
         .catch((reason: unknown) => {
           if (!disposed) {
@@ -138,6 +173,7 @@ export function PluginSurfaceHost({
           void session.dispose('crash').finally(() => {
             if (sessionRef.current === session) {
               sessionRef.current = undefined;
+              mountPromiseRef.current = undefined;
             }
           });
         });
@@ -149,9 +185,21 @@ export function PluginSurfaceHost({
       disposed = true;
       unsubscribe();
       const session = sessionRef.current;
-      sessionRef.current = undefined;
       if (session) {
-        void session.dispose('unmount');
+        // React StrictMode performs a synthetic cleanup followed immediately by
+        // a second setup. Defer disposal so the second setup can reuse the
+        // in-flight session instead of leaving the surface in `waiting`.
+        queueMicrotask(() => {
+          if (lifecycleRef.current !== lifecycle) {
+            return;
+          }
+          if (sessionRef.current === session) {
+            sessionRef.current = undefined;
+            mountPromiseRef.current = undefined;
+            waitingForAdapterRef.current = true;
+          }
+          void session.dispose('unmount');
+        });
       }
     };
   }, [context, extensionId, retryToken, surfaceId, theme, ui]);

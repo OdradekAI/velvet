@@ -230,6 +230,40 @@ await tick();
 assert.equal(surfaceUi.getSession('sample.extension', 'sample.reader.surface'), undefined);
 assert.equal(surfaceRootElement.querySelector('iframe'), null);
 
+const strictSurfaceUi = new PluginUiRegistry();
+strictSurfaceUi.register({
+  id: 'sample.strict.surface',
+  extensionId: 'sample.strict-extension',
+  namespace: 'workbench',
+  kind: 'view',
+  entrypoint: 'https://plugin.example/strict',
+  bridgeVersion: '1',
+});
+const strictSurfaceRootElement = document.createElement('div');
+document.body.append(strictSurfaceRootElement);
+const strictSurfaceRoot = createRoot(strictSurfaceRootElement);
+await act(() => {
+  strictSurfaceRoot.render(React.createElement(
+    React.StrictMode,
+    null,
+    React.createElement(PluginSurfaceHost, {
+      context: new InMemoryWorkspaceContext(),
+      extensionId: 'sample.strict-extension',
+      surfaceId: 'sample.strict.surface',
+      ui: strictSurfaceUi,
+    }),
+  ));
+});
+await settle(4);
+assert.equal(
+  strictSurfaceRootElement.querySelector('[data-plugin-surface-state="active"]') !== null,
+  true,
+);
+assert.equal(strictSurfaceUi.getSession('sample.strict-extension', 'sample.strict.surface')?.state, 'active');
+await act(() => strictSurfaceRoot.unmount());
+await settle(2);
+assert.equal(strictSurfaceUi.getSession('sample.strict-extension', 'sample.strict.surface'), undefined);
+
 const failingSurfaceUi = new PluginUiRegistry();
 failingSurfaceUi.register({
   id: 'sample.failure.surface',
