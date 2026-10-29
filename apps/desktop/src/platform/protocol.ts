@@ -98,6 +98,7 @@ export type LayoutCommand =
 
 export type CoreRequest =
   | { readonly protocolVersion: ProtocolVersion; readonly kind: 'query-layout' }
+  | { readonly protocolVersion: ProtocolVersion; readonly kind: 'query-extensions' }
   | {
       readonly protocolVersion: ProtocolVersion;
       readonly kind: 'layout-command';
@@ -116,8 +117,17 @@ export type CoreRequest =
 export type CoreResponse =
   | { readonly kind: 'layout'; readonly state: LayoutSnapshot }
   | { readonly kind: 'preview'; readonly preview: unknown }
-  | { readonly kind: 'extensions'; readonly extensions: readonly unknown[] }
+  | { readonly kind: 'extensions'; readonly extensions: readonly PluginSummary[] }
   | { readonly kind: 'accepted' };
+
+export type PluginState = 'registered' | 'starting' | 'active' | 'disabled' | 'failed';
+
+export interface PluginSummary {
+  readonly id: string;
+  readonly version: string;
+  readonly active: boolean;
+  readonly state: PluginState;
+}
 
 export interface CoreError {
   readonly code: string;

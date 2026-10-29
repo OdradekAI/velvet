@@ -3,7 +3,10 @@ use std::sync::{Arc, Mutex};
 use velvet_asset_core::ContentKindId;
 use velvet_layout_model::{InMemoryLayoutService, LayoutService};
 use velvet_persistence::{InMemoryLayoutStateStore, LayoutStateStore};
-use velvet_plugin_host::{InMemoryPluginHost, PluginHost};
+use velvet_plugin_api::{ExtensionId, ExtensionManifest, ExtensionState};
+use velvet_plugin_host::{
+    DisableReason, InMemoryPluginHost, PluginError, PluginHost, PluginRuntime,
+};
 use velvet_preview_core::{GenericFallbackProvider, PreviewContext, PreviewResolver};
 use velvet_workbench_protocol::{
     Command, CoreError, CoreTransport, Query, Request, RequestEnvelope, RequestId, Response,
@@ -19,21 +22,29 @@ pub struct ApplicationCore {
 
 impl Default for ApplicationCore {
     fn default() -> Self {
-        let layout_store = Arc::new(InMemoryLayoutStateStore::default());
-        let mut previews = PreviewResolver::default();
-        previews.register(Arc::new(GenericFallbackProvider));
-
-        Self {
-            layout: InMemoryLayoutService::default(),
-            plugins: InMemoryPluginHost::default(),
-            previews,
-            layout_store,
-        }
+        Self::with_store(Arc::new(InMemoryLayoutStateStore::default()))
     }
 }
 
 impl ApplicationCore {
     pub fn with_store(layout_store: Arc<dyn LayoutStateStore>) -> Self {
+        Self::with_store_and_runtime(
+            layout_store,
+            Box::new(velvet_plugin_host::ProcessPluginRuntime),
+        )
+    }
+
+    pub fn with_plugin_runtime(
+        layout_store: Arc<dyn LayoutStateStore>,
+        runtime: Box<dyn PluginRuntime>,
+    ) -> Self {
+        Self::with_store_and_runtime(layout_store, runtime)
+    }
+
+    fn with_store_and_runtime(
+        layout_store: Arc<dyn LayoutStateStore>,
+        runtime: Box<dyn PluginRuntime>,
+    ) -> Self {
         let mut layout = InMemoryLayoutService::default();
         if let Ok(Some(state)) = layout_store.load() {
             if let Ok(migrated) = layout.migrate(state) {
@@ -43,13 +54,37 @@ impl ApplicationCore {
 
         let mut core = Self {
             layout,
-            plugins: InMemoryPluginHost::default(),
+            plugins: InMemoryPluginHost::with_runtime(runtime),
             previews: PreviewResolver::default(),
             layout_store,
         };
 
         core.previews.register(Arc::new(GenericFallbackProvider));
         core
+    }
+
+    pub fn register_plugin(&mut self, manifest: ExtensionManifest) -> Result<(), PluginError> {
+        self.plugins.register(manifest)
+    }
+
+    pub fn activate_plugin(&mut self, id: &ExtensionId) -> Result<(), PluginError> {
+        self.plugins.activate(id)
+    }
+
+    pub fn disable_plugin(
+        &mut self,
+        id: &ExtensionId,
+        reason: DisableReason,
+    ) -> Result<(), PluginError> {
+        self.plugins.disable(id, reason)
+    }
+
+    pub fn check_plugin_health(&mut self, id: &ExtensionId) -> Result<ExtensionState, PluginError> {
+        self.plugins.check_health(id)
+    }
+
+    pub fn recover_plugin(&mut self, id: &ExtensionId) -> Result<(), PluginError> {
+        self.plugins.recover(id)
     }
 
     pub fn dispatch(&mut self, request: Request) -> Result<Response, CoreError> {
@@ -154,19 +189,24 @@ impl CoreTransport for InProcessCoreTransport {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
     use velvet_layout_model::{LayoutCommand, WorkbenchPart};
     use velvet_persistence::JsonFileLayoutStateStore;
+    use velvet_plugin_api::{ExtensionId, ExtensionManifest, RuntimeKind, VersionRange};
+
+    static NEXT_TEST_FILE: AtomicU64 = AtomicU64::new(0);
 
     fn temporary_layout_path() -> PathBuf {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system time should be after the Unix epoch")
             .as_nanos();
+        let sequence = NEXT_TEST_FILE.fetch_add(1, Ordering::Relaxed);
         std::env::temp_dir().join(format!(
-            "velvet-application-core-restart-{}-{nonce}.json",
-            std::process::id()
+            "velvet-application-core-restart-{}-{nonce}-{sequence}.json",
+            std::process::id(),
         ))
     }
 
@@ -351,5 +391,55 @@ mod tests {
         }
 
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn application_core_owns_plugin_runtime_lifecycle() {
+        let mut core = ApplicationCore::default();
+        let manifest = ExtensionManifest {
+            id: ExtensionId("builtin.reader".into()),
+            version: "1.0.0".into(),
+            host_api: VersionRange("^1".into()),
+            runtime: RuntimeKind::BuiltIn,
+            launch: None,
+            target_app: None,
+            contributions: vec![],
+            permission_sets: vec![],
+        };
+        let id = manifest.id.clone();
+
+        core.register_plugin(manifest)
+            .expect("the core should register a plugin manifest");
+        core.activate_plugin(&id)
+            .expect("the core should start the plugin runtime");
+        let response = core
+            .dispatch(Request::Query(Query::Extensions))
+            .expect("the core should expose plugin state");
+        match response {
+            Response::Extensions(extensions) => {
+                assert_eq!(
+                    extensions[0].state,
+                    velvet_plugin_api::ExtensionState::Active
+                );
+                assert!(extensions[0].active);
+            }
+            other => panic!("expected extension response, got {other:?}"),
+        }
+
+        core.disable_plugin(&id, DisableReason::User)
+            .expect("the core should stop the plugin runtime");
+        let response = core
+            .dispatch(Request::Query(Query::Extensions))
+            .expect("the core should expose disabled plugin state");
+        match response {
+            Response::Extensions(extensions) => {
+                assert_eq!(
+                    extensions[0].state,
+                    velvet_plugin_api::ExtensionState::Disabled
+                );
+                assert!(!extensions[0].active);
+            }
+            other => panic!("expected extension response, got {other:?}"),
+        }
     }
 }

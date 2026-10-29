@@ -52,6 +52,20 @@ merely because it runs inside that app.
 
 Every extension identifier, contribution identifier and persisted facet schema is globally unique and versioned.
 
+The first runtime integration keeps the process boundary behind two host-owned
+interfaces: `PluginRuntime` starts an extension with an explicit
+`RuntimeLaunchSpec` and `RuntimeProcess` reports health and shutdown. The
+production adapter uses a child process with a null standard IO surface and
+passes only the extension id and the validated permission grant as environment
+metadata. Built-in extensions use the same lifecycle through a no-op process;
+WASM extensions provide their declared WASM runner as the launch program.
+
+Permission sets are checked against the declared semantic zone before a
+manifest is registered. Startup failure marks only that extension as failed;
+health polling removes a crashed extension from active contributions, and an
+explicit recovery call may create a fresh runtime. A crash or failed restart
+does not disable the Workbench or unrelated extensions.
+
 ## Alternatives considered
 
 1. Load arbitrary third-party Rust dynamic libraries into the Tauri process. Rejected because ABI, memory safety and crash isolation cannot be controlled by the host.

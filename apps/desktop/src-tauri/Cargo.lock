@@ -3711,6 +3711,7 @@ dependencies = [
  "velvet-asset-core",
  "velvet-layout-model",
  "velvet-persistence",
+ "velvet-plugin-api",
  "velvet-plugin-host",
  "velvet-preview-core",
  "velvet-workbench-protocol",

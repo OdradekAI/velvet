@@ -69,6 +69,12 @@ An extension manifest declares its contributions and permissions. The host valid
 
 Third-party extensions are designed for isolated WASM or sidecar runtimes. Built-in adapters may run in-process, but they use the same public contribution model. Extensions communicate through stable protocol types and do not depend on internal Vue or React component types.
 
+The Rust plugin host starts declared external runners through an isolated child
+process boundary, grants only zone-validated permissions, and reports runtime
+state through the core extension query. A failed start or crash removes that
+extension's contributions while leaving the Workbench usable; recovery is an
+explicit host operation that starts a fresh process.
+
 ## Architecture
 
 The first release uses a local-first, single-process topology:

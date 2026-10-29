@@ -90,6 +90,10 @@ pub enum WireRequest {
         #[serde(rename = "protocolVersion")]
         protocol_version: u16,
     },
+    QueryExtensions {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+    },
     LayoutCommand {
         #[serde(rename = "protocolVersion")]
         protocol_version: u16,
@@ -115,6 +119,10 @@ impl WireRequest {
             Self::QueryLayout { protocol_version } => {
                 validate_inner_protocol(outer_protocol_version, protocol_version)?;
                 Ok(Request::Query(velvet_workbench_protocol::Query::Layout))
+            }
+            Self::QueryExtensions { protocol_version } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Query(velvet_workbench_protocol::Query::Extensions))
             }
             Self::LayoutCommand {
                 protocol_version,
@@ -465,6 +473,7 @@ struct WireExtensionSummary {
     id: String,
     version: String,
     active: bool,
+    state: String,
 }
 
 impl From<velvet_plugin_api::ExtensionSummary> for WireExtensionSummary {
@@ -473,6 +482,7 @@ impl From<velvet_plugin_api::ExtensionSummary> for WireExtensionSummary {
             id: value.id.0,
             version: value.version,
             active: value.active,
+            state: extension_state_name(&value.state).into(),
         }
     }
 }
@@ -755,6 +765,16 @@ fn part_name(part: &WorkbenchPart) -> String {
     .into()
 }
 
+fn extension_state_name(state: &velvet_plugin_api::ExtensionState) -> &'static str {
+    match state {
+        velvet_plugin_api::ExtensionState::Registered => "registered",
+        velvet_plugin_api::ExtensionState::Starting => "starting",
+        velvet_plugin_api::ExtensionState::Active => "active",
+        velvet_plugin_api::ExtensionState::Disabled => "disabled",
+        velvet_plugin_api::ExtensionState::Failed => "failed",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -792,6 +812,44 @@ mod tests {
                 }
             })
         ));
+    }
+
+    #[test]
+    fn wire_extension_query_and_runtime_state_use_stable_names() {
+        let envelope: WireRequestEnvelope = serde_json::from_str(
+            r#"{
+                "protocolVersion": 1,
+                "requestId": 12,
+                "request": {
+                    "kind": "query-extensions",
+                    "protocolVersion": 1
+                }
+            }"#,
+        )
+        .expect("the extension query should deserialize");
+
+        assert!(matches!(
+            envelope
+                .request
+                .into_core(1)
+                .expect("the extension query should map"),
+            Request::Query(velvet_workbench_protocol::Query::Extensions)
+        ));
+
+        let response = WireResponseEnvelope::from_core(
+            velvet_workbench_protocol::ResponseEnvelope {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: RequestId(12),
+                response: Response::Extensions(vec![velvet_plugin_api::ExtensionSummary {
+                    id: velvet_plugin_api::ExtensionId("sample.reader".into()),
+                    version: "1.0.0".into(),
+                    active: false,
+                    state: velvet_plugin_api::ExtensionState::Failed,
+                }]),
+            },
+        );
+        let value = serde_json::to_value(response).expect("extension state should serialize");
+        assert_eq!(value["response"]["extensions"][0]["state"], "failed");
     }
 
     #[test]

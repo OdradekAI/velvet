@@ -8,6 +8,7 @@ license.workspace = true
 velvet-asset-core = { path = "../asset-core" }
 velvet-layout-model = { path = "../layout-model" }
 velvet-persistence = { path = "../persistence" }
+velvet-plugin-api = { path = "../plugin-api" }
 velvet-plugin-host = { path = "../plugin-host" }
 velvet-preview-core = { path = "../preview-core" }
 velvet-workbench-protocol = { path = "../workbench-protocol" }

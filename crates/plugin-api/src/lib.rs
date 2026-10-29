@@ -34,7 +34,7 @@ pub enum HostContainer {
     CommandPalette,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum Permission {
     WorkspaceOpen,
     LibraryRead,
@@ -48,6 +48,17 @@ pub enum Permission {
     LogsRead,
     ExternalProcess,
     Network,
+}
+
+/// Describes the executable boundary used to host an external extension.
+///
+/// A WASM extension points at its declared runner (for example a WASI host)
+/// and passes the module path through `args`; a sidecar points directly at its
+/// isolated process. The host never derives this command from a UI entrypoint.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RuntimeLaunchSpec {
+    pub program: String,
+    pub args: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -94,9 +105,19 @@ pub struct ExtensionManifest {
     pub version: String,
     pub host_api: VersionRange,
     pub runtime: RuntimeKind,
+    pub launch: Option<RuntimeLaunchSpec>,
     pub target_app: Option<AppTarget>,
     pub contributions: Vec<ContributionDescriptor>,
     pub permission_sets: Vec<ZonePermissionSet>,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum ExtensionState {
+    Registered,
+    Starting,
+    Active,
+    Disabled,
+    Failed,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -104,4 +125,5 @@ pub struct ExtensionSummary {
     pub id: ExtensionId,
     pub version: String,
     pub active: bool,
+    pub state: ExtensionState,
 }
