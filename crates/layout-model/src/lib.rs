@@ -1,11 +1,66 @@
-use serde::{Deserialize, Serialize};
+use serde::de::{self, Visitor};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::BTreeMap;
+use std::fmt;
 
-#[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "kebab-case")]
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum WorkbenchAppId {
     AssetManager,
     FeedWorkbench,
+    Plugin(String),
+}
+
+impl WorkbenchAppId {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::AssetManager => "asset-manager",
+            Self::FeedWorkbench => "feed-workbench",
+            Self::Plugin(id) => id,
+        }
+    }
+
+    pub fn from_id(id: &str) -> Self {
+        match id {
+            "asset-manager" => Self::AssetManager,
+            "feed-workbench" => Self::FeedWorkbench,
+            other => Self::Plugin(other.to_owned()),
+        }
+    }
+}
+
+impl Serialize for WorkbenchAppId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+struct WorkbenchAppIdVisitor;
+
+impl<'de> Visitor<'de> for WorkbenchAppIdVisitor {
+    type Value = WorkbenchAppId;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a stable WorkbenchApp id string")
+    }
+
+    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(WorkbenchAppId::from_id(value))
+    }
+}
+
+impl<'de> Deserialize<'de> for WorkbenchAppId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_str(WorkbenchAppIdVisitor)
+    }
 }
 
 /// Compatibility alias while older protocol clients still use workspace terminology.
@@ -563,6 +618,13 @@ mod tests {
             .expect("workspace activation should succeed");
 
         assert_eq!(service.snapshot().active_app, WorkbenchAppId::FeedWorkbench);
+    }
+
+    #[test]
+    fn plugin_app_ids_keep_their_stable_wire_form() {
+        let app = WorkbenchAppId::from_id("sample.extension.research");
+        assert_eq!(app, WorkbenchAppId::Plugin("sample.extension.research".into()));
+        assert_eq!(app.as_str(), "sample.extension.research");
     }
 
     #[test]

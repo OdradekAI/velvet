@@ -286,6 +286,38 @@ mod tests {
     }
 
     #[test]
+    fn native_app_switch_is_restored_after_restart() {
+        let path = temporary_layout_path();
+        let first_store = Arc::new(JsonFileLayoutStateStore::new(&path));
+        let mut first_core = ApplicationCore::with_store(first_store);
+
+        first_core
+            .dispatch(Request::Command(Command::Layout(
+                LayoutCommand::ActivateApp(
+                    velvet_layout_model::WorkbenchAppId::FeedWorkbench,
+                ),
+            )))
+            .expect("the native app switch should persist");
+        drop(first_core);
+
+        let second_store = Arc::new(JsonFileLayoutStateStore::new(&path));
+        let mut second_core = ApplicationCore::with_store(second_store);
+        let response = second_core
+            .dispatch(Request::Query(Query::Layout))
+            .expect("the restarted core should load the active app");
+
+        match response {
+            Response::Layout(state) => assert_eq!(
+                state.active_app,
+                velvet_layout_model::WorkbenchAppId::FeedWorkbench
+            ),
+            other => panic!("expected a layout response, got {other:?}"),
+        }
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
     fn plugin_view_container_visibility_and_order_are_restored_after_restart() {
         let path = temporary_layout_path();
         let first_store = Arc::new(JsonFileLayoutStateStore::new(&path));

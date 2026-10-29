@@ -267,6 +267,11 @@ button {
   min-height: 120px;
 }
 
+.velvet-plugin-surface-mount {
+  min-height: 120px;
+  width: 100%;
+}
+
 .velvet-plugin-surface:focus-visible {
   outline: 2px solid var(--velvet-focus);
   outline-offset: 1px;
@@ -282,9 +287,19 @@ button {
   min-height: 100%;
 }
 
+.velvet-app-surface-mount {
+  min-height: 100%;
+  width: 100%;
+}
+
 .velvet-app-surface-host:focus-visible {
   outline: 2px solid var(--velvet-focus);
   outline-offset: -2px;
+}
+
+.velvet-plugin-surface-frame {
+  min-height: 100%;
+  width: 100%;
 }
 
 .velvet-workspace-content {

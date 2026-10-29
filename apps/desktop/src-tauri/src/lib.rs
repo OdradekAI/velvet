@@ -653,11 +653,15 @@ fn validate_inner_protocol(outer: u16, inner: u16) -> Result<(), WireError> {
 }
 
 fn parse_app(value: &str) -> Result<WorkbenchAppId, WireError> {
-    match value {
-        "asset-manager" => Ok(WorkbenchAppId::AssetManager),
-        "feed-workbench" => Ok(WorkbenchAppId::FeedWorkbench),
-        _ => Err(invalid_wire_value("app id", value)),
+    if value.is_empty()
+        || !value.chars().enumerate().all(|(index, character)| {
+            character.is_ascii_alphanumeric()
+                || (matches!(character, '.' | '_' | '-') && index > 0)
+        })
+    {
+        return Err(invalid_wire_value("app id", value));
     }
+    Ok(WorkbenchAppId::from_id(value))
 }
 
 fn parse_part(value: &str) -> Result<WorkbenchPart, WireError> {
@@ -715,10 +719,7 @@ fn invalid_wire_value(kind: &str, value: &str) -> WireError {
 }
 
 fn app_name(app: &WorkbenchAppId) -> String {
-    match app {
-        WorkbenchAppId::AssetManager => "asset-manager".into(),
-        WorkbenchAppId::FeedWorkbench => "feed-workbench".into(),
-    }
+    app.as_str().into()
 }
 
 fn part_name(part: &WorkbenchPart) -> String {
@@ -790,5 +791,65 @@ mod tests {
             value["response"]["state"]["parts"]["primary-sidebar"]["visible"],
             true
         );
+    }
+
+    #[test]
+    fn wire_activate_app_command_uses_the_native_app_identifier() {
+        let envelope: WireRequestEnvelope = serde_json::from_str(
+            r#"{
+                "protocolVersion": 1,
+                "requestId": 8,
+                "request": {
+                    "kind": "layout-command",
+                    "protocolVersion": 1,
+                    "command": {
+                        "id": "workbench.activate-app",
+                        "appId": "feed-workbench"
+                    }
+                }
+            }"#,
+        )
+        .expect("the native app activation request should deserialize");
+
+        assert!(matches!(
+            envelope
+                .request
+                .into_core(1)
+                .expect("the native app command should map"),
+            Request::Command(Command::LayoutAt {
+                command: LayoutCommand::ActivateApp(WorkbenchAppId::FeedWorkbench),
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn wire_plugin_app_identifier_is_preserved_for_native_activation() {
+        let envelope: WireRequestEnvelope = serde_json::from_str(
+            r#"{
+                "protocolVersion": 1,
+                "requestId": 10,
+                "request": {
+                    "kind": "layout-command",
+                    "protocolVersion": 1,
+                    "command": {
+                        "id": "workbench.activate-app",
+                        "appId": "sample.extension.research"
+                    }
+                }
+            }"#,
+        )
+        .expect("the plugin app activation request should deserialize");
+
+        assert!(matches!(
+            envelope
+                .request
+                .into_core(1)
+                .expect("the plugin app command should map"),
+            Request::Command(Command::LayoutAt {
+                command: LayoutCommand::ActivateApp(WorkbenchAppId::Plugin(id)),
+                ..
+            }) if id == "sample.extension.research"
+        ));
     }
 }

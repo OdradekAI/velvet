@@ -12,6 +12,7 @@ import type {
   WorkspaceContext,
   WorkspaceContextCommand,
 } from '../../workbench/services/workspace-context.js';
+import { createPluginSurfaceAdapter } from '../../workbench/plugins/surface-adapters.js';
 
 const INITIAL_SIZE: UiSurfaceSize = { width: 0, height: 0 };
 
@@ -39,6 +40,7 @@ export function WorkbenchAppSurfaceHost({
 }: WorkbenchAppSurfaceHostProps) {
   const descriptor = apps.get(appId);
   const hostRef = useRef<HTMLDivElement>(null);
+  const surfaceMountRef = useRef<HTMLDivElement>(null);
   const [session, setSession] = useState<PluginSurfaceSession>();
   const [size, setSize] = useState<UiSurfaceSize>(INITIAL_SIZE);
   const [surfaceState, setSurfaceState] = useState<PluginSurfaceState | 'waiting'>('waiting');
@@ -76,6 +78,23 @@ export function WorkbenchAppSurfaceHost({
 
     let disposed = false;
     let activating = false;
+    const ensureAdapter = () => {
+      const binding = plugins.listAppSurfaceBindings().find((candidate) => candidate.appId === appId);
+      const host = surfaceMountRef.current;
+      if (
+        !binding ||
+        !host ||
+        plugins.ui.getAdapter(binding.extensionId, binding.surfaceId)
+      ) {
+        return binding;
+      }
+      plugins.ui.bindAdapter(
+        binding.extensionId,
+        binding.surfaceId,
+        createPluginSurfaceAdapter(binding.surface, host),
+      );
+      return binding;
+    };
     const activate = () => {
       const runtimeState = apps.getSurfaceState(appId);
       if (
@@ -88,18 +107,28 @@ export function WorkbenchAppSurfaceHost({
         return;
       }
       activating = true;
-      void apps.activateSurface(appId, {
-        appId,
-        context,
-        dispatch: (command) => dispatchRef.current(command),
-      }).then(syncSession).catch((reason: unknown) => {
+      const binding = ensureAdapter();
+      const host = surfaceMountRef.current;
+      const existingSession = binding && host
+        ? plugins.ui.getSession(binding.extensionId, binding.surfaceId)
+        : undefined;
+      void Promise.resolve()
+        .then(() => existingSession?.attach(host!))
+        .then(() => apps.activateSurface(appId, {
+          appId,
+          context,
+          dispatch: (command) => dispatchRef.current(command),
+        }))
+        .then(syncSession)
+        .catch((reason: unknown) => {
         if (!disposed) {
           setSurfaceState('failed');
           setError(reason instanceof Error ? reason.message : String(reason));
         }
-      }).finally(() => {
-        activating = false;
-      });
+        })
+        .finally(() => {
+          activating = false;
+        });
     };
     const syncSession = () => {
       const binding = plugins.listAppSurfaceBindings().find((candidate) => candidate.appId === appId);
@@ -178,6 +207,7 @@ export function WorkbenchAppSurfaceHost({
       style={style}
       tabIndex={-1}
     >
+      <div className="velvet-app-surface-mount" ref={surfaceMountRef} />
       {error ? (
         <div aria-live="polite" className="velvet-command-error" role="alert">
           <span>App surface failed: {error}</span>

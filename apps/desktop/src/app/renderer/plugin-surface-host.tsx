@@ -7,6 +7,7 @@ import type {
   UiSurfaceSize,
   UiThemeSnapshot,
 } from '../../workbench/plugins/ui-bridge.js';
+import { createPluginSurfaceAdapter } from '../../workbench/plugins/surface-adapters.js';
 import type { WorkspaceContext } from '../../workbench/services/workspace-context.js';
 
 const DEFAULT_THEME: UiThemeSnapshot = {
@@ -38,6 +39,7 @@ export function PluginSurfaceHost({
   theme = DEFAULT_THEME,
 }: PluginSurfaceHostProps) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const surfaceMountRef = useRef<HTMLDivElement>(null);
   const sessionRef = useRef<PluginSurfaceSession | undefined>(undefined);
   const waitingForAdapterRef = useRef(true);
   const [size, setSize] = useState<UiSurfaceSize>(INITIAL_SIZE);
@@ -75,9 +77,22 @@ export function PluginSurfaceHost({
       if (disposed || !waitingForAdapterRef.current || sessionRef.current) {
         return;
       }
+      const host = hostRef.current;
+      const surfaceMount = surfaceMountRef.current;
+      if (!host || !surfaceMount) {
+        return;
+      }
 
       let session: PluginSurfaceSession;
       try {
+        const descriptor = ui.getDescriptor(extensionId, surfaceId);
+        if (descriptor && !ui.getAdapter(extensionId, surfaceId)) {
+          ui.bindAdapter(
+            extensionId,
+            surfaceId,
+            createPluginSurfaceAdapter(descriptor, surfaceMount),
+          );
+        }
         session = ui.createSession(extensionId, surfaceId, {
           onFocusRequest: () => hostRef.current?.focus(),
         });
@@ -96,7 +111,7 @@ export function PluginSurfaceHost({
           context: context.snapshot(),
           theme,
           size,
-        })
+        }, surfaceMount)
         .then(() => {
           if (disposed) {
             return;
@@ -168,6 +183,7 @@ export function PluginSurfaceHost({
       style={style}
       tabIndex={-1}
     >
+      <div className="velvet-plugin-surface-mount" ref={surfaceMountRef} />
       {state === 'active' ? null : (
         <p className="velvet-view-placeholder">
           {error ?? `Waiting for isolated surface adapter (${surfaceId}).`}

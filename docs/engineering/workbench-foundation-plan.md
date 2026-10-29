@@ -72,6 +72,9 @@ app cleanup are covered by the plugin lifecycle tests. The native WorkspaceArea
 now renders a real AppSurface host, including measured resize/context
 forwarding, app-switch suspension/reactivation, disabled-app fallback and
 UI-Bridge session restart coverage.
+The default surface adapter now mounts a sandboxed iframe in browser mode and
+uses a positioned Tauri child WebView for HTTP/`tauri-webview://` entrypoints,
+with explicit capability permissions and cleanup on deactivation.
 
 The current shell slice also renders the accepted Part constraint table: fixed
 Parts use stable dimensions, resizable Parts enforce bounded sizes in Rust, and

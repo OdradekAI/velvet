@@ -5,6 +5,8 @@ import type { WorkbenchAppId } from '../../platform/protocol.js';
 import type { WorkspaceContextSnapshot } from '../services/workspace-context.js';
 
 export const SUPPORTED_UI_BRIDGE_VERSION = '1';
+export const UI_BRIDGE_HOST_EVENT = 'velvet-ui-bridge-host';
+export const UI_BRIDGE_SURFACE_EVENT = 'velvet-ui-bridge-surface';
 
 export type PluginSurfaceKind = 'app-surface' | 'view' | 'dialog' | 'popover' | 'inspector';
 
@@ -57,14 +59,18 @@ export type SurfaceToHostMessage =
   | { readonly type: 'surface.error'; readonly message: string };
 
 export interface UiBridgeEndpoint {
+  /** Sends a host lifecycle message to the mounted iframe or child WebView. */
   send(message: HostToSurfaceMessage): void;
+  /** Lets a transport adapter forward host messages across its native boundary. */
+  subscribeHost(listener: (message: HostToSurfaceMessage) => void): () => void;
   subscribe(listener: (message: SurfaceToHostMessage) => void): () => void;
   receive(message: SurfaceToHostMessage): void;
   close(): void;
 }
 
 export interface PluginSurfaceAdapter {
-  mount(endpoint: UiBridgeEndpoint): void | Promise<void>;
+  mount(endpoint: UiBridgeEndpoint, host?: HTMLElement): void | Promise<void>;
+  attach?(host: HTMLElement): void | Promise<void>;
   unmount(reason: 'unmount' | 'crash' | 'incompatible'): void | Promise<void>;
 }
 
@@ -95,7 +101,8 @@ export interface PluginSurfaceHandlers {
 export interface PluginSurfaceSession {
   readonly surfaceId: string;
   readonly state: PluginSurfaceState;
-  mount(options: PluginSurfaceMountOptions): Promise<void>;
+  mount(options: PluginSurfaceMountOptions, host?: HTMLElement): Promise<void>;
+  attach(host: HTMLElement): void | Promise<void>;
   activate(): void;
   deactivate(): void;
   updateContext(context: WorkspaceContextSnapshot): void;
@@ -153,6 +160,13 @@ export class PluginUiRegistry {
 
     this.adapters.set(key, adapter);
     this.notify();
+  }
+
+  public getAdapter(
+    extensionId: string,
+    surfaceId: string,
+  ): PluginSurfaceAdapter | undefined {
+    return this.adapters.get(surfaceKey(extensionId, surfaceId));
   }
 
   public getDescriptor(
@@ -299,11 +313,11 @@ class PluginSurfaceSessionImpl implements PluginSurfaceSession {
     });
   }
 
-  public async mount(options: PluginSurfaceMountOptions): Promise<void> {
+  public async mount(options: PluginSurfaceMountOptions, host?: HTMLElement): Promise<void> {
     this.ensureState('registered');
     this.options = options;
     try {
-      await this.adapter.mount(this.endpoint);
+      await this.adapter.mount(this.endpoint, host);
       this.endpoint.send({
         type: 'host.ready',
         bridgeVersion: this.descriptor.bridgeVersion,
@@ -322,6 +336,11 @@ class PluginSurfaceSessionImpl implements PluginSurfaceSession {
       });
       throw new PluginUiBridgeError(`Plugin surface mount failed: ${this.surfaceId}`, this.surfaceId);
     }
+  }
+
+  public async attach(host: HTMLElement): Promise<void> {
+    this.ensureMounted();
+    await this.adapter.attach?.(host);
   }
 
   public activate(): void {
@@ -451,13 +470,22 @@ class PluginSurfaceSessionImpl implements PluginSurfaceSession {
 }
 
 class InMemoryUiBridgeEndpoint implements UiBridgeEndpoint {
+  private readonly hostListeners = new Set<(message: HostToSurfaceMessage) => void>();
   private readonly listeners = new Set<(message: SurfaceToHostMessage) => void>();
   private closed = false;
 
-  public send(_message: HostToSurfaceMessage): void {
+  public send(message: HostToSurfaceMessage): void {
     if (this.closed) {
       throw new Error('UI bridge endpoint is closed');
     }
+    for (const listener of this.hostListeners) {
+      listener(message);
+    }
+  }
+
+  public subscribeHost(listener: (message: HostToSurfaceMessage) => void): () => void {
+    this.hostListeners.add(listener);
+    return () => this.hostListeners.delete(listener);
   }
 
   public subscribe(listener: (message: SurfaceToHostMessage) => void): () => void {
@@ -476,6 +504,7 @@ class InMemoryUiBridgeEndpoint implements UiBridgeEndpoint {
 
   public close(): void {
     this.closed = true;
+    this.hostListeners.clear();
     this.listeners.clear();
   }
 }

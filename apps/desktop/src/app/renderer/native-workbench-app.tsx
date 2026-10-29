@@ -30,6 +30,7 @@ export function NativeWorkbenchApp() {
     void app.start()
       .then((layout) => {
         if (!disposed) {
+          app.workbench.context.apply({ kind: 'activate-app', appId: layout.activeApp });
           app.workbench.focus.focus({ kind: 'part', part: 'workspace-area' });
           setState({ app, layout });
         }
@@ -96,8 +97,7 @@ export function NativeWorkbenchApp() {
     if (!workbench) {
       return undefined;
     }
-    return workbench.apps.subscribe(() => {
-      setAppRevision((revision) => revision + 1);
+    const recoverMissingActiveApp = () => {
       const activeAppId = workbench.layout.snapshot()?.activeApp;
       if (activeAppId && !workbench.apps.get(activeAppId)) {
         const fallback = workbench.apps.list()[0];
@@ -107,6 +107,11 @@ export function NativeWorkbenchApp() {
             .catch(() => undefined);
         }
       }
+    };
+    recoverMissingActiveApp();
+    return workbench.apps.subscribe(() => {
+      setAppRevision((revision) => revision + 1);
+      recoverMissingActiveApp();
     });
   }, [state?.app]);
 
