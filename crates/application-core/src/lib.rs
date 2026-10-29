@@ -5,7 +5,8 @@ use velvet_layout_model::{InMemoryLayoutService, LayoutService};
 use velvet_persistence::{InMemoryLayoutStateStore, LayoutStateStore};
 use velvet_plugin_api::{ExtensionId, ExtensionManifest, ExtensionState};
 use velvet_plugin_host::{
-    DisableReason, InMemoryPluginHost, PluginError, PluginHost, PluginRuntime,
+    DisableReason, InMemoryPluginHost, JsonManifestDiscovery, ManifestDiscoveryError,
+    ManifestLoadReport, PluginError, PluginHost, PluginRuntime,
 };
 use velvet_preview_core::{GenericFallbackProvider, PreviewContext, PreviewResolver};
 use velvet_workbench_protocol::{
@@ -85,6 +86,13 @@ impl ApplicationCore {
 
     pub fn recover_plugin(&mut self, id: &ExtensionId) -> Result<(), PluginError> {
         self.plugins.recover(id)
+    }
+
+    pub fn load_plugins_from_directory(
+        &mut self,
+        root: impl AsRef<std::path::Path>,
+    ) -> Result<ManifestLoadReport, ManifestDiscoveryError> {
+        JsonManifestDiscovery::new(root.as_ref()).load_into(&mut self.plugins)
     }
 
     pub fn dispatch(&mut self, request: Request) -> Result<Response, CoreError> {
@@ -188,6 +196,7 @@ impl CoreTransport for InProcessCoreTransport {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
@@ -441,5 +450,48 @@ mod tests {
             }
             other => panic!("expected extension response, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn application_core_discovers_local_plugin_manifests_without_activating_them() {
+        let root = temporary_layout_path().with_extension("plugins");
+        fs::create_dir_all(&root).expect("the plugin directory should be writable");
+        let manifest = ExtensionManifest {
+            id: ExtensionId("local.reader".into()),
+            version: "1.0.0".into(),
+            host_api: VersionRange("^1".into()),
+            runtime: RuntimeKind::BuiltIn,
+            launch: None,
+            target_app: None,
+            contributions: vec![],
+            permission_sets: vec![],
+        };
+        fs::write(
+            root.join("local-reader.json"),
+            serde_json::to_vec(&manifest).expect("the manifest should serialize"),
+        )
+        .expect("the manifest should be written");
+
+        let mut core = ApplicationCore::default();
+        let report = core
+            .load_plugins_from_directory(&root)
+            .expect("the plugin directory should be scanned");
+        assert_eq!(report.loaded.len(), 1);
+        assert!(report.failures.is_empty());
+        match core
+            .dispatch(Request::Query(Query::Extensions))
+            .expect("the core should expose discovered plugins")
+        {
+            Response::Extensions(extensions) => {
+                assert_eq!(extensions[0].id, ExtensionId("local.reader".into()));
+                assert_eq!(
+                    extensions[0].state,
+                    velvet_plugin_api::ExtensionState::Registered
+                );
+            }
+            other => panic!("expected extension response, got {other:?}"),
+        }
+
+        fs::remove_dir_all(root).expect("the plugin directory should be removed");
     }
 }

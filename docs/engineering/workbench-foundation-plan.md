@@ -107,7 +107,10 @@ declared WASM runners or sidecars through `ProcessPluginRuntime`, tracks
 registered/starting/active/disabled/failed states, and exposes health polling
 plus explicit recovery. A failed startup or crashed process removes only that
 extension's active contributions; a later recovery creates a fresh process.
-The Tauri response exposes the same runtime state through the extension query.
+The Tauri setup scans `app_data_dir/plugins` for JSON manifests at startup and
+registers valid manifests lazily; malformed or rejected files are reported
+individually without blocking the other plugins. The Tauri response exposes
+the same runtime state through the extension query.
 
 The current shell slice also renders the accepted Part constraint table: fixed
 Parts use stable dimensions, resizable Parts enforce bounded sizes in Rust, and
@@ -456,7 +459,7 @@ export interface CommandDescriptor {
 4. **Workbench parts**: render ActivityBar, Resource Manager, Feed Workbench, PrimarySidebar, WorkspaceArea, AuxiliarySidebar, OperationsPanel and StatusBar with placeholder views. **Initial renderer slice done.**
 5. **View registry**: add built-in views and one example external view per zone. Verify that cross-zone registration is rejected. **Host registry and rejection tests done; the React shell mounts registered ViewContainers/Views with a renderer adapter seam, PluginClient projects extension views plus isolated UI Bridge sessions into that seam, and the Activity Bar now selects contributed navigation containers.**
 6. **Preview core**: implement generic image/file fallback, `PreviewResolver`, Quick/Inspect/Analyze intents and a fake provider used by contract tests.
-7. **Plugin host**: load manifests, validate permissions, activate lazily, isolate failures and expose the UI SDK boundary. **Runtime startup, permission enforcement, crash isolation and explicit recovery are implemented behind the Rust runtime seam; package discovery and signing remain later work.**
+7. **Plugin host**: load manifests, validate permissions, activate lazily, isolate failures and expose the UI SDK boundary. **Local manifest discovery, runtime startup, permission enforcement, crash isolation and explicit recovery are implemented; package installation, marketplace policy and signing remain later work.**
 8. **Jobs and facets**: implement one thumbnail job, one metadata facet and one cancellable analysis job.
 9. **Tauri adapter**: connect typed commands, queries and events to the desktop client. No feature should bypass the protocol. **Done for the current layout slice, including native command/event serialization and global shortcut entry.**
 

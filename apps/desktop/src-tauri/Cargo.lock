@@ -3760,6 +3760,7 @@ dependencies = [
 name = "velvet-plugin-api"
 version = "0.0.2"
 dependencies = [
+ "serde",
  "velvet-layout-model",
 ]
 
@@ -3767,6 +3768,7 @@ dependencies = [
 name = "velvet-plugin-host"
 version = "0.0.2"
 dependencies = [
+ "serde_json",
  "velvet-layout-model",
  "velvet-plugin-api",
 ]

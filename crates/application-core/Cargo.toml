@@ -12,3 +12,6 @@ velvet-plugin-api = { path = "../plugin-api" }
 velvet-plugin-host = { path = "../plugin-host" }
 velvet-preview-core = { path = "../preview-core" }
 velvet-workbench-protocol = { path = "../workbench-protocol" }
+
+[dev-dependencies]
+serde_json = "1"

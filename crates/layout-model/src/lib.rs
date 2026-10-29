@@ -67,6 +67,7 @@ impl<'de> Deserialize<'de> for WorkbenchAppId {
 pub type WorkbenchWorkspaceId = WorkbenchAppId;
 
 #[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum WorkbenchZone {
     Navigation,
     Contextual,

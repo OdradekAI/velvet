@@ -66,6 +66,13 @@ health polling removes a crashed extension from active contributions, and an
 explicit recovery call may create a fresh runtime. A crash or failed restart
 does not disable the Workbench or unrelated extensions.
 
+The native composition root scans the application data directory's `plugins`
+folder for JSON manifests at startup. Discovery is deterministic by filename,
+and each parse or registration failure is returned in a report while valid
+manifests remain registered for lazy activation. Installation, package
+updates, signing and marketplace policy remain outside this local discovery
+seam.
+
 ## Alternatives considered
 
 1. Load arbitrary third-party Rust dynamic libraries into the Tauri process. Rejected because ABI, memory safety and crash isolation cannot be controlled by the host.

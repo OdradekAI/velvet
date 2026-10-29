@@ -75,6 +75,10 @@ state through the core extension query. A failed start or crash removes that
 extension's contributions while leaving the Workbench usable; recovery is an
 explicit host operation that starts a fresh process.
 
+The native app scans `app_data_dir/plugins` for JSON manifests on startup.
+Invalid files are isolated in the discovery report and do not block valid
+extensions from being registered.
+
 ## Architecture
 
 The first release uses a local-first, single-process topology:

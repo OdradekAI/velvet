@@ -1,4 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 
 use velvet_layout_model::WorkbenchZone;
@@ -184,6 +186,118 @@ impl RuntimeProcess for NoopRuntimeProcess {
 
     fn shutdown(&mut self) -> Result<(), RuntimeError> {
         Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ManifestDiscoveryError {
+    Unavailable { root: PathBuf, message: String },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ManifestLoadError {
+    ReadFailed(String),
+    InvalidJson(String),
+    Rejected(PluginError),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ManifestLoadFailure {
+    pub path: PathBuf,
+    pub error: ManifestLoadError,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ManifestLoadReport {
+    pub loaded: Vec<PathBuf>,
+    pub failures: Vec<ManifestLoadFailure>,
+}
+
+/// Reads local JSON manifests without owning plugin lifecycle state. Valid
+/// files are handed to `PluginHost::register`; invalid files are reported
+/// individually so one broken package cannot hide other installed plugins.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct JsonManifestDiscovery {
+    root: PathBuf,
+}
+
+impl JsonManifestDiscovery {
+    pub fn new(root: impl Into<PathBuf>) -> Self {
+        Self { root: root.into() }
+    }
+
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    pub fn load_into<H: PluginHost>(
+        &self,
+        host: &mut H,
+    ) -> Result<ManifestLoadReport, ManifestDiscoveryError> {
+        let mut paths = Vec::new();
+        let entries = match fs::read_dir(&self.root) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(ManifestLoadReport::default());
+            }
+            Err(error) => {
+                return Err(ManifestDiscoveryError::Unavailable {
+                    root: self.root.clone(),
+                    message: error.to_string(),
+                });
+            }
+        };
+
+        for entry in entries {
+            let entry = entry.map_err(|error| ManifestDiscoveryError::Unavailable {
+                root: self.root.clone(),
+                message: error.to_string(),
+            })?;
+            let path = entry.path();
+            if path.is_file()
+                && path
+                    .extension()
+                    .and_then(|extension| extension.to_str())
+                    .is_some_and(|extension| extension.eq_ignore_ascii_case("json"))
+            {
+                paths.push(path);
+            }
+        }
+        paths.sort();
+
+        let mut report = ManifestLoadReport::default();
+        for path in paths {
+            let bytes = match fs::read(&path) {
+                Ok(bytes) => bytes,
+                Err(error) => {
+                    report.failures.push(ManifestLoadFailure {
+                        path,
+                        error: ManifestLoadError::ReadFailed(error.to_string()),
+                    });
+                    continue;
+                }
+            };
+            let manifest = match serde_json::from_slice::<ExtensionManifest>(&bytes) {
+                Ok(manifest) => manifest,
+                Err(error) => {
+                    report.failures.push(ManifestLoadFailure {
+                        path,
+                        error: ManifestLoadError::InvalidJson(error.to_string()),
+                    });
+                    continue;
+                }
+            };
+
+            match host.register(manifest) {
+                Ok(()) => report.loaded.push(path),
+                Err(error) => report.failures.push(ManifestLoadFailure {
+                    path,
+                    error: ManifestLoadError::Rejected(error),
+                }),
+            }
+        }
+
+        Ok(report)
     }
 }
 
@@ -603,7 +717,10 @@ fn api_compatible(required: &VersionRange, provided: &VersionRange) -> bool {
 #[cfg(test)]
 mod tests {
     use std::collections::VecDeque;
+    use std::fs;
+    use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
     use velvet_layout_model::WorkbenchZone;
@@ -625,6 +742,17 @@ mod tests {
     struct FakeProcess {
         health: VecDeque<RuntimeHealth>,
         shutdowns: Arc<Mutex<usize>>,
+    }
+
+    fn temporary_manifest_dir() -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be after the Unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "velvet-plugin-manifests-{}-{nonce}",
+            std::process::id()
+        ))
     }
 
     impl RuntimeProcess for FakeProcess {
@@ -889,5 +1017,50 @@ mod tests {
         process
             .shutdown()
             .expect("the external process should be stoppable");
+    }
+
+    #[test]
+    fn json_manifest_discovery_isolates_invalid_files() {
+        let root = temporary_manifest_dir();
+        fs::create_dir_all(&root).expect("the manifest directory should be writable");
+
+        let valid = view_manifest(Some(WorkbenchZone::Navigation));
+        fs::write(
+            root.join("a-valid.json"),
+            serde_json::to_vec_pretty(&valid).expect("the valid manifest should serialize"),
+        )
+        .expect("the valid manifest should be written");
+        fs::write(root.join("b-invalid.json"), b"{ not json")
+            .expect("the invalid manifest should be written");
+
+        let mut rejected = view_manifest(Some(WorkbenchZone::Navigation));
+        rejected.id = ExtensionId("rejected.permissions".into());
+        rejected.permission_sets = vec![ZonePermissionSet {
+            zone: WorkbenchZone::Navigation,
+            permissions: vec![Permission::Network],
+        }];
+        fs::write(
+            root.join("c-rejected.json"),
+            serde_json::to_vec_pretty(&rejected).expect("the rejected manifest should serialize"),
+        )
+        .expect("the rejected manifest should be written");
+
+        let mut host = InMemoryPluginHost::default();
+        let report = JsonManifestDiscovery::new(&root)
+            .load_into(&mut host)
+            .expect("the manifest directory should be scanned");
+        assert_eq!(report.loaded, vec![root.join("a-valid.json")]);
+        assert_eq!(report.failures.len(), 2);
+        assert!(matches!(
+            report.failures[0].error,
+            ManifestLoadError::InvalidJson(_)
+        ));
+        assert!(matches!(
+            report.failures[1].error,
+            ManifestLoadError::Rejected(PluginError::PermissionDenied { .. })
+        ));
+        assert_eq!(host.discover().len(), 1);
+
+        fs::remove_dir_all(root).expect("the manifest directory should be removed");
     }
 }

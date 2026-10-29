@@ -649,16 +649,29 @@ pub fn run() {
             let sink = TauriEventSink {
                 app: app.handle().clone(),
             };
-            let layout_path = app
+            let app_data_dir = app
                 .path()
                 .app_data_dir()
-                .expect("Velvet app data directory should be available")
-                .join("workbench-layout.json");
+                .expect("Velvet app data directory should be available");
+            let layout_path = app_data_dir.join("workbench-layout.json");
+            let mut core = ApplicationCore::with_store(Arc::new(
+                JsonFileLayoutStateStore::new(layout_path),
+            ));
+            match core.load_plugins_from_directory(app_data_dir.join("plugins")) {
+                Ok(report) if !report.failures.is_empty() => {
+                    eprintln!(
+                        "Velvet skipped {} invalid plugin manifest(s)",
+                        report.failures.len()
+                    );
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    eprintln!("Velvet could not scan plugin manifests: {error:?}");
+                }
+            }
             app.manage(AppState {
                 transport: Mutex::new(TauriTransport::with_event_sink(
-                    ApplicationCore::with_store(Arc::new(JsonFileLayoutStateStore::new(
-                        layout_path,
-                    ))),
+                    core,
                     sink,
                 )),
             });
