@@ -15,6 +15,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Added keyboard and pointer layout resizing plus workspace context-menu controls for Part visibility and collapse.
 - Added the native Extensions manager with manifest and permission preflight, host API compatibility checks, versioned upgrades and transactional rollback.
 - Added restart recovery for abandoned plugin staging and rollback directories, with deferred activation and explicit recovery actions.
+- Added retryable recovery actions, startup cleanup for orphaned transaction directories, and recent recovery logs in the Extensions manager.
 
 ### Changed
 

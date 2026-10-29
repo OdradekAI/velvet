@@ -215,6 +215,13 @@ pub enum ExtensionInstallRecoveryAction {
     Discard,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ExtensionInstallRecoveryLogStatus {
+    Succeeded,
+    Failed,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ExtensionState {
@@ -259,6 +266,18 @@ pub struct ExtensionInstallRecovery {
     pub can_rollback: bool,
     pub can_discard: bool,
     pub issues: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtensionInstallRecoveryLogEntry {
+    pub extension_id: ExtensionId,
+    pub action: ExtensionInstallRecoveryAction,
+    pub status: ExtensionInstallRecoveryLogStatus,
+    pub attempt: u32,
+    pub message: String,
+    pub removed_paths: Vec<String>,
+    pub occurred_at_ms: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

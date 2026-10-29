@@ -4,6 +4,7 @@ import {
   type CorePluginInstallPreview,
   type CorePluginInstallRecovery,
   type CorePluginInstallRecoveryAction,
+  type CorePluginInstallRecoveryLogEntry,
   type CorePluginProjection,
   type CorePluginDisableReason,
   type CorePluginManifest,
@@ -498,6 +499,20 @@ export class PluginClient {
       );
     }
     return response.recoveries;
+  }
+
+  public async queryCoreInstallRecoveryLog(): Promise<readonly CorePluginInstallRecoveryLogEntry[]> {
+    const response = await this.core.request({
+      protocolVersion: PROTOCOL_VERSION,
+      kind: 'query-plugin-install-recovery-log',
+    });
+    if (response.kind !== 'plugin-install-recovery-log') {
+      throw new PluginLifecycleError(
+        `Expected plugin install recovery log, received ${response.kind}`,
+        'core',
+      );
+    }
+    return response.log;
   }
 
   public getCoreSummary(extensionId: string): CorePluginSummary | undefined {

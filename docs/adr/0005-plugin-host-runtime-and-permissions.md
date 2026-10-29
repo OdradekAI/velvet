@@ -96,6 +96,10 @@ startup. It scans for abandoned `.staging-*` and `.rollback-*` directories left
 by a client crash and holds affected extensions inactive until the host presents
 resume, commit, rollback or discard actions. Other embedders may retain lazy
 activation by calling the lifecycle commands explicitly.
+Recovery failures are logged with an attempt number and remain retryable. Startup
+removes only stale or invalid transaction directories that are not part of a
+recoverable pair, records those cleanups, and exposes a bounded recovery log to
+the native client.
 
 ## Alternatives considered
 

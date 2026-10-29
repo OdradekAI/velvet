@@ -3,7 +3,7 @@ use velvet_asset_core::AssetId;
 use velvet_layout_model::{LayoutCommand, LayoutState};
 use velvet_plugin_api::{
     ExtensionId, ExtensionInstallPreview, ExtensionInstallRecovery, ExtensionInstallRecoveryAction,
-    ExtensionManifest, ExtensionProjection, ExtensionSummary,
+    ExtensionInstallRecoveryLogEntry, ExtensionManifest, ExtensionProjection, ExtensionSummary,
 };
 use velvet_preview_core::{PreviewIntent, PreviewSurface, ResolvedPreview};
 
@@ -83,6 +83,7 @@ pub enum Query {
         surface: PreviewSurface,
     },
     PluginInstallRecoveries,
+    PluginInstallRecoveryLog,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -98,6 +99,7 @@ pub enum Response {
     Extension(ExtensionSummary),
     PluginInstallPreview(ExtensionInstallPreview),
     PluginInstallRecoveries(Vec<ExtensionInstallRecovery>),
+    PluginInstallRecoveryLog(Vec<ExtensionInstallRecoveryLogEntry>),
     PluginProjection(ExtensionProjection),
     Preview(ResolvedPreview),
     Accepted,

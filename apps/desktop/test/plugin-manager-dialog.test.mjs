@@ -72,6 +72,9 @@ const core = {
     if (request.kind === 'query-plugin-install-recoveries') {
       return { kind: 'plugin-install-recoveries', recoveries: [] };
     }
+    if (request.kind === 'query-plugin-install-recovery-log') {
+      return { kind: 'plugin-install-recovery-log', log: [] };
+    }
     if (request.kind === 'install-plugin') {
       installed = true;
       installedState = 'registered';
@@ -190,10 +193,11 @@ await act(async () => {
 assert.match(document.body.textContent ?? '', /sample\.installed installed and activated/);
 assert.match(document.body.textContent ?? '', /sample\.installed/);
 assert.deepEqual(
-  requests.slice(0, 10).map((request) => request.kind),
+  requests.slice(0, 12).map((request) => request.kind),
   [
     'query-extensions',
     'query-plugin-install-recoveries',
+    'query-plugin-install-recovery-log',
     'inspect-plugin',
     'install-plugin',
     'query-plugin-projection',
@@ -202,6 +206,7 @@ assert.deepEqual(
     'commit-plugin-install',
     'query-extensions',
     'query-plugin-install-recoveries',
+    'query-plugin-install-recovery-log',
   ],
 );
 
@@ -233,7 +238,7 @@ await act(async () => {
 });
 assert.deepEqual(confirmCalls, ['sample.installed']);
 assert.equal(document.querySelector('[aria-label="Uninstall sample.installed"]'), null);
-assert.equal(requests.at(-1)?.kind, 'query-plugin-install-recoveries');
+assert.equal(requests.at(-1)?.kind, 'query-plugin-install-recovery-log');
 assert.equal(requests.find((request) => request.kind === 'install-plugin')?.sourceDir, '/tmp/native-plugin');
 
 await act(() => root.unmount());
@@ -241,6 +246,8 @@ await act(() => root.unmount());
 const recoveryRequests = [];
 let recoveryVisible = true;
 let recoveryState = 'registered';
+let recoveryAttempts = 0;
+let recoveryLogs = [];
 const recoverySummary = () => ({
   id: 'sample.recovery',
   version: recoveryState === 'active' ? '0.1.0' : '0.2.0',
@@ -271,9 +278,34 @@ const recoveryCore = {
         }] : [],
       };
     }
+    if (request.kind === 'query-plugin-install-recovery-log') {
+      return { kind: 'plugin-install-recovery-log', log: recoveryLogs };
+    }
     if (request.kind === 'resolve-plugin-install-recovery') {
+      recoveryAttempts += 1;
+      if (recoveryAttempts === 1) {
+        recoveryLogs = [{
+          extensionId: 'sample.recovery',
+          action: 'rollback',
+          status: 'failed',
+          attempt: 1,
+          message: 'temporary recovery failure',
+          removedPaths: [],
+          occurredAtMs: 1,
+        }];
+        throw new Error('temporary recovery failure');
+      }
       recoveryVisible = false;
       recoveryState = 'registered';
+      recoveryLogs = [...recoveryLogs, {
+        extensionId: 'sample.recovery',
+        action: 'rollback',
+        status: 'succeeded',
+        attempt: 2,
+        message: 'recovery action completed',
+        removedPaths: [],
+        occurredAtMs: 2,
+      }];
       return { kind: 'accepted' };
     }
     if (request.kind === 'activate-plugin') {
@@ -316,8 +348,18 @@ await act(async () => {
   await new Promise((resolve) => setTimeout(resolve, 0));
   await new Promise((resolve) => setTimeout(resolve, 0));
 });
+assert.match(document.body.textContent ?? '', /temporary recovery failure/);
+const retryButton = [...document.querySelectorAll('button')]
+  .find((button) => button.textContent === 'Retry rollback');
+assert.ok(retryButton);
+await act(async () => {
+  retryButton.click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+});
 assert.match(document.body.textContent ?? '', /recovery resolved and activated/);
 assert.equal(document.querySelector('[data-plugin-install-recoveries]'), null);
+assert.ok(document.querySelector('[data-plugin-install-recovery-log]'));
 assert.ok(recoveryRequests.some((request) => request.kind === 'resolve-plugin-install-recovery'));
 await act(() => recoveryRoot.unmount());
 console.log('Plugin manager dialog tests passed.');

@@ -110,6 +110,10 @@ export type CoreRequest =
     }
   | {
       readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'query-plugin-install-recovery-log';
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
       readonly kind: 'query-plugin-projection';
       readonly extensionId: string;
     }
@@ -202,6 +206,10 @@ export type CoreResponse =
   | {
       readonly kind: 'plugin-install-recoveries';
       readonly recoveries: readonly CorePluginInstallRecovery[];
+    }
+  | {
+      readonly kind: 'plugin-install-recovery-log';
+      readonly log: readonly CorePluginInstallRecoveryLogEntry[];
     }
   | { readonly kind: 'plugin-projection'; readonly projection: CorePluginProjection }
   | { readonly kind: 'accepted' };
@@ -337,6 +345,7 @@ export interface CorePluginInstallPreview {
 
 export type CorePluginInstallRecoveryKind = 'staging' | 'rollback';
 export type CorePluginInstallRecoveryAction = 'resume' | 'commit' | 'rollback' | 'discard';
+export type CorePluginInstallRecoveryLogStatus = 'succeeded' | 'failed';
 
 export interface CorePluginInstallRecovery {
   readonly extensionId: string;
@@ -350,6 +359,16 @@ export interface CorePluginInstallRecovery {
   readonly canRollback: boolean;
   readonly canDiscard: boolean;
   readonly issues: readonly string[];
+}
+
+export interface CorePluginInstallRecoveryLogEntry {
+  readonly extensionId: string;
+  readonly action: CorePluginInstallRecoveryAction;
+  readonly status: CorePluginInstallRecoveryLogStatus;
+  readonly attempt: number;
+  readonly message: string;
+  readonly removedPaths: readonly string[];
+  readonly occurredAtMs: number;
 }
 
 export interface CorePluginProjection {

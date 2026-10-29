@@ -5,7 +5,7 @@ use velvet_layout_model::{InMemoryLayoutService, LayoutService};
 use velvet_persistence::{InMemoryLayoutStateStore, LayoutStateStore};
 use velvet_plugin_api::{
     ExtensionId, ExtensionInstallPreview, ExtensionInstallRecovery, ExtensionInstallRecoveryAction,
-    ExtensionManifest, ExtensionState,
+    ExtensionInstallRecoveryLogEntry, ExtensionManifest, ExtensionState,
 };
 use velvet_plugin_host::{
     DisableReason, InMemoryPluginHost, JsonManifestDiscovery, ManifestDiscoveryError,
@@ -202,6 +202,23 @@ impl ApplicationCore {
             .resolve_install_recovery(id, action, plugin_directory)
     }
 
+    pub fn inspect_plugin_install_recovery_log(
+        &self,
+    ) -> Result<Vec<ExtensionInstallRecoveryLogEntry>, PluginError> {
+        let Some(plugin_directory) = self.plugin_directory.as_deref() else {
+            return Ok(Vec::new());
+        };
+        self.plugins.inspect_install_recovery_log(plugin_directory)
+    }
+
+    pub fn cleanup_plugin_install_recovery_orphans(&mut self) -> Result<(), PluginError> {
+        let Some(plugin_directory) = self.plugin_directory.as_deref() else {
+            return Ok(());
+        };
+        self.plugins
+            .cleanup_install_recovery_orphans(plugin_directory)
+    }
+
     pub fn uninstall_plugin(&mut self, id: &ExtensionId) -> Result<(), PluginError> {
         let Some(plugin_directory) = self.plugin_directory.as_deref() else {
             return Err(PluginError::UninstallFailed(
@@ -291,6 +308,10 @@ impl ApplicationCore {
             Request::Query(Query::PluginInstallRecoveries) => self
                 .inspect_plugin_install_recoveries()
                 .map(Response::PluginInstallRecoveries)
+                .map_err(plugin_error),
+            Request::Query(Query::PluginInstallRecoveryLog) => self
+                .inspect_plugin_install_recovery_log()
+                .map(Response::PluginInstallRecoveryLog)
                 .map_err(plugin_error),
             Request::Query(Query::PluginProjection { extension_id }) => self
                 .plugins
@@ -428,8 +449,8 @@ mod tests {
     use velvet_persistence::JsonFileLayoutStateStore;
     use velvet_plugin_api::{
         ContributionDescriptor, ContributionKind, ContributionScope, ExtensionId,
-        ExtensionManifest, HostContainer, RuntimeKind, UiSurfaceDescriptor, UiSurfaceKind,
-        VersionRange,
+        ExtensionInstallRecoveryLogStatus, ExtensionManifest, HostContainer, RuntimeKind,
+        UiSurfaceDescriptor, UiSurfaceKind, VersionRange,
     };
 
     static NEXT_TEST_FILE: AtomicU64 = AtomicU64::new(0);
@@ -952,6 +973,16 @@ mod tests {
                 .expect("recovery query should be empty"),
             Response::PluginInstallRecoveries(recoveries) if recoveries.is_empty()
         ));
+        match core
+            .dispatch(Request::Query(Query::PluginInstallRecoveryLog))
+            .expect("recovery log query should succeed")
+        {
+            Response::PluginInstallRecoveryLog(log) => {
+                assert_eq!(log.len(), 1);
+                assert_eq!(log[0].status, ExtensionInstallRecoveryLogStatus::Succeeded);
+            }
+            other => panic!("expected plugin recovery log response, got {other:?}"),
+        }
 
         fs::remove_dir_all(root).expect("the recovery package should be removed");
     }

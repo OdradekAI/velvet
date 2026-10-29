@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import type {
   CorePluginInstallRecovery,
   CorePluginInstallRecoveryAction,
+  CorePluginInstallRecoveryLogEntry,
   CorePluginInstallPreview,
   CorePluginSummary,
 } from '../../platform/protocol.js';
@@ -26,6 +27,7 @@ export function PluginManagerDialog({
 }: PluginManagerDialogProps) {
   const [extensions, setExtensions] = useState<readonly CorePluginSummary[]>([]);
   const [recoveries, setRecoveries] = useState<readonly CorePluginInstallRecovery[]>([]);
+  const [recoveryLogs, setRecoveryLogs] = useState<readonly CorePluginInstallRecoveryLogEntry[]>([]);
   const [sourceDir, setSourceDir] = useState('');
   const [preview, setPreview] = useState<CorePluginInstallPreview>();
   const [previewSource, setPreviewSource] = useState<string>();
@@ -41,10 +43,18 @@ export function PluginManagerDialog({
     try {
       const nextExtensions = await plugins.queryCoreExtensions();
       const nextRecoveries = await plugins.queryCoreInstallRecoveries();
+      const nextRecoveryLogs = await plugins.queryCoreInstallRecoveryLog();
       setExtensions(nextExtensions);
       setRecoveries(nextRecoveries);
+      setRecoveryLogs(nextRecoveryLogs);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
+      const message = reason instanceof Error ? reason.message : String(reason);
+      setError(message);
+      try {
+        setRecoveryLogs(await plugins.queryCoreInstallRecoveryLog());
+      } catch {
+        // The action error remains visible even if the log projection is unavailable.
+      }
     } finally {
       setLoading(false);
     }
@@ -91,7 +101,13 @@ export function PluginManagerDialog({
       setMessage(`${summary.id} installed and activated.`);
       await refresh();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
+      const message = reason instanceof Error ? reason.message : String(reason);
+      setError(message);
+      try {
+        setRecoveryLogs(await plugins.queryCoreInstallRecoveryLog());
+      } catch {
+        // The action error remains visible even if the log projection is unavailable.
+      }
     } finally {
       setInstalling(false);
     }
@@ -138,7 +154,13 @@ export function PluginManagerDialog({
       setMessage(`${summary.id} ${summary.state}.`);
       await refresh();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
+      const message = reason instanceof Error ? reason.message : String(reason);
+      setError(message);
+      try {
+        setRecoveryLogs(await plugins.queryCoreInstallRecoveryLog());
+      } catch {
+        // The action error remains visible even if the log projection is unavailable.
+      }
     } finally {
       setBusyExtensionId(undefined);
     }
@@ -203,7 +225,13 @@ export function PluginManagerDialog({
       }
       await refresh();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
+      const message = reason instanceof Error ? reason.message : String(reason);
+      setError(message);
+      try {
+        setRecoveryLogs(await plugins.queryCoreInstallRecoveryLog());
+      } catch {
+        // The action error remains visible even if the log projection is unavailable.
+      }
     } finally {
       setBusyExtensionId(undefined);
     }
@@ -286,8 +314,18 @@ export function PluginManagerDialog({
               <span className="velvet-plugin-manager__eyebrow">Interrupted installs</span>
               <span className="velvet-plugin-manager__recovery-hint">Review before activation</span>
             </div>
-            {recoveries.map((recovery) => (
-              <div className="velvet-plugin-manager__recovery" key={`${recovery.extensionId}-${recovery.kind}`}>
+            {recoveries.map((recovery) => {
+              const lastFailure = [...recoveryLogs]
+                .reverse()
+                .find((entry) => entry.extensionId === recovery.extensionId && entry.status === 'failed');
+              const canRetry = lastFailure && (
+                (lastFailure.action === 'resume' && recovery.canResume)
+                || (lastFailure.action === 'commit' && recovery.canCommit)
+                || (lastFailure.action === 'rollback' && recovery.canRollback)
+                || (lastFailure.action === 'discard' && recovery.canDiscard)
+              );
+              return (
+                <div className="velvet-plugin-manager__recovery" key={`${recovery.extensionId}-${recovery.kind}`}>
                 <div className="velvet-plugin-manager__identity">
                   <strong>{recovery.extensionId}</strong>
                   <span>
@@ -298,7 +336,22 @@ export function PluginManagerDialog({
                 {recovery.issues.length > 0 ? (
                   <p className="velvet-command-error" role="alert">{recovery.issues.join(' ')}</p>
                 ) : null}
+                {lastFailure ? (
+                  <p className="velvet-plugin-manager__recovery-log" role="status">
+                    Attempt {lastFailure.attempt} failed: {lastFailure.message}
+                  </p>
+                ) : null}
                 <div className="velvet-plugin-manager__controls">
+                  {canRetry ? (
+                    <button
+                      className="velvet-button velvet-button--quiet"
+                      disabled={busyExtensionId !== undefined || installing}
+                      onClick={() => void resolveRecovery(recovery, lastFailure.action)}
+                      type="button"
+                    >
+                      Retry {lastFailure.action}
+                    </button>
+                  ) : null}
                   {recovery.canResume ? (
                     <button
                       className="velvet-button velvet-button--quiet"
@@ -340,6 +393,27 @@ export function PluginManagerDialog({
                     </button>
                   ) : null}
                 </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
+        {recoveryLogs.length > 0 ? (
+          <div className="velvet-plugin-manager__recovery-history" data-plugin-install-recovery-log>
+            <div className="velvet-plugin-manager__toolbar">
+              <span className="velvet-plugin-manager__eyebrow">Recovery history</span>
+              <span className="velvet-plugin-manager__recovery-hint">Recent host attempts</span>
+            </div>
+            {[...recoveryLogs].slice(-8).reverse().map((entry) => (
+              <div className="velvet-plugin-manager__recovery-log" key={`${entry.extensionId}-${entry.action}-${entry.attempt}-${entry.occurredAtMs}`}>
+                <strong>{entry.extensionId}</strong>
+                <span>
+                  {entry.action} · attempt {entry.attempt} · {entry.status}
+                </span>
+                <small>{entry.message}</small>
+                {entry.removedPaths.length > 0 ? (
+                  <small>cleaned {entry.removedPaths.join(', ')}</small>
+                ) : null}
               </div>
             ))}
           </div>

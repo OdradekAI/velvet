@@ -553,6 +553,30 @@ button {
   font-size: 10px;
 }
 
+.velvet-plugin-manager__recovery-log {
+  display: grid;
+  gap: 3px;
+  color: var(--velvet-text-muted);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.velvet-plugin-manager__recovery-log strong {
+  color: var(--velvet-text-primary);
+}
+
+.velvet-plugin-manager__recovery-log small {
+  overflow-wrap: anywhere;
+}
+
+.velvet-plugin-manager__recovery-history {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--velvet-border-subtle);
+}
+
 .velvet-plugin-manager__preview {
   display: flex;
   flex-direction: column;

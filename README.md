@@ -91,6 +91,10 @@ uninstall stops its runtime and removes its installed package directory. On
 startup the host scans for abandoned `.staging-*` and `.rollback-*` directories
 left by a client crash. Affected extensions stay inactive until the Extensions
 dialog offers resume, keep new, restore previous or discard actions.
+Failed recovery actions remain available for retry, while stale or invalid
+transaction directories are cleaned on startup. The host keeps a bounded
+recovery log in the application plugin directory and the dialog shows recent
+attempts and cleanup results.
 
 ## Architecture
 

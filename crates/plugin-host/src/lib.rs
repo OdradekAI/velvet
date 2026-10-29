@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -13,7 +13,8 @@ use velvet_layout_model::WorkbenchZone;
 use velvet_plugin_api::{
     AppTarget, ContributionKind, ContributionScope, ExtensionId, ExtensionInstallOperation,
     ExtensionInstallPreview, ExtensionInstallRecovery, ExtensionInstallRecoveryAction,
-    ExtensionInstallRecoveryKind, ExtensionManifest, ExtensionProjection, ExtensionState,
+    ExtensionInstallRecoveryKind, ExtensionInstallRecoveryLogEntry,
+    ExtensionInstallRecoveryLogStatus, ExtensionManifest, ExtensionProjection, ExtensionState,
     ExtensionSummary, HostContainer, Permission, RuntimeKind, VersionRange,
 };
 
@@ -86,6 +87,8 @@ pub enum RuntimeHealth {
 
 const RUNTIME_PROTOCOL_VERSION: u16 = 1;
 const RUNTIME_INVOCATION_TIMEOUT: Duration = Duration::from_secs(5);
+const RECOVERY_LOG_FILE: &str = ".plugin-recovery-log.json";
+const RECOVERY_LOG_LIMIT: usize = 100;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct PluginInvocation {
@@ -524,6 +527,7 @@ fn collect_manifest_paths(root: &Path, paths: &mut Vec<PathBuf>) -> std::io::Res
         if file_type.is_dir() && !entry.file_name().to_string_lossy().starts_with('.') {
             collect_manifest_paths(&path, paths)?;
         } else if file_type.is_file()
+            && !entry.file_name().to_string_lossy().starts_with('.')
             && path
                 .extension()
                 .and_then(|extension| extension.to_str())
@@ -640,6 +644,71 @@ fn recovery_manifest(path: &Path) -> Result<ExtensionManifest, String> {
     Ok(manifest)
 }
 
+fn recovery_log_path(install_root: &Path) -> PathBuf {
+    install_root.join(RECOVERY_LOG_FILE)
+}
+
+fn recovery_log_timestamp_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or_default()
+}
+
+fn read_recovery_log(
+    install_root: &Path,
+) -> Result<Vec<ExtensionInstallRecoveryLogEntry>, PluginError> {
+    let path = recovery_log_path(install_root);
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(PluginError::InstallFailed(error.to_string())),
+    };
+    serde_json::from_slice(&bytes).map_err(|error| PluginError::InstallFailed(error.to_string()))
+}
+
+fn append_recovery_log(
+    install_root: &Path,
+    entry: ExtensionInstallRecoveryLogEntry,
+) -> Result<(), PluginError> {
+    fs::create_dir_all(install_root)
+        .map_err(|error| PluginError::InstallFailed(error.to_string()))?;
+    let mut entries = read_recovery_log(install_root).unwrap_or_default();
+    entries.push(entry);
+    if entries.len() > RECOVERY_LOG_LIMIT {
+        let start = entries.len() - RECOVERY_LOG_LIMIT;
+        entries.drain(..start);
+    }
+    let bytes = serde_json::to_vec_pretty(&entries)
+        .map_err(|error| PluginError::InstallFailed(error.to_string()))?;
+    let temporary = install_root.join(format!(
+        ".plugin-recovery-log.json.tmp-{}-{}",
+        std::process::id(),
+        recovery_log_timestamp_ms()
+    ));
+    fs::write(&temporary, bytes).map_err(|error| PluginError::InstallFailed(error.to_string()))?;
+    if let Err(error) = fs::rename(&temporary, recovery_log_path(install_root)) {
+        let _ = fs::remove_file(&temporary);
+        return Err(PluginError::InstallFailed(error.to_string()));
+    }
+    Ok(())
+}
+
+fn next_recovery_attempt(
+    install_root: &Path,
+    id: &ExtensionId,
+    action: &ExtensionInstallRecoveryAction,
+) -> u32 {
+    read_recovery_log(install_root)
+        .unwrap_or_default()
+        .iter()
+        .filter(|entry| &entry.extension_id == id && &entry.action == action)
+        .map(|entry| entry.attempt)
+        .max()
+        .unwrap_or_default()
+        .saturating_add(1)
+}
+
 pub trait PluginHost {
     fn register(&mut self, manifest: ExtensionManifest) -> Result<(), PluginError>;
     fn discover(&self) -> Vec<ExtensionSummary>;
@@ -678,6 +747,11 @@ pub trait PluginHost {
         &self,
         install_root: &Path,
     ) -> Result<Vec<ExtensionInstallRecovery>, PluginError>;
+    fn inspect_install_recovery_log(
+        &self,
+        install_root: &Path,
+    ) -> Result<Vec<ExtensionInstallRecoveryLogEntry>, PluginError>;
+    fn cleanup_install_recovery_orphans(&mut self, install_root: &Path) -> Result<(), PluginError>;
     fn resolve_install_recovery(
         &mut self,
         id: &ExtensionId,
@@ -1492,139 +1566,261 @@ impl PluginHost for InMemoryPluginHost {
         action: ExtensionInstallRecoveryAction,
         install_root: &Path,
     ) -> Result<(), PluginError> {
-        let paths_by_id = scan_recovery_paths(install_root)?;
-        let paths = paths_by_id
-            .get(id)
-            .ok_or_else(|| PluginError::InvalidState {
-                extension_id: id.clone(),
-                state: self
-                    .states
-                    .get(id)
-                    .cloned()
-                    .unwrap_or(ExtensionState::Registered),
-            })?;
-        let destination = install_root.join(&id.0);
+        let attempt = next_recovery_attempt(install_root, id, &action);
+        let action_for_log = action.clone();
+        let result = (|| {
+            let paths_by_id = scan_recovery_paths(install_root)?;
+            let paths = paths_by_id
+                .get(id)
+                .ok_or_else(|| PluginError::InvalidState {
+                    extension_id: id.clone(),
+                    state: self
+                        .states
+                        .get(id)
+                        .cloned()
+                        .unwrap_or(ExtensionState::Registered),
+                })?;
+            let destination = install_root.join(&id.0);
 
-        match action {
-            ExtensionInstallRecoveryAction::Resume => {
-                let staging = paths
-                    .staging
-                    .last()
-                    .ok_or_else(|| PluginError::InvalidState {
-                        extension_id: id.clone(),
-                        state: ExtensionState::Registered,
-                    })?;
-                if destination.exists() || self.manifests.contains_key(id) {
-                    return Err(PluginError::InstallConflict(id.clone()));
+            match action {
+                ExtensionInstallRecoveryAction::Resume => {
+                    let staging =
+                        paths
+                            .staging
+                            .last()
+                            .ok_or_else(|| PluginError::InvalidState {
+                                extension_id: id.clone(),
+                                state: ExtensionState::Registered,
+                            })?;
+                    if destination.exists() || self.manifests.contains_key(id) {
+                        return Err(PluginError::InstallConflict(id.clone()));
+                    }
+                    let manifest =
+                        recovery_manifest(staging).map_err(PluginError::InstallFailed)?;
+                    if manifest.id != *id {
+                        return Err(PluginError::InstallFailed(format!(
+                            "staging manifest id {} does not match {}",
+                            manifest.id.0, id.0
+                        )));
+                    }
+                    self.validate_manifest(&manifest)?;
+                    fs::rename(staging, &destination)
+                        .map_err(|error| PluginError::InstallFailed(error.to_string()))?;
+                    if let Err(error) = self.register(manifest) {
+                        let _ = fs::rename(&destination, staging);
+                        return Err(error);
+                    }
+                    for stale in paths.staging.iter().filter(|path| *path != staging) {
+                        let _ = fs::remove_dir_all(stale);
+                    }
                 }
-                let manifest = recovery_manifest(staging).map_err(PluginError::InstallFailed)?;
-                if manifest.id != *id {
-                    return Err(PluginError::InstallFailed(format!(
-                        "staging manifest id {} does not match {}",
-                        manifest.id.0, id.0
-                    )));
+                ExtensionInstallRecoveryAction::Commit => {
+                    if paths.rollback.last().is_none() {
+                        return Err(PluginError::InvalidState {
+                            extension_id: id.clone(),
+                            state: ExtensionState::Registered,
+                        });
+                    }
+                    if !destination.exists() {
+                        return Err(PluginError::InstallFailed(
+                            "cannot keep an interrupted upgrade without its current package".into(),
+                        ));
+                    }
+                    let manifest =
+                        recovery_manifest(&destination).map_err(PluginError::InstallFailed)?;
+                    self.validate_manifest(&manifest)?;
+                    if !self.manifests.contains_key(id) {
+                        self.register(manifest)?;
+                    }
+                    for rollback_path in &paths.rollback {
+                        if rollback_path.exists() {
+                            fs::remove_dir_all(rollback_path)
+                                .map_err(|error| PluginError::InstallFailed(error.to_string()))?;
+                        }
+                    }
                 }
-                self.validate_manifest(&manifest)?;
-                fs::rename(staging, &destination)
-                    .map_err(|error| PluginError::InstallFailed(error.to_string()))?;
-                if let Err(error) = self.register(manifest) {
-                    let _ = fs::rename(&destination, staging);
-                    return Err(error);
-                }
-                for stale in paths.staging.iter().filter(|path| *path != staging) {
-                    let _ = fs::remove_dir_all(stale);
-                }
-            }
-            ExtensionInstallRecoveryAction::Commit => {
-                if paths.rollback.last().is_none() {
-                    return Err(PluginError::InvalidState {
-                        extension_id: id.clone(),
-                        state: ExtensionState::Registered,
-                    });
-                }
-                if !destination.exists() {
-                    return Err(PluginError::InstallFailed(
-                        "cannot keep an interrupted upgrade without its current package".into(),
+                ExtensionInstallRecoveryAction::Rollback => {
+                    let rollback =
+                        paths
+                            .rollback
+                            .last()
+                            .ok_or_else(|| PluginError::InvalidState {
+                                extension_id: id.clone(),
+                                state: ExtensionState::Registered,
+                            })?;
+                    let previous_manifest =
+                        recovery_manifest(rollback).map_err(PluginError::InstallFailed)?;
+                    if previous_manifest.id != *id {
+                        return Err(PluginError::InstallFailed(format!(
+                            "rollback manifest id {} does not match {}",
+                            previous_manifest.id.0, id.0
+                        )));
+                    }
+                    self.validate_manifest(&previous_manifest)?;
+                    if self.active.contains(id) {
+                        self.disable(id, DisableReason::Incompatible)?;
+                    }
+                    let current_backup = install_root.join(format!(
+                        ".{}.recovery-current-{}",
+                        id.0,
+                        std::process::id()
                     ));
-                }
-                let manifest =
-                    recovery_manifest(&destination).map_err(PluginError::InstallFailed)?;
-                self.validate_manifest(&manifest)?;
-                if !self.manifests.contains_key(id) {
-                    self.register(manifest)?;
-                }
-                for rollback_path in &paths.rollback {
-                    if rollback_path.exists() {
-                        fs::remove_dir_all(rollback_path)
+                    if current_backup.exists() {
+                        fs::remove_dir_all(&current_backup)
                             .map_err(|error| PluginError::InstallFailed(error.to_string()))?;
+                    }
+                    if destination.exists() {
+                        fs::rename(&destination, &current_backup)
+                            .map_err(|error| PluginError::InstallFailed(error.to_string()))?;
+                    }
+                    if let Err(error) = fs::rename(rollback, &destination) {
+                        if current_backup.exists() {
+                            let _ = fs::rename(&current_backup, &destination);
+                        }
+                        return Err(PluginError::InstallFailed(error.to_string()));
+                    }
+                    self.remove_registration(id);
+                    if let Err(error) = self.register(previous_manifest) {
+                        let _ = fs::remove_dir_all(&destination);
+                        if current_backup.exists() {
+                            let _ = fs::rename(&current_backup, &destination);
+                        }
+                        return Err(error);
+                    }
+                    if current_backup.exists() {
+                        fs::remove_dir_all(&current_backup)
+                            .map_err(|error| PluginError::InstallFailed(error.to_string()))?;
+                    }
+                    for stale in paths.rollback.iter().filter(|path| *path != rollback) {
+                        let _ = fs::remove_dir_all(stale);
+                    }
+                }
+                ExtensionInstallRecoveryAction::Discard => {
+                    for staging in &paths.staging {
+                        if staging.exists() {
+                            fs::remove_dir_all(staging)
+                                .map_err(|error| PluginError::InstallFailed(error.to_string()))?;
+                        }
+                    }
+                    for rollback in &paths.rollback {
+                        if rollback.exists() {
+                            fs::remove_dir_all(rollback)
+                                .map_err(|error| PluginError::InstallFailed(error.to_string()))?;
+                        }
                     }
                 }
             }
-            ExtensionInstallRecoveryAction::Rollback => {
-                let rollback = paths
+            Ok(())
+        })();
+
+        let (status, message) = match &result {
+            Ok(()) => (
+                ExtensionInstallRecoveryLogStatus::Succeeded,
+                "recovery action completed".to_owned(),
+            ),
+            Err(error) => (
+                ExtensionInstallRecoveryLogStatus::Failed,
+                format!("recovery action failed: {error:?}"),
+            ),
+        };
+        let _ = append_recovery_log(
+            install_root,
+            ExtensionInstallRecoveryLogEntry {
+                extension_id: id.clone(),
+                action: action_for_log,
+                status,
+                attempt,
+                message,
+                removed_paths: Vec::new(),
+                occurred_at_ms: recovery_log_timestamp_ms(),
+            },
+        );
+        result
+    }
+
+    fn inspect_install_recovery_log(
+        &self,
+        install_root: &Path,
+    ) -> Result<Vec<ExtensionInstallRecoveryLogEntry>, PluginError> {
+        Ok(read_recovery_log(install_root).unwrap_or_default())
+    }
+
+    fn cleanup_install_recovery_orphans(&mut self, install_root: &Path) -> Result<(), PluginError> {
+        let paths_by_id = scan_recovery_paths(install_root)?;
+        for (id, paths) in paths_by_id {
+            let destination = install_root.join(&id.0);
+            let mut candidates = Vec::new();
+            candidates.extend(
+                paths
+                    .staging
+                    .iter()
+                    .take(paths.staging.len().saturating_sub(1))
+                    .cloned(),
+            );
+            candidates.extend(
+                paths
                     .rollback
-                    .last()
-                    .ok_or_else(|| PluginError::InvalidState {
-                        extension_id: id.clone(),
-                        state: ExtensionState::Registered,
-                    })?;
-                let previous_manifest =
-                    recovery_manifest(rollback).map_err(PluginError::InstallFailed)?;
-                if previous_manifest.id != *id {
-                    return Err(PluginError::InstallFailed(format!(
-                        "rollback manifest id {} does not match {}",
-                        previous_manifest.id.0, id.0
-                    )));
-                }
-                self.validate_manifest(&previous_manifest)?;
-                if self.active.contains(id) {
-                    self.disable(id, DisableReason::Incompatible)?;
-                }
-                let current_backup =
-                    install_root.join(format!(".{}.recovery-current-{}", id.0, std::process::id()));
-                if current_backup.exists() {
-                    fs::remove_dir_all(&current_backup)
-                        .map_err(|error| PluginError::InstallFailed(error.to_string()))?;
-                }
-                if destination.exists() {
-                    fs::rename(&destination, &current_backup)
-                        .map_err(|error| PluginError::InstallFailed(error.to_string()))?;
-                }
-                if let Err(error) = fs::rename(rollback, &destination) {
-                    if current_backup.exists() {
-                        let _ = fs::rename(&current_backup, &destination);
-                    }
-                    return Err(PluginError::InstallFailed(error.to_string()));
-                }
-                self.remove_registration(id);
-                if let Err(error) = self.register(previous_manifest) {
-                    let _ = fs::remove_dir_all(&destination);
-                    if current_backup.exists() {
-                        let _ = fs::rename(&current_backup, &destination);
-                    }
-                    return Err(error);
-                }
-                if current_backup.exists() {
-                    fs::remove_dir_all(&current_backup)
-                        .map_err(|error| PluginError::InstallFailed(error.to_string()))?;
-                }
-                for stale in paths.rollback.iter().filter(|path| *path != rollback) {
-                    let _ = fs::remove_dir_all(stale);
+                    .iter()
+                    .take(paths.rollback.len().saturating_sub(1))
+                    .cloned(),
+            );
+
+            let staged_replacement_valid = paths
+                .staging
+                .last()
+                .and_then(|staging| recovery_manifest(staging).ok())
+                .is_some_and(|manifest| {
+                    manifest.id == id && self.validate_manifest(&manifest).is_ok()
+                });
+            if let Some(staging) = paths.staging.last() {
+                if !staged_replacement_valid || destination.exists() {
+                    candidates.push(staging.clone());
                 }
             }
-            ExtensionInstallRecoveryAction::Discard => {
-                for staging in &paths.staging {
-                    if staging.exists() {
-                        fs::remove_dir_all(staging)
-                            .map_err(|error| PluginError::InstallFailed(error.to_string()))?;
-                    }
+
+            if let Some(rollback) = paths.rollback.last() {
+                let valid = recovery_manifest(rollback)
+                    .map(|manifest| manifest.id == id && self.validate_manifest(&manifest).is_ok())
+                    .unwrap_or(false);
+                let has_staged_replacement = staged_replacement_valid && !destination.exists();
+                if !valid || (!destination.exists() && !has_staged_replacement) {
+                    candidates.push(rollback.clone());
                 }
-                for rollback in &paths.rollback {
-                    if rollback.exists() {
-                        fs::remove_dir_all(rollback)
-                            .map_err(|error| PluginError::InstallFailed(error.to_string()))?;
-                    }
-                }
+            }
+
+            candidates.sort();
+            candidates.dedup();
+            for path in candidates {
+                let attempt = next_recovery_attempt(
+                    install_root,
+                    &id,
+                    &ExtensionInstallRecoveryAction::Discard,
+                );
+                let result = fs::remove_dir_all(&path)
+                    .map_err(|error| PluginError::InstallFailed(error.to_string()));
+                let (status, message) = match &result {
+                    Ok(()) => (
+                        ExtensionInstallRecoveryLogStatus::Succeeded,
+                        "orphan recovery directory removed".to_owned(),
+                    ),
+                    Err(error) => (
+                        ExtensionInstallRecoveryLogStatus::Failed,
+                        format!("orphan recovery directory could not be removed: {error:?}"),
+                    ),
+                };
+                let _ = append_recovery_log(
+                    install_root,
+                    ExtensionInstallRecoveryLogEntry {
+                        extension_id: id.clone(),
+                        action: ExtensionInstallRecoveryAction::Discard,
+                        status,
+                        attempt,
+                        message,
+                        removed_paths: vec![path.to_string_lossy().into_owned()],
+                        occurred_at_ms: recovery_log_timestamp_ms(),
+                    },
+                );
+                result?;
             }
         }
         Ok(())
@@ -2648,5 +2844,117 @@ mod tests {
         assert!(root.join(&staged_id.0).is_dir());
 
         fs::remove_dir_all(root).expect("the recovery fixture should be removed");
+    }
+
+    #[test]
+    fn recovery_action_failure_is_logged_and_retryable() {
+        let root = temporary_manifest_dir();
+        let id = ExtensionId("retryable.recovery".into());
+        let previous = ExtensionManifest {
+            id: id.clone(),
+            version: "0.1.0".into(),
+            host_api: VersionRange("^1".into()),
+            runtime: RuntimeKind::BuiltIn,
+            launch: None,
+            target_app: None,
+            contributions: Vec::new(),
+            permission_sets: Vec::new(),
+        };
+        let mut current = previous.clone();
+        current.version = "0.2.0".into();
+        write_package(&root.join(&id.0), &current);
+        write_package(&root.join(format!(".{}.rollback-crash", id.0)), &previous);
+
+        let mut host = InMemoryPluginHost::default();
+        JsonManifestDiscovery::new(&root)
+            .load_into(&mut host)
+            .expect("the current package should be discovered");
+        let recovery_current =
+            root.join(format!(".{}.recovery-current-{}", id.0, std::process::id()));
+        fs::write(&recovery_current, b"temporary blocker")
+            .expect("the retry blocker should be writable");
+        host.resolve_install_recovery(&id, ExtensionInstallRecoveryAction::Rollback, &root)
+            .expect_err("the occupied recovery path should make the first attempt fail");
+
+        let failed_log = host
+            .inspect_install_recovery_log(&root)
+            .expect("the failed recovery should be logged");
+        assert_eq!(failed_log.len(), 1);
+        assert_eq!(failed_log[0].attempt, 1);
+        assert_eq!(
+            failed_log[0].status,
+            ExtensionInstallRecoveryLogStatus::Failed
+        );
+
+        fs::remove_file(&recovery_current).expect("the temporary blocker should be removable");
+        host.resolve_install_recovery(&id, ExtensionInstallRecoveryAction::Rollback, &root)
+            .expect("the same recovery action should be retryable");
+        let log = host
+            .inspect_install_recovery_log(&root)
+            .expect("the recovery log should be readable");
+        assert_eq!(log.len(), 2);
+        assert_eq!(log[1].attempt, 2);
+        assert_eq!(log[1].status, ExtensionInstallRecoveryLogStatus::Succeeded);
+        assert_eq!(host.discover()[0].version, "0.1.0");
+
+        fs::remove_dir_all(root).expect("the retry fixture should be removed");
+    }
+
+    #[test]
+    fn orphan_recovery_directories_are_cleaned_and_logged() {
+        let root = temporary_manifest_dir();
+        let orphan_staging = root.join(".orphan.plugin.staging-empty");
+        let orphan_rollback = root.join(".orphan.plugin.rollback-empty");
+        fs::create_dir_all(&orphan_staging).expect("the orphan staging directory should exist");
+        fs::create_dir_all(&orphan_rollback).expect("the orphan rollback directory should exist");
+
+        let stale_id = ExtensionId("stale.plugin".into());
+        let stale = ExtensionManifest {
+            id: stale_id.clone(),
+            version: "0.1.0".into(),
+            host_api: VersionRange("^1".into()),
+            runtime: RuntimeKind::BuiltIn,
+            launch: None,
+            target_app: None,
+            contributions: Vec::new(),
+            permission_sets: Vec::new(),
+        };
+        write_package(&root.join(&stale_id.0), &stale);
+        write_package(&root.join(format!(".{}.staging-stale", stale_id.0)), &stale);
+
+        let missing_id = ExtensionId("missing.plugin".into());
+        write_package(
+            &root.join(format!(".{}.rollback-stale", missing_id.0)),
+            &ExtensionManifest {
+                id: missing_id,
+                ..stale.clone()
+            },
+        );
+
+        let mut host = InMemoryPluginHost::default();
+        JsonManifestDiscovery::new(&root)
+            .load_into(&mut host)
+            .expect("the stale package should be discovered");
+        host.cleanup_install_recovery_orphans(&root)
+            .expect("orphan recovery directories should be cleaned");
+
+        assert!(!orphan_staging.exists());
+        assert!(!orphan_rollback.exists());
+        assert!(!root.join(format!(".{}.staging-stale", stale_id.0)).exists());
+        assert!(!root
+            .join(format!(".{}.rollback-stale", "missing.plugin"))
+            .exists());
+        assert!(root.join(&stale_id.0).exists());
+        let log = host
+            .inspect_install_recovery_log(&root)
+            .expect("orphan cleanup should be logged");
+        assert_eq!(log.len(), 4);
+        assert!(log.iter().all(|entry| {
+            entry.action == ExtensionInstallRecoveryAction::Discard
+                && entry.status == ExtensionInstallRecoveryLogStatus::Succeeded
+                && entry.removed_paths.len() == 1
+        }));
+
+        fs::remove_dir_all(root).expect("the orphan fixture should be removed");
     }
 }

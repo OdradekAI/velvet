@@ -111,6 +111,10 @@ pub enum WireRequest {
         #[serde(rename = "protocolVersion")]
         protocol_version: u16,
     },
+    QueryPluginInstallRecoveryLog {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+    },
     QueryPluginProjection {
         #[serde(rename = "protocolVersion")]
         protocol_version: u16,
@@ -228,6 +232,12 @@ impl WireRequest {
                 validate_inner_protocol(outer_protocol_version, protocol_version)?;
                 Ok(Request::Query(
                     velvet_workbench_protocol::Query::PluginInstallRecoveries,
+                ))
+            }
+            Self::QueryPluginInstallRecoveryLog { protocol_version } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Query(
+                    velvet_workbench_protocol::Query::PluginInstallRecoveryLog,
                 ))
             }
             Self::QueryPluginProjection {
@@ -583,6 +593,9 @@ enum WireResponse {
     PluginInstallRecoveries {
         recoveries: Vec<velvet_plugin_api::ExtensionInstallRecovery>,
     },
+    PluginInstallRecoveryLog {
+        log: Vec<velvet_plugin_api::ExtensionInstallRecoveryLogEntry>,
+    },
     PluginProjection {
         projection: velvet_plugin_api::ExtensionProjection,
     },
@@ -615,6 +628,7 @@ impl WireResponseEnvelope {
             Response::PluginInstallRecoveries(recoveries) => {
                 WireResponse::PluginInstallRecoveries { recoveries }
             }
+            Response::PluginInstallRecoveryLog(log) => WireResponse::PluginInstallRecoveryLog { log },
             Response::PluginProjection(projection) => WireResponse::PluginProjection { projection },
             Response::Preview(preview) => WireResponse::Preview {
                 preview: WireResolvedPreview::from(preview),
@@ -923,6 +937,9 @@ pub fn run() {
                     eprintln!("Velvet could not scan plugin manifests: {error:?}");
                 }
             }
+            if let Err(error) = core.cleanup_plugin_install_recovery_orphans() {
+                eprintln!("Velvet could not clean orphaned plugin recovery directories: {error:?}");
+            }
             for error in core.activate_registered_plugins() {
                 eprintln!("Velvet could not start a discovered plugin: {error:?}");
             }
@@ -1157,6 +1174,27 @@ mod tests {
             recovery_value["response"]["recoveries"][0]["kind"],
             "rollback"
         );
+
+        let log_response = WireResponseEnvelope::from_core(
+            velvet_workbench_protocol::ResponseEnvelope {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: RequestId(26),
+                response: Response::PluginInstallRecoveryLog(vec![
+                    velvet_plugin_api::ExtensionInstallRecoveryLogEntry {
+                        extension_id: velvet_plugin_api::ExtensionId("sample.reader".into()),
+                        action: velvet_plugin_api::ExtensionInstallRecoveryAction::Rollback,
+                        status: velvet_plugin_api::ExtensionInstallRecoveryLogStatus::Failed,
+                        attempt: 2,
+                        message: "temporary blocker".into(),
+                        removed_paths: Vec::new(),
+                        occurred_at_ms: 1,
+                    },
+                ]),
+            },
+        );
+        let log_value = serde_json::to_value(log_response)
+            .expect("plugin recovery log should serialize");
+        assert_eq!(log_value["response"]["log"][0]["status"], "failed");
     }
 
     #[test]
@@ -1276,6 +1314,25 @@ mod tests {
                 .into_core(1)
                 .expect("the plugin recovery query should map"),
             Request::Query(velvet_workbench_protocol::Query::PluginInstallRecoveries)
+        ));
+
+        let recovery_log: WireRequestEnvelope = serde_json::from_str(
+            r#"{
+                "protocolVersion": 1,
+                "requestId": 27,
+                "request": {
+                    "kind": "query-plugin-install-recovery-log",
+                    "protocolVersion": 1
+                }
+            }"#,
+        )
+        .expect("the plugin recovery log query should deserialize");
+        assert!(matches!(
+            recovery_log
+                .request
+                .into_core(1)
+                .expect("the plugin recovery log query should map"),
+            Request::Query(velvet_workbench_protocol::Query::PluginInstallRecoveryLog)
         ));
 
         for (kind, request_id, expected) in [
