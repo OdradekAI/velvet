@@ -655,8 +655,7 @@ fn validate_inner_protocol(outer: u16, inner: u16) -> Result<(), WireError> {
 fn parse_app(value: &str) -> Result<WorkbenchAppId, WireError> {
     if value.is_empty()
         || !value.chars().enumerate().all(|(index, character)| {
-            character.is_ascii_alphanumeric()
-                || (matches!(character, '.' | '_' | '-') && index > 0)
+            character.is_ascii_alphanumeric() || (matches!(character, '.' | '_' | '-') && index > 0)
         })
     {
         return Err(invalid_wire_value("app id", value));

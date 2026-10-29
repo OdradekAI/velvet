@@ -293,9 +293,7 @@ mod tests {
 
         first_core
             .dispatch(Request::Command(Command::Layout(
-                LayoutCommand::ActivateApp(
-                    velvet_layout_model::WorkbenchAppId::FeedWorkbench,
-                ),
+                LayoutCommand::ActivateApp(velvet_layout_model::WorkbenchAppId::FeedWorkbench),
             )))
             .expect("the native app switch should persist");
         drop(first_core);

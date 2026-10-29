@@ -623,7 +623,10 @@ mod tests {
     #[test]
     fn plugin_app_ids_keep_their_stable_wire_form() {
         let app = WorkbenchAppId::from_id("sample.extension.research");
-        assert_eq!(app, WorkbenchAppId::Plugin("sample.extension.research".into()));
+        assert_eq!(
+            app,
+            WorkbenchAppId::Plugin("sample.extension.research".into())
+        );
         assert_eq!(app.as_str(), "sample.extension.research");
     }
 
@@ -812,11 +815,8 @@ mod tests {
             })
             .unwrap();
 
-        let container = service
-            .snapshot()
-            .containers
-            .get("plugin.library")
-            .unwrap();
+        let snapshot = service.snapshot();
+        let container = snapshot.containers.get("plugin.library").unwrap();
         assert!(!container.visible);
         assert_eq!(container.order, 3);
 
@@ -826,11 +826,8 @@ mod tests {
                 visible: true,
             })
             .unwrap();
-        let container = service
-            .snapshot()
-            .containers
-            .get("plugin.library")
-            .unwrap();
+        let snapshot = service.snapshot();
+        let container = snapshot.containers.get("plugin.library").unwrap();
         assert!(container.visible);
         assert_eq!(container.order, 3);
     }
