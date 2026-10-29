@@ -91,6 +91,20 @@ implementation is optional and falls back to a host placeholder until a
 trusted adapter or isolated UI bridge is mounted. This keeps React component
 types out of the Workbench registry and lets plugin surfaces fail independently.
 
+Plugin manifests use local contribution ids as their stable identity. When a
+plugin is activated, `PluginClient` prefixes those ids with the extension id
+before registering `ViewContainer` and `View` descriptors in the host
+`ViewRegistry`; a View references a ViewContainer from the same extension and
+namespace. Global `companion-view` and `operation-view` contributions are
+projected into synthetic containers in the reserved Auxiliary Sidebar and
+Operations Panel. An isolated UI entrypoint is registered in `PluginUiRegistry`
+with an explicit bridge version. The React adapter creates a bridge session
+only while the mapped View is mounted, forwards workspace context, theme and
+size updates, and disposes the session before the host removes the view. A
+missing or late adapter leaves a recoverable waiting placeholder, while plugin
+deactivation disposes sessions before removing view descriptors and generic
+contributions.
+
 At the repository level, `CLAUDE.md` is a symlink to `AGENTS.md`. `.claude/skills` is a symlink to the repository-local `.agent/skills` directory, which may contain intentional skill definitions. Generated skill state remains ignored; the links provide one discoverable entrypoint without duplicating instructions.
 
 ## Alternatives considered

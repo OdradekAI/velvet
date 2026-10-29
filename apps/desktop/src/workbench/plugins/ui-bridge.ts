@@ -128,6 +128,7 @@ export class PluginUiRegistry {
   private readonly descriptors = new Map<string, PluginSurfaceDescriptor>();
   private readonly adapters = new Map<string, PluginSurfaceAdapter>();
   private readonly sessions = new Map<string, PluginSurfaceSessionImpl>();
+  private readonly listeners = new Set<() => void>();
 
   public register(descriptor: PluginSurfaceDescriptor): void {
     this.validateDescriptor(descriptor);
@@ -137,6 +138,7 @@ export class PluginUiRegistry {
     }
 
     this.descriptors.set(key, descriptor);
+    this.notify();
   }
 
   public bindAdapter(
@@ -150,6 +152,29 @@ export class PluginUiRegistry {
     }
 
     this.adapters.set(key, adapter);
+    this.notify();
+  }
+
+  public getDescriptor(
+    extensionId: string,
+    surfaceId: string,
+  ): PluginSurfaceDescriptor | undefined {
+    return this.descriptors.get(surfaceKey(extensionId, surfaceId));
+  }
+
+  /** Removes an unmounted surface descriptor during activation rollback. */
+  public unregister(extensionId: string, surfaceId: string): boolean {
+    const key = surfaceKey(extensionId, surfaceId);
+    if (this.sessions.has(key)) {
+      throw new PluginUiBridgeError(`Plugin surface session is still active: ${key}`, key);
+    }
+
+    const removed = this.descriptors.delete(key);
+    this.adapters.delete(key);
+    if (removed) {
+      this.notify();
+    }
+    return removed;
   }
 
   public createSession(
@@ -171,9 +196,23 @@ export class PluginUiRegistry {
       throw new PluginUiBridgeError(`Plugin surface adapter is not bound: ${key}`, key);
     }
 
-    const session = new PluginSurfaceSessionImpl(key, descriptor, adapter, handlers);
+    const session = new PluginSurfaceSessionImpl(
+      key,
+      descriptor,
+      adapter,
+      handlers,
+      () => {
+        this.sessions.delete(key);
+        this.notify();
+      },
+    );
     this.sessions.set(key, session);
     return session;
+  }
+
+  public subscribe(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
   }
 
   public async disposeExtension(
@@ -192,6 +231,17 @@ export class PluginUiRegistry {
       if (key.startsWith(`${extensionId}:`)) {
         this.descriptors.delete(key);
         this.adapters.delete(key);
+      }
+    }
+    this.notify();
+  }
+
+  private notify(): void {
+    for (const listener of this.listeners) {
+      try {
+        listener();
+      } catch {
+        // One renderer projection must not prevent other surfaces from updating.
       }
     }
   }
@@ -234,6 +284,7 @@ class PluginSurfaceSessionImpl implements PluginSurfaceSession {
     private readonly descriptor: PluginSurfaceDescriptor,
     private readonly adapter: PluginSurfaceAdapter,
     private readonly handlers: PluginSurfaceHandlers,
+    private readonly onDisposed: () => void,
   ) {
     this.surfaceId = descriptor.id;
     this.unsubscribe = this.endpoint.subscribe((message) => {
@@ -310,6 +361,7 @@ class PluginSurfaceSessionImpl implements PluginSurfaceSession {
       this.resourcesDisposed = true;
       this.unsubscribe();
       this.endpoint.close();
+      this.onDisposed();
       return;
     }
 
@@ -318,6 +370,7 @@ class PluginSurfaceSessionImpl implements PluginSurfaceSession {
     this.unsubscribe();
     this.endpoint.close();
     this.options = undefined;
+    this.onDisposed();
   }
 
   private async handleMessage(message: SurfaceToHostMessage): Promise<void> {

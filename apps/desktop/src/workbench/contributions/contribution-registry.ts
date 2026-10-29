@@ -1,6 +1,19 @@
 import type { Part, Zone } from '../../platform/protocol.js';
 import type { WorkbenchAppId } from '../../platform/protocol.js';
 
+/** Serialized isolated surface metadata supplied by an extension manifest. */
+export interface PluginUiContribution {
+  readonly kind: 'app-surface' | 'view' | 'dialog' | 'popover' | 'inspector';
+  readonly entrypoint: string;
+  readonly bridgeVersion: string;
+}
+
+export interface ContributionActivityBarEntry {
+  readonly title: string;
+  readonly icon: string;
+  readonly order?: number;
+}
+
 export type ContributionScope = 'workbench' | 'workbench-app' | 'capability';
 
 export type HostContainer =
@@ -80,6 +93,19 @@ export interface ContributionDescriptor {
   readonly anchor?: ContextAnchor;
   readonly order?: number;
   readonly permissions?: readonly string[];
+  /** Display metadata for ViewContainer/View contributions. */
+  readonly title?: string;
+  readonly titleKey?: string;
+  readonly icon?: string;
+  readonly defaultVisible?: boolean;
+  readonly enablement?: string;
+  readonly activation?: 'eager' | 'on-demand';
+  readonly requiredCapabilities?: readonly string[];
+  /** Local contribution id of the ViewContainer owned by this extension. */
+  readonly viewContainerId?: string;
+  readonly activityBar?: ContributionActivityBarEntry;
+  /** Optional isolated UI surface bound to this contribution. */
+  readonly ui?: PluginUiContribution;
 }
 
 export interface ContributionQuery {
@@ -268,13 +294,11 @@ export class ContributionRegistry {
       'companion-view': 'auxiliary-sidebar',
       'operation-view': 'operations-panel',
       'app-surface': 'workspace-area',
-      'view-container': 'primary-sidebar',
-      view: 'primary-sidebar',
       'app-toolbar': 'workspace-area',
       'inspector-section': 'workspace-area',
     };
 
-    const required = requiredContainer[kind];
+    const required = requiredContainer[kind] ?? viewHostContainer(contribution);
     if (required && container !== required) {
       throw new ContributionValidationError(
         `${kind} must target ${required}`,
@@ -295,6 +319,22 @@ export class ContributionRegistry {
   ): string {
     return `${namespaceFor(contribution.scope, contribution.appId, contribution.extensionId)}:${contribution.extensionId}:${contribution.id}`;
   }
+}
+
+function viewHostContainer(contribution: ContributionDescriptor): HostContainer | undefined {
+  if (contribution.kind !== 'view-container' && contribution.kind !== 'view') {
+    return undefined;
+  }
+
+  if (contribution.scope === 'workbench') {
+    return contribution.zone === 'contextual'
+      ? 'auxiliary-sidebar'
+      : contribution.zone === 'operations'
+        ? 'operations-panel'
+        : 'primary-sidebar';
+  }
+
+  return contribution.zone === 'navigation' ? 'primary-sidebar' : 'workspace-area';
 }
 
 export function namespaceFor(

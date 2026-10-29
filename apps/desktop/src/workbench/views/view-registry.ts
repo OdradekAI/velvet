@@ -82,6 +82,19 @@ export class ViewRegistry {
     return this.containers.get(id);
   }
 
+  /** Removes a container after its registered views have been removed. */
+  public unregisterContainer(id: string): boolean {
+    if ([...this.views.values()].some((view) => view.containerId === id)) {
+      throw new Error(`View container still has registered views: ${id}`);
+    }
+
+    const removed = this.containers.delete(id);
+    if (removed) {
+      this.notify();
+    }
+    return removed;
+  }
+
   public listContainers(appId?: string): ViewContainerDescriptor[] {
     return [...this.containers.values()]
       .filter((container) => {
@@ -111,6 +124,14 @@ export class ViewRegistry {
 
   public get(id: string): ViewDescriptor | undefined {
     return this.views.get(id);
+  }
+
+  public unregister(id: string): boolean {
+    const removed = this.views.delete(id);
+    if (removed) {
+      this.notify();
+    }
+    return removed;
   }
 
   public list(zone?: Zone, appId?: string): ViewDescriptor[] {

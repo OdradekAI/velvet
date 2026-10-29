@@ -43,7 +43,14 @@ export class Workbench {
   public constructor(core: CoreTransport) {
     this.layout = new LayoutService(core);
     this.preview = new PreviewHost(core);
-    this.plugins = new PluginClient(core, this.contributions, this.apps);
+    this.plugins = new PluginClient(
+      core,
+      this.contributions,
+      this.apps,
+      '1',
+      new PluginUiRegistry(),
+      this.views,
+    );
     this.contextKeys = new ContextKeyService();
     this.commands = new CommandRegistry(this.contextKeys);
     this.keybindings = new KeybindingRegistry(this.commands, this.contextKeys);

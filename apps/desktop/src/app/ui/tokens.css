@@ -249,6 +249,20 @@ button {
   line-height: 1.45;
 }
 
+.velvet-plugin-surface {
+  min-height: 32px;
+  width: 100%;
+}
+
+.velvet-plugin-surface[data-plugin-surface-state="active"] {
+  min-height: 120px;
+}
+
+.velvet-plugin-surface:focus-visible {
+  outline: 2px solid var(--velvet-focus);
+  outline-offset: 1px;
+}
+
 .velvet-workspace-content {
   min-height: 100%;
 }

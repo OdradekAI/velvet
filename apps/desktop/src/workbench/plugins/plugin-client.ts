@@ -1,7 +1,8 @@
-import type { CoreTransport, Zone } from '../protocol.js';
+import type { CoreTransport, Part, Zone } from '../protocol.js';
 import {
   ContributionRegistry,
   namespaceFor,
+  type PluginUiContribution,
   type ContributionDescriptor,
 } from '../contributions/contribution-registry.js';
 import {
@@ -9,7 +10,16 @@ import {
 } from '../apps/workbench-app.js';
 import type { WorkbenchAppId } from '../../platform/protocol.js';
 import { canUsePermission } from '../zones/zone-policy.js';
-import { PluginUiRegistry } from './ui-bridge.js';
+import {
+  PluginUiRegistry,
+  type PluginSurfaceDescriptor,
+} from './ui-bridge.js';
+import {
+  ViewRegistry,
+  type ViewContainerDescriptor,
+  type ViewContainerScope,
+  type ViewDescriptor,
+} from '../views/view-registry.js';
 
 export type PluginRuntime = 'builtin' | 'wasm' | 'sidecar';
 
@@ -48,7 +58,18 @@ interface PluginRecord {
   readonly manifest: ExtensionManifest;
   status: PluginStatus;
   registered: ContributionDescriptor[];
+  registeredViewContainers: string[];
+  registeredViews: string[];
+  registeredSurfaceIds: string[];
+  viewSurfaceBindings: PluginViewSurfaceBinding[];
   error?: string;
+}
+
+export interface PluginViewSurfaceBinding {
+  readonly viewId: string;
+  readonly extensionId: string;
+  readonly surfaceId: string;
+  readonly surface: PluginSurfaceDescriptor;
 }
 
 export class PluginLifecycleError extends Error {
@@ -72,9 +93,12 @@ export class PluginClient {
     private readonly appRegistry: WorkbenchAppRegistry = new WorkbenchAppRegistry(),
     private readonly hostApiVersion = '1',
     ui: PluginUiRegistry = new PluginUiRegistry(),
+    private readonly viewRegistry: ViewRegistry = new ViewRegistry(),
   ) {
     this.ui = ui;
   }
+
+  private readonly listeners = new Set<() => void>();
 
   public register(manifest: ExtensionManifest): void {
     if (this.records.has(manifest.id)) {
@@ -89,7 +113,12 @@ export class PluginClient {
       manifest,
       status: 'registered',
       registered: [],
+      registeredViewContainers: [],
+      registeredViews: [],
+      registeredSurfaceIds: [],
+      viewSurfaceBindings: [],
     });
+    this.notify();
   }
 
   public activate(extensionId: string): void {
@@ -99,22 +128,79 @@ export class PluginClient {
     }
 
     const registered: ContributionDescriptor[] = [];
+    const registeredViewContainers: string[] = [];
+    const registeredViews: string[] = [];
+    const registeredSurfaceIds: string[] = [];
+    const viewSurfaceBindings: PluginViewSurfaceBinding[] = [];
     try {
-      for (const contribution of record.manifest.contributions) {
-        const descriptor = this.toDescriptor(record.manifest, contribution);
+      const descriptors = record.manifest.contributions.map((contribution) =>
+        this.toDescriptor(record.manifest, contribution),
+      );
+
+      for (const descriptor of descriptors) {
         this.contributionRegistry.register(descriptor);
         registered.push(descriptor);
       }
+
+      for (const descriptor of descriptors.filter((candidate) => candidate.kind === 'view-container')) {
+        const container = this.toViewContainer(descriptor);
+        this.viewRegistry.registerContainer(container);
+        registeredViewContainers.push(container.id);
+      }
+
+      for (const descriptor of descriptors.filter((candidate) => isViewContribution(candidate.kind))) {
+        const container = this.toSyntheticViewContainer(descriptor);
+        if (container && !this.viewRegistry.getContainer(container.id)) {
+          this.viewRegistry.registerContainer(container);
+          registeredViewContainers.push(container.id);
+        }
+
+        const view = this.toView(descriptor);
+        this.viewRegistry.register(view);
+        registeredViews.push(view.id);
+      }
+
+      for (const descriptor of descriptors) {
+        if (!descriptor.ui) {
+          continue;
+        }
+
+        const surface = this.toSurfaceDescriptor(descriptor);
+        this.ui.register(surface);
+        registeredSurfaceIds.push(surface.id);
+        if (isViewContribution(descriptor.kind) && surface.kind === 'view') {
+          viewSurfaceBindings.push({
+            viewId: contributedId(descriptor.extensionId, descriptor.id),
+            extensionId: descriptor.extensionId,
+            surfaceId: surface.id,
+            surface,
+          });
+        }
+      }
+
       record.registered = registered;
+      record.registeredViewContainers = registeredViewContainers;
+      record.registeredViews = registeredViews;
+      record.registeredSurfaceIds = registeredSurfaceIds;
+      record.viewSurfaceBindings = viewSurfaceBindings;
       record.status = 'active';
       record.error = undefined;
+      this.notify();
     } catch (cause) {
-      for (const contribution of registered) {
-        this.contributionRegistry.unregister(contribution);
-      }
+      this.rollbackActivation(
+        registered,
+        registeredViewContainers,
+        registeredViews,
+        registeredSurfaceIds,
+      );
       record.registered = [];
+      record.registeredViewContainers = [];
+      record.registeredViews = [];
+      record.registeredSurfaceIds = [];
+      record.viewSurfaceBindings = [];
       record.status = 'failed';
       record.error = cause instanceof Error ? cause.message : String(cause);
+      this.notify();
       throw new PluginLifecycleError(
         `Extension activation failed: ${extensionId}`,
         extensionId,
@@ -128,12 +214,23 @@ export class PluginClient {
     _reason: 'user' | 'crash' | 'incompatible' = 'user',
   ): Promise<void> {
     const record = this.require(extensionId);
-    for (const contribution of record.registered) {
+    await this.ui.disposeExtension(extensionId, _reason === 'user' ? 'unmount' : _reason);
+    for (const viewId of [...record.registeredViews].reverse()) {
+      this.viewRegistry.unregister(viewId);
+    }
+    for (const containerId of [...record.registeredViewContainers].reverse()) {
+      this.viewRegistry.unregisterContainer(containerId);
+    }
+    for (const contribution of [...record.registered].reverse()) {
       this.contributionRegistry.unregister(contribution);
     }
-    await this.ui.disposeExtension(extensionId, _reason === 'user' ? 'unmount' : _reason);
     record.registered = [];
+    record.registeredViewContainers = [];
+    record.registeredViews = [];
+    record.registeredSurfaceIds = [];
+    record.viewSurfaceBindings = [];
     record.status = 'disabled';
+    this.notify();
   }
 
   public async unregister(extensionId: string): Promise<boolean> {
@@ -145,7 +242,11 @@ export class PluginClient {
     if (record.status === 'active') {
       await this.deactivate(extensionId);
     }
-    return this.records.delete(extensionId);
+    const removed = this.records.delete(extensionId);
+    if (removed) {
+      this.notify();
+    }
+    return removed;
   }
 
   public get(extensionId: string): PluginSummary | undefined {
@@ -176,6 +277,17 @@ export class PluginClient {
 
     return visible
       .filter((contribution) => activeExtensions.has(contribution.extensionId));
+  }
+
+  public listViewSurfaceBindings(): readonly PluginViewSurfaceBinding[] {
+    return [...this.records.values()]
+      .filter((record) => record.status === 'active')
+      .flatMap((record) => record.viewSurfaceBindings);
+  }
+
+  public subscribe(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
   }
 
   /** Compatibility check retained for the original zone-only skeleton. */
@@ -209,6 +321,7 @@ export class PluginClient {
 
     this.validateZone(manifest);
     const appIds = new Set<WorkbenchAppId>();
+    const viewContainerIds = new Set<string>();
     for (const contribution of manifest.contributions) {
       if (contribution.scope === 'workbench-app') {
         if (!contribution.appId) {
@@ -218,6 +331,77 @@ export class PluginClient {
           );
         }
         appIds.add(contribution.appId);
+      }
+
+      if (contribution.kind === 'view-container') {
+        if (!contribution.title || !contribution.icon) {
+          throw new PluginLifecycleError(
+            `ViewContainer ${contribution.id} must declare title and icon metadata`,
+            manifest.id,
+          );
+        }
+        viewContainerIds.add(contribution.id);
+      }
+
+      if (isViewContribution(contribution.kind)) {
+        if (!contribution.title || !contribution.icon) {
+          throw new PluginLifecycleError(
+            `View ${contribution.id} must declare title and icon metadata`,
+            manifest.id,
+          );
+        }
+        if (contribution.kind === 'view' && !contribution.viewContainerId) {
+          throw new PluginLifecycleError(
+            `View ${contribution.id} must declare a viewContainerId`,
+            manifest.id,
+          );
+        }
+        if (contribution.ui && contribution.ui.kind !== 'view') {
+          throw new PluginLifecycleError(
+            `View ${contribution.id} must bind a view UI surface`,
+            manifest.id,
+          );
+        }
+        if (contribution.kind === 'view' && !contribution.ui) {
+          throw new PluginLifecycleError(
+            `View ${contribution.id} must declare an isolated UI surface`,
+            manifest.id,
+          );
+        }
+      }
+
+      if (contribution.ui) {
+        this.validateUiContribution(manifest.id, contribution, contribution.ui);
+      }
+    }
+
+    for (const contribution of manifest.contributions) {
+      if (
+        contribution.kind === 'view' &&
+        contribution.viewContainerId &&
+        !viewContainerIds.has(contribution.viewContainerId)
+      ) {
+        throw new PluginLifecycleError(
+          `View ${contribution.id} references an unknown ViewContainer ${contribution.viewContainerId}`,
+          manifest.id,
+        );
+      }
+
+      if (contribution.kind === 'view' && contribution.viewContainerId) {
+        const target = manifest.contributions.find(
+          (candidate) =>
+            candidate.kind === 'view-container' &&
+            candidate.id === contribution.viewContainerId,
+        );
+        if (
+          target &&
+          (target.scope !== contribution.scope || target.appId !== contribution.appId)
+        ) {
+          throw new PluginLifecycleError(
+            `View ${contribution.id} must use a ViewContainer in the same namespace`,
+            manifest.id,
+          );
+        }
       }
     }
 
@@ -280,6 +464,168 @@ export class PluginClient {
     };
   }
 
+  private toViewContainer(descriptor: ContributionDescriptor): ViewContainerDescriptor {
+    if (descriptor.kind !== 'view-container') {
+      throw new PluginLifecycleError(
+        `Contribution ${descriptor.id} is not a ViewContainer`,
+        descriptor.extensionId,
+      );
+    }
+
+    return {
+      id: contributedId(descriptor.extensionId, descriptor.id),
+      title: descriptor.title!,
+      titleKey: descriptor.titleKey,
+      icon: descriptor.icon!,
+      zone: descriptor.zone!,
+      preferredPart: descriptor.container as Part,
+      scope: toViewScope(descriptor),
+      order: descriptor.order,
+      defaultVisible: descriptor.defaultVisible,
+      enablement: descriptor.enablement,
+      requiredCapabilities: descriptor.requiredCapabilities,
+      activityBar: descriptor.activityBar,
+    };
+  }
+
+  private toSyntheticViewContainer(
+    descriptor: ContributionDescriptor,
+  ): ViewContainerDescriptor | undefined {
+    if (descriptor.kind !== 'companion-view' && descriptor.kind !== 'operation-view') {
+      return undefined;
+    }
+
+    return {
+      id: `${contributedId(descriptor.extensionId, descriptor.id)}.container`,
+      title: descriptor.title!,
+      titleKey: descriptor.titleKey,
+      icon: descriptor.icon!,
+      zone: descriptor.kind === 'companion-view' ? 'contextual' : 'operations',
+      preferredPart: descriptor.container as Part,
+      scope: { kind: 'workbench' },
+      order: descriptor.order,
+      defaultVisible: descriptor.defaultVisible,
+      enablement: descriptor.enablement,
+      requiredCapabilities: descriptor.requiredCapabilities,
+    };
+  }
+
+  private toView(descriptor: ContributionDescriptor): ViewDescriptor {
+    if (!isViewContribution(descriptor.kind)) {
+      throw new PluginLifecycleError(
+        `Contribution ${descriptor.id} is not a view`,
+        descriptor.extensionId,
+      );
+    }
+
+    const id = contributedId(descriptor.extensionId, descriptor.id);
+    const containerId = descriptor.kind === 'view'
+      ? contributedId(descriptor.extensionId, descriptor.viewContainerId!)
+      : `${id}.container`;
+    const zone = descriptor.kind === 'companion-view'
+      ? 'contextual'
+      : descriptor.kind === 'operation-view'
+        ? 'operations'
+        : descriptor.zone!;
+
+    return {
+      id,
+      containerId,
+      title: descriptor.title!,
+      titleKey: descriptor.titleKey,
+      icon: descriptor.icon!,
+      zone,
+      scope: toViewScope(descriptor),
+      order: descriptor.order,
+      defaultVisible: descriptor.defaultVisible,
+      enablement: descriptor.enablement,
+      activation: descriptor.activation,
+      requiredCapabilities: descriptor.requiredCapabilities,
+    };
+  }
+
+  private toSurfaceDescriptor(descriptor: ContributionDescriptor): PluginSurfaceDescriptor {
+    const ui = descriptor.ui!;
+    return {
+      id: descriptor.id,
+      extensionId: descriptor.extensionId,
+      namespace: descriptor.namespace,
+      kind: ui.kind,
+      entrypoint: ui.entrypoint,
+      bridgeVersion: ui.bridgeVersion,
+      ...(descriptor.appId ? { appId: descriptor.appId } : {}),
+    };
+  }
+
+  private validateUiContribution(
+    extensionId: string,
+    contribution: ManifestContribution,
+    ui: PluginUiContribution,
+  ): void {
+    if (!ui.entrypoint.trim()) {
+      throw new PluginLifecycleError(
+        `Contribution ${contribution.id} must declare a UI entrypoint`,
+        extensionId,
+      );
+    }
+    if (!ui.bridgeVersion.trim()) {
+      throw new PluginLifecycleError(
+        `Contribution ${contribution.id} must declare a UI bridge version`,
+        extensionId,
+      );
+    }
+    if (contribution.scope === 'capability') {
+      throw new PluginLifecycleError(
+        `Capability ${contribution.id} cannot register a UI surface`,
+        extensionId,
+      );
+    }
+
+    const expectedKind = expectedSurfaceKind(contribution.kind);
+    if (!expectedKind) {
+      throw new PluginLifecycleError(
+        `${contribution.kind} ${contribution.id} cannot own a UI surface in this host version`,
+        extensionId,
+      );
+    }
+    if (expectedKind && expectedKind !== ui.kind) {
+      throw new PluginLifecycleError(
+        `${contribution.kind} ${contribution.id} must use a ${expectedKind} UI surface`,
+        extensionId,
+      );
+    }
+  }
+
+  private rollbackActivation(
+    registered: readonly ContributionDescriptor[],
+    registeredViewContainers: readonly string[],
+    registeredViews: readonly string[],
+    registeredSurfaceIds: readonly string[],
+  ): void {
+    for (const surfaceId of [...registeredSurfaceIds].reverse()) {
+      this.ui.unregister(registered[0]?.extensionId ?? '', surfaceId);
+    }
+    for (const viewId of [...registeredViews].reverse()) {
+      this.viewRegistry.unregister(viewId);
+    }
+    for (const containerId of [...registeredViewContainers].reverse()) {
+      this.viewRegistry.unregisterContainer(containerId);
+    }
+    for (const contribution of [...registered].reverse()) {
+      this.contributionRegistry.unregister(contribution);
+    }
+  }
+
+  private notify(): void {
+    for (const listener of this.listeners) {
+      try {
+        listener();
+      } catch {
+        // One renderer projection must not prevent other plugin projections from updating.
+      }
+    }
+  }
+
   private require(extensionId: string): PluginRecord {
     const record = this.records.get(extensionId);
     if (!record) {
@@ -300,6 +646,48 @@ export class PluginClient {
       ...(record.error ? { error: record.error } : {}),
     };
   }
+}
+
+function isViewContribution(
+  kind: ContributionDescriptor['kind'],
+): boolean {
+  return kind === 'view' || kind === 'companion-view' || kind === 'operation-view';
+}
+
+function expectedSurfaceKind(
+  kind: ContributionDescriptor['kind'],
+): PluginUiContribution['kind'] | undefined {
+  switch (kind) {
+    case 'view':
+    case 'companion-view':
+    case 'operation-view':
+      return 'view';
+    case 'app-surface':
+      return 'app-surface';
+    case 'dialog':
+      return 'dialog';
+    case 'inspector-section':
+      return 'inspector';
+    default:
+      return undefined;
+  }
+}
+
+function toViewScope(descriptor: ContributionDescriptor): ViewContainerScope {
+  if (descriptor.scope === 'workbench') {
+    return { kind: 'workbench' };
+  }
+  if (descriptor.scope === 'workbench-app' && descriptor.appId) {
+    return { kind: 'workbench-app', appId: descriptor.appId };
+  }
+  throw new PluginLifecycleError(
+    `Capability ${descriptor.id} cannot register a Workbench view`,
+    descriptor.extensionId,
+  );
+}
+
+function contributedId(extensionId: string, contributionId: string): string {
+  return `${extensionId}.${contributionId}`;
 }
 
 function apiRangeMatches(range: string, version: string): boolean {

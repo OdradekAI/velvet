@@ -29,8 +29,17 @@ correlation and typed native transport errors. The real Tauri application under
 publishes authoritative layout snapshots and forwards native global shortcuts
 into the host keybinding registry. The React renderer selects this composition
 root inside Tauri and keeps the browser DemoApp as a local fallback. The next
-implementation gate is broader accessibility, keyboard, resize constraints
-and recovery behavior before drag-and-drop and plugin panel mounting.
+implementation gate is broader accessibility, keyboard and resize coverage
+around contributed panels. Plugin view contributions now map to the
+framework-neutral `ViewRegistry` with stable extension-prefixed ids. A
+`view` contribution must name its local `ViewContainer` and isolated UI Bridge
+entrypoint; global `companion-view` and `operation-view` contributions receive
+host-owned synthetic containers in their reserved Parts. The React adapter
+creates a `PluginSurfaceSession` only while a contributed view is mounted,
+activates it after the bridge handshake begins, forwards context/theme/size
+updates and disposes it before the host unregisters the contribution. Adapter
+binding remains an isolated runtime concern, so an unavailable adapter leaves
+the view in a recoverable waiting state.
 
 The native Tauri composition now injects a JSON layout store at
 `app_data_dir/workbench-layout.json`, and a restart test proves that the Rust
@@ -391,7 +400,7 @@ export interface CommandDescriptor {
 2. **Protocol types**: implement `workbench-protocol`, `layout-model`, `asset-core` and error envelopes without a UI. **Done for the current layout slice; native wire fixtures cover the Tauri mapping.**
 3. **Layout service**: implement versioned layout state, migrations, fixed zones and persistence tests. **Done for the current file-backed Tauri store and restart recovery slice.**
 4. **Workbench parts**: render ActivityBar, Resource Manager, Feed Workbench, PrimarySidebar, WorkspaceArea, AuxiliarySidebar, OperationsPanel and StatusBar with placeholder views. **Initial renderer slice done.**
-5. **View registry**: add built-in views and one example external view per zone. Verify that cross-zone registration is rejected. **Host registry and rejection tests done; the React shell now mounts registered ViewContainers/Views with a renderer adapter seam.**
+5. **View registry**: add built-in views and one example external view per zone. Verify that cross-zone registration is rejected. **Host registry and rejection tests done; the React shell mounts registered ViewContainers/Views with a renderer adapter seam, and PluginClient now projects extension views plus isolated UI Bridge sessions into that seam.**
 6. **Preview core**: implement generic image/file fallback, `PreviewResolver`, Quick/Inspect/Analyze intents and a fake provider used by contract tests.
 7. **Plugin host**: load manifests, validate permissions, activate lazily, isolate failures and expose the UI SDK boundary.
 8. **Jobs and facets**: implement one thumbnail job, one metadata facet and one cancellable analysis job.

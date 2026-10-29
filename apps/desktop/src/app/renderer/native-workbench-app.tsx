@@ -3,6 +3,7 @@ import { createNativeTauriDesktopApp, type DesktopApp } from '../desktop-app.js'
 import type { LayoutCommand, LayoutSnapshot, WorkbenchAppId } from '../../platform/protocol.js';
 import { WorkbenchShell } from './workbench-shell.js';
 import { ViewRendererRegistry } from './view-renderer-registry.js';
+import { createPluginViewRenderer } from './plugin-view-renderer.js';
 
 interface NativeWorkbenchState {
   readonly app: DesktopApp;
@@ -42,6 +43,50 @@ export function NativeWorkbenchApp() {
       void app.dispose();
     };
   }, []);
+
+  useEffect(() => {
+    const workbench = state?.app.workbench;
+    const pluginClient = workbench?.plugins;
+    if (!workbench || !pluginClient) {
+      return undefined;
+    }
+
+    const registeredPluginViews = new Set<string>();
+    const syncPluginViews = () => {
+      const bindings = pluginClient.listViewSurfaceBindings();
+      const activeViewIds = new Set(bindings.map((binding) => binding.viewId));
+      for (const viewId of registeredPluginViews) {
+        if (!activeViewIds.has(viewId)) {
+          viewRenderers.unregister(viewId);
+          registeredPluginViews.delete(viewId);
+        }
+      }
+
+      for (const binding of bindings) {
+        if (viewRenderers.get(binding.viewId)) {
+          continue;
+        }
+        viewRenderers.register(
+          binding.viewId,
+          createPluginViewRenderer(
+            binding,
+            pluginClient.ui,
+            workbench.context,
+          ),
+        );
+        registeredPluginViews.add(binding.viewId);
+      }
+    };
+
+    syncPluginViews();
+    const unsubscribe = pluginClient.subscribe(syncPluginViews);
+    return () => {
+      unsubscribe();
+      for (const viewId of registeredPluginViews) {
+        viewRenderers.unregister(viewId);
+      }
+    };
+  }, [state?.app, viewRenderers]);
 
   if (startupError) {
     return (

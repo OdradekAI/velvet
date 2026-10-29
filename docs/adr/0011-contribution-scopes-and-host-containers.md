@@ -70,6 +70,15 @@ combinations before activation. WorkbenchApp commands and dialogs remain
 app-scoped; `CompanionView` and `OperationView` are reserved for the global
 AuxiliarySidebar and OperationsPanel respectively.
 
+View contributions carry display metadata and, for isolated surfaces, an
+entrypoint plus UI bridge version. `PluginClient` maps an app-scoped
+`ViewContainer` and its `View` children into the host `ViewRegistry`; global
+CompanionView and OperationView contributions get one synthetic container each
+in their reserved Part. The derived descriptor ids are prefixed with the
+extension id, while `viewContainerId` remains a local manifest reference. This
+keeps persisted layout keys stable without allowing one extension to target
+another extension's container.
+
 Context menus are host-owned composition points. A contribution declares its
 target context (`asset`, `feed-item`, `collection`, `selection`, `view` or
 `background`), label, ordering group, enablement predicate and command. The
