@@ -50,6 +50,7 @@ const { OverlayRegistry } = await import('/tmp/velvet-plugin-tests/workbench/ove
 
 const requests = [];
 let installed = false;
+let installedState = 'active';
 const summary = (id, state) => ({
   id,
   version: id === 'sample.installed' ? '0.1.0' : '1.0.0',
@@ -64,16 +65,30 @@ const core = {
         kind: 'extensions',
         extensions: [
           summary('sample.reader', 'active'),
-          ...(installed ? [summary('sample.installed', 'active')] : []),
+          ...(installed ? [summary('sample.installed', installedState)] : []),
         ],
       };
     }
     if (request.kind === 'install-plugin') {
       installed = true;
+      installedState = 'registered';
       return { kind: 'extension', extension: summary('sample.installed', 'registered') };
     }
     if (request.kind === 'activate-plugin') {
+      installedState = 'active';
       return { kind: 'extension', extension: summary(request.extensionId, 'active') };
+    }
+    if (request.kind === 'disable-plugin') {
+      installedState = 'disabled';
+      return { kind: 'extension', extension: summary(request.extensionId, 'disabled') };
+    }
+    if (request.kind === 'recover-plugin') {
+      installedState = 'active';
+      return { kind: 'extension', extension: summary(request.extensionId, 'active') };
+    }
+    if (request.kind === 'uninstall-plugin') {
+      installed = false;
+      return { kind: 'accepted' };
     }
     if (request.kind === 'query-plugin-projection') {
       return {
@@ -105,11 +120,17 @@ const client = new PluginClient(
 const rootElement = document.createElement('div');
 document.body.append(rootElement);
 const root = createRoot(rootElement);
+let confirmCalls = [];
 
 await act(async () => {
   root.render(React.createElement(PluginManagerDialog, {
     onOpenChange: () => undefined,
     open: true,
+    confirmUninstall: async (extensionId) => {
+      confirmCalls.push(extensionId);
+      return true;
+    },
+    pickDirectory: async () => '/tmp/native-plugin',
     plugins: client,
   }));
   await new Promise((resolve) => setTimeout(resolve, 10));
@@ -119,14 +140,15 @@ assert.match(document.body.textContent ?? '', /active/);
 
 const input = document.querySelector('#velvet-plugin-source');
 assert.ok(input);
-const setInputValue = Object.getOwnPropertyDescriptor(
-  browser.HTMLInputElement.prototype,
-  'value',
-).set;
-setInputValue.call(input, '/tmp/sample-plugin');
-await act(() => {
-  input.dispatchEvent(new browser.Event('input', { bubbles: true }));
+const browseButton = [...document.querySelectorAll('button')]
+  .find((button) => button.textContent === 'Browse…');
+assert.ok(browseButton);
+await act(async () => {
+  browseButton.click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
 });
+assert.equal(input?.value, '/tmp/native-plugin');
+
 const installButton = [...document.querySelectorAll('button')]
   .find((button) => button.textContent === 'Install and activate');
 assert.ok(installButton);
@@ -141,6 +163,37 @@ assert.deepEqual(
   requests.map((request) => request.kind),
   ['query-extensions', 'install-plugin', 'query-plugin-projection', 'activate-plugin', 'query-plugin-projection', 'query-extensions'],
 );
+
+const disableButton = document.querySelector('[aria-label="Disable sample.installed"]');
+assert.ok(disableButton);
+await act(async () => {
+  disableButton.click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+});
+assert.match(document.body.textContent ?? '', /sample\.installed disabled/);
+assert.ok(document.querySelector('[aria-label="Enable sample.installed"]'));
+
+const enableButton = document.querySelector('[aria-label="Enable sample.installed"]');
+assert.ok(enableButton);
+await act(async () => {
+  enableButton.click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+});
+assert.match(document.body.textContent ?? '', /sample\.installed active/);
+
+const uninstallButton = document.querySelector('[aria-label="Uninstall sample.installed"]');
+assert.ok(uninstallButton);
+await act(async () => {
+  uninstallButton.click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+});
+assert.deepEqual(confirmCalls, ['sample.installed']);
+assert.equal(document.querySelector('[aria-label="Uninstall sample.installed"]'), null);
+assert.equal(requests.at(-1)?.kind, 'query-extensions');
+assert.equal(requests.find((request) => request.kind === 'install-plugin')?.sourceDir, '/tmp/native-plugin');
 
 await act(() => root.unmount());
 console.log('Plugin manager dialog tests passed.');

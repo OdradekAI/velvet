@@ -142,6 +142,11 @@ export type CoreRequest =
     }
   | {
       readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'uninstall-plugin';
+      readonly extensionId: string;
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
       readonly kind: 'invoke-plugin-command';
       readonly extensionId: string;
       readonly commandId: string;

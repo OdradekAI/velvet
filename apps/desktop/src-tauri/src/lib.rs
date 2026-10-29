@@ -147,6 +147,12 @@ pub enum WireRequest {
         #[serde(rename = "sourceDir")]
         source_dir: String,
     },
+    UninstallPlugin {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        #[serde(rename = "extensionId")]
+        extension_id: String,
+    },
     InvokePluginCommand {
         #[serde(rename = "protocolVersion")]
         protocol_version: u16,
@@ -249,6 +255,15 @@ impl WireRequest {
             } => {
                 validate_inner_protocol(outer_protocol_version, protocol_version)?;
                 Ok(Request::Command(Command::InstallPlugin { source_dir }))
+            }
+            Self::UninstallPlugin {
+                protocol_version,
+                extension_id,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Command(Command::UninstallPlugin {
+                    extension_id: ExtensionId(extension_id),
+                }))
             }
             Self::InvokePluginCommand {
                 protocol_version,
@@ -795,6 +810,7 @@ pub fn run() {
         .build();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .plugin(shortcuts)
         .setup(|app| {
             let sink = TauriEventSink {
@@ -1107,6 +1123,27 @@ mod tests {
                 .expect("the plugin install request should map"),
             Request::Command(Command::InstallPlugin { source_dir })
                 if source_dir == "/tmp/velvet-example-plugin"
+        ));
+
+        let uninstall: WireRequestEnvelope = serde_json::from_str(
+            r#"{
+                "protocolVersion": 1,
+                "requestId": 19,
+                "request": {
+                    "kind": "uninstall-plugin",
+                    "protocolVersion": 1,
+                    "extensionId": "velvet.example.echo"
+                }
+            }"#,
+        )
+        .expect("the plugin uninstall request should deserialize");
+        assert!(matches!(
+            uninstall
+                .request
+                .into_core(1)
+                .expect("the plugin uninstall request should map"),
+            Request::Command(Command::UninstallPlugin { extension_id })
+                if extension_id.0 == "velvet.example.echo"
         ));
     }
 

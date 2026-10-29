@@ -47,6 +47,7 @@ pub enum PluginError {
     },
     InstallFailed(String),
     InstallConflict(ExtensionId),
+    UninstallFailed(String),
     InvalidState {
         extension_id: ExtensionId,
         state: ExtensionState,
@@ -599,6 +600,11 @@ pub trait PluginHost {
         source_dir: &Path,
         install_root: &Path,
     ) -> Result<ExtensionSummary, PluginError>;
+    fn uninstall_from_directory(
+        &mut self,
+        id: &ExtensionId,
+        install_root: &Path,
+    ) -> Result<(), PluginError>;
 }
 
 pub struct InMemoryPluginHost {
@@ -1072,6 +1078,37 @@ impl PluginHost for InMemoryPluginHost {
             .into_iter()
             .find(|summary| summary.id == id)
             .ok_or_else(|| PluginError::InstallFailed("installed plugin disappeared".into()))
+    }
+
+    fn uninstall_from_directory(
+        &mut self,
+        id: &ExtensionId,
+        install_root: &Path,
+    ) -> Result<(), PluginError> {
+        if !self.manifests.contains_key(id) {
+            return Err(PluginError::NotFound(id.clone()));
+        }
+        if !is_safe_extension_id(&id.0) {
+            return Err(PluginError::UninstallFailed(format!(
+                "extension id {} cannot be used as an installation directory",
+                id.0
+            )));
+        }
+
+        if self.active.contains(id) {
+            self.disable(id, DisableReason::User)?;
+        }
+        let destination = install_root.join(&id.0);
+        if destination.exists() {
+            fs::remove_dir_all(&destination)
+                .map_err(|error| PluginError::UninstallFailed(error.to_string()))?;
+        }
+
+        self.manifests.remove(id);
+        self.active.remove(id);
+        self.states.remove(id);
+        self.processes.remove(id);
+        Ok(())
     }
 }
 
@@ -1826,6 +1863,12 @@ mod tests {
                 Value::Null,
             )
             .expect("the first started sidecar should accept a command");
+
+        restarted
+            .uninstall_from_directory(&ExtensionId("velvet.example.echo".into()), &root)
+            .expect("the installed sidecar should be uninstallable");
+        assert!(restarted.discover().is_empty());
+        assert!(!root.join("velvet.example.echo").exists());
 
         fs::remove_dir_all(root).expect("the temporary installation should be removed");
     }

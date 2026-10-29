@@ -6,6 +6,8 @@ import { VelvetDialog } from '../ui/velvet-ui.js';
 export interface PluginManagerDialogProps {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
+  readonly pickDirectory?: () => Promise<string | undefined>;
+  readonly confirmUninstall?: (extensionId: string) => Promise<boolean>;
   readonly plugins: PluginClient;
 }
 
@@ -13,12 +15,15 @@ export interface PluginManagerDialogProps {
 export function PluginManagerDialog({
   open,
   onOpenChange,
+  pickDirectory,
+  confirmUninstall,
   plugins,
 }: PluginManagerDialogProps) {
   const [extensions, setExtensions] = useState<readonly CorePluginSummary[]>([]);
   const [sourceDir, setSourceDir] = useState('');
   const [loading, setLoading] = useState(false);
   const [installing, setInstalling] = useState(false);
+  const [busyExtensionId, setBusyExtensionId] = useState<string>();
   const [message, setMessage] = useState<string>();
   const [error, setError] = useState<string>();
 
@@ -70,6 +75,79 @@ export function PluginManagerDialog({
     }
   };
 
+  const chooseDirectory = async () => {
+    if (!pickDirectory) {
+      return;
+    }
+    setError(undefined);
+    try {
+      const directory = await pickDirectory();
+      if (directory) {
+        setSourceDir(directory);
+        setMessage(undefined);
+      }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    }
+  };
+
+  const enable = async (extension: CorePluginSummary) => {
+    setBusyExtensionId(extension.id);
+    setError(undefined);
+    setMessage(undefined);
+    try {
+      const summary = extension.state === 'failed'
+        ? await plugins.recoverInCore(extension.id)
+        : await plugins.activateInCore(extension.id);
+      setMessage(`${summary.id} ${summary.state}.`);
+      await refresh();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setBusyExtensionId(undefined);
+    }
+  };
+
+  const disable = async (extension: CorePluginSummary) => {
+    setBusyExtensionId(extension.id);
+    setError(undefined);
+    setMessage(undefined);
+    try {
+      const summary = await plugins.disableInCore(extension.id);
+      setMessage(`${summary.id} ${summary.state}.`);
+      await refresh();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setBusyExtensionId(undefined);
+    }
+  };
+
+  const uninstall = async (extension: CorePluginSummary) => {
+    if (confirmUninstall) {
+      try {
+        if (!(await confirmUninstall(extension.id))) {
+          return;
+        }
+      } catch (reason) {
+        setError(reason instanceof Error ? reason.message : String(reason));
+        return;
+      }
+    }
+    setBusyExtensionId(extension.id);
+    setError(undefined);
+    setMessage(undefined);
+    try {
+      await plugins.uninstallInCore(extension.id);
+      setMessage(`${extension.id} uninstalled.`);
+      await refresh();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setBusyExtensionId(undefined);
+    }
+  };
+
   return (
     <VelvetDialog
       description="Install a local extension package and inspect its host-owned runtime state."
@@ -95,15 +173,49 @@ export function PluginManagerDialog({
           ) : null}
           {extensions.map((extension) => (
             <div className="velvet-plugin-manager__item" key={extension.id}>
-              <div>
+              <div className="velvet-plugin-manager__identity">
                 <strong>{extension.id}</strong>
                 <span>v{extension.version}</span>
               </div>
-              <span
-                className={`velvet-plugin-manager__status velvet-plugin-manager__status--${extension.state}`}
-              >
-                {extension.state}
-              </span>
+              <div className="velvet-plugin-manager__controls">
+                <span
+                  className={`velvet-plugin-manager__status velvet-plugin-manager__status--${extension.state}`}
+                >
+                  {extension.state}
+                </span>
+                {extension.state === 'active' ? (
+                  <button
+                    aria-label={`Disable ${extension.id}`}
+                    className="velvet-button velvet-button--quiet"
+                    disabled={busyExtensionId !== undefined || installing}
+                    onClick={() => void disable(extension)}
+                    type="button"
+                  >
+                    {busyExtensionId === extension.id ? 'Working…' : 'Disable'}
+                  </button>
+                ) : extension.state !== 'starting' ? (
+                  <button
+                    aria-label={`${extension.state === 'failed' ? 'Recover' : 'Enable'} ${extension.id}`}
+                    className="velvet-button velvet-button--quiet"
+                    disabled={busyExtensionId !== undefined || installing}
+                    onClick={() => void enable(extension)}
+                    type="button"
+                  >
+                    {busyExtensionId === extension.id
+                      ? 'Working…'
+                      : extension.state === 'failed' ? 'Recover' : 'Enable'}
+                  </button>
+                ) : null}
+                <button
+                  aria-label={`Uninstall ${extension.id}`}
+                  className="velvet-button velvet-button--quiet velvet-button--danger"
+                  disabled={busyExtensionId !== undefined || installing}
+                  onClick={() => void uninstall(extension)}
+                  type="button"
+                >
+                  Uninstall
+                </button>
+              </div>
             </div>
           ))}
         </div>
@@ -118,7 +230,21 @@ export function PluginManagerDialog({
               placeholder="/path/to/plugin-package"
               value={sourceDir}
             />
-            <button className="velvet-button" disabled={installing} type="submit">
+            {pickDirectory ? (
+              <button
+                className="velvet-button velvet-button--quiet"
+                disabled={installing || busyExtensionId !== undefined}
+                onClick={() => void chooseDirectory()}
+                type="button"
+              >
+                Browse…
+              </button>
+            ) : null}
+            <button
+              className="velvet-button"
+              disabled={installing || busyExtensionId !== undefined}
+              type="submit"
+            >
               {installing ? 'Installing…' : 'Install and activate'}
             </button>
           </div>

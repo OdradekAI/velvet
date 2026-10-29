@@ -81,8 +81,11 @@ that directory, and the native composition root starts discovered registered
 extensions during the first client launch. Invalid files are isolated in the
 discovery report and do not block valid extensions. The native Workbench exposes
 the same operation through its `Extensions` dialog: it lists Rust-owned plugin
-state, installs a local package directory and activates the new extension after
-the install response has been projected.
+state, opens a native directory picker for a local package, and activates the
+new extension after the install response has been projected. Each installed
+extension can be enabled, disabled, recovered after a failure, or uninstalled
+with a native confirmation; uninstall stops its runtime and removes its
+installed package directory.
 
 ## Architecture
 

@@ -361,6 +361,10 @@ button {
   color: var(--velvet-text-secondary);
 }
 
+.velvet-button--danger {
+  color: var(--velvet-danger);
+}
+
 .velvet-input {
   min-width: 0;
   min-height: var(--velvet-control-height);
@@ -457,6 +461,7 @@ button {
 
 .velvet-plugin-manager__item {
   justify-content: space-between;
+  align-items: flex-start;
   min-height: 48px;
   padding: 8px 10px;
   border: 1px solid var(--velvet-border-subtle);
@@ -464,11 +469,21 @@ button {
   background: var(--velvet-surface-panel);
 }
 
-.velvet-plugin-manager__item > div {
+.velvet-plugin-manager__identity,
+.velvet-plugin-manager__controls {
   display: flex;
+}
+
+.velvet-plugin-manager__identity {
   flex-direction: column;
   gap: 2px;
   min-width: 0;
+}
+
+.velvet-plugin-manager__controls {
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 5px;
 }
 
 .velvet-plugin-manager__item strong {

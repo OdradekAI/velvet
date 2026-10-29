@@ -144,6 +144,16 @@ impl ApplicationCore {
             .install_from_directory(source_dir.as_ref(), plugin_directory)
     }
 
+    pub fn uninstall_plugin(&mut self, id: &ExtensionId) -> Result<(), PluginError> {
+        let Some(plugin_directory) = self.plugin_directory.as_deref() else {
+            return Err(PluginError::UninstallFailed(
+                "plugin uninstallation is unavailable without an application plugin directory"
+                    .into(),
+            ));
+        };
+        self.plugins.uninstall_from_directory(id, plugin_directory)
+    }
+
     pub fn dispatch(&mut self, request: Request) -> Result<Response, CoreError> {
         match request {
             Request::Command(Command::Layout(command)) => self.apply_layout(None, command),
@@ -181,6 +191,10 @@ impl ApplicationCore {
                 .install_plugin_from_directory(source_dir)
                 .map(Response::Extension)
                 .map_err(plugin_error),
+            Request::Command(Command::UninstallPlugin { extension_id }) => {
+                self.uninstall_plugin(&extension_id).map_err(plugin_error)?;
+                Ok(Response::Accepted)
+            }
             Request::Command(Command::InvokePluginCommand {
                 extension_id,
                 command_id,
@@ -827,6 +841,12 @@ mod tests {
             restarted_core.discover_plugins()[0].state,
             velvet_plugin_api::ExtensionState::Active
         );
+
+        restarted_core
+            .uninstall_plugin(&ExtensionId("velvet.example.echo".into()))
+            .expect("the application core should uninstall the package");
+        assert!(restarted_core.discover_plugins().is_empty());
+        assert!(!plugin_root.join("velvet.example.echo").exists());
 
         let _ = fs::remove_dir_all(plugin_root);
         let _ = fs::remove_file(layout_path);

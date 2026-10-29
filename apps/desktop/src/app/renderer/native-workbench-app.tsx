@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { ask } from '@tauri-apps/plugin-dialog';
 import { createNativeTauriDesktopApp, type DesktopApp } from '../desktop-app.js';
 import type { LayoutCommand, LayoutSnapshot, WorkbenchAppId } from '../../platform/protocol.js';
 import { WorkbenchShell } from './workbench-shell.js';
@@ -7,6 +8,7 @@ import { createPluginViewRenderer } from './plugin-view-renderer.js';
 import { PluginOverlayHost } from './plugin-overlay-host.js';
 import { WorkbenchAppSurfaceHost } from './workbench-app-surface-host.js';
 import { PluginManagerDialog } from './plugin-manager-dialog.js';
+import { createNativeDirectoryPicker } from '../../platform/tauri-directory-picker.js';
 
 interface NativeWorkbenchState {
   readonly app: DesktopApp;
@@ -21,6 +23,7 @@ export function NativeWorkbenchApp() {
   const [pluginManagerOpen, setPluginManagerOpen] = useState(false);
   const [appRevision, setAppRevision] = useState(0);
   const [viewRenderers] = useState(() => new ViewRendererRegistry());
+  const [directoryPicker] = useState(() => createNativeDirectoryPicker());
 
   useEffect(() => {
     const app = createNativeTauriDesktopApp();
@@ -205,8 +208,15 @@ export function NativeWorkbenchApp() {
     >
       <div className="velvet-native-workspace">
         <PluginManagerDialog
+          confirmUninstall={async (extensionId) => {
+            return ask(`Remove ${extensionId} and its installed package?`, {
+              title: 'Uninstall extension',
+              kind: 'warning',
+            });
+          }}
           onOpenChange={setPluginManagerOpen}
           open={pluginManagerOpen}
+          pickDirectory={() => directoryPicker.pickDirectory()}
           plugins={currentState.app.workbench.plugins}
         />
         {commandError ? (

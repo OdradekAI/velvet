@@ -12,6 +12,8 @@
     "core:webview:allow-set-webview-focus",
     "core:webview:allow-webview-hide",
     "core:webview:allow-webview-show",
+    "dialog:allow-ask",
+    "dialog:allow-open",
     "global-shortcut:allow-register",
     "global-shortcut:allow-unregister",
     "global-shortcut:allow-is-registered"

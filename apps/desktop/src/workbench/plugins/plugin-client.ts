@@ -644,6 +644,25 @@ export class PluginClient {
     }
   }
 
+  public async uninstallInCore(extensionId: string): Promise<void> {
+    const response = await this.core.request({
+      protocolVersion: PROTOCOL_VERSION,
+      kind: 'uninstall-plugin',
+      extensionId,
+    });
+    if (response.kind !== 'accepted') {
+      throw new PluginLifecycleError(
+        `Expected an accepted response for uninstalling ${extensionId}, received ${response.kind}`,
+        extensionId,
+      );
+    }
+
+    await this.unregister(extensionId);
+    this.coreProjections.delete(extensionId);
+    this.coreSummaries.delete(extensionId);
+    this.notify();
+  }
+
   public listVisible(activeAppId?: WorkbenchAppId): readonly ContributionDescriptor[] {
     const activeExtensions = new Set(
       [...this.records.values()]

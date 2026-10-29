@@ -35,6 +35,9 @@ pub enum Command {
     InstallPlugin {
         source_dir: String,
     },
+    UninstallPlugin {
+        extension_id: ExtensionId,
+    },
     InvokePluginCommand {
         extension_id: ExtensionId,
         command_id: String,
