@@ -50,6 +50,14 @@ AuxiliarySidebar and OperationsPanel remain global CompanionView and
 OperationView surfaces. A View must stay in the same scope and semantic Zone as
 its container.
 
+The renderer projects Activity Bar entries from the active app's registered
+navigation containers. Selecting one makes that container the visible primary
+sidebar selection, reveals the container and sidebar when either is hidden or
+collapsed, and moves focus to the sidebar. Selection is transient; container
+visibility and order remain the durable layout state. Activity Bar buttons use
+roving keyboard navigation with Arrow, Home and End keys, while the host keeps
+the built-in WorkbenchApp entries ahead of contributed container entries.
+
 In version one, Part docking positions are fixed. A plugin cannot move a contribution across semantic zones. Users may hide, show, collapse and focus ViewContainers, reorder them within a compatible Part, and reorder or move Views between compatible containers in the same scope and Zone. Hidden contributions retain their order, and the host repairs order when a contribution is disabled or removed. Built-in ActivityBar entries remain stable, while accepted product extensions may contribute `WorkbenchApp` entries without gaining ownership of the global shell.
 
 Ordering is represented as host-owned state and changed through typed commands. Commands should identify the contribution and a stable `before` or `after` anchor; the renderer's drag-and-drop interaction is only an adapter over those commands.

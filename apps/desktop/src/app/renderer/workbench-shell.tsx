@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import type {
   CSSProperties,
   KeyboardEvent as ReactKeyboardEvent,
@@ -16,6 +17,7 @@ import { focusTargetId, type FocusService } from '../../workbench/focus/focus-se
 import { ViewRegistry } from '../../workbench/views/view-registry.js';
 import { VelvetContextMenu, VelvetPanel } from '../ui/velvet-ui.js';
 import { useFocusDomAdapter } from './focus-dom-adapter.js';
+import { nextActivityBarIndex } from './activity-bar-navigation.js';
 import { ViewRendererRegistry } from './view-renderer-registry.js';
 import { WorkbenchViewHost } from './workbench-view-host.js';
 
@@ -62,6 +64,13 @@ function isPartCollapsed(layout: LayoutSnapshot, part: Part): boolean {
   return layout.parts[part]?.collapsed ?? false;
 }
 
+function isContainerVisible(
+  layout: LayoutSnapshot,
+  container: { readonly id: string; readonly defaultVisible?: boolean },
+): boolean {
+  return layout.containers[container.id]?.visible ?? container.defaultVisible !== false;
+}
+
 function togglePart(
   part: Part,
   onLayoutCommand: ((command: LayoutCommand) => void) | undefined,
@@ -94,6 +103,29 @@ function dispatchResize(
     part,
     size: clampSize(part, size),
   });
+}
+
+function handleActivityBarKeyDown(
+  event: ReactKeyboardEvent<HTMLButtonElement>,
+  index: number,
+  count: number,
+): void {
+  const buttons = event.currentTarget
+    .closest('nav')
+    ?.querySelectorAll<HTMLButtonElement>('[data-velvet-activity-entry]');
+
+  if (!buttons || buttons.length !== count) {
+    return;
+  }
+
+  const targetIndex = nextActivityBarIndex(event.key, index, count);
+
+  if (targetIndex === undefined) {
+    return;
+  }
+
+  event.preventDefault();
+  buttons[targetIndex]?.focus();
 }
 
 interface PartResizeHandleProps {
@@ -186,9 +218,84 @@ export function WorkbenchShell({
   children,
 }: WorkbenchShellProps) {
   useFocusDomAdapter(focusService);
+  const [, rerender] = useState(0);
+  const [activeContainerId, setActiveContainerId] = useState<string>();
+  useEffect(() => {
+    if (!viewRegistry) {
+      return undefined;
+    }
+    return viewRegistry.subscribe(() => rerender((value) => value + 1));
+  }, [viewRegistry]);
+
   const activeApp = apps.find(
     (workspace) => workspace.id === layout.activeApp,
   );
+  const navigationContainers = viewRegistry
+    ?.listContainers(layout.activeApp)
+    .filter(
+      (container) =>
+        container.scope.kind === 'workbench-app' &&
+        container.scope.appId === layout.activeApp &&
+        container.zone === 'navigation' &&
+        container.preferredPart === 'primary-sidebar',
+    ) ?? [];
+  const selectedContainerId = activeContainerId &&
+    navigationContainers.some((container) => container.id === activeContainerId)
+    ? activeContainerId
+    : navigationContainers.find((container) => isContainerVisible(layout, container))?.id ??
+      navigationContainers[0]?.id;
+  const builtInContainerIds = new Set(
+    apps.flatMap((app) => app.viewContainers?.map((container) => container.id) ?? []),
+  );
+  const activityBarContainers = viewRegistry
+    ?.listActivityBarEntries(layout.activeApp)
+    .filter((entry) => !builtInContainerIds.has(entry.containerId))
+    .sort(
+      (left, right) =>
+        (layout.containers[left.containerId]?.order ?? left.order) -
+        (layout.containers[right.containerId]?.order ?? right.order),
+    ) ?? [];
+  const activityBarEntryCount = apps.length + activityBarContainers.length;
+
+  function selectApp(appId: WorkbenchAppId): void {
+    const appContainer = apps
+      .find((app) => app.id === appId)
+      ?.viewContainers
+      ?.find(
+        (container) =>
+          container.zone === 'navigation' &&
+          container.preferredPart === 'primary-sidebar',
+      );
+    setActiveContainerId(appContainer?.id);
+    onActivateApp(appId);
+  }
+
+  function selectViewContainer(containerId: string): void {
+    setActiveContainerId(containerId);
+    const container = navigationContainers.find((candidate) => candidate.id === containerId);
+    if (container && !isContainerVisible(layout, container)) {
+      onLayoutCommand?.({
+        id: 'workbench.set-view-container-visibility',
+        containerId,
+        visible: true,
+      });
+    }
+    if (!isPartVisible(layout, 'primary-sidebar')) {
+      onLayoutCommand?.({
+        id: 'workbench.set-part-visibility',
+        part: 'primary-sidebar',
+        visible: true,
+      });
+    }
+    if (isPartCollapsed(layout, 'primary-sidebar')) {
+      onLayoutCommand?.({
+        id: 'workbench.collapse-part',
+        part: 'primary-sidebar',
+        collapsed: false,
+      });
+    }
+    focusService?.focus({ kind: 'part', part: 'primary-sidebar' });
+  }
   const layoutActions = [
     {
       id: 'toggle-title-bar',
@@ -277,17 +384,43 @@ export function WorkbenchShell({
           hidden={!isPartVisible(layout, 'activity-bar')}
           tabIndex={-1}
         >
-          {apps.map((app) => (
+          {apps.map((app, index) => (
             <button
               aria-label={app.title}
+              aria-pressed={app.id === layout.activeApp}
               className="velvet-workspace-button"
               data-active={app.id === layout.activeApp}
+              data-velvet-activity-entry
               key={app.id}
-              onClick={() => onActivateApp(app.id)}
+              onClick={() => selectApp(app.id)}
+              onKeyDown={(event) =>
+                handleActivityBarKeyDown(event, index, activityBarEntryCount)}
               title={app.title}
               type="button"
             >
               {app.activityBarIcon.slice(0, 2).toUpperCase()}
+            </button>
+          ))}
+          {activityBarContainers.map((entry, index) => (
+            <button
+              aria-label={entry.title}
+              aria-pressed={entry.containerId === selectedContainerId}
+              className="velvet-workspace-button velvet-workspace-button--container"
+              data-active={entry.containerId === selectedContainerId}
+              data-hidden={layout.containers[entry.containerId]?.visible === false}
+              data-velvet-activity-entry
+              key={entry.containerId}
+              onClick={() => selectViewContainer(entry.containerId)}
+              onKeyDown={(event) =>
+                handleActivityBarKeyDown(
+                  event,
+                  apps.length + index,
+                  activityBarEntryCount,
+                )}
+              title={entry.title}
+              type="button"
+            >
+              {entry.icon.slice(0, 2).toUpperCase()}
             </button>
           ))}
         </nav>
@@ -311,6 +444,7 @@ export function WorkbenchShell({
                 registry={viewRegistry}
                 renderers={viewRenderers}
                 scope="workbench-app"
+                activeContainerId={selectedContainerId}
                 zone="navigation"
               />
             ) : (

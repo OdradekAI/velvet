@@ -734,6 +734,46 @@ mod tests {
     }
 
     #[test]
+    fn view_container_visibility_changes_preserve_user_order() {
+        let mut service = InMemoryLayoutService::default();
+        service
+            .apply(LayoutCommand::UpsertViewContainer {
+                container_id: "plugin.library".into(),
+                visible: true,
+                order: 3,
+            })
+            .unwrap();
+        service
+            .apply(LayoutCommand::SetViewContainerVisibility {
+                container_id: "plugin.library".into(),
+                visible: false,
+            })
+            .unwrap();
+
+        let container = service
+            .snapshot()
+            .containers
+            .get("plugin.library")
+            .unwrap();
+        assert!(!container.visible);
+        assert_eq!(container.order, 3);
+
+        service
+            .apply(LayoutCommand::SetViewContainerVisibility {
+                container_id: "plugin.library".into(),
+                visible: true,
+            })
+            .unwrap();
+        let container = service
+            .snapshot()
+            .containers
+            .get("plugin.library")
+            .unwrap();
+        assert!(container.visible);
+        assert_eq!(container.order, 3);
+    }
+
+    #[test]
     fn fixed_parts_reject_unsupported_geometry_commands() {
         let mut service = InMemoryLayoutService::default();
 

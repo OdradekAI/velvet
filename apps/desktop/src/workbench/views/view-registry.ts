@@ -10,6 +10,15 @@ export interface ViewContainerActivityBarEntry {
   readonly order?: number;
 }
 
+export interface ActivityBarViewContainerProjection {
+  readonly kind: 'view-container';
+  readonly containerId: string;
+  readonly title: string;
+  readonly icon: string;
+  readonly order: number;
+  readonly scope: ViewContainerScope;
+}
+
 export interface ViewContainerDescriptor {
   readonly id: string;
   readonly title: string;
@@ -105,6 +114,28 @@ export class ViewRegistry {
         return appId === undefined || container.scope.appId === appId;
       })
       .sort((left, right) => (left.order ?? 0) - (right.order ?? 0));
+  }
+
+  /** Projects navigation containers into the Activity Bar without exposing registry state. */
+  public listActivityBarEntries(appId: string): ActivityBarViewContainerProjection[] {
+    return this.listContainers(appId)
+      .filter(
+        (container) =>
+          container.scope.kind === 'workbench-app' &&
+          container.scope.appId === appId &&
+          container.zone === 'navigation' &&
+          container.preferredPart === 'primary-sidebar' &&
+          container.activityBar !== undefined,
+      )
+      .map((container) => ({
+        kind: 'view-container' as const,
+        containerId: container.id,
+        title: container.activityBar!.title,
+        icon: container.activityBar!.icon,
+        order: container.activityBar!.order ?? container.order ?? 0,
+        scope: container.scope,
+      }))
+      .sort((left, right) => left.order - right.order);
   }
 
   public register(view: ViewDescriptor): void {

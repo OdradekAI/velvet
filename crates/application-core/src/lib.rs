@@ -284,4 +284,42 @@ mod tests {
 
         let _ = std::fs::remove_file(path);
     }
+
+    #[test]
+    fn plugin_view_container_visibility_and_order_are_restored_after_restart() {
+        let path = temporary_layout_path();
+        let first_store = Arc::new(JsonFileLayoutStateStore::new(&path));
+        let mut first_core = ApplicationCore::with_store(first_store);
+
+        first_core
+            .dispatch(Request::Command(Command::Layout(
+                LayoutCommand::UpsertViewContainer {
+                    container_id: "plugin.library".into(),
+                    visible: false,
+                    order: 4,
+                },
+            )))
+            .expect("the plugin container should be persisted");
+        drop(first_core);
+
+        let second_store = Arc::new(JsonFileLayoutStateStore::new(&path));
+        let mut second_core = ApplicationCore::with_store(second_store);
+        let response = second_core
+            .dispatch(Request::Query(Query::Layout))
+            .expect("the restarted core should restore plugin layout state");
+
+        match response {
+            Response::Layout(state) => {
+                let container = state
+                    .containers
+                    .get("plugin.library")
+                    .expect("plugin container should survive restart");
+                assert!(!container.visible);
+                assert_eq!(container.order, 4);
+            }
+            other => panic!("expected a layout response, got {other:?}"),
+        }
+
+        let _ = std::fs::remove_file(path);
+    }
 }

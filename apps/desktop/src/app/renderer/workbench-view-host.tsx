@@ -19,6 +19,7 @@ export interface WorkbenchViewHostProps {
   readonly part: Part;
   readonly scope: ViewContainerScope['kind'];
   readonly appId?: WorkbenchAppId;
+  readonly activeContainerId?: string;
   readonly focusService?: FocusService;
 }
 
@@ -72,6 +73,7 @@ export function WorkbenchViewHost({
   part,
   scope,
   appId,
+  activeContainerId,
   focusService,
 }: WorkbenchViewHostProps) {
   const [, rerender] = useState(0);
@@ -90,6 +92,7 @@ export function WorkbenchViewHost({
       (container) =>
         container.zone === zone &&
         container.preferredPart === part &&
+        (activeContainerId === undefined || container.id === activeContainerId) &&
         isScopeMatch(container.scope, scope, appId),
     )
     .sort((left, right) => containerOrder(layout, left) - containerOrder(layout, right));

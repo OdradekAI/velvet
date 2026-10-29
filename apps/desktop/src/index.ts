@@ -6,6 +6,7 @@ export * from './app/renderer/view-renderer-registry.js';
 export * from './app/renderer/workbench-view-host.js';
 export * from './app/renderer/plugin-surface-host.js';
 export * from './app/renderer/plugin-view-renderer.js';
+export * from './app/renderer/activity-bar-navigation.js';
 export * from './platform/index.js';
 export * from './workbench/workbench.js';
 export * from './workbench/apps/workbench-app.js';

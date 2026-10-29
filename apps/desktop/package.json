@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types test/activity-bar-navigation.test.mjs"
   },
   "dependencies": {
     "@radix-ui/react-context-menu": "^2.2.16",

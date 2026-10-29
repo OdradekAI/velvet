@@ -116,6 +116,7 @@ cargo fmt --all -- --check
 cd apps/desktop
 npm install
 npm run typecheck
+npm run test
 ```
 
 The native desktop boundary can be checked independently from the repository

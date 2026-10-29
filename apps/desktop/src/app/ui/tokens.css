@@ -182,6 +182,15 @@ button {
   color: var(--velvet-text-primary);
 }
 
+.velvet-workspace-button[data-hidden="true"] {
+  border-style: dashed;
+  color: var(--velvet-text-muted);
+}
+
+.velvet-workspace-button--container {
+  margin-top: 2px;
+}
+
 .velvet-panel {
   display: flex;
   flex-direction: column;
