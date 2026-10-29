@@ -21,6 +21,7 @@ import { ViewRegistry } from '../../workbench/views/view-registry.js';
 import { VelvetContextMenu, VelvetPanel } from '../ui/velvet-ui.js';
 import { useFocusDomAdapter } from './focus-dom-adapter.js';
 import { nextActivityBarIndex } from './activity-bar-navigation.js';
+import { nextResizeSize } from './part-resize-navigation.js';
 import { ViewRendererRegistry } from './view-renderer-registry.js';
 import { WorkbenchViewHost } from './workbench-view-host.js';
 
@@ -115,6 +116,7 @@ function handleActivityBarKeyDown(
   event: ReactKeyboardEvent<HTMLButtonElement>,
   index: number,
   count: number,
+  onFocusIndex: (index: number) => void,
 ): void {
   const buttons = event.currentTarget
     .closest('nav')
@@ -131,7 +133,12 @@ function handleActivityBarKeyDown(
   }
 
   event.preventDefault();
+  onFocusIndex(targetIndex);
   buttons[targetIndex]?.focus();
+}
+
+function partDomId(part: Part): string {
+  return `velvet-part-${part}`;
 }
 
 interface PartResizeHandleProps {
@@ -176,31 +183,27 @@ function PartResizeHandle({
   }
 
   function onKeyDown(event: ReactKeyboardEvent<HTMLButtonElement>): void {
-    const horizontalStep = event.shiftKey ? 40 : 10;
-    const verticalStep = event.shiftKey ? 40 : 10;
-    const step = part === 'operations-panel' ? verticalStep : horizontalStep;
-    const direction = part === 'auxiliary-sidebar' ? -1 : 1;
-    let delta = 0;
+    const nextSize = nextResizeSize(event.key, {
+      axis: part === 'operations-panel' ? 'vertical' : 'horizontal',
+      currentSize,
+      direction: part === 'auxiliary-sidebar' ? -1 : 1,
+      large: event.shiftKey,
+      min: resizeBounds(part).min,
+      max: resizeBounds(part).max,
+    });
 
-    if (part === 'operations-panel') {
-      if (event.key === 'ArrowUp') delta = step;
-      if (event.key === 'ArrowDown') delta = -step;
-    } else {
-      if (event.key === 'ArrowRight') delta = step * direction;
-      if (event.key === 'ArrowLeft') delta = -step * direction;
-    }
-
-    if (!delta) {
+    if (nextSize === undefined) {
       return;
     }
 
     event.preventDefault();
-    dispatchResize(part, currentSize + delta, onLayoutCommand);
+    dispatchResize(part, nextSize, onLayoutCommand);
   }
 
   return (
     <button
       aria-label={`Resize ${part.replaceAll('-', ' ')}`}
+      aria-controls={partDomId(part)}
       aria-orientation={part === 'operations-panel' ? 'horizontal' : 'vertical'}
       aria-valuemax={resizeBounds(part).max}
       aria-valuemin={resizeBounds(part).min}
@@ -208,6 +211,7 @@ function PartResizeHandle({
       className={`velvet-resize-handle velvet-resize-handle--${placement}`}
       onKeyDown={onKeyDown}
       onPointerDown={onPointerDown}
+      role="separator"
       type="button"
     />
   );
@@ -229,6 +233,7 @@ export function WorkbenchShell({
   useFocusDomAdapter(focusService);
   const [, rerender] = useState(0);
   const [activeContainerId, setActiveContainerId] = useState<string>();
+  const [activityBarFocusIndex, setActivityBarFocusIndex] = useState(0);
   useEffect(() => {
     if (!viewRegistry) {
       return undefined;
@@ -271,6 +276,29 @@ export function WorkbenchShell({
         (layout.containers[right.containerId]?.order ?? right.order),
     ) ?? [];
   const activityBarEntryCount = apps.length + activityBarContainers.length;
+
+  useEffect(() => {
+    if (activityBarEntryCount === 0) {
+      setActivityBarFocusIndex(0);
+      return;
+    }
+    const activeAppIndex = apps.findIndex((app) => app.id === layout.activeApp);
+    const activeContainerIndex = activityBarContainers.findIndex(
+      (entry) => entry.containerId === selectedContainerId,
+    );
+    const selectedIndex = activeContainerIndex >= 0
+      ? apps.length + activeContainerIndex
+      : activeAppIndex >= 0
+        ? activeAppIndex
+        : 0;
+    setActivityBarFocusIndex(Math.min(selectedIndex, activityBarEntryCount - 1));
+  }, [
+    activityBarEntryCount,
+    activityBarContainers.length,
+    apps.length,
+    layout.activeApp,
+    selectedContainerId,
+  ]);
 
   function selectApp(appId: WorkbenchAppId): void {
     const appContainer = apps
@@ -406,6 +434,7 @@ export function WorkbenchShell({
           className="velvet-part velvet-part--title"
           data-velvet-focus-target={focusTargetId({ kind: 'part', part: 'title-bar' })}
           hidden={!isPartVisible(layout, 'title-bar')}
+          id={partDomId('title-bar')}
           tabIndex={-1}
         >
           <span>Velvet / {activeApp?.title ?? 'Workbench'}</span>
@@ -417,6 +446,7 @@ export function WorkbenchShell({
           className="velvet-part velvet-part--activity"
           data-velvet-focus-target={focusTargetId({ kind: 'part', part: 'activity-bar' })}
           hidden={!isPartVisible(layout, 'activity-bar')}
+          id={partDomId('activity-bar')}
           tabIndex={-1}
         >
           {apps.map((app, index) => (
@@ -429,7 +459,14 @@ export function WorkbenchShell({
               key={app.id}
               onClick={() => selectApp(app.id)}
               onKeyDown={(event) =>
-                handleActivityBarKeyDown(event, index, activityBarEntryCount)}
+                handleActivityBarKeyDown(
+                  event,
+                  index,
+                  activityBarEntryCount,
+                  setActivityBarFocusIndex,
+                )}
+              onFocus={() => setActivityBarFocusIndex(index)}
+              tabIndex={activityBarFocusIndex === index ? 0 : -1}
               title={app.title}
               type="button"
             >
@@ -451,7 +488,10 @@ export function WorkbenchShell({
                   event,
                   apps.length + index,
                   activityBarEntryCount,
+                  setActivityBarFocusIndex,
                 )}
+              onFocus={() => setActivityBarFocusIndex(apps.length + index)}
+              tabIndex={activityBarFocusIndex === apps.length + index ? 0 : -1}
               title={entry.title}
               type="button"
             >
@@ -467,6 +507,7 @@ export function WorkbenchShell({
             !isPartVisible(layout, 'primary-sidebar') ||
             isPartCollapsed(layout, 'primary-sidebar')
           }
+          id={partDomId('primary-sidebar')}
           tabIndex={-1}
         >
           <VelvetPanel title="Navigation">
@@ -500,6 +541,7 @@ export function WorkbenchShell({
         <section
           className="velvet-part velvet-part--workspace"
           data-velvet-focus-target={focusTargetId({ kind: 'part', part: 'workspace-area' })}
+          id={partDomId('workspace-area')}
           tabIndex={-1}
         >
           <VelvetContextMenu
@@ -555,6 +597,7 @@ export function WorkbenchShell({
             !isPartVisible(layout, 'auxiliary-sidebar') ||
             isPartCollapsed(layout, 'auxiliary-sidebar')
           }
+          id={partDomId('auxiliary-sidebar')}
           tabIndex={-1}
         >
           <VelvetPanel title="Auxiliary">
@@ -585,6 +628,7 @@ export function WorkbenchShell({
             !isPartVisible(layout, 'operations-panel') ||
             isPartCollapsed(layout, 'operations-panel')
           }
+          id={partDomId('operations-panel')}
           tabIndex={-1}
         >
           <VelvetPanel title="Operations">
@@ -612,6 +656,7 @@ export function WorkbenchShell({
           className="velvet-part velvet-part--status"
           data-velvet-focus-target={focusTargetId({ kind: 'part', part: 'status-bar' })}
           hidden={!isPartVisible(layout, 'status-bar')}
+          id={partDomId('status-bar')}
           tabIndex={-1}
         >
           Ready · Layout schema {layout.schemaVersion}

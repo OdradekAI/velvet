@@ -8,7 +8,7 @@
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "test:compile": "tsc --target ES2022 --module ESNext --moduleResolution Bundler --skipLibCheck --rootDir src --outDir /tmp/velvet-plugin-tests --noEmit false src/workbench/plugins/plugin-client.ts src/workbench/plugins/surface-adapters.ts",
-    "test": "npm run test:compile && node --experimental-strip-types test/activity-bar-navigation.test.mjs && node test/plugin-contribution-lifecycle.test.mjs && node test/plugin-surface-adapter.test.mjs"
+    "test": "npm run test:compile && node --experimental-strip-types test/activity-bar-navigation.test.mjs && node --experimental-strip-types test/part-resize-navigation.test.mjs && node test/plugin-contribution-lifecycle.test.mjs && node test/plugin-surface-adapter.test.mjs"
   },
   "dependencies": {
     "@radix-ui/react-context-menu": "^2.2.16",

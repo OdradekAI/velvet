@@ -65,6 +65,10 @@ function renderFallback(view: ViewDescriptor): ReactNode {
   );
 }
 
+function viewContainerDomId(containerId: string): string {
+  return `velvet-view-container-${containerId.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
+}
+
 export function WorkbenchViewHost({
   layout,
   registry,
@@ -98,7 +102,12 @@ export function WorkbenchViewHost({
     .sort((left, right) => containerOrder(layout, left) - containerOrder(layout, right));
 
   return (
-    <div className="velvet-view-host" data-velvet-view-zone={zone}>
+    <div
+      aria-label={`${zone} views`}
+      className="velvet-view-host"
+      data-velvet-view-zone={zone}
+      role="group"
+    >
       {containers.map((container) => {
         if (!isContainerVisible(layout, container)) {
           return null;
@@ -115,26 +124,33 @@ export function WorkbenchViewHost({
           .sort((left, right) => viewOrder(layout, left) - viewOrder(layout, right));
 
         return (
-          <VelvetPanel className="velvet-view-container" key={container.id} title={container.title}>
+          <VelvetPanel
+            ariaLabel={`${container.title} views`}
+            className="velvet-view-container"
+            id={viewContainerDomId(container.id)}
+            key={container.id}
+            title={container.title}
+          >
             {views.length === 0 ? (
               <p className="velvet-view-placeholder">No views are active in this container.</p>
             ) : (
               views.map((view) => {
                 const renderer = renderers?.get(view.id);
                 const viewContent = renderer ? renderer(view) : renderFallback(view);
-                if (focusService) {
-                  return (
-                    <div
-                      className="velvet-view"
-                      data-velvet-focus-target={focusTargetId({ kind: 'view', viewId: view.id })}
-                      key={view.id}
-                      tabIndex={-1}
-                    >
-                      {viewContent}
-                    </div>
-                  );
-                }
-                return <div className="velvet-view" key={view.id}>{viewContent}</div>;
+                return (
+                  <div
+                    aria-label={view.title}
+                    className="velvet-view"
+                    data-velvet-focus-target={focusService
+                      ? focusTargetId({ kind: 'view', viewId: view.id })
+                      : undefined}
+                    key={view.id}
+                    role="region"
+                    tabIndex={focusService ? -1 : undefined}
+                  >
+                    {viewContent}
+                  </div>
+                );
               })
             )}
           </VelvetPanel>

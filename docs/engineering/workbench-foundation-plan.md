@@ -28,10 +28,14 @@ correlation and typed native transport errors. The real Tauri application under
 `apps/desktop/src-tauri` now implements the command/event serialization seam,
 publishes authoritative layout snapshots and forwards native global shortcuts
 into the host keybinding registry. The React renderer selects this composition
-root inside Tauri and keeps the browser DemoApp as a local fallback. The next
-implementation gate is broader accessibility, keyboard and resize coverage
-around contributed panels. Plugin view contributions now map to the
-framework-neutral `ViewRegistry` with stable extension-prefixed ids. A
+root inside Tauri and keeps the browser DemoApp as a local fallback. The shell
+now exposes roving Activity Bar focus, semantic resize separators with bounded
+Arrow/Home/End keyboard behavior, stable Part ids and labeled contributed view
+regions. The pure keyboard resize contract is covered alongside the existing
+Activity Bar navigation tests. The next implementation gate is native renderer
+coverage for these semantics around contributed panels. Plugin view
+contributions now map to the framework-neutral `ViewRegistry` with stable
+extension-prefixed ids. A
 `view` contribution must name its local `ViewContainer` and isolated UI Bridge
 entrypoint; global `companion-view` and `operation-view` contributions receive
 host-owned synthetic containers in their reserved Parts. The React adapter
