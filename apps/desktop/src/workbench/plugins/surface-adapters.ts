@@ -247,7 +247,11 @@ function isTauriWebviewEntrypoint(entrypoint: string): boolean {
 }
 
 function isTauriRuntime(): boolean {
-  return Boolean((globalThis as { isTauri?: unknown }).isTauri);
+  const runtime = globalThis as {
+    isTauri?: unknown;
+    __TAURI_INTERNALS__?: unknown;
+  };
+  return Boolean(runtime.isTauri || runtime.__TAURI_INTERNALS__);
 }
 
 function resolveTauriUrl(entrypoint: string): string {

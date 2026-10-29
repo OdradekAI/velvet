@@ -8,7 +8,8 @@ import {
   UI_BRIDGE_SURFACE_EVENT,
 } from '/tmp/velvet-plugin-tests/workbench/plugins/ui-bridge.js';
 
-globalThis.isTauri = true;
+globalThis.isTauri = false;
+globalThis.__TAURI_INTERNALS__ = {};
 
 const hostListeners = new Set();
 const receivedMessages = [];
