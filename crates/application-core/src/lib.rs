@@ -231,7 +231,16 @@ fn disable_reason(reason: PluginDisableReason) -> DisableReason {
 }
 
 fn plugin_error(error: PluginError) -> CoreError {
-    CoreError::Plugin(format!("{error:?}"))
+    match error {
+        PluginError::RuntimeInvocation {
+            extension_id,
+            message,
+        } => CoreError::PluginRuntimeFailed {
+            extension_id: extension_id.0,
+            message,
+        },
+        other => CoreError::Plugin(format!("{other:?}")),
+    }
 }
 
 #[derive(Clone)]

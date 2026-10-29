@@ -501,7 +501,7 @@ impl JsonManifestDiscovery {
                     continue;
                 }
             };
-            let manifest = match serde_json::from_slice::<ExtensionManifest>(&bytes) {
+            let mut manifest = match serde_json::from_slice::<ExtensionManifest>(&bytes) {
                 Ok(manifest) => manifest,
                 Err(error) => {
                     report.failures.push(ManifestLoadFailure {
@@ -511,6 +511,7 @@ impl JsonManifestDiscovery {
                     continue;
                 }
             };
+            resolve_relative_launch_args(&path, &mut manifest);
 
             match host.register(manifest) {
                 Ok(()) => report.loaded.push(path),
@@ -522,6 +523,25 @@ impl JsonManifestDiscovery {
         }
 
         Ok(report)
+    }
+}
+
+/// Package manifests may use `./` or `../` launch arguments for files shipped
+/// beside the manifest. Resolve only those explicitly relative arguments so
+/// executable names such as `node` and arbitrary user arguments retain their
+/// normal process lookup semantics.
+fn resolve_relative_launch_args(manifest_path: &Path, manifest: &mut ExtensionManifest) {
+    let Some(launch) = manifest.launch.as_mut() else {
+        return;
+    };
+    let Some(base) = manifest_path.parent() else {
+        return;
+    };
+
+    for argument in &mut launch.args {
+        if argument.starts_with("./") || argument.starts_with("../") {
+            *argument = base.join(&*argument).to_string_lossy().into_owned();
+        }
     }
 }
 
@@ -1611,5 +1631,74 @@ mod tests {
         assert_eq!(host.discover().len(), 1);
 
         fs::remove_dir_all(root).expect("the manifest directory should be removed");
+    }
+
+    #[test]
+    fn bundled_echo_sidecar_runs_the_full_lifecycle() {
+        let source =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/plugins/echo-sidecar");
+        let root = temporary_manifest_dir();
+        fs::create_dir_all(&root).expect("the example plugin directory should be writable");
+        fs::copy(source.join("manifest.json"), root.join("manifest.json"))
+            .expect("the example manifest should be copied");
+        fs::copy(source.join("sidecar.mjs"), root.join("sidecar.mjs"))
+            .expect("the example sidecar should be copied");
+
+        let mut host = InMemoryPluginHost::default();
+        let report = JsonManifestDiscovery::new(&root)
+            .load_into(&mut host)
+            .expect("the example manifest should be discovered");
+        assert_eq!(report.loaded, vec![root.join("manifest.json")]);
+        assert!(report.failures.is_empty());
+
+        let id = ExtensionId("velvet.example.echo".into());
+        host.activate(&id)
+            .expect("the example sidecar should start");
+        let projection = host
+            .projection(&id)
+            .expect("the active example should expose a projection");
+        assert!(projection.contributions.iter().any(|contribution| {
+            contribution.id == "echo.view"
+                && contribution
+                    .ui
+                    .as_ref()
+                    .is_some_and(|surface| surface.entrypoint.starts_with("data:text/html"))
+        }));
+
+        let echoed = host
+            .invoke_command(
+                &id,
+                "echo.open".into(),
+                serde_json::json!({ "source": "integration-test" }),
+                serde_json::json!({
+                    "activeAppId": "asset-manager",
+                    "keys": { "resourceKind": "asset" }
+                }),
+            )
+            .expect("the example command should reach the sidecar");
+        assert_eq!(
+            echoed
+                .result
+                .as_ref()
+                .and_then(|result| result.get("commandId")),
+            Some(&serde_json::json!("echo.open"))
+        );
+
+        let crash = host
+            .invoke_command(&id, "echo.crash".into(), Value::Null, Value::Null)
+            .expect_err("the crash command should fail only its extension");
+        assert!(matches!(crash, PluginError::RuntimeInvocation { .. }));
+        assert_eq!(host.discover()[0].state, ExtensionState::Failed);
+        assert!(host.active_contributions(&id).unwrap().is_empty());
+
+        host.recover(&id)
+            .expect("the crashed example should be recoverable");
+        assert_eq!(host.discover()[0].state, ExtensionState::Active);
+        host.invoke_command(&id, "echo.open".into(), Value::Null, Value::Null)
+            .expect("the recovered sidecar should accept commands");
+        host.disable(&id, DisableReason::User)
+            .expect("the example should be stoppable");
+
+        fs::remove_dir_all(root).expect("the temporary example directory should be removed");
     }
 }

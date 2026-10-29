@@ -159,6 +159,7 @@ dependencies = [
 name = "velvet-tauri-adapter"
 version = "0.0.2"
 dependencies = [
+ "serde_json",
  "velvet-application-core",
  "velvet-layout-model",
  "velvet-plugin-api",

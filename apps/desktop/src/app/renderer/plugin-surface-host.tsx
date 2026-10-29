@@ -75,6 +75,16 @@ export function PluginSurfaceHost({
     let disposed = false;
 
     const mount = () => {
+      const registeredSession = ui.getSession(extensionId, surfaceId);
+      const descriptor = ui.getDescriptor(extensionId, surfaceId);
+      if (
+        sessionRef.current &&
+        registeredSession !== sessionRef.current &&
+        !descriptor
+      ) {
+        sessionRef.current = undefined;
+        waitingForAdapterRef.current = true;
+      }
       if (disposed || !waitingForAdapterRef.current || sessionRef.current) {
         return;
       }

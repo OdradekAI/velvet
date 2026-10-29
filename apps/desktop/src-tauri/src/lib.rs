@@ -65,6 +65,16 @@ impl From<CoreError> for WireError {
                 expected_revision: Some(expected),
                 actual_revision: Some(actual),
             },
+            CoreError::PluginRuntimeFailed {
+                extension_id,
+                message,
+            } => Self {
+                code: "plugin-runtime-failed".into(),
+                message: format!("Plugin {extension_id} runtime failed: {message}"),
+                retryable: true,
+                expected_revision: None,
+                actual_revision: None,
+            },
             other => Self {
                 code: "core-error".into(),
                 message: format!("{other:?}"),
@@ -1094,6 +1104,18 @@ mod tests {
                 && args["source"] == "context-menu"
                 && context["activeAppId"] == "asset-manager"
         ));
+    }
+
+    #[test]
+    fn wire_runtime_failure_has_a_retryable_plugin_error_code() {
+        let error = WireError::from(CoreError::PluginRuntimeFailed {
+            extension_id: "velvet.example.echo".into(),
+            message: "sidecar exited".into(),
+        });
+
+        assert_eq!(error.code, "plugin-runtime-failed");
+        assert!(error.retryable);
+        assert!(error.message.contains("velvet.example.echo"));
     }
 
     #[test]

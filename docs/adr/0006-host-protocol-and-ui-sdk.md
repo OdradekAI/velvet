@@ -62,6 +62,9 @@ the versioned CoreTransport as an `invoke-plugin-command` request; Rust checks
 that the command belongs to the active extension and forwards it through the
 runtime's versioned JSONL channel. Local trusted handlers remain an adapter for
 built-in integrations, while external execution never bypasses the host.
+If invocation fails because the isolated runtime closes, crashes or times out,
+the Tauri adapter emits a `plugin-disabled` crash event so the renderer removes
+the failed projection and can recover it through the normal lifecycle command.
 
 The UI SDK exposes host concepts rather than Vue or React component types:
 

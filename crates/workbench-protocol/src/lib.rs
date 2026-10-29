@@ -92,11 +92,21 @@ pub enum Event {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CoreError {
-    ProtocolVersionMismatch { expected: u16, received: u16 },
+    ProtocolVersionMismatch {
+        expected: u16,
+        received: u16,
+    },
     InvalidCommand(String),
     Layout(String),
     Plugin(String),
-    StaleRevision { expected: u64, actual: u64 },
+    PluginRuntimeFailed {
+        extension_id: String,
+        message: String,
+    },
+    StaleRevision {
+        expected: u64,
+        actual: u64,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

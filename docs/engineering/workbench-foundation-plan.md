@@ -131,6 +131,13 @@ the isolated runtime. Runtime rejection stays local to the command, while a
 closed, malformed or timed-out runtime is failed and recoverable without
 removing unrelated extensions.
 
+The repository now includes a runnable `examples/plugins/echo-sidecar` fixture.
+Its Rust integration test covers manifest discovery, relative sidecar launch,
+command JSONL invocation, UI metadata projection, intentional crash isolation
+and recovery. The desktop regression test consumes the same manifest, invokes
+the real Node sidecar, mounts its data URL through the UI Bridge, removes the
+surface on failure and remounts it after recovery.
+
 The current shell slice also renders the accepted Part constraint table: fixed
 Parts use stable dimensions, resizable Parts enforce bounded sizes in Rust, and
 visibility/collapse commands are exposed through the host-owned workspace

@@ -243,16 +243,21 @@ export class PluginUiRegistry {
     const sessions = [...this.sessions.entries()].filter(([key]) =>
       key.startsWith(`${extensionId}:`),
     );
-    for (const [key, session] of sessions) {
-      await session.dispose(reason);
-      this.sessions.delete(key);
-    }
 
+    // Remove descriptors before disposing sessions. The renderer may be
+    // subscribed to registry changes; seeing an ended session while its
+    // descriptor is still present would immediately remount it during plugin
+    // failure cleanup.
     for (const key of [...this.descriptors.keys()]) {
       if (key.startsWith(`${extensionId}:`)) {
         this.descriptors.delete(key);
         this.adapters.delete(key);
       }
+    }
+
+    for (const [key, session] of sessions) {
+      await session.dispose(reason);
+      this.sessions.delete(key);
     }
     this.notify();
   }

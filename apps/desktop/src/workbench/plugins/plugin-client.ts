@@ -173,6 +173,11 @@ export class PluginClient {
     private readonly overlayRegistry?: OverlayRegistry,
   ) {
     this.ui = ui;
+    this.core.subscribe((event) => {
+      if (event.kind === 'plugin-disabled') {
+        void this.handleCorePluginDisabled(event.extensionId, event.reason);
+      }
+    });
   }
 
   private readonly listeners = new Set<() => void>();
@@ -1358,6 +1363,21 @@ export class PluginClient {
         `Expected an accepted response for plugin command ${commandId}, received ${response.kind}`,
         extensionId,
       );
+    }
+  }
+
+  private async handleCorePluginDisabled(
+    extensionId: string,
+    reason: string,
+  ): Promise<void> {
+    try {
+      const projection = await this.queryCoreProjection(extensionId);
+      await this.applyCoreProjection(projection);
+    } catch {
+      const record = this.records.get(extensionId);
+      if (record?.status === 'active') {
+        await this.deactivate(extensionId, reason === 'crash' ? 'crash' : 'user');
+      }
     }
   }
 

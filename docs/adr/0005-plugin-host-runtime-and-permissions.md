@@ -79,7 +79,9 @@ folder for JSON manifests at startup. Discovery is deterministic by filename,
 and each parse or registration failure is returned in a report while valid
 manifests remain registered for lazy activation. Installation, package
 updates, signing and marketplace policy remain outside this local discovery
-seam.
+seam. Relative launch arguments beginning with `./` or `../` resolve from the
+manifest directory, which lets a sidecar package move as one directory without
+embedding an absolute executable path.
 
 ## Alternatives considered
 

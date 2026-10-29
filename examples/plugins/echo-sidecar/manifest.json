@@ -1,0 +1,71 @@
+{
+  "id": "velvet.example.echo",
+  "version": "0.1.0",
+  "hostApi": "^1",
+  "runtime": "sidecar",
+  "launch": {
+    "program": "node",
+    "args": ["./sidecar.mjs"]
+  },
+  "targetApp": { "appId": "asset-manager", "api": "^1" },
+  "contributions": [
+    {
+      "id": "echo.container",
+      "kind": "view-container",
+      "scope": { "kind": "workbench-app", "appId": "asset-manager" },
+      "namespace": "workbench.app.asset-manager",
+      "container": "primary-sidebar",
+      "zone": "navigation",
+      "title": "Echo Tools",
+      "icon": "message-circle",
+      "order": 20,
+      "defaultVisible": true
+    },
+    {
+      "id": "echo.view",
+      "kind": "view",
+      "scope": { "kind": "workbench-app", "appId": "asset-manager" },
+      "namespace": "workbench.app.asset-manager",
+      "container": "primary-sidebar",
+      "zone": "navigation",
+      "title": "Echo Inspector",
+      "icon": "message-circle",
+      "order": 20,
+      "defaultVisible": true,
+      "viewContainerId": "echo.container",
+      "ui": {
+        "kind": "view",
+        "entrypoint": "data:text/html,%3C!doctype%20html%3E%3Cmeta%20charset%3Dutf-8%3E%3Cbody%20style%3D%22font-family%3Asans-serif%3Bpadding%3A1rem%3Bbackground%3A%231b1b1b%3Bcolor%3A%23eee%22%3E%3Ch2%3EEcho%20Inspector%3C%2Fh2%3E%3Cp%3EExternal%20sidecar%20UI%20Bridge%20example.%3C%2Fp%3E%3C%2Fbody%3E",
+        "bridgeVersion": "1"
+      }
+    },
+    {
+      "id": "echo.open",
+      "kind": "command",
+      "scope": { "kind": "workbench" },
+      "namespace": "workbench",
+      "title": "Echo Selection"
+    },
+    {
+      "id": "echo.crash",
+      "kind": "command",
+      "scope": { "kind": "workbench" },
+      "namespace": "workbench",
+      "title": "Crash Echo Runtime"
+    },
+    {
+      "id": "echo.menu",
+      "kind": "context-menu",
+      "scope": { "kind": "workbench" },
+      "namespace": "workbench",
+      "container": "context-menu",
+      "zone": "navigation",
+      "title": "Echo Selection",
+      "label": "Echo Selection",
+      "commandId": "echo.open",
+      "group": "example",
+      "anchor": "asset"
+    }
+  ],
+  "permissionSets": []
+}

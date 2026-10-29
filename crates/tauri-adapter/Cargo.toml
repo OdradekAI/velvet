@@ -9,5 +9,6 @@ velvet-application-core = { path = "../application-core" }
 velvet-workbench-protocol = { path = "../workbench-protocol" }
 
 [dev-dependencies]
+serde_json = "1"
 velvet-plugin-api = { path = "../plugin-api" }
 velvet-layout-model = { path = "../layout-model" }
