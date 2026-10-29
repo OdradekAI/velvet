@@ -112,7 +112,7 @@ await act(async () => {
     open: true,
     plugins: client,
   }));
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 10));
 });
 assert.match(document.body.textContent ?? '', /sample\.reader/);
 assert.match(document.body.textContent ?? '', /active/);
@@ -124,7 +124,9 @@ const setInputValue = Object.getOwnPropertyDescriptor(
   'value',
 ).set;
 setInputValue.call(input, '/tmp/sample-plugin');
-input.dispatchEvent(new browser.Event('input', { bubbles: true }));
+await act(() => {
+  input.dispatchEvent(new browser.Event('input', { bubbles: true }));
+});
 const installButton = [...document.querySelectorAll('button')]
   .find((button) => button.textContent === 'Install and activate');
 assert.ok(installButton);

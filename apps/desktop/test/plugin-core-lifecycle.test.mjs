@@ -294,4 +294,117 @@ assert.deepEqual(
 assert.equal(requests[0].manifest.runtime, 'built-in');
 assert.equal(requests[7].reason, 'user');
 
+const failedInstallRequests = [];
+let failedInstallState = 'registered';
+const duplicateCommand = projection('active').contributions.find(
+  (contribution) => contribution.kind === 'command',
+);
+const failedInstallProjection = {
+  summary: {
+    id: 'sample.failed-install',
+    version: '0.1.0',
+    active: failedInstallState === 'active',
+    state: failedInstallState,
+  },
+  targetApp: { appId: 'asset-manager', api: '1' },
+  contributions: [
+    { ...duplicateCommand, id: 'duplicate-command' },
+    { ...duplicateCommand, id: 'duplicate-command' },
+  ],
+};
+const failedInstallCore = {
+  request: async (request) => {
+    failedInstallRequests.push(request);
+    if (request.kind === 'install-plugin') {
+      failedInstallState = 'registered';
+      return {
+        kind: 'extension',
+        extension: {
+          id: 'sample.failed-install',
+          version: '0.1.0',
+          active: false,
+          state: 'registered',
+        },
+      };
+    }
+    if (request.kind === 'query-plugin-projection') {
+      return {
+        kind: 'plugin-projection',
+        projection: {
+          ...failedInstallProjection,
+          summary: {
+            ...failedInstallProjection.summary,
+            active: failedInstallState === 'active',
+            state: failedInstallState,
+          },
+        },
+      };
+    }
+    if (request.kind === 'activate-plugin') {
+      failedInstallState = 'active';
+      return {
+        kind: 'extension',
+        extension: {
+          id: 'sample.failed-install',
+          version: '0.1.0',
+          active: true,
+          state: 'active',
+        },
+      };
+    }
+    if (request.kind === 'disable-plugin') {
+      failedInstallState = 'disabled';
+      return {
+        kind: 'extension',
+        extension: {
+          id: 'sample.failed-install',
+          version: '0.1.0',
+          active: false,
+          state: 'disabled',
+        },
+      };
+    }
+    throw new Error(`Unexpected failed-install request: ${request.kind}`);
+  },
+  subscribe: () => () => {},
+};
+const failedInstallCommands = new CommandRegistry(new ContextKeyService());
+const failedInstallClient = new PluginClient(
+  failedInstallCore,
+  undefined,
+  new WorkbenchAppRegistry([{
+    id: 'asset-manager',
+    title: 'Resource Manager',
+    activityBarIcon: 'library',
+    apiVersion: '1',
+    surface: { trust: 'trusted', entrypoint: 'builtin://resource-manager' },
+  }]),
+  '1',
+  new PluginUiRegistry(),
+  new ViewRegistry(),
+  failedInstallCommands,
+  new MenuRegistry(failedInstallCommands, new ContextKeyService()),
+  new OverlayRegistry(new ContextKeyService()),
+);
+await assert.rejects(
+  () => failedInstallClient.installInCore('/tmp/failing-plugin'),
+  /Extension activation failed: sample\.failed-install/,
+);
+assert.equal(failedInstallState, 'disabled');
+assert.equal(failedInstallClient.getCoreSummary('sample.failed-install')?.state, 'disabled');
+assert.equal(
+  failedInstallCommands.get('workbench.app.asset-manager', 'duplicate-command'),
+  undefined,
+);
+assert.deepEqual(
+  failedInstallRequests.map((request) => request.kind),
+  [
+    'install-plugin',
+    'query-plugin-projection',
+    'activate-plugin',
+    'query-plugin-projection',
+    'disable-plugin',
+  ],
+);
+
 console.log('Plugin core lifecycle bridge tests passed.');

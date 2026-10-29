@@ -611,21 +611,37 @@ export class PluginClient {
       kind: 'install-plugin',
       sourceDir,
     });
-    await this.syncCoreProjectionState(installed);
-    if (installed.state !== 'registered') {
-      return installed;
-    }
+    const cleanupRequired = installed.state === 'registered' || installed.state === 'active';
 
-    // Installation leaves the package registered so invalid or incompatible
-    // packages never start implicitly. The explicit host UI completes the
-    // first activation after the install response has been projected.
-    const activated = await this.requestCoreExtension({
-      protocolVersion: PROTOCOL_VERSION,
-      kind: 'activate-plugin',
-      extensionId: installed.id,
-    });
-    await this.syncCoreProjectionState(activated);
-    return activated;
+    try {
+      await this.syncCoreProjectionState(installed);
+      if (installed.state !== 'registered') {
+        return installed;
+      }
+
+      // Installation leaves the package registered so invalid or incompatible
+      // packages never start implicitly. The explicit host UI completes the
+      // first activation after the install response has been projected.
+      const activated = await this.requestCoreExtension({
+        protocolVersion: PROTOCOL_VERSION,
+        kind: 'activate-plugin',
+        extensionId: installed.id,
+      });
+      await this.syncCoreProjectionState(activated);
+      return activated;
+    } catch (cause) {
+      if (cleanupRequired) {
+        // Rust may have already started the runtime when the browser-side
+        // projection fails. Best-effort disable keeps the host registries and
+        // the sidecar lifecycle aligned without masking the original error.
+        try {
+          await this.disableInCore(installed.id, 'incompatible');
+        } catch {
+          // Preserve the projection or activation error for the caller.
+        }
+      }
+      throw cause;
+    }
   }
 
   public listVisible(activeAppId?: WorkbenchAppId): readonly ContributionDescriptor[] {
