@@ -37,6 +37,10 @@ The native Tauri composition now injects a JSON layout store at
 core restores the persisted revisioned snapshot. Missing files start from the
 default layout; malformed files are rejected by the storage adapter and the
 core starts from its safe default until a later layout write replaces them.
+Runtime layout command failures now stay inside the mounted Workbench as an
+announced, dismissible error; the renderer refreshes from the Rust snapshot
+after a failed mutation instead of replacing the whole shell with a startup
+failure page.
 
 The current shell slice also renders the accepted Part constraint table: fixed
 Parts use stable dimensions, resizable Parts enforce bounded sizes in Rust, and
