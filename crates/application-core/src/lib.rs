@@ -14,8 +14,8 @@ use velvet_plugin_host::{
     ManifestLoadReport, PluginError, PluginHost, PluginRuntime,
 };
 use velvet_preview_core::{
-    GenericFallbackProvider, PreviewCandidate, PreviewContext, PreviewRenderer, PreviewRequest,
-    PreviewResolver, PreviewSession, PreviewSessionDescriptor,
+    GenericFallbackProvider, PreviewAssetSource, PreviewCandidate, PreviewContext, PreviewProvider,
+    PreviewRenderer, PreviewRequest, PreviewResolver, PreviewSession, PreviewSessionDescriptor,
 };
 use velvet_workbench_protocol::{
     Command, CoreError, CoreTransport, PluginDisableReason, PluginInstallPreviewDto,
@@ -137,6 +137,20 @@ impl ApplicationCore {
 
     pub fn register_plugin(&mut self, manifest: ExtensionManifest) -> Result<(), PluginError> {
         self.plugins.register(manifest)
+    }
+
+    /// Installs the host-owned, read-only source adapter used by built-in
+    /// preview providers. External providers never receive this object; they
+    /// use the bounded runtime invocation context instead.
+    pub fn set_preview_asset_source(&mut self, source: Arc<dyn PreviewAssetSource>) {
+        self.previews.set_asset_source(source);
+    }
+
+    /// Registers a trusted built-in provider through the preview-core seam.
+    /// Product composition owns which providers are available; the resolver
+    /// still owns matching, priority and fallback semantics.
+    pub fn register_preview_provider(&mut self, provider: Arc<dyn PreviewProvider>) {
+        self.previews.register(provider);
     }
 
     pub fn activate_plugin(&mut self, id: &ExtensionId) -> Result<(), PluginError> {

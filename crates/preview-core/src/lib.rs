@@ -25,6 +25,72 @@ pub struct PreviewContext {
     pub surface: PreviewSurface,
 }
 
+pub const DEFAULT_PREVIEW_READ_LIMIT: usize = 512 * 1024;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PreviewReadRequest {
+    max_bytes: usize,
+}
+
+impl Default for PreviewReadRequest {
+    fn default() -> Self {
+        Self::new(DEFAULT_PREVIEW_READ_LIMIT)
+    }
+}
+
+impl PreviewReadRequest {
+    pub fn new(max_bytes: usize) -> Self {
+        Self {
+            max_bytes: max_bytes.clamp(1, DEFAULT_PREVIEW_READ_LIMIT),
+        }
+    }
+
+    pub fn max_bytes(&self) -> usize {
+        self.max_bytes
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PreviewAssetContent {
+    Text { text: String, truncated: bool },
+    Bytes { bytes: Vec<u8>, truncated: bool },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PreviewSourceError {
+    Unavailable,
+    NotFound,
+    PermissionDenied,
+    InvalidRequest(String),
+    Failed(String),
+}
+
+/// Host-owned, bounded read seam for built-in preview providers.
+///
+/// Implementations may read from persistence, a connected source or a cache,
+/// but providers receive content only through this typed result. Paths,
+/// database handles and source credentials never cross the preview boundary.
+pub trait PreviewAssetSource: Send + Sync {
+    fn read(
+        &self,
+        context: &PreviewContext,
+        request: PreviewReadRequest,
+    ) -> Result<PreviewAssetContent, PreviewSourceError>;
+}
+
+#[derive(Default)]
+struct UnavailablePreviewAssetSource;
+
+impl PreviewAssetSource for UnavailablePreviewAssetSource {
+    fn read(
+        &self,
+        _context: &PreviewContext,
+        _request: PreviewReadRequest,
+    ) -> Result<PreviewAssetContent, PreviewSourceError> {
+        Err(PreviewSourceError::Unavailable)
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum PreviewRenderer {
@@ -105,7 +171,11 @@ pub enum PreviewError {
 
 pub trait PreviewProvider: Send + Sync {
     fn candidate(&self) -> PreviewCandidate;
-    fn open(&self, context: PreviewContext) -> Result<PreviewSession, PreviewError>;
+    fn open(
+        &self,
+        context: PreviewContext,
+        source: &dyn PreviewAssetSource,
+    ) -> Result<PreviewSession, PreviewError>;
 }
 
 #[derive(Default)]
@@ -122,7 +192,11 @@ impl PreviewProvider for GenericFallbackProvider {
         }
     }
 
-    fn open(&self, context: PreviewContext) -> Result<PreviewSession, PreviewError> {
+    fn open(
+        &self,
+        context: PreviewContext,
+        _source: &dyn PreviewAssetSource,
+    ) -> Result<PreviewSession, PreviewError> {
         Ok(PreviewSession {
             provider_id: "builtin.generic-fallback".into(),
             context,
@@ -136,14 +210,27 @@ impl PreviewProvider for GenericFallbackProvider {
     }
 }
 
-#[derive(Default)]
 pub struct PreviewResolver {
     providers: Vec<Arc<dyn PreviewProvider>>,
+    source: Arc<dyn PreviewAssetSource>,
+}
+
+impl Default for PreviewResolver {
+    fn default() -> Self {
+        Self {
+            providers: Vec::new(),
+            source: Arc::new(UnavailablePreviewAssetSource),
+        }
+    }
 }
 
 impl PreviewResolver {
     pub fn register(&mut self, provider: Arc<dyn PreviewProvider>) {
         self.providers.push(provider);
+    }
+
+    pub fn set_asset_source(&mut self, source: Arc<dyn PreviewAssetSource>) {
+        self.source = source;
     }
 
     pub fn resolve(&self, request: PreviewRequest) -> Result<ResolvedPreview, PreviewError> {
@@ -173,7 +260,7 @@ impl PreviewResolver {
 
         let mut first_error = None;
         for (candidate, provider) in candidates {
-            match provider.open(request.context.clone()) {
+            match provider.open(request.context.clone(), self.source.as_ref()) {
                 Ok(session) => {
                     return Ok(ResolvedPreview {
                         candidate,
@@ -212,7 +299,11 @@ mod tests {
             }
         }
 
-        fn open(&self, context: PreviewContext) -> Result<PreviewSession, PreviewError> {
+        fn open(
+            &self,
+            context: PreviewContext,
+            _source: &dyn PreviewAssetSource,
+        ) -> Result<PreviewSession, PreviewError> {
             Ok(PreviewSession {
                 provider_id: "image.provider".into(),
                 context,
@@ -239,10 +330,75 @@ mod tests {
             }
         }
 
-        fn open(&self, _context: PreviewContext) -> Result<PreviewSession, PreviewError> {
+        fn open(
+            &self,
+            _context: PreviewContext,
+            _source: &dyn PreviewAssetSource,
+        ) -> Result<PreviewSession, PreviewError> {
             Err(PreviewError::ProviderFailed {
                 provider_id: "broken.image".into(),
                 message: "decoder failed".into(),
+            })
+        }
+    }
+
+    struct MemoryTextSource;
+
+    impl PreviewAssetSource for MemoryTextSource {
+        fn read(
+            &self,
+            _context: &PreviewContext,
+            request: PreviewReadRequest,
+        ) -> Result<PreviewAssetContent, PreviewSourceError> {
+            assert_eq!(request.max_bytes(), 64);
+            Ok(PreviewAssetContent::Text {
+                text: "hello preview".into(),
+                truncated: false,
+            })
+        }
+    }
+
+    struct SourceBackedProvider;
+
+    impl PreviewProvider for SourceBackedProvider {
+        fn candidate(&self) -> PreviewCandidate {
+            PreviewCandidate {
+                provider_id: "builtin.text".into(),
+                content_kinds: vec![ContentKindId("text/plain".into())],
+                intents: vec![PreviewIntent::Quick],
+                surfaces: vec![PreviewSurface::Workspace],
+                priority: 10,
+            }
+        }
+
+        fn open(
+            &self,
+            context: PreviewContext,
+            source: &dyn PreviewAssetSource,
+        ) -> Result<PreviewSession, PreviewError> {
+            let content = source
+                .read(&context, PreviewReadRequest::new(64))
+                .map_err(|error| PreviewError::ProviderFailed {
+                    provider_id: "builtin.text".into(),
+                    message: format!("source read failed: {error:?}"),
+                })?;
+            let PreviewAssetContent::Text { text, truncated } = content else {
+                return Err(PreviewError::ProviderFailed {
+                    provider_id: "builtin.text".into(),
+                    message: "text provider received non-text content".into(),
+                });
+            };
+            assert_eq!(text, "hello preview");
+            assert!(!truncated);
+            Ok(PreviewSession {
+                provider_id: "builtin.text".into(),
+                context,
+                descriptor: PreviewSessionDescriptor {
+                    session_id: "builtin.text:asset-1".into(),
+                    renderer: PreviewRenderer::Generic,
+                    commands: Vec::new(),
+                    slots: Vec::new(),
+                },
             })
         }
     }
@@ -256,6 +412,25 @@ mod tests {
                 surface: PreviewSurface::Workspace,
             },
         }
+    }
+
+    #[test]
+    fn resolver_passes_bounded_content_through_the_host_source_seam() {
+        let mut resolver = PreviewResolver::default();
+        resolver.set_asset_source(Arc::new(MemoryTextSource));
+        resolver.register(Arc::new(SourceBackedProvider));
+
+        let resolved = resolver
+            .resolve(PreviewRequest {
+                context: PreviewContext {
+                    asset_id: AssetId("asset-1".into()),
+                    content_kind: ContentKindId("text/plain".into()),
+                    intent: PreviewIntent::Quick,
+                    surface: PreviewSurface::Workspace,
+                },
+            })
+            .expect("source-backed provider should resolve");
+        assert_eq!(resolved.candidate.provider_id, "builtin.text");
     }
 
     #[test]

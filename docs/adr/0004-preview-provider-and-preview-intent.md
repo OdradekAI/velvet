@@ -80,6 +80,12 @@ selection and creates a transient UI Bridge session; `PreviewRendererHost`
 owns the DOM container, size/context/theme projection and disposal. The
 transient session never enters the static View/Dialog/AppSurface registry.
 
+Built-in providers receive content through a host-owned `PreviewAssetSource`
+seam. Reads are bounded by `PreviewReadRequest`, return typed text/bytes
+content or a typed source error, and never expose filesystem paths, database
+handles or source credentials. External providers do not receive the source
+object; their runtime context remains capability-scoped and failure-isolated.
+
 `PreviewResolver` selects one Primary provider from Asset, ContentKind, intent,
 surface and Workspace/Profile context. The deterministic order is explicit
 user choice, Profile/Workspace default, selector match, provider priority,

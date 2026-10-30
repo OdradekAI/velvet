@@ -540,6 +540,11 @@ host-owned overlay. Renderer factories are injectable and disposable, so a
 future built-in image/model renderer can be added without changing
 `PreviewHost`, plugin lifecycle or the static UI contribution registry.
 
+The Rust preview core now also defines the `PreviewAssetSource` seam for
+built-in providers. It clamps read requests to a host limit and returns typed
+text/bytes content or a typed source error. The application core installs the
+adapter, while preview providers receive no path or persistence handle.
+
 ### Optional text-language capability
 
 Language is not a P0 Workbench service. A future text-oriented application may
