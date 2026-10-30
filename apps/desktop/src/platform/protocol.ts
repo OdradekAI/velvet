@@ -330,6 +330,25 @@ export interface CoreJobSnapshot {
   readonly retryable: boolean;
   readonly durationMs: number;
   readonly willFail: boolean;
+  readonly provenance: CoreJobProvenance;
+  readonly result: CoreJobResult | null;
+}
+
+export interface CoreJobProvenance {
+  readonly ownerId: string;
+  readonly assetId: string | null;
+  readonly contentKind: string | null;
+  readonly inputFingerprint: string | null;
+  readonly providerId: string | null;
+  readonly providerVersion: string | null;
+  readonly settingsFingerprint: string | null;
+  readonly schemaVersion: number;
+}
+
+export interface CoreJobResult {
+  readonly schemaVersion: number;
+  readonly contentType: string;
+  readonly payload: unknown;
 }
 
 export type PluginState = 'registered' | 'starting' | 'active' | 'disabled' | 'failed';

@@ -43,6 +43,17 @@ const client = {
       retryable: true,
       durationMs: 2400,
       willFail,
+      provenance: {
+        ownerId: 'core',
+        assetId: null,
+        contentKind: null,
+        inputFingerprint: null,
+        providerId: null,
+        providerVersion: null,
+        settingsFingerprint: null,
+        schemaVersion: 1,
+      },
+      result: null,
     };
     jobs = [...jobs, job];
     notify();

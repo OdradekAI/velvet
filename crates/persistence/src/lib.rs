@@ -179,6 +179,12 @@ mod tests {
             retryable: true,
             duration_ms: 1_000,
             will_fail: false,
+            provenance: velvet_job_system::JobProvenance::for_owner("test"),
+            result: Some(velvet_job_system::JobResult {
+                schema_version: 1,
+                content_type: "application/json".into(),
+                payload: serde_json::json!({ "ok": true }),
+            }),
         }];
 
         store.save(&jobs).expect("jobs should be written");

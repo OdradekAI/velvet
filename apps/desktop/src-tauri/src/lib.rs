@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 use tauri_plugin_global_shortcut::{Builder as ShortcutBuilder, ShortcutState};
 use velvet_application_core::ApplicationCore;
-use velvet_job_system::{JobId, JobSnapshot, JobStatus};
+use velvet_job_system::{JobId, JobProvenance, JobResult, JobSnapshot, JobStatus};
 use velvet_layout_model::{
     LayoutCommand, LayoutState, ViewContainerState, ViewState, WorkbenchAppId, WorkbenchPart,
 };
@@ -1146,7 +1146,7 @@ impl From<Event> for WireEventEnvelope {
                 reason,
             },
             Event::JobChanged { snapshot } => WireEvent::JobChanged {
-                snapshot: WireJobSnapshot::from(snapshot),
+                snapshot: WireJobSnapshot::from(*snapshot),
             },
         };
         Self {
@@ -1168,6 +1168,54 @@ struct WireJobSnapshot {
     retryable: bool,
     duration_ms: u64,
     will_fail: bool,
+    provenance: WireJobProvenance,
+    result: Option<WireJobResult>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WireJobProvenance {
+    owner_id: String,
+    asset_id: Option<String>,
+    content_kind: Option<String>,
+    input_fingerprint: Option<String>,
+    provider_id: Option<String>,
+    provider_version: Option<String>,
+    settings_fingerprint: Option<String>,
+    schema_version: u16,
+}
+
+impl From<JobProvenance> for WireJobProvenance {
+    fn from(value: JobProvenance) -> Self {
+        Self {
+            owner_id: value.owner_id,
+            asset_id: value.asset_id,
+            content_kind: value.content_kind,
+            input_fingerprint: value.input_fingerprint,
+            provider_id: value.provider_id,
+            provider_version: value.provider_version,
+            settings_fingerprint: value.settings_fingerprint,
+            schema_version: value.schema_version,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WireJobResult {
+    schema_version: u16,
+    content_type: String,
+    payload: serde_json::Value,
+}
+
+impl From<JobResult> for WireJobResult {
+    fn from(value: JobResult) -> Self {
+        Self {
+            schema_version: value.schema_version,
+            content_type: value.content_type,
+            payload: value.payload,
+        }
+    }
 }
 
 impl From<JobSnapshot> for WireJobSnapshot {
@@ -1190,6 +1238,8 @@ impl From<JobSnapshot> for WireJobSnapshot {
             retryable: value.retryable,
             duration_ms: value.duration_ms,
             will_fail: value.will_fail,
+            provenance: value.provenance.into(),
+            result: value.result.map(Into::into),
         }
     }
 }
@@ -2284,11 +2334,52 @@ mod tests {
                 retryable: true,
                 duration_ms: 2400,
                 will_fail: true,
+                provenance: velvet_job_system::JobProvenance::for_owner("test"),
+                result: None,
             }),
         });
         let value = serde_json::to_value(response).expect("job response should serialize");
         assert_eq!(value["response"]["kind"], "job");
         assert_eq!(value["response"]["job"]["status"], "failed");
         assert_eq!(value["response"]["job"]["attempt"], 2);
+        assert_eq!(value["response"]["job"]["provenance"]["ownerId"], "test");
+        assert!(value["response"]["job"]["result"].is_null());
+
+        let completed = WireResponseEnvelope::from_core(
+            velvet_workbench_protocol::ResponseEnvelope {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: RequestId(15),
+                response: Response::Job(JobSnapshot {
+                    id: JobId("job-000002".into()),
+                    kind: "metadata".into(),
+                    status: JobStatus::Completed,
+                    progress: 100,
+                    message: Some("Completed".into()),
+                    attempt: 1,
+                    retryable: false,
+                    duration_ms: 200,
+                    will_fail: false,
+                    provenance: velvet_job_system::JobProvenance {
+                        owner_id: "sample.extension".into(),
+                        asset_id: Some("asset-1".into()),
+                        content_kind: Some("image".into()),
+                        input_fingerprint: Some("sha256:input".into()),
+                        provider_id: Some("sample.preview".into()),
+                        provider_version: Some("1.2.0".into()),
+                        settings_fingerprint: Some("settings:v1".into()),
+                        schema_version: 1,
+                    },
+                    result: Some(JobResult {
+                        schema_version: 1,
+                        content_type: "application/json".into(),
+                        payload: serde_json::json!({ "assetId": "asset-1" }),
+                    }),
+                }),
+            },
+        );
+        let completed = serde_json::to_value(completed).expect("completed job should serialize");
+        assert_eq!(completed["response"]["job"]["provenance"]["providerId"], "sample.preview");
+        assert_eq!(completed["response"]["job"]["result"]["contentType"], "application/json");
+        assert_eq!(completed["response"]["job"]["result"]["payload"]["assetId"], "asset-1");
     }
 }

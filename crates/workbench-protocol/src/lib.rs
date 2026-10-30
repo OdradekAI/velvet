@@ -275,7 +275,7 @@ pub enum Event {
         reason: String,
     },
     JobChanged {
-        snapshot: JobSnapshot,
+        snapshot: Box<JobSnapshot>,
     },
 }
 

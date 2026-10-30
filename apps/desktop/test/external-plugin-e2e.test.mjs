@@ -218,6 +218,17 @@ const core = {
             retryable: true,
             durationMs: response.result.durationMs,
             willFail: false,
+            provenance: {
+              ownerId: request.extensionId,
+              assetId: request.context.assetId,
+              contentKind: request.context.contentKind,
+              inputFingerprint: null,
+              providerId: request.context.providerId,
+              providerVersion: null,
+              settingsFingerprint: null,
+              schemaVersion: 1,
+            },
+            result: null,
           },
         };
       }

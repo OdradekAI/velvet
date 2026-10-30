@@ -31,14 +31,32 @@ record. On restart, queued or running work becomes an explicit retryable
 interrupted state, while derived results remain invalidatable and
 recomputable independently of the extension that produced them.
 
+The execution seam is a Rust `JobRunner` registry keyed by owner and declared
+Job kind. Runner registrations are removed when their owner is disabled,
+crashes or uninstalls. A runner receives an opaque `JobExecutionContext` with the Job id,
+attempt, provenance, progress reporter and cooperative cancellation handle; it
+returns a typed content type and JSON payload or a typed failure. The
+`JobSystem` supplies a deterministic runner as a safe fallback for unregistered
+development jobs, catches runner panics, and rejects stale progress/completion
+from an older attempt after cancellation and retry.
+
+`JobProvenance` is part of the persisted Job snapshot and includes the owner,
+optional Asset/content identity, input fingerprint, provider id/version,
+settings fingerprint and provenance schema version. A successful runner stores
+one `JobResult` with its own schema version, content type and payload beside
+the snapshot. Tauri and the desktop receive this as a read-only projection;
+they never write results or provenance.
+
 ## Consequences
 
 The v0.0.3 host slice implements the shared lifecycle seam: JobSystem owns
 snapshots and transitions, the persistence adapter writes them under the
 application data directory, and projections travel through CoreTransport.
-Queued/running work maps to retryable `Interrupted` state after a restart. The current sample worker exists to prove the boundary;
-thumbnail, indexing, feed-sync and facet-specific providers remain future
-consumers of the same contract.
+Queued/running work maps to retryable `Interrupted` state after a restart. The
+current slice now also proves runner registration, cooperative cancellation,
+panic isolation, persisted result payloads and provenance projection. Product
+thumbnail, indexing, feed-sync and facet-specific runners remain consumers of
+the same contract.
 
 Positive:
 

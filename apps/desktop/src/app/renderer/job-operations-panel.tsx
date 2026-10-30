@@ -137,6 +137,21 @@ export function JobOperationsPanel({ jobs }: JobOperationsPanelProps) {
               </div>
               <progress max={100} value={job.progress} />
               {job.message ? <p>{job.message}</p> : null}
+              <div data-job-provenance>
+                <span data-job-owner>Owner: {job.provenance.ownerId}</span>
+                {job.provenance.assetId ? (
+                  <span data-job-asset>Asset: {job.provenance.assetId}</span>
+                ) : null}
+                {job.provenance.providerId ? (
+                  <span data-job-provider>Provider: {job.provenance.providerId}</span>
+                ) : null}
+              </div>
+              {job.result ? (
+                <details data-job-result>
+                  <summary>Result · {job.result.contentType}</summary>
+                  <pre>{JSON.stringify(job.result.payload, null, 2)}</pre>
+                </details>
+              ) : null}
             </article>
           ))}
         </div>

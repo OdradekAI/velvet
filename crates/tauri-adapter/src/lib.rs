@@ -84,7 +84,9 @@ impl CoreTransport for TauriTransport {
         };
 
         for snapshot in self.inner.drain_job_events() {
-            self.event_sink.emit(Event::JobChanged { snapshot });
+            self.event_sink.emit(Event::JobChanged {
+                snapshot: Box::new(snapshot),
+            });
         }
 
         if emits_layout_event {

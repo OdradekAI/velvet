@@ -8,7 +8,9 @@ pub use preview_source::{
 };
 
 use velvet_asset_core::ContentKindId;
-use velvet_job_system::{JobError, JobId, JobSpec, JobStateStore, JobSystem};
+use velvet_job_system::{
+    JobError, JobId, JobProvenance, JobSpec, JobStateStore, JobSystem, JOB_SCHEMA_VERSION,
+};
 use velvet_layout_model::{InMemoryLayoutService, LayoutService};
 use velvet_persistence::{InMemoryLayoutStateStore, LayoutStateStore};
 use velvet_plugin_api::{
@@ -190,16 +192,14 @@ impl ApplicationCore {
         reason: DisableReason,
     ) -> Result<(), PluginError> {
         let result = self.plugins.disable(id, reason);
-        if result.is_ok() {
-            self.forget_preview_actions(id);
-        }
+        self.clear_plugin_runtime_state(id);
         result
     }
 
     pub fn check_plugin_health(&mut self, id: &ExtensionId) -> Result<ExtensionState, PluginError> {
         let result = self.plugins.check_health(id);
         if result.is_err() {
-            self.forget_preview_actions(id);
+            self.clear_plugin_runtime_state(id);
         }
         result
     }
@@ -342,11 +342,48 @@ impl ApplicationCore {
         duration_ms: u64,
         will_fail: bool,
     ) -> Result<velvet_job_system::JobSnapshot, JobError> {
+        self.create_job_with_provenance(
+            kind,
+            duration_ms,
+            will_fail,
+            JobProvenance::for_owner("core"),
+        )
+    }
+
+    pub fn create_job_with_provenance(
+        &self,
+        kind: String,
+        duration_ms: u64,
+        will_fail: bool,
+        provenance: JobProvenance,
+    ) -> Result<velvet_job_system::JobSnapshot, JobError> {
         self.jobs.submit(JobSpec {
             kind,
             duration_ms,
             will_fail,
+            provenance,
         })
+    }
+
+    pub fn register_job_runner(
+        &self,
+        kind: impl Into<String>,
+        runner: Arc<dyn velvet_job_system::JobRunner>,
+    ) -> Result<(), JobError> {
+        self.jobs.register_runner("core", kind, runner)
+    }
+
+    pub fn register_owned_job_runner(
+        &self,
+        owner_id: impl Into<String>,
+        kind: impl Into<String>,
+        runner: Arc<dyn velvet_job_system::JobRunner>,
+    ) -> Result<(), JobError> {
+        self.jobs.register_runner(owner_id, kind, runner)
+    }
+
+    pub fn unregister_owned_job_runners(&self, owner_id: &str) -> Result<usize, JobError> {
+        self.jobs.unregister_runners(owner_id)
     }
 
     pub fn invoke_preview_action(
@@ -373,6 +410,7 @@ impl ApplicationCore {
                 "preview action is not declared by the active preview session".into(),
             ));
         }
+        let job_provenance = self.preview_job_provenance(&extension_id, &context);
         let result =
             match self
                 .plugins
@@ -387,7 +425,7 @@ impl ApplicationCore {
                         .find(|summary| summary.id == extension_id)
                         .is_some_and(|summary| summary.state == ExtensionState::Failed);
                     if plugin_failed {
-                        self.forget_preview_actions(&extension_id);
+                        self.clear_plugin_runtime_state(&extension_id);
                         return Err(plugin_error(error));
                     }
                     return Err(CoreError::Plugin(format!(
@@ -440,10 +478,32 @@ impl ApplicationCore {
                         extension_id.0
                     )));
                 }
-                self.create_job(job_kind, duration_ms, false)
+                self.create_job_with_provenance(job_kind, duration_ms, false, job_provenance)
                     .map(Response::Job)
                     .map_err(job_error)
             }
+        }
+    }
+
+    fn preview_job_provenance(
+        &self,
+        extension_id: &ExtensionId,
+        context: &PreviewActionContext,
+    ) -> JobProvenance {
+        JobProvenance {
+            owner_id: extension_id.0.clone(),
+            asset_id: Some(context.asset_id.clone()),
+            content_kind: Some(context.content_kind.clone()),
+            input_fingerprint: None,
+            provider_id: Some(context.provider_id.clone()),
+            provider_version: self
+                .plugins
+                .discover()
+                .into_iter()
+                .find(|summary| summary.id == *extension_id)
+                .map(|summary| summary.version),
+            settings_fingerprint: None,
+            schema_version: JOB_SCHEMA_VERSION,
         }
     }
 
@@ -479,6 +539,11 @@ impl ApplicationCore {
             .retain(|_, authorization| &authorization.extension_id != extension_id);
     }
 
+    fn clear_plugin_runtime_state(&mut self, extension_id: &ExtensionId) {
+        self.forget_preview_actions(extension_id);
+        let _ = self.jobs.unregister_runners(&extension_id.0);
+    }
+
     fn release_preview_session(&mut self, session_id: &str) -> Response {
         self.preview_actions.remove(session_id);
         Response::Accepted
@@ -508,9 +573,7 @@ impl ApplicationCore {
             ));
         };
         let result = self.plugins.uninstall_from_directory(id, plugin_directory);
-        if result.is_ok() {
-            self.forget_preview_actions(id);
-        }
+        self.clear_plugin_runtime_state(id);
         result
     }
 
@@ -1550,6 +1613,13 @@ mod tests {
             Response::Job(job) => {
                 assert_eq!(job.kind, "preview.metadata-analysis");
                 assert_eq!(job.status, velvet_job_system::JobStatus::Queued);
+                assert_eq!(job.provenance.owner_id, "preview.example");
+                assert_eq!(job.provenance.asset_id.as_deref(), Some("asset-1"));
+                assert_eq!(
+                    job.provenance.provider_id.as_deref(),
+                    Some("preview.example.preview.metadata")
+                );
+                assert_eq!(job.provenance.provider_version.as_deref(), Some("0.1.0"));
             }
             other => panic!("expected job response, got {other:?}"),
         }
@@ -2252,6 +2322,8 @@ mod tests {
                 retryable: true,
                 duration_ms: 30_000,
                 will_fail: false,
+                provenance: velvet_job_system::JobProvenance::for_owner("test"),
+                result: None,
             }])
             .expect("the fixture job should persist");
 
