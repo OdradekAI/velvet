@@ -226,7 +226,7 @@ export type CoreRequest =
 
 export type CoreResponse =
   | { readonly kind: 'layout'; readonly state: LayoutSnapshot }
-  | { readonly kind: 'preview'; readonly preview: unknown }
+  | { readonly kind: 'preview'; readonly preview: CoreResolvedPreview }
   | { readonly kind: 'extensions'; readonly extensions: readonly CorePluginSummary[] }
   | { readonly kind: 'extension'; readonly extension: CorePluginSummary }
   | { readonly kind: 'plugin-install-preview'; readonly preview: CorePluginInstallPreview }
@@ -242,6 +242,31 @@ export type CoreResponse =
   | { readonly kind: 'job'; readonly job: CoreJobSnapshot }
   | { readonly kind: 'jobs'; readonly jobs: readonly CoreJobSnapshot[] }
   | { readonly kind: 'accepted' };
+
+export interface CorePreviewCandidate {
+  readonly providerId: string;
+  readonly contentKinds: readonly string[];
+  readonly intents: readonly ('quick' | 'inspect' | 'analyze')[];
+  readonly surfaces: readonly ('workspace' | 'thumbnail' | 'inspector')[];
+  readonly priority: number;
+}
+
+export interface CorePreviewContext {
+  readonly assetId: string;
+  readonly contentKind: string;
+  readonly intent: 'quick' | 'inspect' | 'analyze';
+  readonly surface: 'workspace' | 'thumbnail' | 'inspector';
+}
+
+export interface CorePreviewSession {
+  readonly providerId: string;
+  readonly context: CorePreviewContext;
+}
+
+export interface CoreResolvedPreview {
+  readonly candidate: CorePreviewCandidate;
+  readonly session: CorePreviewSession;
+}
 
 export type CoreJobStatus =
   | 'queued'
@@ -272,6 +297,41 @@ export interface PluginSummary {
   readonly state: PluginState;
 }
 
+export type CorePluginExtensionKind = 'ui' | 'workspace' | 'capability';
+export type CorePluginActivationEvent =
+  | { readonly kind: 'onWorkbenchReady' }
+  | { readonly kind: 'onApp'; readonly appId: string }
+  | { readonly kind: 'onView'; readonly contributionId: string }
+  | { readonly kind: 'onCommand'; readonly contributionId: string }
+  | { readonly kind: 'onPreview'; readonly selector: string }
+  | { readonly kind: 'onJob'; readonly jobKind: string };
+
+export interface CorePluginSupport {
+  readonly trustedWorkspace: boolean;
+  readonly virtualWorkspace: boolean;
+  readonly profiles: boolean;
+}
+
+export interface CorePluginLocalization {
+  readonly defaultLocale: string;
+  readonly supportedLocales: readonly string[];
+  readonly resourceRoot: string;
+  readonly bundleSchema: number;
+}
+
+export interface CorePluginWorkbenchApp {
+  readonly id: string;
+  readonly api: string;
+  readonly title: string;
+  readonly activityBarIcon: string;
+  readonly activityBarOrder: number | null;
+  readonly surface: {
+    readonly kind: CorePluginUiSurfaceKind;
+    readonly entrypoint: string;
+    readonly bridgeVersion: string;
+  };
+}
+
 export type CorePluginRuntime = 'built-in' | 'wasm' | 'sidecar';
 export type CorePluginDisableReason = 'user' | 'crash' | 'incompatible';
 export type CorePluginPermission =
@@ -288,6 +348,7 @@ export type CorePluginPermission =
   | 'external-process'
   | 'network';
 export type CorePluginContributionKind =
+  | 'app-surface'
   | 'activity-bar-entry'
   | 'companion-view'
   | 'operation-view'
@@ -295,6 +356,10 @@ export type CorePluginContributionKind =
   | 'view'
   | 'dialog'
   | 'context-menu'
+  | 'menu'
+  | 'keybinding'
+  | 'popover'
+  | 'notification'
   | 'preview-provider'
   | 'preview-augmentation'
   | 'inspector'
@@ -360,19 +425,38 @@ export interface CorePluginContribution {
   } | null;
 }
 
+export type CorePluginManifestContribution = Omit<
+  CorePluginContribution,
+  'namespace'
+> & {
+  readonly namespace?: string | null;
+};
+
 export interface CorePluginPermissionSet {
   readonly zone: Zone;
   readonly permissions: readonly CorePluginPermission[];
 }
 
 export interface CorePluginManifest {
+  readonly [key: `x-${string}`]: unknown;
+  readonly manifestSchema: number;
   readonly id: string;
   readonly version: string;
   readonly hostApi: string;
+  readonly bridgeApi: string;
+  readonly runtimeProtocol: string;
   readonly runtime: CorePluginRuntime;
+  readonly extensionKind: readonly CorePluginExtensionKind[];
   readonly launch: { readonly program: string; readonly args: readonly string[] } | null;
+  readonly activationEvents: readonly CorePluginActivationEvent[];
+  readonly extensionDependencies: readonly string[];
   readonly targetApp: { readonly appId: string; readonly api: string } | null;
-  readonly contributions: readonly CorePluginContribution[];
+  readonly support: CorePluginSupport;
+  readonly requiredCapabilities: readonly string[];
+  readonly optionalCapabilities: readonly string[];
+  readonly localization: CorePluginLocalization | null;
+  readonly workbenchApp: CorePluginWorkbenchApp | null;
+  readonly contributions: readonly CorePluginManifestContribution[];
   readonly permissionSets: readonly CorePluginPermissionSet[];
 }
 
@@ -422,8 +506,7 @@ export interface CorePluginInstallRecoveryLogEntry {
 
 export interface CorePluginProjection {
   readonly summary: CorePluginSummary;
-  readonly targetApp: { readonly appId: string; readonly api: string } | null;
-  readonly contributions: readonly CorePluginContribution[];
+  readonly manifest: CorePluginManifest;
 }
 
 export interface CoreError {

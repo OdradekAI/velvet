@@ -322,6 +322,18 @@ const appRegistry = new WorkbenchAppRegistry([{
   activityBarIcon: 'library',
   surface: { trust: 'trusted', entrypoint: 'builtin://asset-manager' },
 }]);
+let trustedAppMounts = 0;
+let trustedAppDisposals = 0;
+appRegistry.bindSurfaceFactory('asset-manager', () => ({
+  mount: () => {
+    trustedAppMounts += 1;
+  },
+  activate: () => undefined,
+  deactivate: () => undefined,
+  dispose: () => {
+    trustedAppDisposals += 1;
+  },
+}));
 const appUi = new PluginUiRegistry();
 const appPlugins = new PluginClient(
   { request: async () => ({ kind: 'accepted' }), subscribe: () => () => {} },
@@ -455,7 +467,9 @@ await failingAppPlugins.deactivate(failingAppManifest.id);
 
 await act(() => renderAppSurface('asset-manager'));
 await settle();
-assert.equal(appRootElement.querySelector('.fallback-surface')?.textContent, 'Fallback');
+assert.equal(appRootElement.querySelector('[data-trusted-app-surface="asset-manager"]') !== null, true);
+assert.equal(appRootElement.querySelector('[data-surface-state="active"]') !== null, true);
+assert.equal(trustedAppMounts, 1);
 assert.equal(
   appRegistry.getSurfaceState('sample.app-extension.research'),
   'suspended',
@@ -468,6 +482,7 @@ assert.equal(
   appRegistry.getSurfaceState('sample.app-extension.research'),
   'active',
 );
+assert.equal(trustedAppDisposals, 0);
 
 await act(async () => {
   await appPlugins.deactivate(appManifest.id);

@@ -3841,6 +3841,7 @@ name = "velvet-plugin-api"
 version = "0.0.3"
 dependencies = [
  "serde",
+ "serde_json",
  "velvet-layout-model",
 ]
 
@@ -3873,6 +3874,7 @@ dependencies = [
 name = "velvet-workbench-protocol"
 version = "0.0.3"
 dependencies = [
+ "serde",
  "serde_json",
  "velvet-asset-core",
  "velvet-job-system",

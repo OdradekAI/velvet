@@ -23,6 +23,14 @@ content fingerprint
 
 When an input, provider or setting changes, the cache becomes stale and the job is rescheduled. The workbench observes jobs through events and renders them in `OperationsPanel`.
 
+The JobSystem is also the authoritative owner for Job result and log state.
+Persistence supplies only a versioned storage adapter. A Job snapshot carries
+its owner, input/provider fingerprint, schema/version, progress, cancellation,
+retry and recovery status; a renderer or extension cannot persist a second Job
+record. On restart, queued or running work becomes an explicit retryable
+interrupted state, while derived results remain invalidatable and
+recomputable independently of the extension that produced them.
+
 ## Consequences
 
 The v0.0.3 host slice implements the shared lifecycle seam: JobSystem owns

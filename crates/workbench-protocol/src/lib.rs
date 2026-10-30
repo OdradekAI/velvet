@@ -1,14 +1,144 @@
+use std::collections::BTreeMap;
+
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use velvet_asset_core::AssetId;
 use velvet_job_system::{JobId, JobSnapshot};
 use velvet_layout_model::{LayoutCommand, LayoutState};
 use velvet_plugin_api::{
-    ExtensionId, ExtensionInstallPreview, ExtensionInstallRecovery, ExtensionInstallRecoveryAction,
-    ExtensionInstallRecoveryLogEntry, ExtensionManifest, ExtensionProjection, ExtensionSummary,
+    AppTarget, ContributionDescriptor, ExtensionId, ExtensionInstallPreview,
+    ExtensionInstallRecovery, ExtensionInstallRecoveryAction, ExtensionInstallRecoveryLogEntry,
+    ExtensionKind, ExtensionManifest, ExtensionSummary, ExtensionSupport, LocalizationManifest,
+    RuntimeKind, RuntimeLaunchSpec, VersionRange, WorkbenchAppDescriptor, ZonePermissionSet,
 };
 use velvet_preview_core::{PreviewIntent, PreviewSurface, ResolvedPreview};
 
 pub const PROTOCOL_VERSION: u16 = 1;
+
+/// Transport-owned mirror of the Rust plugin-api manifest.
+///
+/// `velvet-plugin-api` owns manifest semantics and validation. This DTO keeps
+/// the protocol boundary explicit so a future wire evolution does not silently
+/// become a domain-model change.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginManifestDto {
+    pub manifest_schema: u16,
+    pub id: ExtensionId,
+    pub version: String,
+    pub host_api: VersionRange,
+    pub bridge_api: VersionRange,
+    pub runtime_protocol: VersionRange,
+    pub runtime: RuntimeKind,
+    pub extension_kind: Vec<ExtensionKind>,
+    pub launch: Option<RuntimeLaunchSpec>,
+    pub activation_events: Vec<velvet_plugin_api::ActivationEvent>,
+    pub extension_dependencies: Vec<ExtensionId>,
+    pub target_app: Option<AppTarget>,
+    pub support: ExtensionSupport,
+    pub required_capabilities: Vec<String>,
+    pub optional_capabilities: Vec<String>,
+    pub localization: Option<LocalizationManifest>,
+    pub workbench_app: Option<WorkbenchAppDescriptor>,
+    pub contributions: Vec<ContributionDescriptor>,
+    pub permission_sets: Vec<ZonePermissionSet>,
+    #[serde(flatten)]
+    pub extensions: BTreeMap<String, Value>,
+}
+
+impl From<ExtensionManifest> for PluginManifestDto {
+    fn from(manifest: ExtensionManifest) -> Self {
+        Self {
+            manifest_schema: manifest.manifest_schema,
+            id: manifest.id,
+            version: manifest.version,
+            host_api: manifest.host_api,
+            bridge_api: manifest.bridge_api,
+            runtime_protocol: manifest.runtime_protocol,
+            runtime: manifest.runtime,
+            extension_kind: manifest.extension_kind,
+            launch: manifest.launch,
+            activation_events: manifest.activation_events,
+            extension_dependencies: manifest.extension_dependencies,
+            target_app: manifest.target_app,
+            support: manifest.support,
+            required_capabilities: manifest.required_capabilities,
+            optional_capabilities: manifest.optional_capabilities,
+            localization: manifest.localization,
+            workbench_app: manifest.workbench_app,
+            contributions: manifest.contributions,
+            permission_sets: manifest.permission_sets,
+            extensions: manifest.extensions,
+        }
+    }
+}
+
+impl From<PluginManifestDto> for ExtensionManifest {
+    fn from(manifest: PluginManifestDto) -> Self {
+        Self {
+            manifest_schema: manifest.manifest_schema,
+            id: manifest.id,
+            version: manifest.version,
+            host_api: manifest.host_api,
+            bridge_api: manifest.bridge_api,
+            runtime_protocol: manifest.runtime_protocol,
+            runtime: manifest.runtime,
+            extension_kind: manifest.extension_kind,
+            launch: manifest.launch,
+            activation_events: manifest.activation_events,
+            extension_dependencies: manifest.extension_dependencies,
+            target_app: manifest.target_app,
+            support: manifest.support,
+            required_capabilities: manifest.required_capabilities,
+            optional_capabilities: manifest.optional_capabilities,
+            localization: manifest.localization,
+            workbench_app: manifest.workbench_app,
+            contributions: manifest.contributions,
+            permission_sets: manifest.permission_sets,
+            extensions: manifest.extensions,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PluginProjectionDto {
+    pub summary: ExtensionSummary,
+    pub manifest: PluginManifestDto,
+}
+
+impl From<velvet_plugin_api::ExtensionProjection> for PluginProjectionDto {
+    fn from(projection: velvet_plugin_api::ExtensionProjection) -> Self {
+        Self {
+            summary: projection.summary,
+            manifest: projection.manifest.into(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PluginInstallPreviewDto {
+    pub manifest: PluginManifestDto,
+    pub existing: Option<ExtensionSummary>,
+    pub operation: velvet_plugin_api::ExtensionInstallOperation,
+    pub compatible: bool,
+    pub can_install: bool,
+    pub issues: Vec<String>,
+}
+
+impl From<ExtensionInstallPreview> for PluginInstallPreviewDto {
+    fn from(preview: ExtensionInstallPreview) -> Self {
+        Self {
+            manifest: preview.manifest.into(),
+            existing: preview.existing,
+            operation: preview.operation,
+            compatible: preview.compatible,
+            can_install: preview.can_install,
+            issues: preview.issues,
+        }
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RequestId(pub u64);
@@ -21,7 +151,7 @@ pub enum Command {
         command: LayoutCommand,
     },
     RegisterPlugin {
-        manifest: ExtensionManifest,
+        manifest: Box<PluginManifestDto>,
     },
     ActivatePlugin {
         extension_id: ExtensionId,
@@ -114,10 +244,10 @@ pub enum Response {
     Layout(LayoutState),
     Extensions(Vec<ExtensionSummary>),
     Extension(ExtensionSummary),
-    PluginInstallPreview(ExtensionInstallPreview),
+    PluginInstallPreview(PluginInstallPreviewDto),
     PluginInstallRecoveries(Vec<ExtensionInstallRecovery>),
     PluginInstallRecoveryLog(Vec<ExtensionInstallRecoveryLogEntry>),
-    PluginProjection(ExtensionProjection),
+    PluginProjection(PluginProjectionDto),
     Job(JobSnapshot),
     Jobs(Vec<JobSnapshot>),
     Preview(ResolvedPreview),
@@ -191,5 +321,30 @@ pub trait CoreTransport: Send + Sync {
             request_id,
             response,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn canonical_manifest_dto_round_trips_without_becoming_the_domain_owner() {
+        let manifest = ExtensionManifest {
+            id: ExtensionId("sample.reader".into()),
+            extension_kind: vec![ExtensionKind::Ui, ExtensionKind::Capability],
+            activation_events: vec![velvet_plugin_api::ActivationEvent::WorkbenchReady],
+            ..ExtensionManifest::default()
+        };
+
+        let dto = PluginManifestDto::from(manifest.clone());
+        let json = serde_json::to_value(&dto).expect("protocol DTO should serialize");
+        assert_eq!(json["manifestSchema"], 1);
+        assert_eq!(json["bridgeApi"], "1");
+        assert_eq!(json["activationEvents"][0]["kind"], "onWorkbenchReady");
+
+        let decoded: PluginManifestDto =
+            serde_json::from_value(json).expect("protocol DTO should deserialize");
+        assert_eq!(ExtensionManifest::from(decoded), manifest);
     }
 }

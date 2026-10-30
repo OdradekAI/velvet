@@ -8,6 +8,28 @@ import { PluginUiRegistry } from '/tmp/velvet-plugin-tests/workbench/plugins/ui-
 import { ViewRegistry } from '/tmp/velvet-plugin-tests/workbench/views/view-registry.js';
 import { WorkbenchAppRegistry } from '/tmp/velvet-plugin-tests/workbench/apps/workbench-app.js';
 
+const canonicalManifest = (id, version, targetApp, contributions, runtime = 'built-in') => ({
+  manifestSchema: 1,
+  id,
+  version,
+  hostApi: '^1',
+  bridgeApi: '^1',
+  runtimeProtocol: '^1',
+  runtime,
+  extensionKind: ['ui', 'capability'],
+  launch: null,
+  activationEvents: [],
+  extensionDependencies: [],
+  targetApp,
+  support: { trustedWorkspace: true, virtualWorkspace: false, profiles: true },
+  requiredCapabilities: [],
+  optionalCapabilities: [],
+  localization: null,
+  workbenchApp: null,
+  contributions,
+  permissionSets: [],
+});
+
 const requests = [];
 let runtimeState = 'registered';
 let installed = false;
@@ -18,8 +40,11 @@ const projection = (state, id = 'sample.reader') => ({
     active: state === 'active',
     state,
   },
-  targetApp: { appId: 'asset-manager', api: '1' },
-  contributions: id === 'sample.reader'
+  manifest: canonicalManifest(
+    id,
+    '1.0.0',
+    { appId: 'asset-manager', api: '1' },
+    id === 'sample.reader'
     ? [
         {
           id: 'library',
@@ -121,6 +146,7 @@ const projection = (state, id = 'sample.reader') => ({
         },
       ]
     : [],
+  ),
 });
 
 const core = {
@@ -207,16 +233,7 @@ const apps = new WorkbenchAppRegistry([{
   surface: { trust: 'trusted', entrypoint: 'builtin://resource-manager' },
 }]);
 const client = new PluginClient(core, undefined, apps, '1', ui, views, commands, menus, overlays);
-const manifest = {
-  id: 'sample.reader',
-  version: '1.0.0',
-  hostApi: '^1',
-  runtime: 'built-in',
-  launch: null,
-  targetApp: null,
-  contributions: [],
-  permissionSets: [],
-};
+const manifest = canonicalManifest('sample.reader', '1.0.0', null, []);
 
 const registered = await client.registerInCore(manifest);
 assert.equal(registered.state, 'registered');
@@ -283,7 +300,10 @@ assert.ok(commands.get('workbench.app.asset-manager', 'open-reader'));
 await assert.rejects(
   () => client.applyCoreProjection({
     ...projection('active', 'foreign.reader'),
-    contributions: [{ ...projection('active').contributions[0], namespace: 'workbench.app.foreign' }],
+    manifest: {
+      ...projection('active', 'foreign.reader').manifest,
+      contributions: [{ ...projection('active').manifest.contributions[0], namespace: 'workbench.app.foreign' }],
+    },
   }),
   /invalid namespace/,
 );
@@ -316,7 +336,7 @@ assert.equal(requests[7].reason, 'user');
 const failedInstallRequests = [];
 let failedInstallState = 'registered';
 let failedInstallRolledBack = false;
-const duplicateCommand = projection('active').contributions.find(
+const duplicateCommand = projection('active').manifest.contributions.find(
   (contribution) => contribution.kind === 'command',
 );
 const failedInstallProjection = {
@@ -326,11 +346,15 @@ const failedInstallProjection = {
     active: failedInstallState === 'active',
     state: failedInstallState,
   },
-  targetApp: { appId: 'asset-manager', api: '1' },
-  contributions: [
-    { ...duplicateCommand, id: 'duplicate-command' },
-    { ...duplicateCommand, id: 'duplicate-command' },
-  ],
+  manifest: canonicalManifest(
+    'sample.failed-install',
+    '0.1.0',
+    { appId: 'asset-manager', api: '1' },
+    [
+      { ...duplicateCommand, id: 'duplicate-command' },
+      { ...duplicateCommand, id: 'duplicate-command' },
+    ],
+  ),
 };
 const failedInstallCore = {
   request: async (request) => {

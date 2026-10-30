@@ -24,8 +24,21 @@ Protocol version `1` uses request and response envelopes with a request id.
 Layout mutations may include an expected revision; Rust rejects stale writes
 with a typed error and returns the authoritative revisioned snapshot. The
 protocol defines layout and plugin lifecycle event shapes for the future Tauri
-subscription, while the desktop TypeScript contract remains an explicit
-adapter mapping until serialization and compatibility fixtures are finalized.
+subscription. Plugin manifests cross this boundary as explicit
+`PluginManifestDto`, `PluginProjectionDto` and `PluginInstallPreviewDto`
+mirrors of the Rust `plugin-api` types; the desktop TypeScript contract and
+Tauri wire types map those DTOs explicitly rather than importing the domain
+Manifest as a transport owner.
+
+The canonical envelope also carries a negotiated feature set, `sessionId`,
+message kind (`command`, `query`, `response`, `event`, `handle`, `error` or
+`cancel`), method, typed payload, revision/sequence and deadline. Request ids
+are idempotent across retry; duplicate events are ignored, sequence gaps cause
+bounded snapshot resync, and reconnect reports the last acknowledged sequence
+and scope revisions. The transport retains no unbounded event log. A missing,
+corrupt or incompatible state document is handled by its Rust owner with a
+versioned migration, safe default or typed recovery error; the renderer never
+repairs persistence directly.
 
 The desktop mapping is exposed by `TauriCoreTransport`. It sends a
 `velvet_core_request` envelope with a monotonically allocated request id and
@@ -48,6 +61,16 @@ contribution registries; UI registration and isolated surface mounting remain
 explicit renderer actions. A plugin inventory query is best-effort during
 native startup so a runtime or transport failure cannot block the Workbench
 shell.
+
+The plugin runtime envelope is shared by built-in, WASM and sidecar adapters.
+It carries `protocolVersion`, `sessionId`, `requestId`, a typed message kind
+(`request`, `response`, `event`, `cancel` or `health`), method, typed payload,
+deadline and sequence. Requests use idempotent request ids; deadlines produce
+bounded cancellation and non-cooperative runtimes are terminated after a
+grace period. Reconnect creates a fresh session and restores the authoritative
+capability/context snapshot without replaying side-effecting commands. Typed
+runtime errors, malformed DTOs, crash state and recovery remain scoped to the
+extension that owns the session.
 
 Active extension projections can also be queried with their declared
 ViewContainer/View metadata and isolated UI Bridge descriptors. The desktop
@@ -80,6 +103,84 @@ Notification
 
 Trusted built-in extensions may use a native Vue/React adapter. External extensions use an isolated UI surface with host-provided theme, lifecycle, accessibility and message channels.
 
+### Optional text-language capability
+
+The reusable Workbench foundation is editorless. It does not require an
+editor document model, a language provider registry or an LSP adapter. A
+future text-oriented `WorkbenchApp` may opt into a separate text-language
+capability pack; the first known need is limited to syntax-highlighting
+resources.
+
+If that pack is introduced, core languages reserve stable short `LanguageId`
+values such as `json` and `markdown`. A plugin-defined language receives an
+extension-qualified identity (`extensionId/localId`); a plugin that augments an
+existing language targets that identity explicitly. Provider, grammar, snippet
+and contribution ids are owned by the contributing extension, while
+human-readable aliases are localized labels. Language identity, file
+associations and the document's content survive extension disable or removal;
+only the extension's optional highlighting resources are removed. The resource
+format, selector grammar and JSON/Markdown fixture are deferred. Diagnostics,
+completion, hover, definition, formatting, provider matching, document
+versions, snippets, schema validation, semantic tokens and any LSP adapter are
+also deferred and are not Workbench dependencies.
+
+### Plugin localization
+
+Extension localization is a P0 plugin capability, separate from Workbench
+display-language packs and from the optional text-language capability. A
+manifest that contributes localized text may declare a strict, versioned
+`localization` object with `defaultLocale`, BCP-47 `supportedLocales`, a
+package-relative `resourceRoot` (default `l10n` when opted in) and a
+`bundleSchema`. Bundles live at `<resourceRoot>/<locale>.json`; the default
+bundle is required, other locales are optional, and traversal outside the
+package is rejected. Unknown fields are rejected except reserved `x-*`
+metadata. The host validates locale tags, duplicate ids, message syntax and
+argument shapes before activation. Workbench display-language packs are a
+separate extension category and do not change this contract.
+
+Message ids are stable and namespaced as `<extensionId>.<localMessageId>`.
+Manifest-owned labels (commands, Views, menus, settings, Activity Bar,
+Preview, Job and Overlay labels) carry a message id and a human-readable
+`defaultMessage`; the host resolves them before projection. Runtime strings use
+the same conceptual API:
+
+```ts
+interface L10n {
+  t<T extends MessageArgs>(
+    messageId: string,
+    defaultMessage: string,
+    args?: T,
+  ): LocalizedString;
+}
+```
+
+The host verifies namespace ownership and argument compatibility. Trusted
+surfaces receive a scoped host `L10n` handle. Isolated surfaces receive the
+same semantic service through the UI Bridge as a locale/bundle snapshot or
+message-resolution channel carrying the bundle schema, session id and locale
+revision. Neither path exposes another extension's bundle, arbitrary paths,
+HTML, components or framework objects.
+
+The effective locale is owned by Profile/Session state. Selection and change
+are host commands; active surfaces observe a scoped locale revision. Resolution
+uses the deterministic chain `requested exact locale → requested language
+subtag → extension defaultLocale → declared defaultMessage`. A missing or
+invalid translation records an extension/locale/message diagnostic and keeps
+the contribution visible with fallback text.
+
+The initial message format supports named arguments, validated number/date
+formatting and `plural`/`select` branches using a constrained ICU-like syntax.
+Bundle entries and `defaultMessage` must agree on argument names and branch
+types; invalid entries fall back per message and rendered values are text-only.
+Bundles load lazily and are cached by extension id, package version, schema
+and locale. A locale change re-resolves projections and sends bounded updates
+to active Views, AppSurfaces, Previews, Overlays and Job UI. Duplicate or late
+updates from an old session/revision are discarded. Bad JSON, schema mismatch,
+invalid locale, path escape, duplicate id or bridge delivery failure isolates
+the affected bundle/message; a valid extension and the Workbench remain usable.
+Disable, upgrade and uninstall remove that extension's bundle cache and
+projections without touching core layout, Asset identity or other extensions.
+
 The host owns registries and lifecycle:
 
 ```text
@@ -102,6 +203,25 @@ normalized multi-chord sequences, allow context-qualified alternatives, prefer
 the active WorkbenchApp namespace and execute through `CommandRegistry`.
 Focus state is a framework-neutral projection for Parts, Views and overlays;
 the renderer adapts it to DOM focus while the host retains restoration order.
+
+The public command seam uses typed request/response DTOs with a request id,
+typed arguments and results, a context snapshot, cancellation and typed
+diagnostics. Command errors distinguish missing/inactive, disabled,
+permission-denied, cancelled, timeout and handler failure. `MenuRegistry` may
+reference only registered commands. Context expressions carry a grammar
+version; the first grammar supports boolean operators, parentheses, equality,
+inequality and finite-set membership, and rejects unknown syntax closed with a
+diagnostic. Command Palette and Quick Input remain host-owned surfaces.
+
+The host Overlay contract covers dialogs, popovers, context menus, command
+search, quick input, toast, alert and NotificationCenter. The host owns the
+overlay stack, modality, placement, escape/outside-click, timeout, focus trap,
+focus restoration, live-region announcement and cleanup. A trusted or
+isolated body is only a renderer adapter. View providers use the same host
+lifecycle for loading, empty, welcome, badge, toolbar, failure, retry and
+state-restore projections; their namespaced state is separate from Rust layout
+persistence. View/Container movement and drag-and-drop remain typed
+`LayoutService` commands.
 
 Layout actions use stable command identifiers (`workbench.toggle-part`,
 `workbench.focus-part`, `workbench.resize-part`, `workbench.collapse-part`,

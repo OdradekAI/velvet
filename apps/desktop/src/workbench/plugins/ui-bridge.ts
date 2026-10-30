@@ -30,6 +30,13 @@ export interface UiSurfaceSize {
   readonly devicePixelRatio?: number;
 }
 
+export interface UiLocaleProjection {
+  readonly extensionId: string;
+  readonly locale: string;
+  readonly revision: number;
+  readonly messages: Readonly<Record<string, string>>;
+}
+
 export type HostToSurfaceMessage =
   | {
       readonly type: 'host.ready';
@@ -38,9 +45,11 @@ export type HostToSurfaceMessage =
       readonly theme: UiThemeSnapshot;
       readonly size: UiSurfaceSize;
       readonly context: WorkspaceContextSnapshot;
+      readonly locale?: UiLocaleProjection;
     }
   | { readonly type: 'host.context'; readonly context: WorkspaceContextSnapshot }
   | { readonly type: 'host.theme'; readonly theme: UiThemeSnapshot }
+  | { readonly type: 'host.locale'; readonly locale: UiLocaleProjection }
   | { readonly type: 'host.resize'; readonly size: UiSurfaceSize }
   | { readonly type: 'host.focus'; readonly focused: boolean }
   | { readonly type: 'host.dispose'; readonly reason: 'unmount' | 'crash' | 'incompatible' }
@@ -88,6 +97,7 @@ export interface PluginSurfaceMountOptions {
   readonly context: WorkspaceContextSnapshot;
   readonly theme: UiThemeSnapshot;
   readonly size: UiSurfaceSize;
+  readonly locale?: UiLocaleProjection;
 }
 
 export interface PluginSurfaceHandlers {
@@ -107,6 +117,7 @@ export interface PluginSurfaceSession {
   deactivate(): void;
   updateContext(context: WorkspaceContextSnapshot): void;
   updateTheme(theme: UiThemeSnapshot): void;
+  updateLocale(locale: UiLocaleProjection): void;
   resize(size: UiSurfaceSize): void;
   dispose(reason?: 'unmount' | 'crash' | 'incompatible'): Promise<void>;
 }
@@ -135,6 +146,7 @@ export class PluginUiRegistry {
   private readonly descriptors = new Map<string, PluginSurfaceDescriptor>();
   private readonly adapters = new Map<string, PluginSurfaceAdapter>();
   private readonly sessions = new Map<string, PluginSurfaceSessionImpl>();
+  private readonly localeProjections = new Map<string, UiLocaleProjection>();
   private readonly listeners = new Set<() => void>();
 
   public register(descriptor: PluginSurfaceDescriptor): void {
@@ -222,6 +234,7 @@ export class PluginUiRegistry {
       descriptor,
       adapter,
       handlers,
+      this.localeProjections.get(extensionId),
       () => {
         this.sessions.delete(key);
         this.notify();
@@ -254,12 +267,34 @@ export class PluginUiRegistry {
         this.adapters.delete(key);
       }
     }
+    this.localeProjections.delete(extensionId);
 
     for (const [key, session] of sessions) {
       await session.dispose(reason);
       this.sessions.delete(key);
     }
     this.notify();
+  }
+
+  /** Projects the host locale to all current and future surfaces of an extension. */
+  public projectLocale(
+    extensionId: string,
+    locale: UiLocaleProjection | undefined,
+  ): void {
+    if (locale) {
+      this.localeProjections.set(extensionId, locale);
+    } else {
+      this.localeProjections.delete(extensionId);
+    }
+    for (const [key, session] of this.sessions) {
+      if (key.startsWith(`${extensionId}:`) && locale) {
+        try {
+          session.updateLocale(locale);
+        } catch {
+          // A disposed surface is cleaned by its normal lifecycle path.
+        }
+      }
+    }
   }
 
   private notify(): void {
@@ -310,6 +345,7 @@ class PluginSurfaceSessionImpl implements PluginSurfaceSession {
     private readonly descriptor: PluginSurfaceDescriptor,
     private readonly adapter: PluginSurfaceAdapter,
     private readonly handlers: PluginSurfaceHandlers,
+    private localeProjection: UiLocaleProjection | undefined,
     private readonly onDisposed: () => void,
   ) {
     this.surfaceId = descriptor.id;
@@ -330,6 +366,7 @@ class PluginSurfaceSessionImpl implements PluginSurfaceSession {
         theme: options.theme,
         size: options.size,
         context: options.context,
+        locale: options.locale ?? this.localeProjection,
       });
       this.state = 'mounted';
     } catch (cause) {
@@ -376,6 +413,13 @@ class PluginSurfaceSessionImpl implements PluginSurfaceSession {
   public updateTheme(theme: UiThemeSnapshot): void {
     this.ensureMounted();
     this.endpoint.send({ type: 'host.theme', theme });
+  }
+
+  public updateLocale(locale: UiLocaleProjection): void {
+    this.localeProjection = locale;
+    if (this.state === 'mounted' || this.state === 'active' || this.state === 'suspended') {
+      this.endpoint.send({ type: 'host.locale', locale });
+    }
   }
 
   public resize(size: UiSurfaceSize): void {

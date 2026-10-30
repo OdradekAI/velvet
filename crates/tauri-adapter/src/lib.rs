@@ -184,6 +184,7 @@ mod tests {
             target_app: None,
             contributions: vec![],
             permission_sets: vec![],
+            ..ExtensionManifest::default()
         };
         let id = manifest.id.clone();
         core.register_plugin(manifest)
@@ -230,7 +231,7 @@ mod tests {
                 id: "echo.crash".into(),
                 kind: ContributionKind::Command,
                 scope: ContributionScope::Workbench,
-                namespace: "workbench".into(),
+                namespace: Some("workbench".into()),
                 container: None,
                 zone: None,
                 title: Some("Crash Echo Runtime".into()),
@@ -249,6 +250,7 @@ mod tests {
                 ui: None,
             }],
             permission_sets: vec![],
+            ..ExtensionManifest::default()
         };
         let id = manifest.id.clone();
         core.register_plugin(manifest)

@@ -57,6 +57,27 @@ const summary = (id, state) => ({
   active: state === 'active',
   state,
 });
+const canonicalManifest = (id, version, runtime = 'built-in', targetApp = null, contributions = [], permissionSets = []) => ({
+  manifestSchema: 1,
+  id,
+  version,
+  hostApi: '^1',
+  bridgeApi: '^1',
+  runtimeProtocol: '^1',
+  runtime,
+  extensionKind: ['capability'],
+  launch: runtime === 'built-in' ? null : { program: 'sample-sidecar', args: [] },
+  activationEvents: [],
+  extensionDependencies: [],
+  targetApp,
+  support: { trustedWorkspace: true, virtualWorkspace: false, profiles: true },
+  requiredCapabilities: [],
+  optionalCapabilities: [],
+  localization: null,
+  workbenchApp: null,
+  contributions,
+  permissionSets,
+});
 const core = {
   request: async (request) => {
     requests.push(request);
@@ -84,16 +105,14 @@ const core = {
       return {
         kind: 'plugin-install-preview',
         preview: {
-          manifest: {
-            id: 'sample.installed',
-            version: '0.1.0',
-            hostApi: '1',
-            runtime: 'sidecar',
-            launch: { program: 'sample-sidecar', args: [] },
-            targetApp: null,
-            contributions: [],
-            permissionSets: [{ zone: 'navigation', permissions: ['library-read', 'asset-read'] }],
-          },
+          manifest: canonicalManifest(
+            'sample.installed',
+            '0.1.0',
+            'sidecar',
+            null,
+            [],
+            [{ zone: 'navigation', permissions: ['library-read', 'asset-read'] }],
+          ),
           existing: null,
           operation: 'install',
           compatible: true,
@@ -126,8 +145,7 @@ const core = {
         kind: 'plugin-projection',
         projection: {
           summary: summary(request.extensionId, 'active'),
-          targetApp: null,
-          contributions: [],
+          manifest: canonicalManifest(request.extensionId, summary(request.extensionId, 'active').version),
         },
       };
     }
@@ -317,8 +335,7 @@ const recoveryCore = {
         kind: 'plugin-projection',
         projection: {
           summary: recoverySummary(),
-          targetApp: null,
-          contributions: [],
+          manifest: canonicalManifest('sample.recovery', '1.0.0'),
         },
       };
     }

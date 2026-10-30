@@ -107,6 +107,34 @@ and a host-managed lifecycle/focus handle; trusted Velvet UI or an isolated UI
 surface renders the body. The host owns placement, accessibility, escape,
 failure, timeout and cleanup behavior.
 
+The host uses one framework-neutral contract for Views, Commands, Menus,
+Keybindings, ContextKeys, Focus and Overlays. A View provider may render a
+list, tree, inspector, timeline, Webview-like surface or isolated UI, but it
+does not own a Part, global layout or another View. Its lifecycle is
+`registered → available → resolving → mounted → active ↔ suspended`, with
+typed failure, retry and disposal states. The host owns loading, empty,
+welcome, error, disabled, badge, title-toolbar, context-menu and focus
+projections; provider state is namespaced and versioned separately from Rust
+layout persistence.
+
+Commands use typed request/response DTOs with request ids, context snapshots,
+cancellation and typed errors. Menu entries reference registered Commands,
+and Command Palette/Quick Input are host-owned surfaces. Context expressions
+carry a grammar version and P0 supports boolean operators, parentheses,
+equality, inequality and finite-set membership; unsupported expressions fail
+closed with diagnostics. Keybindings are normalized multi-chord sequences
+resolved through built-in, extension, Profile/user, Workspace and
+Session/window layers, with active-app precedence and conflict diagnostics.
+
+The OverlayLayer owns dialogs, popovers, context menus, command search, quick
+input, toasts, alerts and NotificationCenter. It owns placement, z-order,
+modality, escape, outside-click, timeout, focus trap/restoration, live-region
+announcements and cleanup. Extensions provide typed body descriptors or
+trusted/isolated surfaces; they do not replace the OverlayLayer or mutate the
+DOM. View movement, visibility, ordering, focus and compatible drag-and-drop
+dispatch Rust `LayoutService` commands. Extension removal repairs order,
+focus and dependent overlays while preserving unrelated layout and core data.
+
 Feed monitors and subscriptions are capability contributions. They write
 FeedItem/Capture records through the core and expose progress, retry and
 provenance. The explicit `materialize` operation creates or links an Asset for

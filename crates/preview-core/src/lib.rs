@@ -34,6 +34,7 @@ pub struct PreviewCandidate {
     pub provider_id: String,
     pub content_kinds: Vec<ContentKindId>,
     pub intents: Vec<PreviewIntent>,
+    pub surfaces: Vec<PreviewSurface>,
     pub priority: i32,
 }
 
@@ -46,8 +47,13 @@ impl PreviewCandidate {
                 .any(|kind| kind == &context.content_kind);
         let intent_matches =
             self.intents.is_empty() || self.intents.iter().any(|intent| intent == &context.intent);
+        let surface_matches = self.surfaces.is_empty()
+            || self
+                .surfaces
+                .iter()
+                .any(|surface| surface == &context.surface);
 
-        content_matches && intent_matches
+        content_matches && intent_matches && surface_matches
     }
 }
 
@@ -88,6 +94,7 @@ impl PreviewProvider for GenericFallbackProvider {
             provider_id: "builtin.generic-fallback".into(),
             content_kinds: Vec::new(),
             intents: Vec::new(),
+            surfaces: Vec::new(),
             priority: i32::MIN,
         }
     }
@@ -122,17 +129,34 @@ impl PreviewResolver {
             })
             .collect::<Vec<_>>();
 
-        candidates.sort_by_key(|left| std::cmp::Reverse(left.0.priority));
-        let (candidate, provider) =
-            candidates
-                .into_iter()
-                .next()
-                .ok_or_else(|| PreviewError::NoProvider {
-                    content_kind: request.context.content_kind.clone(),
-                })?;
-        let session = provider.open(request.context)?;
+        candidates.sort_by(|left, right| {
+            right
+                .0
+                .priority
+                .cmp(&left.0.priority)
+                .then_with(|| left.0.provider_id.cmp(&right.0.provider_id))
+        });
+        if candidates.is_empty() {
+            return Err(PreviewError::NoProvider {
+                content_kind: request.context.content_kind.clone(),
+            });
+        }
 
-        Ok(ResolvedPreview { candidate, session })
+        let mut first_error = None;
+        for (candidate, provider) in candidates {
+            match provider.open(request.context.clone()) {
+                Ok(session) => return Ok(ResolvedPreview { candidate, session }),
+                Err(error) => {
+                    if first_error.is_none() {
+                        first_error = Some(error);
+                    }
+                }
+            }
+        }
+
+        Err(first_error.unwrap_or(PreviewError::NoProvider {
+            content_kind: request.context.content_kind,
+        }))
     }
 }
 
@@ -148,6 +172,7 @@ mod tests {
                 provider_id: "image.provider".into(),
                 content_kinds: vec![ContentKindId("image".into())],
                 intents: vec![PreviewIntent::Quick, PreviewIntent::Inspect],
+                surfaces: vec![PreviewSurface::Workspace],
                 priority: 10,
             }
         }
@@ -156,6 +181,27 @@ mod tests {
             Ok(PreviewSession {
                 provider_id: "image.provider".into(),
                 context,
+            })
+        }
+    }
+
+    struct FailingProvider;
+
+    impl PreviewProvider for FailingProvider {
+        fn candidate(&self) -> PreviewCandidate {
+            PreviewCandidate {
+                provider_id: "broken.image".into(),
+                content_kinds: vec![ContentKindId("image".into())],
+                intents: vec![PreviewIntent::Quick],
+                surfaces: vec![PreviewSurface::Workspace],
+                priority: 100,
+            }
+        }
+
+        fn open(&self, _context: PreviewContext) -> Result<PreviewSession, PreviewError> {
+            Err(PreviewError::ProviderFailed {
+                provider_id: "broken.image".into(),
+                message: "decoder failed".into(),
             })
         }
     }
@@ -189,5 +235,28 @@ mod tests {
 
         let resolved = resolver.resolve(request(PreviewIntent::Analyze)).unwrap();
         assert_eq!(resolved.candidate.provider_id, "builtin.generic-fallback");
+    }
+
+    #[test]
+    fn resolver_falls_back_when_the_selected_provider_fails() {
+        let mut resolver = PreviewResolver::default();
+        resolver.register(Arc::new(GenericFallbackProvider));
+        resolver.register(Arc::new(FailingProvider));
+
+        let resolved = resolver.resolve(request(PreviewIntent::Quick)).unwrap();
+        assert_eq!(resolved.candidate.provider_id, "builtin.generic-fallback");
+    }
+
+    #[test]
+    fn resolver_filters_candidates_by_surface() {
+        let mut resolver = PreviewResolver::default();
+        resolver.register(Arc::new(ImageProvider));
+
+        let mut request = request(PreviewIntent::Quick);
+        request.context.surface = PreviewSurface::Thumbnail;
+        assert!(matches!(
+            resolver.resolve(request),
+            Err(PreviewError::NoProvider { .. })
+        ));
     }
 }

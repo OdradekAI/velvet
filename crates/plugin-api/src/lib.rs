@@ -1,5 +1,10 @@
-use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+
+use serde::{de, Deserialize, Deserializer, Serialize};
+use serde_json::Value;
 use velvet_layout_model::WorkbenchZone;
+
+pub const MANIFEST_SCHEMA_VERSION: u16 = 1;
 
 #[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct ExtensionId(pub String);
@@ -13,6 +18,69 @@ pub enum RuntimeKind {
     BuiltIn,
     Wasm,
     Sidecar,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ExtensionKind {
+    Ui,
+    Workspace,
+    Capability,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExtensionSupport {
+    pub trusted_workspace: bool,
+    pub virtual_workspace: bool,
+    pub profiles: bool,
+}
+
+impl Default for ExtensionSupport {
+    fn default() -> Self {
+        Self {
+            trusted_workspace: true,
+            virtual_workspace: false,
+            profiles: true,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
+pub enum ActivationEvent {
+    #[serde(rename = "onWorkbenchReady")]
+    WorkbenchReady,
+    #[serde(rename = "onApp")]
+    App { app_id: String },
+    #[serde(rename = "onView")]
+    View { contribution_id: String },
+    #[serde(rename = "onCommand")]
+    Command { contribution_id: String },
+    #[serde(rename = "onPreview")]
+    Preview { selector: String },
+    #[serde(rename = "onJob")]
+    Job { job_kind: String },
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LocalizationManifest {
+    pub default_locale: String,
+    pub supported_locales: Vec<String>,
+    pub resource_root: String,
+    pub bundle_schema: u16,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkbenchAppDescriptor {
+    pub id: String,
+    pub api: VersionRange,
+    pub title: String,
+    pub activity_bar_icon: String,
+    pub activity_bar_order: Option<u32>,
+    pub surface: UiSurfaceDescriptor,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -64,7 +132,7 @@ pub enum Permission {
 /// and passes the module path through `args`; a sidecar points directly at its
 /// isolated process. The host never derives this command from a UI entrypoint.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RuntimeLaunchSpec {
     pub program: String,
     pub args: Vec<String>,
@@ -73,6 +141,7 @@ pub struct RuntimeLaunchSpec {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ContributionKind {
+    AppSurface,
     ActivityBarEntry,
     CompanionView,
     OperationView,
@@ -80,6 +149,10 @@ pub enum ContributionKind {
     View,
     Dialog,
     ContextMenu,
+    Menu,
+    Keybinding,
+    Popover,
+    Notification,
     PreviewProvider,
     PreviewAugmentation,
     Inspector,
@@ -109,7 +182,7 @@ pub enum UiSurfaceKind {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct UiSurfaceDescriptor {
     pub kind: UiSurfaceKind,
     pub entrypoint: String,
@@ -117,7 +190,7 @@ pub struct UiSurfaceDescriptor {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ActivityBarDescriptor {
     pub title: String,
     pub icon: String,
@@ -125,12 +198,15 @@ pub struct ActivityBarDescriptor {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ContributionDescriptor {
     pub id: String,
     pub kind: ContributionKind,
     pub scope: ContributionScope,
-    pub namespace: String,
+    /// Optional manifest echo. The host derives the authoritative namespace
+    /// from the extension id and discriminated scope before projection.
+    #[serde(default)]
+    pub namespace: Option<String>,
     #[serde(default)]
     pub container: Option<HostContainer>,
     #[serde(default)]
@@ -166,30 +242,138 @@ pub struct ContributionDescriptor {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AppTarget {
     pub app_id: String,
     pub api: VersionRange,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ZonePermissionSet {
     pub zone: WorkbenchZone,
     pub permissions: Vec<Permission>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExtensionManifest {
+    pub manifest_schema: u16,
     pub id: ExtensionId,
     pub version: String,
     pub host_api: VersionRange,
+    pub bridge_api: VersionRange,
+    pub runtime_protocol: VersionRange,
     pub runtime: RuntimeKind,
+    pub extension_kind: Vec<ExtensionKind>,
     pub launch: Option<RuntimeLaunchSpec>,
+    pub activation_events: Vec<ActivationEvent>,
+    pub extension_dependencies: Vec<ExtensionId>,
     pub target_app: Option<AppTarget>,
+    pub support: ExtensionSupport,
+    pub required_capabilities: Vec<String>,
+    pub optional_capabilities: Vec<String>,
+    pub localization: Option<LocalizationManifest>,
+    pub workbench_app: Option<WorkbenchAppDescriptor>,
     pub contributions: Vec<ContributionDescriptor>,
     pub permission_sets: Vec<ZonePermissionSet>,
+    /// Reserved package metadata. Only keys prefixed with `x-` are accepted.
+    #[serde(flatten)]
+    pub extensions: BTreeMap<String, Value>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawExtensionManifest {
+    manifest_schema: u16,
+    id: ExtensionId,
+    version: String,
+    host_api: VersionRange,
+    bridge_api: VersionRange,
+    runtime_protocol: VersionRange,
+    runtime: RuntimeKind,
+    extension_kind: Vec<ExtensionKind>,
+    launch: Option<RuntimeLaunchSpec>,
+    activation_events: Vec<ActivationEvent>,
+    extension_dependencies: Vec<ExtensionId>,
+    target_app: Option<AppTarget>,
+    support: ExtensionSupport,
+    required_capabilities: Vec<String>,
+    optional_capabilities: Vec<String>,
+    localization: Option<LocalizationManifest>,
+    workbench_app: Option<WorkbenchAppDescriptor>,
+    contributions: Vec<ContributionDescriptor>,
+    permission_sets: Vec<ZonePermissionSet>,
+    #[serde(flatten)]
+    extensions: BTreeMap<String, Value>,
+}
+
+impl<'de> Deserialize<'de> for ExtensionManifest {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = RawExtensionManifest::deserialize(deserializer)?;
+        validate_reserved_metadata(&raw.extensions).map_err(de::Error::custom)?;
+        Ok(Self {
+            manifest_schema: raw.manifest_schema,
+            id: raw.id,
+            version: raw.version,
+            host_api: raw.host_api,
+            bridge_api: raw.bridge_api,
+            runtime_protocol: raw.runtime_protocol,
+            runtime: raw.runtime,
+            extension_kind: raw.extension_kind,
+            launch: raw.launch,
+            activation_events: raw.activation_events,
+            extension_dependencies: raw.extension_dependencies,
+            target_app: raw.target_app,
+            support: raw.support,
+            required_capabilities: raw.required_capabilities,
+            optional_capabilities: raw.optional_capabilities,
+            localization: raw.localization,
+            workbench_app: raw.workbench_app,
+            contributions: raw.contributions,
+            permission_sets: raw.permission_sets,
+            extensions: raw.extensions,
+        })
+    }
+}
+
+pub fn validate_reserved_metadata(metadata: &BTreeMap<String, Value>) -> Result<(), String> {
+    if let Some(key) = metadata.keys().find(|key| !key.starts_with("x-")) {
+        return Err(format!(
+            "unknown manifest field {key}; only x-* fields are reserved"
+        ));
+    }
+    Ok(())
+}
+
+impl Default for ExtensionManifest {
+    fn default() -> Self {
+        Self {
+            manifest_schema: MANIFEST_SCHEMA_VERSION,
+            id: ExtensionId("builtin.default".into()),
+            version: "0.0.0".into(),
+            host_api: VersionRange("1".into()),
+            bridge_api: VersionRange("1".into()),
+            runtime_protocol: VersionRange("1".into()),
+            runtime: RuntimeKind::BuiltIn,
+            extension_kind: vec![ExtensionKind::Capability],
+            launch: None,
+            activation_events: Vec::new(),
+            extension_dependencies: Vec::new(),
+            target_app: None,
+            support: ExtensionSupport::default(),
+            required_capabilities: Vec::new(),
+            optional_capabilities: Vec::new(),
+            localization: None,
+            workbench_app: None,
+            contributions: Vec::new(),
+            permission_sets: Vec::new(),
+            extensions: BTreeMap::new(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -284,6 +468,53 @@ pub struct ExtensionInstallRecoveryLogEntry {
 #[serde(rename_all = "camelCase")]
 pub struct ExtensionProjection {
     pub summary: ExtensionSummary,
-    pub target_app: Option<AppTarget>,
-    pub contributions: Vec<ContributionDescriptor>,
+    pub manifest: ExtensionManifest,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn canonical_manifest_uses_the_versioned_camel_case_shape() {
+        let manifest = ExtensionManifest {
+            id: ExtensionId("sample.reader".into()),
+            extension_kind: vec![ExtensionKind::Ui, ExtensionKind::Capability],
+            activation_events: vec![ActivationEvent::WorkbenchReady],
+            ..ExtensionManifest::default()
+        };
+
+        let value = serde_json::to_value(&manifest).expect("manifest should serialize");
+        assert_eq!(value["manifestSchema"], MANIFEST_SCHEMA_VERSION);
+        assert_eq!(value["bridgeApi"], "1");
+        assert_eq!(value["runtimeProtocol"], "1");
+        assert_eq!(value["extensionKind"][0], "ui");
+        assert_eq!(value["activationEvents"][0]["kind"], "onWorkbenchReady");
+
+        let decoded: ExtensionManifest =
+            serde_json::from_value(value).expect("canonical manifest should round-trip");
+        assert_eq!(decoded, manifest);
+    }
+
+    #[test]
+    fn canonical_manifest_rejects_unknown_fields() {
+        let mut value =
+            serde_json::to_value(ExtensionManifest::default()).expect("manifest should serialize");
+        value["unexpected"] = serde_json::json!(true);
+
+        let error = serde_json::from_value::<ExtensionManifest>(value)
+            .expect_err("unknown manifest fields should be rejected");
+        assert!(error.to_string().contains("unknown manifest field"));
+    }
+
+    #[test]
+    fn canonical_manifest_accepts_only_reserved_x_fields() {
+        let mut value =
+            serde_json::to_value(ExtensionManifest::default()).expect("manifest should serialize");
+        value["x-vendor"] = serde_json::json!({ "feature": true });
+
+        let manifest: ExtensionManifest =
+            serde_json::from_value(value).expect("reserved metadata should be accepted");
+        assert_eq!(manifest.extensions["x-vendor"]["feature"], true);
+    }
 }

@@ -1,13 +1,13 @@
 # ADR-0005: Plugin host runtime, permissions and lifecycle
 
-Status: Proposed
+Status: Accepted
 Date: 2026-10-28
 
 ## Context
 
 The product needs an ecosystem for format readers, previewers, inspector panels, feed connectors, AI actions and operational tools. Tauri plugins that expose host capabilities and user-installed product extensions have different trust and lifecycle requirements.
 
-## Proposed decision
+## Decision
 
 Keep two extension layers separate:
 
@@ -52,16 +52,84 @@ merely because it runs inside that app.
 
 Every extension identifier, contribution identifier and persisted facet schema is globally unique and versioned.
 
+The canonical manifest contract is owned semantically by Rust `plugin-api` and
+is mirrored explicitly by the `workbench-protocol` DTOs, the Tauri wire DTO,
+the TypeScript `PluginClient` and external package manifests. A package uses a stable `ExtensionId` matching
+`[A-Za-z0-9][A-Za-z0-9._-]*` (the recommended form is `publisher.name`) and a
+SemVer package version. `manifestSchema`, `hostApi`, `bridgeApi` and
+`runtimeProtocol` are explicit compatibility ranges. Display metadata such as
+name, description, icon, categories and default locale is separate from
+identity. Manifest decoding is strict: unknown fields are validation errors,
+with only explicitly reserved `x-*` metadata available for forward extension.
+The same fixture must round-trip through JSON, Rust, the Tauri mapping and the
+TypeScript mirror.
+
+When an extension contributes localized labels or runtime UI text, its manifest
+may additionally declare a strict `localization` object with `defaultLocale`,
+BCP-47 `supportedLocales`, a package-relative `resourceRoot` and a versioned
+`bundleSchema`. Bundles are `<resourceRoot>/<locale>.json` (defaulting to
+`l10n` only when the capability is declared); the default bundle is required,
+and path traversal, duplicate ids, unsupported locale tags, malformed JSON or
+schema mismatches are rejected before activation. Message ids are scoped as
+`<extensionId>.<localMessageId>`, and contribution labels carry an id plus a
+`defaultMessage`. The host resolves them through the same scoped localization
+handle exposed to trusted extensions and the UI Bridge channel exposed to
+isolated surfaces. Locale selection belongs to Profile/Session state and uses
+the host fallback chain `requested exact locale → language subtag → extension
+defaultLocale → defaultMessage`; a missing translation emits a diagnostic but
+does not remove a contribution. Bundle caches and projections are cleaned up
+with the owning extension and cannot affect core layout or Asset identity.
+
+The runtime declaration is one of `builtin`, `wasm` or `sidecar`. Built-ins
+are trusted adapters; third-party runtimes remain isolated. `extensionKind`
+describes `ui`, `workspace` and/or `capability` contributions, while the host
+selects the actual `desktop-core` or `isolated-runtime` location. Runtime
+choice does not grant permissions or expose a frontend framework. All runtime
+adapters use the same contribution descriptors, lifecycle, capability grant
+and RPC contracts.
+
+Activation is indexed by `onWorkbenchReady`, `onApp:<app-id>`,
+`onView:<contribution-id>`, `onCommand:<contribution-id>`,
+`onPreview:<selector>` and `onJob:<kind>`. It is lazy by default and
+idempotent within a session. Hard `extensionDependencies` form a validated
+acyclic graph and activate in topological order; missing or failed
+dependencies block only their dependents. Optional integration uses capability
+discovery without imposing activation order.
+
+The manifest declares trusted, virtual-workspace and profile support, plus
+required and optional capabilities. The host intersects those declarations
+with trust/restriction mode and Profile/Workspace policy (`allow`, `prompt` or
+`deny`) and sends the effective grant during activation and UI-surface
+handshakes. P0 handles are namespaced context/theme/focus, declared command
+dispatch and handoff, localization, extension storage, configuration and URI
+access, plus explicitly approved Asset/Preview/Job registrations. Secrets,
+metadata writes, filesystem, downloads, network and external processes are
+separate capabilities. `ExtensionContext` exposes opaque scoped handles,
+session cancellation, logging and localization; it never exposes unrestricted
+paths, database access or host framework objects.
+
+Built-in, WASM and sidecar adapters use one versioned RPC envelope containing
+`protocolVersion`, `sessionId`, `requestId`, message `kind`, `method`, typed
+`payload`, `deadline` and `sequence`. Typed errors, cancellation, bounded
+timeouts and health messages are mandatory. Reconnect and restart create a
+fresh session, re-send authoritative context/capabilities and re-project
+validated contributions without replaying side-effecting commands. A crash,
+timeout, malformed response or failed restart marks only that extension
+failed, removes its active projections and leaves the Workbench and core data
+usable. Disable and uninstall stop the runtime before idempotently removing
+all host projections and UI sessions; extension-owned durable data follows its
+retention/migration policy.
+
 The first runtime integration keeps the process boundary behind two host-owned
 interfaces: `PluginRuntime` starts an extension with an explicit
 `RuntimeLaunchSpec` and `RuntimeProcess` reports health, shutdown and command
-invocation. The production adapter uses a child process with a versioned JSONL
-stdin/stdout channel and passes only the extension id and the validated
+invocation. The production adapter uses a child process with the canonical
+versioned JSONL envelope and passes only the extension id and the validated
 permission grant as environment metadata. Built-in extensions use the same
 lifecycle through a no-op process; WASM extensions provide their declared WASM
-runner as the launch program. Invocation requests carry the extension id,
-command id, opaque arguments and a context snapshot; responses carry the
-runtime protocol version, success flag, result and optional error.
+runner as the launch program. Invocation payloads and responses are typed by
+the negotiated runtime protocol; they are not an untyped second manifest or
+transport contract.
 
 The host applies a bounded invocation timeout. A plugin-level rejection is
 returned to the caller while the extension stays active. A closed or crashed
@@ -91,9 +159,11 @@ version increases. The host keeps the previous package as a hidden rollback
 backup until the client has projected and activated the new extension, then
 `commit-plugin-install` removes the backup. `rollback-plugin-install` removes a
 new package or restores the previous package and runtime state. The native
-Tauri composition root activates committed registered extensions during client
-startup. It scans for abandoned `.staging-*` and `.rollback-*` directories left
-by a client crash and holds affected extensions inactive until the host presents
+Tauri composition root registers committed manifests and indexes their
+activation events during client startup; it does not activate every extension
+merely because it is installed. It scans for abandoned `.staging-*` and
+`.rollback-*` directories left by a client crash and holds affected extensions
+inactive until the host presents
 resume, commit, rollback or discard actions. Other embedders may retain lazy
 activation by calling the lifecycle commands explicitly.
 Recovery failures are logged with an attempt number and remain retryable. Startup
@@ -123,7 +193,7 @@ Costs:
 - Sidecar and WASM boundaries add serialization and packaging work.
 - Permission prompts and compatibility checks become part of the product UX.
 
-## Open questions
+## Deferred decisions
 
 - Which extension packages may be signed, and who is trusted to sign them?
 - Is there a marketplace in the first release or only local installation?

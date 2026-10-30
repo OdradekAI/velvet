@@ -13,6 +13,7 @@ import type {
   WorkspaceContextCommand,
 } from '../../workbench/services/workspace-context.js';
 import { createPluginSurfaceAdapter } from '../../workbench/plugins/surface-adapters.js';
+import { TrustedAppSurfaceHost } from './trusted-app-surface-host.js';
 
 const INITIAL_SIZE: UiSurfaceSize = { width: 0, height: 0 };
 
@@ -30,7 +31,24 @@ export interface WorkbenchAppSurfaceHostProps {
  * isolated surface lifecycle; this adapter only observes its session and
  * forwards host-owned context and geometry to the UI Bridge.
  */
-export function WorkbenchAppSurfaceHost({
+export function WorkbenchAppSurfaceHost(props: WorkbenchAppSurfaceHostProps) {
+  const descriptor = props.apps.get(props.appId);
+  if (descriptor?.surface.trust !== 'isolated') {
+    return (
+      <TrustedAppSurfaceHost
+        appId={props.appId}
+        apps={props.apps}
+        context={props.context}
+        dispatch={props.dispatch}
+        fallback={props.fallback}
+      />
+    );
+  }
+
+  return <IsolatedWorkbenchAppSurfaceHost {...props} />;
+}
+
+function IsolatedWorkbenchAppSurfaceHost({
   appId,
   apps,
   plugins,
@@ -208,7 +226,7 @@ export function WorkbenchAppSurfaceHost({
     });
   }, [context, session]);
 
-  if (descriptor?.surface.trust !== 'isolated') {
+  if (!descriptor) {
     return <>{fallback}</>;
   }
 

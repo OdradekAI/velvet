@@ -11,7 +11,10 @@ use velvet_layout_model::{
     LayoutCommand, LayoutState, ViewContainerState, ViewState, WorkbenchAppId, WorkbenchPart,
 };
 use velvet_plugin_api::{
-    ExtensionId, ExtensionInstallRecoveryAction, ExtensionManifest,
+    ActivationEvent, AppTarget, ContributionDescriptor, ExtensionId, ExtensionInstallRecoveryAction,
+    ExtensionKind, ExtensionManifest, ExtensionSupport, LocalizationManifest, RuntimeKind,
+    RuntimeLaunchSpec, VersionRange, WorkbenchAppDescriptor, ZonePermissionSet,
+    validate_reserved_metadata,
 };
 use velvet_persistence::{JsonFileJobStateStore, JsonFileLayoutStateStore};
 use velvet_preview_core::{PreviewIntent, PreviewSurface, ResolvedPreview};
@@ -98,6 +101,62 @@ pub struct WireRequestEnvelope {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WirePluginManifest {
+    manifest_schema: u16,
+    id: String,
+    version: String,
+    host_api: VersionRange,
+    bridge_api: VersionRange,
+    runtime_protocol: VersionRange,
+    runtime: RuntimeKind,
+    extension_kind: Vec<ExtensionKind>,
+    launch: Option<RuntimeLaunchSpec>,
+    activation_events: Vec<ActivationEvent>,
+    extension_dependencies: Vec<ExtensionId>,
+    target_app: Option<AppTarget>,
+    support: ExtensionSupport,
+    required_capabilities: Vec<String>,
+    optional_capabilities: Vec<String>,
+    localization: Option<LocalizationManifest>,
+    workbench_app: Option<WorkbenchAppDescriptor>,
+    contributions: Vec<ContributionDescriptor>,
+    permission_sets: Vec<ZonePermissionSet>,
+    #[serde(flatten)]
+    extensions: BTreeMap<String, serde_json::Value>,
+}
+
+impl TryFrom<WirePluginManifest> for ExtensionManifest {
+    type Error = String;
+
+    fn try_from(value: WirePluginManifest) -> Result<Self, Self::Error> {
+        validate_reserved_metadata(&value.extensions)?;
+        Ok(Self {
+            manifest_schema: value.manifest_schema,
+            id: ExtensionId(value.id),
+            version: value.version,
+            host_api: value.host_api,
+            bridge_api: value.bridge_api,
+            runtime_protocol: value.runtime_protocol,
+            runtime: value.runtime,
+            extension_kind: value.extension_kind,
+            launch: value.launch,
+            activation_events: value.activation_events,
+            extension_dependencies: value.extension_dependencies,
+            target_app: value.target_app,
+            support: value.support,
+            required_capabilities: value.required_capabilities,
+            optional_capabilities: value.optional_capabilities,
+            localization: value.localization,
+            workbench_app: value.workbench_app,
+            contributions: value.contributions,
+            permission_sets: value.permission_sets,
+            extensions: value.extensions,
+        })
+    }
+}
+
+#[derive(Debug, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum WireRequest {
     QueryLayout {
@@ -129,7 +188,7 @@ pub enum WireRequest {
     RegisterPlugin {
         #[serde(rename = "protocolVersion")]
         protocol_version: u16,
-        manifest: ExtensionManifest,
+        manifest: WirePluginManifest,
     },
     ActivatePlugin {
         #[serde(rename = "protocolVersion")]
@@ -296,7 +355,18 @@ impl WireRequest {
                 manifest,
             } => {
                 validate_inner_protocol(outer_protocol_version, protocol_version)?;
-                Ok(Request::Command(Command::RegisterPlugin { manifest }))
+                let manifest: ExtensionManifest = manifest
+                    .try_into()
+                    .map_err(|message: String| WireError {
+                        code: "invalid-plugin-manifest".into(),
+                        message,
+                        retryable: false,
+                        expected_revision: None,
+                        actual_revision: None,
+                    })?;
+                Ok(Request::Command(Command::RegisterPlugin {
+                    manifest: Box::new(manifest.into()),
+                }))
             }
             Self::ActivatePlugin {
                 protocol_version,
@@ -670,7 +740,7 @@ enum WireResponse {
         extension: WireExtensionSummary,
     },
     PluginInstallPreview {
-        preview: velvet_plugin_api::ExtensionInstallPreview,
+        preview: velvet_workbench_protocol::PluginInstallPreviewDto,
     },
     PluginInstallRecoveries {
         recoveries: Vec<velvet_plugin_api::ExtensionInstallRecovery>,
@@ -679,7 +749,7 @@ enum WireResponse {
         log: Vec<velvet_plugin_api::ExtensionInstallRecoveryLogEntry>,
     },
     PluginProjection {
-        projection: velvet_plugin_api::ExtensionProjection,
+        projection: velvet_workbench_protocol::PluginProjectionDto,
     },
     Job {
         job: WireJobSnapshot,
@@ -710,9 +780,7 @@ impl WireResponseEnvelope {
             Response::Extension(extension) => WireResponse::Extension {
                 extension: WireExtensionSummary::from(extension),
             },
-            Response::PluginInstallPreview(preview) => {
-                WireResponse::PluginInstallPreview { preview }
-            }
+            Response::PluginInstallPreview(preview) => WireResponse::PluginInstallPreview { preview },
             Response::PluginInstallRecoveries(recoveries) => {
                 WireResponse::PluginInstallRecoveries { recoveries }
             }
@@ -859,6 +927,7 @@ struct WirePreviewCandidate {
     provider_id: String,
     content_kinds: Vec<String>,
     intents: Vec<String>,
+    surfaces: Vec<String>,
     priority: i32,
 }
 
@@ -894,6 +963,12 @@ impl From<ResolvedPreview> for WireResolvedPreview {
                     .intents
                     .into_iter()
                     .map(|intent| format!("{intent:?}").to_lowercase())
+                    .collect(),
+                surfaces: value
+                    .candidate
+                    .surfaces
+                    .into_iter()
+                    .map(|surface| format!("{surface:?}").to_lowercase())
                     .collect(),
                 priority: value.candidate.priority,
             },
@@ -1347,12 +1422,27 @@ mod tests {
                     "kind": "register-plugin",
                     "protocolVersion": 1,
                     "manifest": {
+                        "manifestSchema": 1,
                         "id": "sample.reader",
                         "version": "1.0.0",
                         "hostApi": "^1",
+                        "bridgeApi": "^1",
+                        "runtimeProtocol": "^1",
                         "runtime": "built-in",
+                        "extensionKind": ["capability"],
                         "launch": null,
+                        "activationEvents": [],
+                        "extensionDependencies": [],
                         "targetApp": null,
+                        "support": {
+                            "trustedWorkspace": true,
+                            "virtualWorkspace": false,
+                            "profiles": true
+                        },
+                        "requiredCapabilities": [],
+                        "optionalCapabilities": [],
+                        "localization": null,
+                        "workbenchApp": null,
                         "contributions": [],
                         "permissionSets": []
                     }
@@ -1664,40 +1754,47 @@ mod tests {
             velvet_workbench_protocol::ResponseEnvelope {
                 protocol_version: PROTOCOL_VERSION,
                 request_id: RequestId(16),
-                response: Response::PluginProjection(velvet_plugin_api::ExtensionProjection {
+                response: Response::PluginProjection(velvet_workbench_protocol::PluginProjectionDto {
                     summary: velvet_plugin_api::ExtensionSummary {
                         id: velvet_plugin_api::ExtensionId("sample.reader".into()),
                         version: "1.0.0".into(),
                         active: true,
                         state: velvet_plugin_api::ExtensionState::Active,
                     },
-                    target_app: None,
-                    contributions: vec![velvet_plugin_api::ContributionDescriptor {
-                        id: "sample.reader.view".into(),
-                        kind: velvet_plugin_api::ContributionKind::View,
-                        scope: velvet_plugin_api::ContributionScope::Workbench,
-                        namespace: "workbench".into(),
-                        container: Some(velvet_plugin_api::HostContainer::PrimarySidebar),
-                        zone: Some(velvet_layout_model::WorkbenchZone::Navigation),
-                        title: Some("Reader".into()),
-                        title_key: None,
-                        icon: Some("book".into()),
-                        order: Some(1),
-                        default_visible: Some(true),
-                        view_container_id: None,
-                        activity_bar: None,
-                        label: None,
-                        label_key: None,
-                        command_id: None,
-                        group: None,
-                        when: None,
-                        anchor: None,
-                        ui: Some(velvet_plugin_api::UiSurfaceDescriptor {
-                            kind: velvet_plugin_api::UiSurfaceKind::View,
-                            entrypoint: "wasm://sample/reader".into(),
-                            bridge_version: "1".into(),
-                        }),
-                    }],
+                    manifest: velvet_workbench_protocol::PluginManifestDto::from(
+                        velvet_plugin_api::ExtensionManifest {
+                            id: velvet_plugin_api::ExtensionId("sample.reader".into()),
+                            version: "1.0.0".into(),
+                            target_app: None,
+                            contributions: vec![velvet_plugin_api::ContributionDescriptor {
+                                id: "sample.reader.view".into(),
+                                kind: velvet_plugin_api::ContributionKind::View,
+                                scope: velvet_plugin_api::ContributionScope::Workbench,
+                                namespace: Some("workbench".into()),
+                                container: Some(velvet_plugin_api::HostContainer::PrimarySidebar),
+                                zone: Some(velvet_layout_model::WorkbenchZone::Navigation),
+                                title: Some("Reader".into()),
+                                title_key: None,
+                                icon: Some("book".into()),
+                                order: Some(1),
+                                default_visible: Some(true),
+                                view_container_id: None,
+                                activity_bar: None,
+                                label: None,
+                                label_key: None,
+                                command_id: None,
+                                group: None,
+                                when: None,
+                                anchor: None,
+                                ui: Some(velvet_plugin_api::UiSurfaceDescriptor {
+                                    kind: velvet_plugin_api::UiSurfaceKind::View,
+                                    entrypoint: "wasm://sample/reader".into(),
+                                    bridge_version: "1".into(),
+                                }),
+                            }],
+                            ..velvet_plugin_api::ExtensionManifest::default()
+                        },
+                    ),
                 }),
             },
         );
@@ -1705,11 +1802,11 @@ mod tests {
 
         assert_eq!(value["response"]["kind"], "plugin-projection");
         assert_eq!(
-            value["response"]["projection"]["contributions"][0]["ui"]["entrypoint"],
+            value["response"]["projection"]["manifest"]["contributions"][0]["ui"]["entrypoint"],
             "wasm://sample/reader"
         );
         assert_eq!(
-            value["response"]["projection"]["contributions"][0]["namespace"],
+            value["response"]["projection"]["manifest"]["contributions"][0]["namespace"],
             "workbench"
         );
     }

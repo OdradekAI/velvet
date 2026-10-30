@@ -96,8 +96,10 @@ const projection = (state = 'active') => ({
     active: state === 'active',
     state,
   },
-  targetApp: manifest.targetApp,
-  contributions: manifest.contributions.map(normalizeContribution),
+  manifest: {
+    ...manifest,
+    contributions: manifest.contributions.map(normalizeContribution),
+  },
 });
 
 function startRuntime() {

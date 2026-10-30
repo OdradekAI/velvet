@@ -20,6 +20,7 @@ import { PluginUiRegistry } from './plugins/ui-bridge.js';
 import { ViewRegistry } from './views/view-registry.js';
 import { FocusService } from './focus/focus-service.js';
 import { BUILTIN_WORKBENCH_APPS } from '../workspaces/index.js';
+import { LocalizationService } from './localization/localization-service.js';
 
 export class Workbench {
   public readonly layout: LayoutService;
@@ -32,6 +33,7 @@ export class Workbench {
   public readonly activityBar = new ActivityBarContributionRegistry();
   public readonly contributions = new ContributionRegistry();
   public readonly context = new InMemoryWorkspaceContext();
+  public readonly localization = new LocalizationService();
   public readonly focus = new FocusService();
   public readonly contextKeys: ContextKeyService;
   public readonly commands: CommandRegistry;
@@ -62,9 +64,11 @@ export class Workbench {
       this.commands,
       this.menus,
       this.overlays,
+      this.localization,
     );
     this.jobs = new JobClient(core);
     this.pluginUi = this.plugins.ui;
+    this.bindTrustedAppSurfaceFactories();
     this.registerWorkbenchViews();
     this.registerBuiltInLayoutCommands();
     this.layout.subscribe(() => this.scheduleLayoutContributionSync());
@@ -79,6 +83,24 @@ export class Workbench {
       for (const view of app.views ?? []) {
         this.views.register(view);
       }
+    }
+  }
+
+  /**
+   * Built-in apps render through the trusted React adapter, but still enter
+   * the same registry lifecycle as isolated plugin AppSurfaces.
+   */
+  private bindTrustedAppSurfaceFactories(): void {
+    for (const app of this.apps.list()) {
+      if (app.surface.trust !== 'trusted') {
+        continue;
+      }
+      this.apps.bindSurfaceFactory(app.id, () => ({
+        mount: () => undefined,
+        activate: () => undefined,
+        deactivate: () => undefined,
+        dispose: () => undefined,
+      }));
     }
   }
 

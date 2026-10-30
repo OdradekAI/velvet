@@ -7,7 +7,47 @@ This plan is intentionally a skeleton. It establishes seams and ownership withou
 
 ## Active first-stage scope
 
-The immediate destination is the business-independent Workbench foundation, tracked in `.scratch/workbench-shell-foundation/`. It covers fixed Part docking and semantic Zones, VS Code-like visibility, collapse, resize and within-Zone ordering controls, Rust-owned layout persistence and migrations, host commands and overlays, selectable `WorkbenchApp` surfaces, shared `WorkspaceContext` projections, scoped plugin namespaces, reserved global companion/operations surfaces and the framework-neutral ViewContainer/View contribution seam. Built-in apps remain stable Activity Bar entries while accepted extensions may contribute app entries under the same host rules; product-domain behavior, preview providers, jobs, indexing and marketplace policy remain later decisions.
+The immediate destination is the business-independent Workbench foundation, tracked in `.scratch/workbench-shell-foundation/` and its completion route in `.scratch/workbench-foundation-completion/`. It covers fixed Part docking and semantic Zones, VS Code-like visibility, collapse, resize and within-Zone ordering controls, Rust-owned layout persistence and migrations, host commands and overlays, selectable `WorkbenchApp` surfaces, shared `WorkspaceContext` projections, scoped plugin namespaces, reserved global companion/operations surfaces and the framework-neutral ViewContainer/View contribution seam. Built-in apps remain stable Activity Bar entries while accepted extensions may contribute app entries under the same host rules. Preview and Job are P0 capability seams with host-owned lifecycle and fallback; product-specific providers, indexing and marketplace policy remain later decisions.
+
+The P0 foundation is editorless. It does not require an editor document
+model, language provider registry or LSP layer. A future text-oriented
+`WorkbenchApp` may opt into a separate text-language capability pack; that
+pack must not become a hidden dependency of the Workbench shell, AppSurface,
+Preview or Job infrastructure.
+
+The AppSurface contract is explicit: trusted and isolated adapters share the
+same negotiated lifecycle and typed capabilities; a new surface must be ready
+before the host commits a switch; failures preserve a healthy current surface
+and expose diagnostics/retry; reconnect resynchronizes the latest authoritative
+context/theme/size/focus snapshot by session and sequence.
+
+The View/Command/Overlay host contract is also fixed. View providers use one
+host lifecycle for generic app content, with host-owned loading/empty/welcome/
+error/badge/toolbar/menu/focus and versioned state restoration. Commands and
+menus use typed DTOs, request ids, cancellation, typed errors and versioned
+context expressions; Command Palette and Quick Input stay host-owned.
+Keybindings are normalized multi-chord sequences resolved through layered
+Profile/Workspace/Session configuration with app precedence and conflict
+diagnostics. Dialogs, popovers, context menus, command search, quick input,
+toasts, alerts and NotificationCenter share one host Overlay stack with focus
+trap/restoration and live-region behavior. View movement and drag-and-drop
+remain Rust `LayoutService` commands, and contribution removal repairs layout,
+focus and dependent overlays without a second persistence owner.
+
+The state/transport structure is fixed around one owner per durable scope:
+Rust owns Profile, Workspace, Session/Window, Job and extension lifecycle
+state; `PluginHost` owns namespaced extension data; capability owners own
+derived Preview/facet caches; persistence crates are storage adapters; and the
+desktop only consumes projections. `workbench-protocol` is the canonical DTO
+layer, `tauri-adapter` is a thin mapping, and renderer/workbench modules cannot
+create alternate persistence or transport owners. Every boundary uses
+versioned schema, migration, invalidation, recovery and fake-adapter tests.
+The envelope carries protocol/features, session/request ids, kind, typed
+payload, revision/sequence and deadline. Stale writes reject with the current
+snapshot; sequence gaps resync the latest snapshot; reconnect is bounded and
+degraded-but-diagnosable; corrupt stores use owner safe defaults. Foundation
+completion requires the failure matrix in the state/transport decision ticket,
+not only a rendered-shell smoke test.
 
 The current React shell is a renderer slice, not the completed foundation. The
 Part/mode, three-scope layout state, WorkbenchApp/AppSurface/shared context,
@@ -92,6 +132,9 @@ UI-Bridge session restart coverage.
 The default surface adapter now mounts a sandboxed iframe in browser mode and
 uses a positioned Tauri child WebView for HTTP/`tauri-webview://` entrypoints,
 with explicit capability permissions and cleanup on deactivation.
+Built-in trusted apps now pass through the same AppSurface registry lifecycle:
+the React adapter projects context revisions and measured size, keeps failed
+surfaces retryable and suspends the previous surface during app switches.
 The desktop regression suite now mounts `WorkbenchShell` through ReactDOM in a
 browser-like DOM and verifies contributed panel markup, focus restoration,
 resize keyboard commands, context-menu actions, isolated PluginSurfaceHost
@@ -130,6 +173,21 @@ extension and declared command before forwarding a versioned JSONL request to
 the isolated runtime. Runtime rejection stays local to the command, while a
 closed, malformed or timed-out runtime is failed and recoverable without
 removing unrelated extensions.
+
+The canonical plugin contract is now fixed across Rust `plugin-api`, the
+versioned `workbench-protocol`, the TypeScript `PluginClient` and external
+package manifests. It includes strict schema and host API ranges, stable
+extension identity and metadata, explicit builtin/WASM/sidecar runtime
+adapters, `ui`/`workspace`/`capability` kinds, event-indexed lazy activation,
+acyclic dependency ordering, target-app and trust/Profile/virtual-workspace
+constraints, required/optional capability grants, and namespaced
+`ExtensionContext` handles. `plugin-api` owns the semantic Manifest; the
+protocol exposes an explicit `PluginManifestDto`/projection DTO, Tauri maps its
+wire DTO explicitly, and TypeScript keeps a checked-in mirror. All adapters
+use the same typed RPC envelope with session/request ids, sequence, deadlines,
+cancellation, health, fresh-session recovery and idempotent cleanup. Canonical
+JSON round-trip fixtures cover Rust, protocol, Tauri and desktop projection
+paths; this work does not add an Editor or LSP dependency.
 
 The repository now includes a runnable `examples/plugins/echo-sidecar` fixture.
 Its Rust integration test covers manifest discovery, relative sidecar launch,
@@ -206,10 +264,6 @@ apps/
           view-container.ts
           view-registry.ts
           view-pane.ts
-        editors/
-          editor-group.ts
-          editor-input.ts
-          editor-registry.ts
         preview/
           preview-host.ts
           preview-context.ts
@@ -450,6 +504,42 @@ pub trait PreviewAugmentation {
 }
 ```
 
+The preview protocol is a P0 host capability. `Quick` now has a host-owned
+overlay entry point, while `Inspect` and `Analyze` may render in an
+`AppSurface`, inspector or another declared preview surface. Rust filters
+providers by content kind, intent and target surface, orders candidates
+deterministically and continues through a failing provider to a lower-priority
+or generic fallback. The desktop `PreviewHost` projects typed resolving,
+loading, ready, failure, close and dispose states. A provider owns primary
+format content; the host owns the frame, lifecycle, fallback, theme, focus and
+failure states. This protocol does not imply an Editor.
+
+The accepted PreviewHost contract uses a session id, opaque Asset/Context
+handles, theme/locale/size/focus inputs, cancellation and deadline. Trusted
+built-in and isolated plugin providers return the same framework-neutral
+session descriptor. Resolver selection is deterministic; augmentations attach
+to declared slots without replacing the primary provider; decode and analysis
+flow through JobSystem; and provider/capability caches carry provenance and
+invalidate on content/provider/decoder/settings changes. A provider or
+augmentation failure leaves generic fallback and unrelated Workbench state
+usable.
+
+### Optional text-language capability
+
+Language is not a P0 Workbench service. A future text-oriented application may
+opt into a capability pack whose first known need is syntax highlighting.
+Language identity is stable: core languages use reserved ids, plugin-defined
+languages use `extensionId/localId`, and plugins may explicitly augment an
+existing id. Aliases are localized labels and language resources are owned by
+the contributing extension.
+
+The highlighting resource format, selector grammar and JSON/Markdown fixture
+remain deferred. The editor document model, provider registry, diagnostics,
+completion, hover, definition, formatting, snippets, schema validation,
+semantic tokens, document versions, cancellation rules and LSP are explicitly
+outside the current foundation and must not become hidden dependencies of the
+Workbench, AppSurface, Preview or Job seams.
+
 ### Plugin host
 
 ```rust
@@ -495,6 +585,46 @@ export interface CommandDescriptor {
 }
 ```
 
+### Plugin localization
+
+Localization is a host capability, separate from display-language packs and
+the optional text-language capability. An extension that contributes localized
+labels declares a strict versioned manifest object:
+
+```json
+{
+  "localization": {
+    "defaultLocale": "en",
+    "supportedLocales": ["en", "zh-Hans"],
+    "resourceRoot": "l10n",
+    "bundleSchema": 1
+  }
+}
+```
+
+Bundles are package-relative `<resourceRoot>/<locale>.json` files; the default
+bundle is required. The host validates locale tags, paths, schema, duplicate
+message ids and argument shapes before activation. The desktop
+`LocalizationService` now owns locale revision, bundle registration and the
+typed message handle; package/resource loading is injected through a loader
+seam, and active isolated UI Bridge sessions receive the selected bundle and
+locale revision through `host.locale`. Message ids are scoped as
+`<extensionId>.<localMessageId>`. Manifest labels carry an id and
+`defaultMessage`, and runtime strings use a scoped `l10n.t(id, defaultMessage,
+args)` handle. Trusted UI receives that handle directly; isolated UI receives
+the same semantic service through the UI Bridge with a bundle/message channel,
+session id and locale revision.
+
+Profile/Session owns the effective locale. The host service resolves
+`requested exact locale → language subtag → extension defaultLocale →
+defaultMessage`, records missing/invalid translations as diagnostics and keeps
+the contribution visible. The initial message format is a constrained ICU-like
+subset with named arguments, number/date formatting and `plural`/`select`;
+invalid argument shapes fall back per message. Locale changes re-project
+manifest labels and notify active Views, AppSurfaces, Previews, Overlays and
+Job UI. Bad bundles or bridge updates are isolated to the affected extension,
+bundle or message; caches are cleaned on disable, upgrade and uninstall.
+
 ## Implementation sequence
 
 1. **Documentation and vocabulary**: complete `docs/GLOSSARY.md`, accept the topology ADR, and add the decision link to the local Wayfinder map. **Done for the current skeleton.**
@@ -502,8 +632,8 @@ export interface CommandDescriptor {
 3. **Layout service**: implement versioned layout state, migrations, fixed zones and persistence tests. **Done for the current file-backed Tauri store and restart recovery slice.**
 4. **Workbench parts**: render ActivityBar, Resource Manager, Feed Workbench, PrimarySidebar, WorkspaceArea, AuxiliarySidebar, OperationsPanel and StatusBar with placeholder views. **Initial renderer slice done.**
 5. **View registry**: add built-in views and one example external view per zone. Verify that cross-zone registration is rejected. **Host registry and rejection tests done; the React shell mounts registered ViewContainers/Views with a renderer adapter seam, PluginClient projects extension views plus isolated UI Bridge sessions into that seam, and the Activity Bar now selects contributed navigation containers.**
-6. **Preview core**: implement generic image/file fallback, `PreviewResolver`, Quick/Inspect/Analyze intents and a fake provider used by contract tests.
-7. **Plugin host**: load manifests, validate permissions, activate lazily, isolate failures and expose the UI SDK boundary. **Local discovery, install preflight, permission enforcement, host API compatibility checks, numeric version upgrades, transactional commit/rollback, crash-recovery scanning, deferred activation, retryable recovery, orphan cleanup and bounded recovery logs are implemented; marketplace policy and signing remain later work.**
+6. **Preview core**: implement generic image/file fallback, `PreviewResolver`, Quick/Inspect/Analyze intents and a fake provider used by contract tests. **Host slice done:** surface-aware deterministic resolution, provider-failure fallback, typed Tauri/TypeScript projection, `PreviewHost` state machine, Quick overlay and unregisterable provider/augmentation slots. Format-specific provider execution, augmentation renderer adapters and cache/job handoff remain follow-up consumers.
+7. **Plugin host**: load manifests, validate permissions and localization bundles, activate lazily, isolate failures and expose the UI SDK boundary. **Local discovery, install preflight, permission enforcement, host API compatibility checks, numeric version upgrades, transactional commit/rollback, crash-recovery scanning, deferred activation, retryable recovery, orphan cleanup and bounded recovery logs are implemented; marketplace policy and signing remain later work. The host localization service, fallback formatter, diagnostics, loader/plugin lifecycle seam and isolated UI Bridge locale projection are implemented; archive filesystem loading and durable Profile/Session locale ownership remain adapter work.**
 8. **Jobs and facets**: the shared Rust JobSystem lifecycle seam is now wired to OperationsPanel with persisted progress, cancellation, retry, failure and restart recovery; product-specific thumbnail, metadata and analysis providers remain follow-up consumers.
 9. **Tauri adapter**: connect typed commands, queries and events to the desktop client. No feature should bypass the protocol. **Done for the current layout slice, including native command/event serialization and global shortcut entry.**
 
@@ -515,11 +645,17 @@ export interface CommandDescriptor {
 - A host-approved CompanionView can follow shared context in the AuxiliarySidebar, while global jobs remain visible in the OperationsPanel.
 - A navigation plugin, contextual plugin and operations plugin can only register in their declared zone.
 - A plugin can be disabled while the workbench remains usable.
+- A trusted built-in and an isolated plugin can declare an English default bundle plus one translated locale; manifest labels and runtime UI strings resolve through the same namespaced `l10n` semantics.
+- Locale selection and change use the host Profile/Session revision and re-project active Views, AppSurfaces, Previews, Overlays and Job UI without replacing the Workbench shell.
+- Missing, malformed or argument-incompatible translations record a diagnostic and fall back through exact locale, language subtag, extension default locale and `defaultMessage`; disabling, upgrading or uninstalling the extension removes only its localization projections and caches.
 - A RAW-like fake provider supports all three preview intents through one resolver.
 - A metadata-only plugin augments the inspector without replacing the primary preview.
 - Layout changes survive restart and pass a schema migration test.
 - A long-running job reports progress, supports cancellation and leaves a diagnosable result.
 - Replacing the frontend adapter does not change the Rust protocol or plugin manifest.
+- No P0 acceptance scenario requires an Editor, text document model or LSP; a future text-oriented app may add that capability without changing the shell contract.
+- A stale revision, sequence gap, transport disconnect, corrupt store, provider timeout, plugin crash, failed AppSurface switch, failed View/Overlay, cancelled Job and extension uninstall each leave a diagnosable usable shell and have an explicit recovery action.
+- Every durable state field and cache names one owner, scope, schema version, migration, invalidation and recovery path; persistence adapters never become a second owner.
 
 ## Structure review checkpoints
 

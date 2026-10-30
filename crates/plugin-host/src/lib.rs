@@ -11,11 +11,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use velvet_layout_model::WorkbenchZone;
 use velvet_plugin_api::{
-    AppTarget, ContributionKind, ContributionScope, ExtensionId, ExtensionInstallOperation,
-    ExtensionInstallPreview, ExtensionInstallRecovery, ExtensionInstallRecoveryAction,
-    ExtensionInstallRecoveryKind, ExtensionInstallRecoveryLogEntry,
+    validate_reserved_metadata, AppTarget, ContributionKind, ContributionScope, ExtensionId,
+    ExtensionInstallOperation, ExtensionInstallPreview, ExtensionInstallRecovery,
+    ExtensionInstallRecoveryAction, ExtensionInstallRecoveryKind, ExtensionInstallRecoveryLogEntry,
     ExtensionInstallRecoveryLogStatus, ExtensionManifest, ExtensionProjection, ExtensionState,
     ExtensionSummary, HostContainer, Permission, RuntimeKind, VersionRange,
+    MANIFEST_SCHEMA_VERSION,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -833,6 +834,84 @@ impl InMemoryPluginHost {
     }
 
     fn validate_manifest(&self, manifest: &ExtensionManifest) -> Result<(), PluginError> {
+        validate_reserved_metadata(&manifest.extensions)
+            .map_err(PluginError::InvalidContribution)?;
+        if manifest.manifest_schema != MANIFEST_SCHEMA_VERSION {
+            return Err(PluginError::InvalidContribution(format!(
+                "manifest schema {} is unsupported; expected {}",
+                manifest.manifest_schema, MANIFEST_SCHEMA_VERSION
+            )));
+        }
+
+        if !is_safe_extension_id(&manifest.id.0) {
+            return Err(PluginError::InvalidContribution(format!(
+                "extension id {} is invalid",
+                manifest.id.0
+            )));
+        }
+
+        if manifest.extension_kind.is_empty() {
+            return Err(PluginError::InvalidContribution(
+                "extensionKind must declare at least one kind".into(),
+            ));
+        }
+
+        if manifest.required_capabilities.iter().any(|required| {
+            manifest
+                .optional_capabilities
+                .iter()
+                .any(|optional| optional == required)
+        }) {
+            return Err(PluginError::InvalidContribution(
+                "a capability cannot be both required and optional".into(),
+            ));
+        }
+
+        if manifest
+            .extension_dependencies
+            .iter()
+            .any(|dependency| dependency == &manifest.id)
+        {
+            return Err(PluginError::InvalidContribution(
+                "an extension cannot depend on itself".into(),
+            ));
+        }
+
+        match manifest.runtime {
+            RuntimeKind::BuiltIn if manifest.launch.is_some() => {
+                return Err(PluginError::InvalidContribution(
+                    "built-in extensions cannot declare a launch process".into(),
+                ));
+            }
+            RuntimeKind::Wasm | RuntimeKind::Sidecar if manifest.launch.is_none() => {
+                return Err(PluginError::InvalidContribution(
+                    "isolated extensions must declare a launch process".into(),
+                ));
+            }
+            _ => {}
+        }
+
+        if let Some(localization) = &manifest.localization {
+            if localization.default_locale.trim().is_empty()
+                || localization.supported_locales.is_empty()
+                || !localization
+                    .supported_locales
+                    .iter()
+                    .any(|locale| locale == &localization.default_locale)
+                || localization.resource_root.trim().is_empty()
+                || localization.resource_root.starts_with('/')
+                || localization
+                    .resource_root
+                    .split('/')
+                    .any(|segment| segment == "..")
+                || localization.bundle_schema == 0
+            {
+                return Err(PluginError::InvalidContribution(
+                    "localization metadata is invalid".into(),
+                ));
+            }
+        }
+
         if !api_compatible(&manifest.host_api, &self.host_api) {
             return Err(PluginError::IncompatibleHostApi(manifest.id.clone()));
         }
@@ -852,7 +931,11 @@ impl InMemoryPluginHost {
         let mut app_ids = BTreeSet::new();
         for contribution in &manifest.contributions {
             let expected_namespace = namespace_for(&contribution.scope, &manifest.id);
-            if contribution.namespace != expected_namespace {
+            if contribution
+                .namespace
+                .as_deref()
+                .is_some_and(|namespace| namespace != expected_namespace)
+            {
                 return Err(PluginError::InvalidNamespace(format!(
                     "{} must use namespace {}",
                     contribution.id, expected_namespace
@@ -940,6 +1023,28 @@ impl InMemoryPluginHost {
         Ok(())
     }
 
+    fn normalize_manifest(
+        &self,
+        mut manifest: ExtensionManifest,
+    ) -> Result<ExtensionManifest, PluginError> {
+        for contribution in &mut manifest.contributions {
+            let expected_namespace = namespace_for(&contribution.scope, &manifest.id);
+            if contribution
+                .namespace
+                .as_deref()
+                .is_some_and(|namespace| namespace != expected_namespace)
+            {
+                return Err(PluginError::InvalidNamespace(format!(
+                    "{} must use namespace {}",
+                    contribution.id, expected_namespace
+                )));
+            }
+            contribution.namespace = Some(expected_namespace);
+        }
+        self.validate_manifest(&manifest)?;
+        Ok(manifest)
+    }
+
     fn validate_target(
         &self,
         target: &AppTarget,
@@ -984,6 +1089,7 @@ impl InMemoryPluginHost {
 
 impl PluginHost for InMemoryPluginHost {
     fn register(&mut self, manifest: ExtensionManifest) -> Result<(), PluginError> {
+        let manifest = self.normalize_manifest(manifest)?;
         if self.manifests.contains_key(&manifest.id) {
             return Err(PluginError::AlreadyRegistered(manifest.id));
         }
@@ -1023,8 +1129,7 @@ impl PluginHost for InMemoryPluginHost {
             .ok_or_else(|| PluginError::NotFound(id.clone()))?;
         Ok(ExtensionProjection {
             summary,
-            target_app: manifest.target_app.clone(),
-            contributions: manifest.contributions.clone(),
+            manifest: manifest.clone(),
         })
     }
 
@@ -2118,7 +2223,7 @@ mod tests {
                 id: "example.view".into(),
                 kind: ContributionKind::View,
                 scope: ContributionScope::Workbench,
-                namespace: "workbench".into(),
+                namespace: Some("workbench".into()),
                 container: Some(HostContainer::PrimarySidebar),
                 zone,
                 title: Some("Example view".into()),
@@ -2137,6 +2242,7 @@ mod tests {
                 ui: None,
             }],
             permission_sets: vec![],
+            ..ExtensionManifest::default()
         }
     }
 
@@ -2147,6 +2253,19 @@ mod tests {
         assert!(matches!(
             host.register(view_manifest(None)),
             Err(PluginError::InvalidContribution(_))
+        ));
+    }
+
+    #[test]
+    fn manifests_with_an_unknown_schema_are_rejected_before_registration() {
+        let mut manifest = view_manifest(Some(WorkbenchZone::Navigation));
+        manifest.manifest_schema = MANIFEST_SCHEMA_VERSION + 1;
+        let mut host = InMemoryPluginHost::default();
+
+        assert!(matches!(
+            host.register(manifest),
+            Err(PluginError::InvalidContribution(message))
+                if message.contains("manifest schema")
         ));
     }
 
@@ -2281,9 +2400,12 @@ mod tests {
             .projection(&ExtensionId("example".into()))
             .expect("active plugin projection should be available");
         assert_eq!(projection.summary.state, ExtensionState::Active);
-        assert_eq!(projection.contributions[0].namespace, "workbench");
         assert_eq!(
-            projection.contributions[0]
+            projection.manifest.contributions[0].namespace.as_deref(),
+            Some("workbench")
+        );
+        assert_eq!(
+            projection.manifest.contributions[0]
                 .ui
                 .as_ref()
                 .expect("view UI metadata should be preserved")
@@ -2320,7 +2442,7 @@ mod tests {
                 scope: ContributionScope::WorkbenchApp {
                     app_id: "feed-workbench".into(),
                 },
-                namespace: "workbench.app.feed-workbench".into(),
+                namespace: Some("workbench.app.feed-workbench".into()),
                 container: Some(HostContainer::ContextMenu),
                 zone: Some(WorkbenchZone::Navigation),
                 title: Some("Open feed tool".into()),
@@ -2339,6 +2461,7 @@ mod tests {
                 ui: None,
             }],
             permission_sets: vec![],
+            ..ExtensionManifest::default()
         };
         let mut host = InMemoryPluginHost::default();
 
@@ -2431,6 +2554,7 @@ mod tests {
                 zone: WorkbenchZone::Contextual,
                 permissions: vec![Permission::AssetRead, Permission::MetadataRead],
             }],
+            ..ExtensionManifest::default()
         };
         let id = manifest.id.clone();
         host.register(manifest).unwrap();
@@ -2513,6 +2637,7 @@ mod tests {
             target_app: None,
             contributions: vec![],
             permission_sets: vec![],
+            ..ExtensionManifest::default()
         };
 
         let mut process = runtime
@@ -2541,7 +2666,8 @@ mod tests {
             target_app: None,
             contributions: vec![],
             permission_sets: vec![],
-        };
+            ..ExtensionManifest::default()
+            };
 
         let mut process = runtime
             .start(&manifest, &PermissionGrant::default())
@@ -2630,13 +2756,17 @@ mod tests {
         let projection = host
             .projection(&id)
             .expect("the active example should expose a projection");
-        assert!(projection.contributions.iter().any(|contribution| {
-            contribution.id == "echo.view"
-                && contribution
-                    .ui
-                    .as_ref()
-                    .is_some_and(|surface| surface.entrypoint.starts_with("data:text/html"))
-        }));
+        assert!(projection
+            .manifest
+            .contributions
+            .iter()
+            .any(|contribution| {
+                contribution.id == "echo.view"
+                    && contribution
+                        .ui
+                        .as_ref()
+                        .is_some_and(|surface| surface.entrypoint.starts_with("data:text/html"))
+            }));
 
         let echoed = host
             .invoke_command(
@@ -2733,6 +2863,7 @@ mod tests {
             target_app: None,
             contributions: Vec::new(),
             permission_sets: Vec::new(),
+            ..ExtensionManifest::default()
         };
         write_package(&first_source, &first);
         let mut host = InMemoryPluginHost::default();
@@ -2820,6 +2951,7 @@ mod tests {
             target_app: None,
             contributions: Vec::new(),
             permission_sets: Vec::new(),
+            ..ExtensionManifest::default()
         };
         let mut current = previous.clone();
         current.version = "0.2.0".into();
@@ -2870,6 +3002,7 @@ mod tests {
             target_app: None,
             contributions: Vec::new(),
             permission_sets: Vec::new(),
+            ..ExtensionManifest::default()
         };
         write_package(&staging, &staged);
         let staged_recovery = restarted
@@ -2901,6 +3034,7 @@ mod tests {
             target_app: None,
             contributions: Vec::new(),
             permission_sets: Vec::new(),
+            ..ExtensionManifest::default()
         };
         let mut current = previous.clone();
         current.version = "0.2.0".into();
@@ -2977,6 +3111,7 @@ mod tests {
             target_app: None,
             contributions: Vec::new(),
             permission_sets: Vec::new(),
+            ..ExtensionManifest::default()
         };
         write_package(&root.join(&stale_id.0), &stale);
         write_package(&root.join(format!(".{}.staging-stale", stale_id.0)), &stale);

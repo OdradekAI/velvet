@@ -29,6 +29,7 @@ export interface WorkbenchShellProps {
   readonly layout: LayoutSnapshot;
   readonly apps: readonly WorkbenchAppDescriptor[];
   readonly onActivateApp: (appId: WorkbenchAppId) => void;
+  readonly onOpenPreview?: () => void;
   readonly onLayoutCommand?: (command: LayoutCommand) => void;
   readonly titleActions?: ReactNode;
   readonly operationsContent?: ReactNode;
@@ -223,6 +224,7 @@ export function WorkbenchShell({
   layout,
   apps,
   onActivateApp,
+  onOpenPreview,
   onLayoutCommand,
   titleActions,
   operationsContent,
@@ -555,7 +557,7 @@ export function WorkbenchShell({
               {
                 id: 'open-preview',
                 label: 'Open preview',
-                onSelect: () => undefined,
+                onSelect: () => onOpenPreview?.(),
               },
               {
                 id: 'inspect-asset',

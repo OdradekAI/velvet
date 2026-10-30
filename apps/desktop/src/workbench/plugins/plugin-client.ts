@@ -5,6 +5,7 @@ import {
   type CorePluginInstallRecovery,
   type CorePluginInstallRecoveryAction,
   type CorePluginInstallRecoveryLogEntry,
+  type CorePluginLocalization,
   type CorePluginProjection,
   type CorePluginDisableReason,
   type CorePluginManifest,
@@ -54,6 +55,11 @@ import {
   OverlayRegistry,
   type OverlayDescriptor,
 } from '../overlays/overlay-registry.js';
+import {
+  LocalizationService,
+  type LocalizationBundleInput,
+  type LocalizationBundleLoader,
+} from '../localization/localization-service.js';
 
 export type PluginRuntime = 'builtin' | 'wasm' | 'sidecar';
 
@@ -77,6 +83,7 @@ export interface ExtensionManifest {
   /** A plugin-owned top-level WorkbenchApp. Its id must be extension-prefixed. */
   readonly workbenchApp?: PluginWorkbenchApp;
   readonly targetApp?: AppTarget;
+  readonly localization?: CorePluginLocalization | null;
   readonly contributions: readonly ManifestContribution[];
   readonly permissions: Partial<Record<Zone, readonly string[]>>;
 }
@@ -175,6 +182,7 @@ export class PluginClient {
     private readonly commandRegistry?: CommandRegistry,
     private readonly menuRegistry?: MenuRegistry,
     private readonly overlayRegistry?: OverlayRegistry,
+    private readonly localization: LocalizationService = new LocalizationService(),
   ) {
     this.ui = ui;
     this.core.subscribe((event) => {
@@ -182,6 +190,7 @@ export class PluginClient {
         void this.handleCorePluginDisabled(event.extensionId, event.reason);
       }
     });
+    this.localization.subscribe(() => this.projectActiveLocalizations());
   }
 
   private readonly listeners = new Set<() => void>();
@@ -433,6 +442,7 @@ export class PluginClient {
     record.registeredAppId = undefined;
     record.appSurfaceBinding = undefined;
     this.commandHandlers.delete(extensionId);
+    this.localization.unregisterExtension(extensionId);
     record.status = 'disabled';
     this.notify();
   }
@@ -449,9 +459,48 @@ export class PluginClient {
     const removed = this.records.delete(extensionId);
     if (removed) {
       this.commandHandlers.delete(extensionId);
+      this.localization.unregisterExtension(extensionId);
       this.notify();
     }
     return removed;
+  }
+
+  /** Loads package-relative l10n bundles through the host-owned loader seam. */
+  public async loadLocalization(
+    extensionId: string,
+    loader: LocalizationBundleLoader,
+  ): Promise<boolean> {
+    const record = this.require(extensionId);
+    if (!record.manifest.localization) {
+      return false;
+    }
+    const loaded = await this.localization.loadExtension(
+      extensionId,
+      record.manifest.localization,
+      loader,
+    );
+    this.projectLocalization(extensionId);
+    this.notify();
+    return loaded;
+  }
+
+  /** Registers an already decoded bundle set for a trusted built-in extension. */
+  public registerLocalization(
+    extensionId: string,
+    bundles: readonly LocalizationBundleInput[],
+  ): boolean {
+    const record = this.require(extensionId);
+    if (!record.manifest.localization) {
+      return false;
+    }
+    const registered = this.localization.registerExtension(
+      extensionId,
+      record.manifest.localization,
+      bundles,
+    );
+    this.projectLocalization(extensionId);
+    this.notify();
+    return registered;
   }
 
   public get(extensionId: string): PluginSummary | undefined {
@@ -860,6 +909,18 @@ export class PluginClient {
     return [...this.records.values()]
       .filter((record) => record.status === 'active' && record.appSurfaceBinding)
       .map((record) => record.appSurfaceBinding!);
+  }
+
+  private projectActiveLocalizations(): void {
+    for (const record of this.records.values()) {
+      if (record.status === 'active') {
+        this.projectLocalization(record.manifest.id);
+      }
+    }
+  }
+
+  private projectLocalization(extensionId: string): void {
+    this.ui.projectLocale(extensionId, this.localization.projection(extensionId));
   }
 
   public subscribe(listener: () => void): () => void {
@@ -1624,34 +1685,100 @@ export class PluginClient {
 }
 
 function manifestFromCoreProjection(projection: CorePluginProjection): ExtensionManifest {
+  const canonical = projection.manifest;
   return {
-    id: projection.summary.id,
-    version: projection.summary.version,
-    hostApi: '1',
-    runtime: 'builtin',
-    targetApp: projection.targetApp
-      ? { appId: projection.targetApp.appId, apiRange: projection.targetApp.api }
+    id: canonical.id,
+    version: canonical.version,
+    hostApi: canonical.hostApi,
+    runtime: canonicalRuntime(canonical.runtime),
+    localization: canonical.localization ?? undefined,
+    targetApp: canonical.targetApp
+      ? { appId: canonical.targetApp.appId, apiRange: canonical.targetApp.api }
       : undefined,
-    contributions: projection.contributions
+    workbenchApp: canonical.workbenchApp
+      ? {
+          id: canonical.workbenchApp.id,
+          apiVersion: canonical.workbenchApp.api,
+          title: canonical.workbenchApp.title,
+          activityBarIcon: canonical.workbenchApp.activityBarIcon,
+          activityBarOrder: canonical.workbenchApp.activityBarOrder ?? undefined,
+          surface: {
+            entrypoint: canonical.workbenchApp.surface.entrypoint,
+            bridgeVersion: canonical.workbenchApp.surface.bridgeVersion,
+          },
+        }
+      : undefined,
+    contributions: canonical.contributions
       .filter(isRenderableCoreContribution)
-      .map(coreContributionToManifest),
-    permissions: {},
+      .map((contribution) =>
+        coreContributionToManifest({
+          ...contribution,
+          namespace:
+            contribution.namespace ?? namespaceForCanonicalScope(contribution.scope, canonical.id),
+        }),
+      ),
+    permissions: permissionsFromCanonical(canonical.permissionSets),
   };
 }
 
-function isRenderableCoreContribution(contribution: CorePluginContribution): boolean {
+function isRenderableCoreContribution(
+  contribution: CorePluginManifest['contributions'][number],
+): boolean {
   return (
+    contribution.kind === 'app-surface' ||
+    contribution.kind === 'activity-bar-entry' ||
     contribution.kind === 'view-container' ||
     contribution.kind === 'view' ||
     contribution.kind === 'companion-view' ||
     contribution.kind === 'operation-view' ||
     contribution.kind === 'dialog' ||
     contribution.kind === 'command' ||
-    contribution.kind === 'context-menu'
+    contribution.kind === 'context-menu' ||
+    contribution.kind === 'menu' ||
+    contribution.kind === 'keybinding' ||
+    contribution.kind === 'popover' ||
+    contribution.kind === 'notification' ||
+    contribution.kind === 'preview-provider' ||
+    contribution.kind === 'preview-augmentation' ||
+    contribution.kind === 'inspector' ||
+    contribution.kind === 'job'
   );
 }
 
-function coreContributionToManifest(contribution: CorePluginContribution): ManifestContribution {
+function canonicalRuntime(runtime: CorePluginManifest['runtime']): PluginRuntime {
+  return runtime === 'built-in' ? 'builtin' : runtime;
+}
+
+function namespaceForCanonicalScope(
+  scope: CorePluginContribution['scope'],
+  extensionId: string,
+): string {
+  switch (scope.kind) {
+    case 'workbench':
+      return 'workbench';
+    case 'workbench-app':
+      return `workbench.app.${scope.appId}`;
+    case 'capability':
+      return `capability.${extensionId}`;
+  }
+}
+
+function permissionsFromCanonical(
+  permissionSets: CorePluginManifest['permissionSets'],
+): Partial<Record<Zone, readonly string[]>> {
+  const permissions: Partial<Record<Zone, readonly string[]>> = {};
+  for (const permissionSet of permissionSets) {
+    permissions[permissionSet.zone] = permissionSet.permissions;
+  }
+  return permissions;
+}
+
+type OwnedCorePluginContribution = CorePluginManifest['contributions'][number] &
+  Pick<CorePluginContribution, 'namespace'>;
+
+function coreContributionToManifest(
+  contribution: OwnedCorePluginContribution,
+): ManifestContribution {
   const scope = contribution.scope.kind === 'workbench-app' ? 'workbench-app' : contribution.scope.kind;
   const appId = contribution.scope.kind === 'workbench-app'
     ? contribution.scope.appId
@@ -1696,7 +1823,7 @@ function coreContributionToManifest(contribution: CorePluginContribution): Manif
 }
 
 function coreContributionKind(
-  contribution: CorePluginContribution,
+  contribution: OwnedCorePluginContribution,
 ): ManifestContribution['kind'] {
   switch (contribution.kind) {
     case 'context-menu':

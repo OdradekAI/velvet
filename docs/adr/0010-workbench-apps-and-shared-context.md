@@ -72,6 +72,33 @@ persistence, Asset identity, Source identity or the shared data stores. The
 host owns activation, focus, layout, lifecycle, permissions and failure
 isolation.
 
+The `AppSurface` boundary is the same for trusted built-in adapters and
+isolated plugin adapters. Its descriptor carries a stable surface id, owner
+namespace, target app, host API and bridge version ranges, trust mode,
+required and optional capabilities, minimum size, input/drop/download policy
+and resource limits. The host negotiates the descriptor before mounting and
+drives the lifecycle `registered → negotiating → mounted → active ↔
+suspended`, with typed `failed → retrying → negotiating` and `disposed`
+transitions.
+
+`WorkspaceArea` switches surfaces transactionally: the target must negotiate,
+mount and acknowledge readiness before the current healthy surface is
+suspended. A failed target remains unavailable with diagnostics, retry and
+details actions; the previous surface stays active. If no healthy surface is
+available, the host renders a recoverable fallback. Sessions and messages use
+a `sessionId` plus monotonic sequence; replaceable projections carry
+revisions, and reconnect replays the latest authoritative snapshot instead of
+requiring an unbounded event log. Commands use request ids so retries are
+idempotent.
+
+The host owns lifecycle, outer geometry, focus, permission resolution,
+loading/error/disabled/fallback UI, diagnostics and recovery. A surface may
+own its internal grid, canvas, timeline, preview or app-scoped state, but it
+cannot mutate Parts, global layout, core Asset/Feed identity, another surface
+or host-owned persistence. Capability grants are resolved from trust plus
+Profile/Workspace policy (`allow`, `prompt` or `deny`) and are sent in the
+handshake; they are never inferred from a Part or Zone.
+
 `WorkspaceArea` hosts one active `WorkbenchApp` surface at a time. The host
 does not assume editor tabs as the central navigation model. An app may later
 define its own internal tabs, panes or navigation, but those remain inside the

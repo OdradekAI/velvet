@@ -12,6 +12,7 @@ import { PluginRecoveryOperationsPanel } from './plugin-recovery-operations-pane
 import { JobOperationsPanel } from './job-operations-panel.js';
 import { createNativeDirectoryPicker } from '../../platform/tauri-directory-picker.js';
 import { createNativeFileExporter } from '../../platform/tauri-file-exporter.js';
+import { PreviewOverlay } from './preview-overlay.js';
 
 interface NativeWorkbenchState {
   readonly app: DesktopApp;
@@ -24,6 +25,7 @@ export function NativeWorkbenchApp() {
   const [startupError, setStartupError] = useState<unknown>();
   const [commandError, setCommandError] = useState<unknown>();
   const [pluginManagerOpen, setPluginManagerOpen] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [appRevision, setAppRevision] = useState(0);
   const [viewRenderers] = useState(() => new ViewRendererRegistry());
   const [directoryPicker] = useState(() => createNativeDirectoryPicker());
@@ -200,6 +202,7 @@ export function NativeWorkbenchApp() {
       layout={currentState.layout}
       menuRegistry={currentState.app.workbench.menus}
       onActivateApp={activateApp}
+      onOpenPreview={() => setPreviewOpen(true)}
       onLayoutCommand={dispatchLayout}
       operationsContent={(
         <div className="velvet-operations-stack">
@@ -242,6 +245,18 @@ export function NativeWorkbenchApp() {
           open={pluginManagerOpen}
           pickDirectory={() => directoryPicker.pickDirectory()}
           plugins={currentState.app.workbench.plugins}
+        />
+        <PreviewOverlay
+          context={{
+            assetId: 'asset-1',
+            contentKind: 'generic',
+            intent: 'quick',
+            surface: 'workspace',
+          }}
+          host={currentState.app.workbench.preview}
+          onOpenChange={setPreviewOpen}
+          open={previewOpen}
+          registry={currentState.app.workbench.previewRegistry}
         />
         {commandError ? (
           <div aria-live="polite" className="velvet-command-error" role="alert">

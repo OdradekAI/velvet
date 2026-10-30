@@ -14,8 +14,9 @@ use velvet_plugin_host::{
 };
 use velvet_preview_core::{GenericFallbackProvider, PreviewContext, PreviewResolver};
 use velvet_workbench_protocol::{
-    Command, CoreError, CoreTransport, PluginDisableReason, Query, Request, RequestEnvelope,
-    RequestId, Response, ResponseEnvelope, PROTOCOL_VERSION,
+    Command, CoreError, CoreTransport, PluginDisableReason, PluginInstallPreviewDto,
+    PluginProjectionDto, Query, Request, RequestEnvelope, RequestId, Response, ResponseEnvelope,
+    PROTOCOL_VERSION,
 };
 
 pub struct ApplicationCore {
@@ -329,6 +330,7 @@ impl ApplicationCore {
                 command,
             }) => self.apply_layout(expected_revision, command),
             Request::Command(Command::RegisterPlugin { manifest }) => {
+                let manifest: ExtensionManifest = (*manifest).into();
                 let id = manifest.id.clone();
                 self.register_plugin(manifest).map_err(plugin_error)?;
                 self.extension_response(&id)
@@ -360,6 +362,7 @@ impl ApplicationCore {
                 .map_err(plugin_error),
             Request::Command(Command::InspectPlugin { source_dir }) => self
                 .inspect_plugin_from_directory(source_dir)
+                .map(PluginInstallPreviewDto::from)
                 .map(Response::PluginInstallPreview)
                 .map_err(plugin_error),
             Request::Command(Command::CommitPluginInstall { extension_id }) => {
@@ -435,6 +438,7 @@ impl ApplicationCore {
             Request::Query(Query::PluginProjection { extension_id }) => self
                 .plugins
                 .projection(&extension_id)
+                .map(PluginProjectionDto::from)
                 .map(Response::PluginProjection)
                 .map_err(plugin_error),
             Request::Query(Query::ResolvePreview {
@@ -792,6 +796,7 @@ mod tests {
             target_app: None,
             contributions: vec![],
             permission_sets: vec![],
+            ..ExtensionManifest::default()
         };
         let id = manifest.id.clone();
 
@@ -842,11 +847,14 @@ mod tests {
             target_app: None,
             contributions: vec![],
             permission_sets: vec![],
+            ..ExtensionManifest::default()
         };
         let id = manifest.id.clone();
 
         let registered = core
-            .dispatch(Request::Command(Command::RegisterPlugin { manifest }))
+            .dispatch(Request::Command(Command::RegisterPlugin {
+                manifest: Box::new(manifest.into()),
+            }))
             .expect("register command should succeed");
         assert!(matches!(
             registered,
@@ -892,7 +900,7 @@ mod tests {
                 id: "command.runtime.open".into(),
                 kind: ContributionKind::Command,
                 scope: ContributionScope::Workbench,
-                namespace: "workbench".into(),
+                namespace: Some("workbench".into()),
                 container: None,
                 zone: None,
                 title: Some("Open runtime command".into()),
@@ -911,11 +919,14 @@ mod tests {
                 ui: None,
             }],
             permission_sets: vec![],
+            ..ExtensionManifest::default()
         };
         let id = manifest.id.clone();
 
-        core.dispatch(Request::Command(Command::RegisterPlugin { manifest }))
-            .expect("command plugin should register");
+        core.dispatch(Request::Command(Command::RegisterPlugin {
+            manifest: Box::new(manifest.into()),
+        }))
+        .expect("command plugin should register");
         core.dispatch(Request::Command(Command::ActivatePlugin {
             extension_id: id.clone(),
         }))
@@ -949,7 +960,7 @@ mod tests {
                 id: "reader.view".into(),
                 kind: ContributionKind::View,
                 scope: ContributionScope::Workbench,
-                namespace: "workbench".into(),
+                namespace: Some("workbench".into()),
                 container: Some(HostContainer::PrimarySidebar),
                 zone: Some(WorkbenchZone::Navigation),
                 title: Some("Reader".into()),
@@ -972,11 +983,14 @@ mod tests {
                 }),
             }],
             permission_sets: vec![],
+            ..ExtensionManifest::default()
         };
         let id = manifest.id.clone();
 
-        core.dispatch(Request::Command(Command::RegisterPlugin { manifest }))
-            .expect("projection plugin should register");
+        core.dispatch(Request::Command(Command::RegisterPlugin {
+            manifest: Box::new(manifest.into()),
+        }))
+        .expect("projection plugin should register");
         core.dispatch(Request::Command(Command::ActivatePlugin {
             extension_id: id.clone(),
         }))
@@ -989,8 +1003,8 @@ mod tests {
             response,
             Response::PluginProjection(projection)
                 if projection.summary.state == velvet_plugin_api::ExtensionState::Active
-                    && projection.contributions[0].namespace == "workbench"
-                    && projection.contributions[0]
+                    && projection.manifest.contributions[0].namespace.as_deref() == Some("workbench")
+                    && projection.manifest.contributions[0]
                         .ui
                         .as_ref()
                         .expect("projection should include UI metadata")
@@ -1011,6 +1025,7 @@ mod tests {
             target_app: None,
             contributions: vec![],
             permission_sets: vec![],
+            ..ExtensionManifest::default()
         };
         fs::write(
             root.join("local-reader.json"),
@@ -1054,6 +1069,7 @@ mod tests {
             target_app: None,
             contributions: vec![],
             permission_sets: vec![],
+            ..ExtensionManifest::default()
         };
         let mut previous = current.clone();
         previous.version = "0.1.0".into();

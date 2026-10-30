@@ -1,6 +1,6 @@
 # ADR-0004: Preview providers, intents and augmentations
 
-Status: Proposed
+Status: Accepted
 Date: 2026-10-28
 
 ## Context
@@ -9,7 +9,7 @@ Different users need different levels of preview. A general user wants a clean, 
 
 Eagle demonstrates that these capabilities can arrive through separate extensions: 3D and RAW extensions provide format handling and preview, PNG metadata adds inspector data, and AI Actions add workflows. Spacedrive also separates preview renderers, inspectors, views, commands and jobs in its extension UI model.
 
-## Proposed decision
+## Decision
 
 Use one host-managed `PreviewHost` with three stable user intents:
 
@@ -34,9 +34,49 @@ AnalysisJob           performs expensive asynchronous analysis
 
 For one asset, intent and surface, the resolver chooses one primary `PreviewProvider`; multiple augmentations may attach. Resolution order is explicit user choice, user profile default, provider priority and built-in fallback.
 
+The first Workbench host maps `Quick` to a host-owned preview overlay when a
+popup is appropriate; `Inspect` and `Analyze` may render through an
+`AppSurface` region, inspector or another declared preview surface. The frame,
+loading/error/disabled/fallback states, focus, theme and accessibility remain
+host-owned. Built-in and product-plugin providers use the same public seam;
+plugins extend declared augmentation, inspector and tool slots without
+replacing the host frame.
+
 The host owns loading, error, empty, disabled-extension and fallback states. Extensions return typed contributions and capability handles; they do not replace the host layout or inject arbitrary DOM.
 
 Preview caches are keyed by content fingerprint, extension version, decoder version and relevant user settings. Expensive work runs through the shared job system and can be cancelled.
+
+The host/provider boundary is explicit. `PreviewHost` drives the lifecycle
+`requested → resolving → loading → ready ↔ suspended`, with typed failed,
+retrying, disabled, unsupported and disposed states. A `PreviewContext` carries
+an opaque Asset handle, ContentKind, intent, target surface, WorkspaceContext
+projection, theme, locale, measured size, focus, granted capabilities,
+session id, cancellation and deadline. It never exposes a database connection,
+unrestricted path or another extension session.
+
+Providers return a framework-neutral `PreviewSessionDescriptor` describing the
+render adapter/UI Bridge version, supported commands and augmentation slots.
+Trusted and isolated providers use the same descriptor and lifecycle; only the
+renderer transport differs. The host owns the Quick overlay/AppSurface frame,
+placement, focus, accessibility, theme, loading/error/fallback and disposal.
+Providers never return React/Vue components, inject arbitrary DOM or replace
+the frame. Late events are ignored after session disposal or a session-id
+change.
+
+`PreviewResolver` selects one Primary provider from Asset, ContentKind, intent,
+surface and Workspace/Profile context. The deterministic order is explicit
+user choice, Profile/Workspace default, selector match, provider priority,
+provider id and the built-in generic fallback. Equal-priority ambiguity is a
+diagnostic decision. A provider cannot bypass the resolver or claim the host
+directly.
+
+Augmentations, Inspector sections and tools register only declared slots.
+Augmentations do not replace the Primary provider; their loading/error/disabled
+state is independent. Inspector and toolbar actions consume typed projections
+and dispatch host Commands. Decode, parse, thumbnail, histogram and analysis
+work goes through the Rust `JobSystem`, and provider/capability caches are
+owned by their producer and invalidated by content, provider, decoder, schema
+or settings changes. A stale cache is never reported as a current result.
 
 Editing is a separate `Editor` concern. Preview providers may expose non-destructive tools, but mutations go through registered commands and transactions.
 
