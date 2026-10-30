@@ -545,9 +545,9 @@ built-in providers. It clamps read requests to a host limit and returns typed
 text/bytes content or a typed source error. The application core installs the
 adapter, while preview providers receive no path or persistence handle.
 
-The current code includes a bounded in-memory source adapter that a composition
-or contract test can inject, and trusted text/image providers as the first
-executable consumers. Their renderer
+The current `application-core` composition includes a bounded in-memory source
+adapter that a composition or contract test can inject, and trusted
+text/image providers as the first executable consumers. Their renderer
 projections are explicit Rust → Tauri → TypeScript DTOs: text is rendered by
 the host as bounded text, image bytes are rendered through a host-owned Blob
 URL, and a truncation flag remains visible. A missing source or provider error

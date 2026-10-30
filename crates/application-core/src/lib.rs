@@ -1,5 +1,9 @@
 use std::sync::{Arc, Mutex};
 
+mod preview_source;
+
+pub use preview_source::InMemoryPreviewAssetSource;
+
 use velvet_asset_core::ContentKindId;
 use velvet_job_system::{JobError, JobId, JobSpec, JobStateStore, JobSystem};
 use velvet_layout_model::{InMemoryLayoutService, LayoutService};
@@ -793,8 +797,6 @@ mod tests {
         PluginInvocation, PluginInvocationResult, PluginRuntime, RuntimeError, RuntimeHealth,
         RuntimeProcess,
     };
-    use velvet_preview_core::InMemoryPreviewAssetSource;
-
     static NEXT_TEST_FILE: AtomicU64 = AtomicU64::new(0);
 
     fn temporary_layout_path() -> PathBuf {

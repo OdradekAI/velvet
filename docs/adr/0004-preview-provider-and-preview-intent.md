@@ -86,13 +86,13 @@ content or a typed source error, and never expose filesystem paths, database
 handles or source credentials. External providers do not receive the source
 object; their runtime context remains capability-scoped and failure-isolated.
 
-The current skeleton ships a concrete `InMemoryPreviewAssetSource` adapter so
-the host and provider contracts can be exercised before the Asset source
-location/store decision is accepted. It is read-only at the provider seam,
-clamps both text and bytes to the requested limit, preserves UTF-8 boundaries,
-and returns `NotFound` or a typed failure without leaking storage details. A
-future persistence/source-location adapter will satisfy the same interface; it
-does not move source ownership into `preview-core`.
+The current skeleton ships a concrete `InMemoryPreviewAssetSource` adapter in
+`application-core` so the host and provider contracts can be exercised before
+the Asset source location/store decision is accepted. It is read-only at the
+provider seam, clamps both text and bytes to the requested limit, preserves
+UTF-8 boundaries, and returns `NotFound` or a typed failure without leaking
+storage details. A future persistence/source-location adapter will satisfy the
+same interface; `preview-core` keeps only the source seam and preview logic.
 
 The first trusted providers are host-owned text and image adapters. They return
 framework-neutral `Text` and `Image` renderer projections containing only the

@@ -1,5 +1,4 @@
-use std::collections::BTreeMap;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use velvet_asset_core::{AssetId, ContentKindId};
@@ -77,96 +76,6 @@ pub trait PreviewAssetSource: Send + Sync {
         context: &PreviewContext,
         request: PreviewReadRequest,
     ) -> Result<PreviewAssetContent, PreviewSourceError>;
-}
-
-/// A small read-only content adapter for the current skeleton.
-///
-/// The application composition owns the source instance and can replace it
-/// with a persistence/source-location adapter once the asset store is wired.
-/// Keeping this adapter here gives built-in providers a real bounded-content
-/// implementation without making `preview-core` depend on filesystem paths
-/// or persistence handles.
-#[derive(Default)]
-pub struct InMemoryPreviewAssetSource {
-    assets: RwLock<BTreeMap<AssetId, PreviewAssetContent>>,
-}
-
-impl InMemoryPreviewAssetSource {
-    pub fn insert_text(&self, asset_id: AssetId, text: impl Into<String>) {
-        self.insert(
-            asset_id,
-            PreviewAssetContent::Text {
-                text: text.into(),
-                truncated: false,
-            },
-        );
-    }
-
-    pub fn insert_bytes(&self, asset_id: AssetId, bytes: impl Into<Vec<u8>>) {
-        self.insert(
-            asset_id,
-            PreviewAssetContent::Bytes {
-                bytes: bytes.into(),
-                truncated: false,
-            },
-        );
-    }
-
-    pub fn insert(&self, asset_id: AssetId, content: PreviewAssetContent) {
-        if let Ok(mut assets) = self.assets.write() {
-            assets.insert(asset_id, content);
-        }
-    }
-
-    pub fn remove(&self, asset_id: &AssetId) -> Option<PreviewAssetContent> {
-        self.assets
-            .write()
-            .ok()
-            .and_then(|mut assets| assets.remove(asset_id))
-    }
-}
-
-impl PreviewAssetSource for InMemoryPreviewAssetSource {
-    fn read(
-        &self,
-        context: &PreviewContext,
-        request: PreviewReadRequest,
-    ) -> Result<PreviewAssetContent, PreviewSourceError> {
-        let assets = self
-            .assets
-            .read()
-            .map_err(|_| PreviewSourceError::Failed("asset source lock poisoned".into()))?;
-        let Some(content) = assets.get(&context.asset_id) else {
-            return Err(PreviewSourceError::NotFound);
-        };
-        Ok(bound_content(content, request.max_bytes()))
-    }
-}
-
-fn bound_content(content: &PreviewAssetContent, max_bytes: usize) -> PreviewAssetContent {
-    match content {
-        PreviewAssetContent::Text { text, truncated } => {
-            if text.len() <= max_bytes {
-                return PreviewAssetContent::Text {
-                    text: text.clone(),
-                    truncated: *truncated,
-                };
-            }
-
-            let mut end = max_bytes;
-            while end > 0 && !text.is_char_boundary(end) {
-                end -= 1;
-            }
-            PreviewAssetContent::Text {
-                text: text[..end].to_string(),
-                truncated: true,
-            }
-        }
-        PreviewAssetContent::Bytes { bytes, truncated } => PreviewAssetContent::Bytes {
-            bytes: bytes[..bytes.len().min(max_bytes)].to_vec(),
-            truncated: *truncated || bytes.len() > max_bytes,
-        },
-    }
 }
 
 #[derive(Default)]
@@ -683,34 +592,31 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn in_memory_source_returns_bounded_typed_content() {
-        let source = InMemoryPreviewAssetSource::default();
-        source.insert_text(AssetId("asset-1".into()), "你好 preview");
-        let context = PreviewContext {
-            asset_id: AssetId("asset-1".into()),
-            content_kind: ContentKindId("text/plain".into()),
-            intent: PreviewIntent::Quick,
-            surface: PreviewSurface::Workspace,
-        };
+    struct BuiltinProviderSource;
 
-        let content = source
-            .read(&context, PreviewReadRequest::new(6))
-            .expect("the in-memory source should find the asset");
-        assert_eq!(
-            content,
-            PreviewAssetContent::Text {
-                text: "你好".into(),
-                truncated: true,
+    impl PreviewAssetSource for BuiltinProviderSource {
+        fn read(
+            &self,
+            context: &PreviewContext,
+            _request: PreviewReadRequest,
+        ) -> Result<PreviewAssetContent, PreviewSourceError> {
+            match context.asset_id.0.as_str() {
+                "text-1" => Ok(PreviewAssetContent::Text {
+                    text: "hello".into(),
+                    truncated: false,
+                }),
+                "image-1" => Ok(PreviewAssetContent::Bytes {
+                    bytes: vec![1, 2, 3],
+                    truncated: false,
+                }),
+                _ => Err(PreviewSourceError::NotFound),
             }
-        );
+        }
     }
 
     #[test]
     fn built_in_text_and_image_providers_return_host_renderers() {
-        let source = InMemoryPreviewAssetSource::default();
-        source.insert_text(AssetId("text-1".into()), "hello");
-        source.insert_bytes(AssetId("image-1".into()), vec![1, 2, 3]);
+        let source = BuiltinProviderSource;
 
         let text_context = PreviewContext {
             asset_id: AssetId("text-1".into()),
