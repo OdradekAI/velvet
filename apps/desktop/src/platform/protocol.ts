@@ -171,6 +171,15 @@ export type CoreRequest =
     }
   | {
       readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'clear-plugin-install-recovery-log';
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'export-plugin-install-recovery-log';
+      readonly destination: string;
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
       readonly kind: 'uninstall-plugin';
       readonly extensionId: string;
     }

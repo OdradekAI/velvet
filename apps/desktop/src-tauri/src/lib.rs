@@ -188,6 +188,15 @@ pub enum WireRequest {
         extension_id: String,
         action: ExtensionInstallRecoveryAction,
     },
+    ClearPluginInstallRecoveryLog {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+    },
+    ExportPluginInstallRecoveryLog {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        destination: String,
+    },
     InvokePluginCommand {
         #[serde(rename = "protocolVersion")]
         protocol_version: u16,
@@ -347,6 +356,17 @@ impl WireRequest {
                     extension_id: ExtensionId(extension_id),
                     action,
                 }))
+            }
+            Self::ClearPluginInstallRecoveryLog { protocol_version } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Command(Command::ClearPluginInstallRecoveryLog))
+            }
+            Self::ExportPluginInstallRecoveryLog {
+                protocol_version,
+                destination,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Command(Command::ExportPluginInstallRecoveryLog { destination }))
             }
             Self::InvokePluginCommand {
                 protocol_version,
@@ -1333,6 +1353,42 @@ mod tests {
                 .into_core(1)
                 .expect("the plugin recovery log query should map"),
             Request::Query(velvet_workbench_protocol::Query::PluginInstallRecoveryLog)
+        ));
+
+        let clear_recovery_log: WireRequestEnvelope = serde_json::from_value(serde_json::json!({
+            "protocolVersion": 1,
+            "requestId": 28,
+            "request": {
+                "kind": "clear-plugin-install-recovery-log",
+                "protocolVersion": 1
+            }
+        }))
+        .expect("the recovery log clear request should deserialize");
+        assert!(matches!(
+            clear_recovery_log
+                .request
+                .into_core(1)
+                .expect("the recovery log clear request should map"),
+            Request::Command(Command::ClearPluginInstallRecoveryLog)
+        ));
+
+        let export_recovery_log: WireRequestEnvelope = serde_json::from_value(serde_json::json!({
+            "protocolVersion": 1,
+            "requestId": 29,
+            "request": {
+                "kind": "export-plugin-install-recovery-log",
+                "protocolVersion": 1,
+                "destination": "/tmp/velvet-recovery-log.json"
+            }
+        }))
+        .expect("the recovery log export request should deserialize");
+        assert!(matches!(
+            export_recovery_log
+                .request
+                .into_core(1)
+                .expect("the recovery log export request should map"),
+            Request::Command(Command::ExportPluginInstallRecoveryLog { destination })
+                if destination == "/tmp/velvet-recovery-log.json"
         ));
 
         for (kind, request_id, expected) in [

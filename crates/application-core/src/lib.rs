@@ -219,6 +219,27 @@ impl ApplicationCore {
             .cleanup_install_recovery_orphans(plugin_directory)
     }
 
+    pub fn clear_plugin_install_recovery_log(&mut self) -> Result<(), PluginError> {
+        let Some(plugin_directory) = self.plugin_directory.as_deref() else {
+            return Ok(());
+        };
+        self.plugins.clear_install_recovery_log(plugin_directory)
+    }
+
+    pub fn export_plugin_install_recovery_log(
+        &self,
+        destination: impl AsRef<std::path::Path>,
+    ) -> Result<(), PluginError> {
+        let Some(plugin_directory) = self.plugin_directory.as_deref() else {
+            return Err(PluginError::InstallFailed(
+                "plugin recovery log export is unavailable without an application plugin directory"
+                    .into(),
+            ));
+        };
+        self.plugins
+            .export_install_recovery_log(plugin_directory, destination.as_ref())
+    }
+
     pub fn uninstall_plugin(&mut self, id: &ExtensionId) -> Result<(), PluginError> {
         let Some(plugin_directory) = self.plugin_directory.as_deref() else {
             return Err(PluginError::UninstallFailed(
@@ -285,6 +306,16 @@ impl ApplicationCore {
                 action,
             }) => {
                 self.resolve_plugin_install_recovery(&extension_id, action)
+                    .map_err(plugin_error)?;
+                Ok(Response::Accepted)
+            }
+            Request::Command(Command::ClearPluginInstallRecoveryLog) => {
+                self.clear_plugin_install_recovery_log()
+                    .map_err(plugin_error)?;
+                Ok(Response::Accepted)
+            }
+            Request::Command(Command::ExportPluginInstallRecoveryLog { destination }) => {
+                self.export_plugin_install_recovery_log(destination)
                     .map_err(plugin_error)?;
                 Ok(Response::Accepted)
             }

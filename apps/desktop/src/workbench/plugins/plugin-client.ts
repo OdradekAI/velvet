@@ -515,6 +515,34 @@ export class PluginClient {
     return response.log;
   }
 
+  public async clearCoreInstallRecoveryLog(): Promise<void> {
+    const response = await this.core.request({
+      protocolVersion: PROTOCOL_VERSION,
+      kind: 'clear-plugin-install-recovery-log',
+    });
+    if (response.kind !== 'accepted') {
+      throw new PluginLifecycleError(
+        `Expected an accepted response for clearing the plugin install recovery log, received ${response.kind}`,
+        'core',
+      );
+    }
+    this.notify();
+  }
+
+  public async exportCoreInstallRecoveryLog(destination: string): Promise<void> {
+    const response = await this.core.request({
+      protocolVersion: PROTOCOL_VERSION,
+      kind: 'export-plugin-install-recovery-log',
+      destination,
+    });
+    if (response.kind !== 'accepted') {
+      throw new PluginLifecycleError(
+        `Expected an accepted response for exporting the plugin install recovery log, received ${response.kind}`,
+        'core',
+      );
+    }
+  }
+
   public getCoreSummary(extensionId: string): CorePluginSummary | undefined {
     return this.coreSummaries.get(extensionId);
   }

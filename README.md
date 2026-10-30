@@ -94,7 +94,10 @@ dialog offers resume, keep new, restore previous or discard actions.
 Failed recovery actions remain available for retry, while stale or invalid
 transaction directories are cleaned on startup. The host keeps a bounded
 recovery log in the application plugin directory and the dialog shows recent
-attempts and cleanup results.
+attempts and cleanup results. The same Rust-owned log is projected into the
+global Operations panel, where users can filter by plugin, status or action,
+clear the bounded history, and export a JSON snapshot through a native save
+dialog.
 
 ## Architecture
 

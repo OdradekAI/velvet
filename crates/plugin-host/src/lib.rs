@@ -751,6 +751,12 @@ pub trait PluginHost {
         &self,
         install_root: &Path,
     ) -> Result<Vec<ExtensionInstallRecoveryLogEntry>, PluginError>;
+    fn clear_install_recovery_log(&mut self, install_root: &Path) -> Result<(), PluginError>;
+    fn export_install_recovery_log(
+        &self,
+        install_root: &Path,
+        destination: &Path,
+    ) -> Result<(), PluginError>;
     fn cleanup_install_recovery_orphans(&mut self, install_root: &Path) -> Result<(), PluginError>;
     fn resolve_install_recovery(
         &mut self,
@@ -1743,6 +1749,42 @@ impl PluginHost for InMemoryPluginHost {
         install_root: &Path,
     ) -> Result<Vec<ExtensionInstallRecoveryLogEntry>, PluginError> {
         Ok(read_recovery_log(install_root).unwrap_or_default())
+    }
+
+    fn clear_install_recovery_log(&mut self, install_root: &Path) -> Result<(), PluginError> {
+        match fs::remove_file(recovery_log_path(install_root)) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(PluginError::InstallFailed(error.to_string())),
+        }
+        let entries = match fs::read_dir(install_root) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(PluginError::InstallFailed(error.to_string())),
+        };
+        for entry in entries {
+            let entry = entry.map_err(|error| PluginError::InstallFailed(error.to_string()))?;
+            if entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".plugin-recovery-log.json.tmp-")
+            {
+                fs::remove_file(entry.path())
+                    .map_err(|error| PluginError::InstallFailed(error.to_string()))?;
+            }
+        }
+        Ok(())
+    }
+
+    fn export_install_recovery_log(
+        &self,
+        install_root: &Path,
+        destination: &Path,
+    ) -> Result<(), PluginError> {
+        let entries = read_recovery_log(install_root)?;
+        let bytes = serde_json::to_vec_pretty(&entries)
+            .map_err(|error| PluginError::InstallFailed(error.to_string()))?;
+        fs::write(destination, bytes).map_err(|error| PluginError::InstallFailed(error.to_string()))
     }
 
     fn cleanup_install_recovery_orphans(&mut self, install_root: &Path) -> Result<(), PluginError> {
@@ -2897,7 +2939,24 @@ mod tests {
         assert_eq!(log[1].status, ExtensionInstallRecoveryLogStatus::Succeeded);
         assert_eq!(host.discover()[0].version, "0.1.0");
 
+        let export_path = root.with_extension("recovery-log.json");
+        host.export_install_recovery_log(&root, &export_path)
+            .expect("the recovery log should export");
+        let exported: Vec<ExtensionInstallRecoveryLogEntry> = serde_json::from_slice(
+            &fs::read(&export_path).expect("the exported recovery log should be readable"),
+        )
+        .expect("the exported recovery log should be valid JSON");
+        assert_eq!(exported.len(), 2);
+        host.clear_install_recovery_log(&root)
+            .expect("the recovery log should clear");
+        assert!(host
+            .inspect_install_recovery_log(&root)
+            .expect("the cleared recovery log should remain readable")
+            .is_empty());
+        assert!(!recovery_log_path(&root).exists());
+
         fs::remove_dir_all(root).expect("the retry fixture should be removed");
+        fs::remove_file(export_path).expect("the exported recovery log should be removed");
     }
 
     #[test]

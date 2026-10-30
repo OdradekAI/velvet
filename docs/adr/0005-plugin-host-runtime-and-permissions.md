@@ -99,7 +99,10 @@ activation by calling the lifecycle commands explicitly.
 Recovery failures are logged with an attempt number and remain retryable. Startup
 removes only stale or invalid transaction directories that are not part of a
 recoverable pair, records those cleanups, and exposes a bounded recovery log to
-the native client.
+the native client. The desktop projects that log into OperationsPanel; filtering
+is transient, while clear and JSON export remain typed host commands. Export
+uses a user-selected native destination and does not make the frontend a second
+persistence owner.
 
 ## Alternatives considered
 

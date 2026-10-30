@@ -8,7 +8,9 @@ import { createPluginViewRenderer } from './plugin-view-renderer.js';
 import { PluginOverlayHost } from './plugin-overlay-host.js';
 import { WorkbenchAppSurfaceHost } from './workbench-app-surface-host.js';
 import { PluginManagerDialog } from './plugin-manager-dialog.js';
+import { PluginRecoveryOperationsPanel } from './plugin-recovery-operations-panel.js';
 import { createNativeDirectoryPicker } from '../../platform/tauri-directory-picker.js';
+import { createNativeFileExporter } from '../../platform/tauri-file-exporter.js';
 
 interface NativeWorkbenchState {
   readonly app: DesktopApp;
@@ -24,6 +26,7 @@ export function NativeWorkbenchApp() {
   const [appRevision, setAppRevision] = useState(0);
   const [viewRenderers] = useState(() => new ViewRendererRegistry());
   const [directoryPicker] = useState(() => createNativeDirectoryPicker());
+  const [fileExporter] = useState(() => createNativeFileExporter());
 
   useEffect(() => {
     const app = createNativeTauriDesktopApp();
@@ -197,6 +200,19 @@ export function NativeWorkbenchApp() {
       menuRegistry={currentState.app.workbench.menus}
       onActivateApp={activateApp}
       onLayoutCommand={dispatchLayout}
+      operationsContent={(
+        <PluginRecoveryOperationsPanel
+          exportLogs={async () => {
+            const destination = await fileExporter.pickExportPath();
+            if (!destination) {
+              return undefined;
+            }
+            await currentState.app.workbench.plugins.exportCoreInstallRecoveryLog(destination);
+            return destination;
+          }}
+          plugins={currentState.app.workbench.plugins}
+        />
+      )}
       titleActions={
         <button
           aria-label="Open Extensions"

@@ -31,6 +31,7 @@ export interface WorkbenchShellProps {
   readonly onActivateApp: (appId: WorkbenchAppId) => void;
   readonly onLayoutCommand?: (command: LayoutCommand) => void;
   readonly titleActions?: ReactNode;
+  readonly operationsContent?: ReactNode;
   readonly focusService?: FocusService;
   readonly commandRegistry?: CommandRegistry;
   readonly contextKeys?: ContextKeyService;
@@ -224,6 +225,7 @@ export function WorkbenchShell({
   onActivateApp,
   onLayoutCommand,
   titleActions,
+  operationsContent,
   focusService,
   commandRegistry,
   contextKeys,
@@ -639,6 +641,7 @@ export function WorkbenchShell({
           tabIndex={-1}
         >
           <VelvetPanel title="Operations">
+            {operationsContent}
             {viewRegistry ? (
               <WorkbenchViewHost
                 focusService={focusService}
@@ -650,7 +653,7 @@ export function WorkbenchShell({
                 onLayoutCommand={onLayoutCommand}
                 zone="operations"
               />
-            ) : <p>Jobs, logs and operational tools appear here.</p>}
+            ) : operationsContent ? null : <p>Jobs, logs and operational tools appear here.</p>}
           </VelvetPanel>
           <PartResizeHandle
             layout={layout}

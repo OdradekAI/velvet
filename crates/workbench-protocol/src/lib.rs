@@ -51,6 +51,10 @@ pub enum Command {
         extension_id: ExtensionId,
         action: ExtensionInstallRecoveryAction,
     },
+    ClearPluginInstallRecoveryLog,
+    ExportPluginInstallRecoveryLog {
+        destination: String,
+    },
     UninstallPlugin {
         extension_id: ExtensionId,
     },

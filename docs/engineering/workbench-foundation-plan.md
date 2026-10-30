@@ -152,7 +152,9 @@ keep new, restore previous or discard actions. The dialog also uses native
 directory selection and confirmation and exposes enable, disable, recovery and
 uninstall actions. Failed recovery actions remain retryable, and startup cleans
 orphaned transaction directories while the host exposes a bounded recovery log
-for the dialog to display.
+for the dialog to display. OperationsPanel consumes the same log projection and
+supports transient plugin/status/action filters, idempotent clearing and native
+JSON export through the CoreTransport boundary.
 
 The current shell slice also renders the accepted Part constraint table: fixed
 Parts use stable dimensions, resizable Parts enforce bounded sizes in Rust, and
