@@ -10,3 +10,4 @@ velvet-asset-core = { path = "../asset-core" }
 velvet-layout-model = { path = "../layout-model" }
 velvet-plugin-api = { path = "../plugin-api" }
 velvet-preview-core = { path = "../preview-core" }
+velvet-job-system = { path = "../job-system" }

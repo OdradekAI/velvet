@@ -504,7 +504,7 @@ export interface CommandDescriptor {
 5. **View registry**: add built-in views and one example external view per zone. Verify that cross-zone registration is rejected. **Host registry and rejection tests done; the React shell mounts registered ViewContainers/Views with a renderer adapter seam, PluginClient projects extension views plus isolated UI Bridge sessions into that seam, and the Activity Bar now selects contributed navigation containers.**
 6. **Preview core**: implement generic image/file fallback, `PreviewResolver`, Quick/Inspect/Analyze intents and a fake provider used by contract tests.
 7. **Plugin host**: load manifests, validate permissions, activate lazily, isolate failures and expose the UI SDK boundary. **Local discovery, install preflight, permission enforcement, host API compatibility checks, numeric version upgrades, transactional commit/rollback, crash-recovery scanning, deferred activation, retryable recovery, orphan cleanup and bounded recovery logs are implemented; marketplace policy and signing remain later work.**
-8. **Jobs and facets**: implement one thumbnail job, one metadata facet and one cancellable analysis job.
+8. **Jobs and facets**: the shared Rust JobSystem lifecycle seam is now wired to OperationsPanel with persisted progress, cancellation, retry, failure and restart recovery; product-specific thumbnail, metadata and analysis providers remain follow-up consumers.
 9. **Tauri adapter**: connect typed commands, queries and events to the desktop client. No feature should bypass the protocol. **Done for the current layout slice, including native command/event serialization and global shortcut entry.**
 
 ## Acceptance scenarios

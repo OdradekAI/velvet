@@ -83,6 +83,10 @@ impl CoreTransport for TauriTransport {
             }
         };
 
+        for snapshot in self.inner.drain_job_events() {
+            self.event_sink.emit(Event::JobChanged { snapshot });
+        }
+
         if emits_layout_event {
             if let Response::Layout(state) = &response {
                 self.event_sink.emit(Event::LayoutChanged {
@@ -123,7 +127,7 @@ mod tests {
         ContributionDescriptor, ContributionKind, ContributionScope, ExtensionId,
         ExtensionManifest, RuntimeKind, RuntimeLaunchSpec, VersionRange,
     };
-    use velvet_workbench_protocol::PluginDisableReason;
+    use velvet_workbench_protocol::{PluginDisableReason, Query};
 
     #[test]
     fn successful_layout_commands_emit_authoritative_events() {
@@ -273,5 +277,37 @@ mod tests {
             [Event::PluginDisabled { extension_id, reason }] if extension_id == "sample.crashing-sidecar"
                 && reason == "crash"
         ));
+    }
+
+    #[test]
+    fn job_commands_emit_progress_and_terminal_events() {
+        let sink = InMemoryEventSink::default();
+        let transport = TauriTransport::with_event_sink(ApplicationCore::default(), sink.clone());
+        let response = transport
+            .dispatch(
+                RequestId(4),
+                Request::Command(Command::CreateJob {
+                    kind: "sample".into(),
+                    duration_ms: 200,
+                    will_fail: false,
+                }),
+            )
+            .expect("job should be accepted");
+        let job_id = match response {
+            Response::Job(snapshot) => snapshot.id,
+            other => panic!("expected job response, got {other:?}"),
+        };
+        std::thread::sleep(std::time::Duration::from_millis(80));
+        let _ = transport.dispatch(RequestId(5), Request::Query(Query::Jobs));
+        let events = sink.events();
+        assert!(events.iter().any(|event| matches!(event, Event::JobChanged { snapshot } if snapshot.id == job_id && snapshot.progress > 0)));
+        for request_id in 6..=20 {
+            std::thread::sleep(std::time::Duration::from_millis(40));
+            let _ = transport.dispatch(RequestId(request_id), Request::Query(Query::Jobs));
+            if sink.events().iter().any(|event| matches!(event, Event::JobChanged { snapshot } if snapshot.id == job_id && snapshot.status == velvet_job_system::JobStatus::Completed)) {
+                return;
+            }
+        }
+        panic!("job never emitted a completed event: {:?}", sink.events());
     }
 }

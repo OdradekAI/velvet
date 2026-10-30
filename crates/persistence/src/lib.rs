@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use velvet_job_system::{JobSnapshot, JobStateStore};
 use velvet_layout_model::LayoutState;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -79,6 +80,46 @@ impl LayoutStateStore for InMemoryLayoutStateStore {
     }
 }
 
+/// JSON-backed JobSystem storage. JobSystem remains the state owner; this
+/// adapter only supplies atomic file reads/writes for the native composition.
+pub struct JsonFileJobStateStore {
+    path: PathBuf,
+    write_lock: std::sync::Mutex<()>,
+}
+
+impl JsonFileJobStateStore {
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        Self {
+            path: path.into(),
+            write_lock: std::sync::Mutex::new(()),
+        }
+    }
+}
+
+impl JobStateStore for JsonFileJobStateStore {
+    fn load(&self) -> Result<Vec<JobSnapshot>, String> {
+        match fs::read_to_string(&self.path) {
+            Ok(contents) => serde_json::from_str(&contents).map_err(|error| error.to_string()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+
+    fn save(&self, jobs: &[JobSnapshot]) -> Result<(), String> {
+        let _guard = self
+            .write_lock
+            .lock()
+            .map_err(|_| "job store lock poisoned".to_string())?;
+        if let Some(parent) = self.path.parent() {
+            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        let contents = serde_json::to_string_pretty(jobs).map_err(|error| error.to_string())?;
+        let temporary = self.path.with_extension("json.tmp");
+        fs::write(&temporary, contents).map_err(|error| error.to_string())?;
+        fs::rename(temporary, &self.path).map_err(|error| error.to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -120,5 +161,28 @@ mod tests {
         let store = JsonFileLayoutStateStore::new(path);
 
         assert_eq!(store.load().expect("missing files are valid"), None);
+    }
+
+    #[test]
+    fn file_store_round_trips_job_snapshots() {
+        use velvet_job_system::{JobId, JobStatus};
+
+        let path = temporary_path("jobs-round-trip");
+        let store = JsonFileJobStateStore::new(&path);
+        let jobs = vec![JobSnapshot {
+            id: JobId("job-000001".into()),
+            kind: "sample".into(),
+            status: JobStatus::Interrupted,
+            progress: 25,
+            message: Some("restart".into()),
+            attempt: 2,
+            retryable: true,
+            duration_ms: 1_000,
+            will_fail: false,
+        }];
+
+        store.save(&jobs).expect("jobs should be written");
+        assert_eq!(store.load().expect("jobs should be readable"), jobs);
+        let _ = fs::remove_file(path);
     }
 }

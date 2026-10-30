@@ -6,13 +6,14 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 use tauri_plugin_global_shortcut::{Builder as ShortcutBuilder, ShortcutState};
 use velvet_application_core::ApplicationCore;
+use velvet_job_system::{JobId, JobSnapshot, JobStatus};
 use velvet_layout_model::{
     LayoutCommand, LayoutState, ViewContainerState, ViewState, WorkbenchAppId, WorkbenchPart,
 };
 use velvet_plugin_api::{
     ExtensionId, ExtensionInstallRecoveryAction, ExtensionManifest,
 };
-use velvet_persistence::JsonFileLayoutStateStore;
+use velvet_persistence::{JsonFileJobStateStore, JsonFileLayoutStateStore};
 use velvet_preview_core::{PreviewIntent, PreviewSurface, ResolvedPreview};
 use velvet_tauri_adapter::{CoreEventSink, TauriTransport};
 use velvet_workbench_protocol::{
@@ -115,6 +116,10 @@ pub enum WireRequest {
         #[serde(rename = "protocolVersion")]
         protocol_version: u16,
     },
+    QueryJobs {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+    },
     QueryPluginProjection {
         #[serde(rename = "protocolVersion")]
         protocol_version: u16,
@@ -207,6 +212,28 @@ pub enum WireRequest {
         args: serde_json::Value,
         context: serde_json::Value,
     },
+    CreateJob {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        #[serde(rename = "jobKind")]
+        job_kind: String,
+        #[serde(rename = "durationMs")]
+        duration_ms: u64,
+        #[serde(rename = "willFail")]
+        will_fail: bool,
+    },
+    CancelJob {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        #[serde(rename = "jobId")]
+        job_id: String,
+    },
+    RetryJob {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        #[serde(rename = "jobId")]
+        job_id: String,
+    },
     LayoutCommand {
         #[serde(rename = "protocolVersion")]
         protocol_version: u16,
@@ -248,6 +275,10 @@ impl WireRequest {
                 Ok(Request::Query(
                     velvet_workbench_protocol::Query::PluginInstallRecoveryLog,
                 ))
+            }
+            Self::QueryJobs { protocol_version } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Query(velvet_workbench_protocol::Query::Jobs))
             }
             Self::QueryPluginProjection {
                 protocol_version,
@@ -381,6 +412,37 @@ impl WireRequest {
                     command_id,
                     args,
                     context,
+                }))
+            }
+            Self::CreateJob {
+                protocol_version,
+                job_kind,
+                duration_ms,
+                will_fail,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Command(Command::CreateJob {
+                    kind: job_kind,
+                    duration_ms,
+                    will_fail,
+                }))
+            }
+            Self::CancelJob {
+                protocol_version,
+                job_id,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Command(Command::CancelJob {
+                    job_id: JobId(job_id),
+                }))
+            }
+            Self::RetryJob {
+                protocol_version,
+                job_id,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Command(Command::RetryJob {
+                    job_id: JobId(job_id),
                 }))
             }
             Self::LayoutCommand {
@@ -619,6 +681,12 @@ enum WireResponse {
     PluginProjection {
         projection: velvet_plugin_api::ExtensionProjection,
     },
+    Job {
+        job: WireJobSnapshot,
+    },
+    Jobs {
+        jobs: Vec<WireJobSnapshot>,
+    },
     Preview {
         preview: WireResolvedPreview,
     },
@@ -650,6 +718,12 @@ impl WireResponseEnvelope {
             }
             Response::PluginInstallRecoveryLog(log) => WireResponse::PluginInstallRecoveryLog { log },
             Response::PluginProjection(projection) => WireResponse::PluginProjection { projection },
+            Response::Job(job) => WireResponse::Job {
+                job: WireJobSnapshot::from(job),
+            },
+            Response::Jobs(jobs) => WireResponse::Jobs {
+                jobs: jobs.into_iter().map(WireJobSnapshot::from).collect(),
+            },
             Response::Preview(preview) => WireResponse::Preview {
                 preview: WireResolvedPreview::from(preview),
             },
@@ -854,6 +928,9 @@ enum WireEvent {
         extension_id: String,
         reason: String,
     },
+    JobChanged {
+        snapshot: WireJobSnapshot,
+    },
 }
 
 impl From<Event> for WireEventEnvelope {
@@ -870,10 +947,51 @@ impl From<Event> for WireEventEnvelope {
                 extension_id,
                 reason,
             },
+            Event::JobChanged { snapshot } => WireEvent::JobChanged {
+                snapshot: WireJobSnapshot::from(snapshot),
+            },
         };
         Self {
             protocol_version: PROTOCOL_VERSION,
             event,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WireJobSnapshot {
+    id: String,
+    kind: String,
+    status: String,
+    progress: u8,
+    message: Option<String>,
+    attempt: u32,
+    retryable: bool,
+    duration_ms: u64,
+    will_fail: bool,
+}
+
+impl From<JobSnapshot> for WireJobSnapshot {
+    fn from(value: JobSnapshot) -> Self {
+        Self {
+            id: value.id.0,
+            kind: value.kind,
+            status: match value.status {
+                JobStatus::Queued => "queued",
+                JobStatus::Running => "running",
+                JobStatus::Interrupted => "interrupted",
+                JobStatus::Cancelled => "cancelled",
+                JobStatus::Failed => "failed",
+                JobStatus::Completed => "completed",
+            }
+            .into(),
+            progress: value.progress,
+            message: value.message,
+            attempt: value.attempt,
+            retryable: value.retryable,
+            duration_ms: value.duration_ms,
+            will_fail: value.will_fail,
         }
     }
 }
@@ -940,10 +1058,12 @@ pub fn run() {
                 .app_data_dir()
                 .expect("Velvet app data directory should be available");
             let layout_path = app_data_dir.join("workbench-layout.json");
+            let jobs_path = app_data_dir.join("jobs.json");
             let plugin_directory = app_data_dir.join("plugins");
-            let mut core = ApplicationCore::with_store_and_plugin_directory(
+            let mut core = ApplicationCore::with_store_and_plugin_directory_and_job_store(
                 Arc::new(JsonFileLayoutStateStore::new(layout_path)),
                 &plugin_directory,
+                Arc::new(JsonFileJobStateStore::new(jobs_path)),
             );
             match core.load_plugins_from_directory(&plugin_directory) {
                 Ok(report) if !report.failures.is_empty() => {
@@ -1730,5 +1850,78 @@ mod tests {
                 ..
             }) if id == "sample.extension.research"
         ));
+    }
+
+    #[test]
+    fn wire_job_requests_and_responses_preserve_lifecycle_fields() {
+        let envelope: WireRequestEnvelope = serde_json::from_str(
+            r#"{
+                "protocolVersion": 1,
+                "requestId": 11,
+                "request": {
+                    "kind": "create-job",
+                    "protocolVersion": 1,
+                    "jobKind": "sample",
+                    "durationMs": 2400,
+                    "willFail": true
+                }
+            }"#,
+        )
+        .expect("job request should deserialize");
+        assert!(matches!(
+            envelope.request.into_core(1).expect("job request should map"),
+            Request::Command(Command::CreateJob { kind, duration_ms, will_fail })
+                if kind == "sample" && duration_ms == 2400 && will_fail
+        ));
+
+        let cancel: WireRequestEnvelope = serde_json::from_value(serde_json::json!({
+            "protocolVersion": 1,
+            "requestId": 13,
+            "request": {
+                "kind": "cancel-job",
+                "protocolVersion": 1,
+                "jobId": "job-000001"
+            }
+        }))
+        .expect("cancel request should deserialize");
+        assert!(matches!(
+            cancel.request.into_core(1).expect("cancel request should map"),
+            Request::Command(Command::CancelJob { job_id }) if job_id.0 == "job-000001"
+        ));
+
+        let retry: WireRequestEnvelope = serde_json::from_value(serde_json::json!({
+            "protocolVersion": 1,
+            "requestId": 14,
+            "request": {
+                "kind": "retry-job",
+                "protocolVersion": 1,
+                "jobId": "job-000001"
+            }
+        }))
+        .expect("retry request should deserialize");
+        assert!(matches!(
+            retry.request.into_core(1).expect("retry request should map"),
+            Request::Command(Command::RetryJob { job_id }) if job_id.0 == "job-000001"
+        ));
+
+        let response = WireResponseEnvelope::from_core(velvet_workbench_protocol::ResponseEnvelope {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: RequestId(12),
+            response: Response::Job(JobSnapshot {
+                id: JobId("job-000001".into()),
+                kind: "sample".into(),
+                status: JobStatus::Failed,
+                progress: 70,
+                message: Some("failed".into()),
+                attempt: 2,
+                retryable: true,
+                duration_ms: 2400,
+                will_fail: true,
+            }),
+        });
+        let value = serde_json::to_value(response).expect("job response should serialize");
+        assert_eq!(value["response"]["kind"], "job");
+        assert_eq!(value["response"]["job"]["status"], "failed");
+        assert_eq!(value["response"]["job"]["attempt"], 2);
     }
 }

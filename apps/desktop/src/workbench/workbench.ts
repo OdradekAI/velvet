@@ -1,6 +1,7 @@
 import { LayoutService } from './layout/layout-service.js';
 import { PARTS } from './parts/part-registry.js';
 import { PluginClient } from './plugins/plugin-client.js';
+import { JobClient } from './jobs/job-client.js';
 import { PreviewHost } from './preview/preview-host.js';
 import { PreviewRegistry } from './preview/preview-registry.js';
 import type { CoreTransport } from './protocol.js';
@@ -25,6 +26,7 @@ export class Workbench {
   public readonly preview: PreviewHost;
   public readonly previewRegistry = new PreviewRegistry();
   public readonly plugins: PluginClient;
+  public readonly jobs: JobClient;
   public readonly views = new ViewRegistry();
   public readonly apps = new WorkbenchAppRegistry(BUILTIN_WORKBENCH_APPS);
   public readonly activityBar = new ActivityBarContributionRegistry();
@@ -61,6 +63,7 @@ export class Workbench {
       this.menus,
       this.overlays,
     );
+    this.jobs = new JobClient(core);
     this.pluginUi = this.plugins.ui;
     this.registerWorkbenchViews();
     this.registerBuiltInLayoutCommands();

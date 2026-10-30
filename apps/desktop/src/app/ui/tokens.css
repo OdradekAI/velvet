@@ -601,6 +601,85 @@ button {
   height: 100%;
 }
 
+.velvet-operations-stack {
+  display: grid;
+  gap: 10px;
+}
+
+.velvet-job-operations {
+  display: grid;
+  gap: 6px;
+}
+
+.velvet-job-operations__toolbar {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.velvet-job-operations__toolbar strong {
+  margin-right: 4px;
+}
+
+.velvet-job-operations__entries {
+  display: grid;
+  gap: 5px;
+  max-height: 112px;
+  overflow: auto;
+}
+
+.velvet-job-operations__entry {
+  background: var(--velvet-surface-raised);
+  border: 1px solid var(--velvet-border-subtle);
+  border-radius: 4px;
+  display: grid;
+  gap: 3px;
+  padding: 5px 7px;
+}
+
+.velvet-job-operations__entry[data-status="failed"] {
+  border-color: var(--velvet-danger);
+}
+
+.velvet-job-operations__entry-heading {
+  align-items: center;
+  display: flex;
+  gap: 7px;
+  min-width: 0;
+}
+
+.velvet-job-operations__entry-heading strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.velvet-job-operations__entry-heading span {
+  color: var(--velvet-muted);
+  font-size: 11px;
+}
+
+.velvet-job-operations__entry-heading span[data-job-status] {
+  color: var(--velvet-text);
+  font-weight: 600;
+}
+
+.velvet-job-operations__entry[data-status="failed"] span[data-job-status] {
+  color: var(--velvet-danger);
+}
+
+.velvet-job-operations__entry progress {
+  height: 5px;
+  width: 100%;
+}
+
+.velvet-job-operations__entry p {
+  color: var(--velvet-muted);
+  font-size: 11px;
+  margin: 0;
+}
+
 .velvet-plugin-recovery-operations__toolbar {
   display: flex;
   align-items: center;

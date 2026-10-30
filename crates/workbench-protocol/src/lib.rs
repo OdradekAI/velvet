@@ -1,5 +1,6 @@
 use serde_json::Value;
 use velvet_asset_core::AssetId;
+use velvet_job_system::{JobId, JobSnapshot};
 use velvet_layout_model::{LayoutCommand, LayoutState};
 use velvet_plugin_api::{
     ExtensionId, ExtensionInstallPreview, ExtensionInstallRecovery, ExtensionInstallRecoveryAction,
@@ -64,6 +65,17 @@ pub enum Command {
         args: Value,
         context: Value,
     },
+    CreateJob {
+        kind: String,
+        duration_ms: u64,
+        will_fail: bool,
+    },
+    CancelJob {
+        job_id: JobId,
+    },
+    RetryJob {
+        job_id: JobId,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -88,6 +100,7 @@ pub enum Query {
     },
     PluginInstallRecoveries,
     PluginInstallRecoveryLog,
+    Jobs,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -105,6 +118,8 @@ pub enum Response {
     PluginInstallRecoveries(Vec<ExtensionInstallRecovery>),
     PluginInstallRecoveryLog(Vec<ExtensionInstallRecoveryLogEntry>),
     PluginProjection(ExtensionProjection),
+    Job(JobSnapshot),
+    Jobs(Vec<JobSnapshot>),
     Preview(ResolvedPreview),
     Accepted,
 }
@@ -118,6 +133,9 @@ pub enum Event {
     PluginDisabled {
         extension_id: String,
         reason: String,
+    },
+    JobChanged {
+        snapshot: JobSnapshot,
     },
 }
 
@@ -134,6 +152,7 @@ pub enum CoreError {
         extension_id: String,
         message: String,
     },
+    Job(String),
     StaleRevision {
         expected: u64,
         actual: u64,

@@ -25,6 +25,13 @@ When an input, provider or setting changes, the cache becomes stale and the job 
 
 ## Consequences
 
+The v0.0.2 host slice implements the shared lifecycle seam: JobSystem owns
+snapshots and transitions, the persistence adapter writes them under the
+application data directory, and projections travel through CoreTransport.
+Queued/running work maps to retryable `Interrupted` state after a restart. The current sample worker exists to prove the boundary;
+thumbnail, indexing, feed-sync and facet-specific providers remain future
+consumers of the same contract.
+
 Positive:
 
 - All long-running work has consistent cancellation and progress behavior.

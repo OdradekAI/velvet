@@ -26,6 +26,7 @@ export function createDesktopApp(core: CoreTransport): DesktopApp {
     },
     async dispose() {
       workbench.layout.dispose();
+      workbench.jobs.dispose();
       if (isDisposableTransport(core)) {
         await core.dispose();
       }

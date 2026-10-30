@@ -98,6 +98,7 @@ version = "0.0.2"
 dependencies = [
  "serde_json",
  "velvet-asset-core",
+ "velvet-job-system",
  "velvet-layout-model",
  "velvet-persistence",
  "velvet-plugin-api",
@@ -113,6 +114,9 @@ version = "0.0.2"
 [[package]]
 name = "velvet-job-system"
 version = "0.0.2"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "velvet-layout-model"
@@ -127,6 +131,7 @@ version = "0.0.2"
 dependencies = [
  "serde",
  "serde_json",
+ "velvet-job-system",
  "velvet-layout-model",
 ]
 
@@ -161,6 +166,7 @@ version = "0.0.2"
 dependencies = [
  "serde_json",
  "velvet-application-core",
+ "velvet-job-system",
  "velvet-layout-model",
  "velvet-plugin-api",
  "velvet-workbench-protocol",
@@ -172,6 +178,7 @@ version = "0.0.2"
 dependencies = [
  "serde_json",
  "velvet-asset-core",
+ "velvet-job-system",
  "velvet-layout-model",
  "velvet-plugin-api",
  "velvet-preview-core",

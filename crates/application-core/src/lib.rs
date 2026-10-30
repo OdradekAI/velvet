@@ -1,6 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use velvet_asset_core::ContentKindId;
+use velvet_job_system::{JobError, JobId, JobSpec, JobStateStore, JobSystem};
 use velvet_layout_model::{InMemoryLayoutService, LayoutService};
 use velvet_persistence::{InMemoryLayoutStateStore, LayoutStateStore};
 use velvet_plugin_api::{
@@ -21,6 +22,7 @@ pub struct ApplicationCore {
     layout: InMemoryLayoutService,
     plugins: InMemoryPluginHost,
     previews: PreviewResolver,
+    jobs: JobSystem,
     layout_store: Arc<dyn LayoutStateStore>,
     plugin_directory: Option<std::path::PathBuf>,
 }
@@ -36,6 +38,18 @@ impl ApplicationCore {
         Self::with_store_and_runtime(
             layout_store,
             Box::new(velvet_plugin_host::ProcessPluginRuntime),
+        )
+    }
+
+    pub fn with_store_and_job_store(
+        layout_store: Arc<dyn LayoutStateStore>,
+        job_store: Arc<dyn JobStateStore>,
+    ) -> Self {
+        Self::with_store_and_runtime_and_plugin_directory_and_jobs(
+            layout_store,
+            Box::new(velvet_plugin_host::ProcessPluginRuntime),
+            None,
+            JobSystem::with_store(job_store),
         )
     }
 
@@ -57,6 +71,19 @@ impl ApplicationCore {
         )
     }
 
+    pub fn with_store_and_plugin_directory_and_job_store(
+        layout_store: Arc<dyn LayoutStateStore>,
+        plugin_directory: impl Into<std::path::PathBuf>,
+        job_store: Arc<dyn JobStateStore>,
+    ) -> Self {
+        Self::with_store_and_runtime_and_plugin_directory_and_jobs(
+            layout_store,
+            Box::new(velvet_plugin_host::ProcessPluginRuntime),
+            Some(plugin_directory.into()),
+            JobSystem::with_store(job_store),
+        )
+    }
+
     fn with_store_and_runtime(
         layout_store: Arc<dyn LayoutStateStore>,
         runtime: Box<dyn PluginRuntime>,
@@ -69,6 +96,20 @@ impl ApplicationCore {
         runtime: Box<dyn PluginRuntime>,
         plugin_directory: Option<std::path::PathBuf>,
     ) -> Self {
+        Self::with_store_and_runtime_and_plugin_directory_and_jobs(
+            layout_store,
+            runtime,
+            plugin_directory,
+            JobSystem::default(),
+        )
+    }
+
+    fn with_store_and_runtime_and_plugin_directory_and_jobs(
+        layout_store: Arc<dyn LayoutStateStore>,
+        runtime: Box<dyn PluginRuntime>,
+        plugin_directory: Option<std::path::PathBuf>,
+        jobs: JobSystem,
+    ) -> Self {
         let mut layout = InMemoryLayoutService::default();
         if let Ok(Some(state)) = layout_store.load() {
             if let Ok(migrated) = layout.migrate(state) {
@@ -80,6 +121,7 @@ impl ApplicationCore {
             layout,
             plugins: InMemoryPluginHost::with_runtime(runtime),
             previews: PreviewResolver::default(),
+            jobs,
             layout_store,
             plugin_directory,
         };
@@ -240,6 +282,35 @@ impl ApplicationCore {
             .export_install_recovery_log(plugin_directory, destination.as_ref())
     }
 
+    pub fn create_job(
+        &self,
+        kind: String,
+        duration_ms: u64,
+        will_fail: bool,
+    ) -> Result<velvet_job_system::JobSnapshot, JobError> {
+        self.jobs.submit(JobSpec {
+            kind,
+            duration_ms,
+            will_fail,
+        })
+    }
+
+    pub fn cancel_job(&self, id: &JobId) -> Result<velvet_job_system::JobSnapshot, JobError> {
+        self.jobs.cancel(id)
+    }
+
+    pub fn retry_job(&self, id: &JobId) -> Result<velvet_job_system::JobSnapshot, JobError> {
+        self.jobs.retry(id)
+    }
+
+    pub fn job_snapshots(&self) -> Vec<velvet_job_system::JobSnapshot> {
+        self.jobs.snapshots()
+    }
+
+    pub fn drain_job_events(&self) -> Vec<velvet_job_system::JobSnapshot> {
+        self.jobs.drain_events()
+    }
+
     pub fn uninstall_plugin(&mut self, id: &ExtensionId) -> Result<(), PluginError> {
         let Some(plugin_directory) = self.plugin_directory.as_deref() else {
             return Err(PluginError::UninstallFailed(
@@ -334,6 +405,22 @@ impl ApplicationCore {
                     .map_err(plugin_error)?;
                 Ok(Response::Accepted)
             }
+            Request::Command(Command::CreateJob {
+                kind,
+                duration_ms,
+                will_fail,
+            }) => self
+                .create_job(kind, duration_ms, will_fail)
+                .map(Response::Job)
+                .map_err(job_error),
+            Request::Command(Command::CancelJob { job_id }) => self
+                .cancel_job(&job_id)
+                .map(Response::Job)
+                .map_err(job_error),
+            Request::Command(Command::RetryJob { job_id }) => self
+                .retry_job(&job_id)
+                .map(Response::Job)
+                .map_err(job_error),
             Request::Query(Query::Layout) => Ok(Response::Layout(self.layout.snapshot())),
             Request::Query(Query::Extensions) => Ok(Response::Extensions(self.plugins.discover())),
             Request::Query(Query::PluginInstallRecoveries) => self
@@ -344,6 +431,7 @@ impl ApplicationCore {
                 .inspect_plugin_install_recovery_log()
                 .map(Response::PluginInstallRecoveryLog)
                 .map_err(plugin_error),
+            Request::Query(Query::Jobs) => Ok(Response::Jobs(self.job_snapshots())),
             Request::Query(Query::PluginProjection { extension_id }) => self
                 .plugins
                 .projection(&extension_id)
@@ -446,6 +534,10 @@ fn plugin_error(error: PluginError) -> CoreError {
     }
 }
 
+fn job_error(error: JobError) -> CoreError {
+    CoreError::Job(format!("{error:?}"))
+}
+
 #[derive(Clone)]
 pub struct InProcessCoreTransport {
     core: Arc<Mutex<ApplicationCore>>,
@@ -456,6 +548,13 @@ impl InProcessCoreTransport {
         Self {
             core: Arc::new(Mutex::new(core)),
         }
+    }
+
+    pub fn drain_job_events(&self) -> Vec<velvet_job_system::JobSnapshot> {
+        self.core
+            .lock()
+            .map(|core| core.drain_job_events())
+            .unwrap_or_default()
     }
 }
 
@@ -1062,5 +1161,46 @@ mod tests {
 
         let _ = fs::remove_dir_all(plugin_root);
         let _ = fs::remove_file(layout_path);
+    }
+
+    #[test]
+    fn application_core_exposes_interrupted_jobs_after_restart() {
+        use velvet_job_system::{JobId, JobSnapshot, JobStatus};
+
+        let layout_path = temporary_layout_path();
+        let jobs_path = layout_path.with_extension("jobs.json");
+        let job_store = Arc::new(velvet_persistence::JsonFileJobStateStore::new(&jobs_path));
+        job_store
+            .save(&[JobSnapshot {
+                id: JobId("job-000041".into()),
+                kind: "restartable".into(),
+                status: JobStatus::Running,
+                progress: 35,
+                message: Some("Running".into()),
+                attempt: 1,
+                retryable: true,
+                duration_ms: 30_000,
+                will_fail: false,
+            }])
+            .expect("the fixture job should persist");
+
+        let mut core = ApplicationCore::with_store_and_job_store(
+            Arc::new(JsonFileLayoutStateStore::new(&layout_path)),
+            job_store,
+        );
+        match core
+            .dispatch(Request::Query(Query::Jobs))
+            .expect("jobs should be queryable after restart")
+        {
+            Response::Jobs(jobs) => {
+                assert_eq!(jobs.len(), 1);
+                assert_eq!(jobs[0].status, JobStatus::Interrupted);
+                assert!(jobs[0].retryable);
+            }
+            other => panic!("expected jobs response, got {other:?}"),
+        }
+
+        let _ = fs::remove_file(layout_path);
+        let _ = fs::remove_file(jobs_path);
     }
 }

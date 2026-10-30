@@ -112,6 +112,7 @@ export type CoreRequest =
       readonly protocolVersion: ProtocolVersion;
       readonly kind: 'query-plugin-install-recovery-log';
     }
+  | { readonly protocolVersion: ProtocolVersion; readonly kind: 'query-jobs' }
   | {
       readonly protocolVersion: ProtocolVersion;
       readonly kind: 'query-plugin-projection';
@@ -193,6 +194,23 @@ export type CoreRequest =
     }
   | {
       readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'create-job';
+      readonly jobKind: string;
+      readonly durationMs: number;
+      readonly willFail: boolean;
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'cancel-job';
+      readonly jobId: string;
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'retry-job';
+      readonly jobId: string;
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
       readonly kind: 'layout-command';
       readonly command: LayoutCommand;
       readonly expectedRevision?: number;
@@ -221,7 +239,29 @@ export type CoreResponse =
       readonly log: readonly CorePluginInstallRecoveryLogEntry[];
     }
   | { readonly kind: 'plugin-projection'; readonly projection: CorePluginProjection }
+  | { readonly kind: 'job'; readonly job: CoreJobSnapshot }
+  | { readonly kind: 'jobs'; readonly jobs: readonly CoreJobSnapshot[] }
   | { readonly kind: 'accepted' };
+
+export type CoreJobStatus =
+  | 'queued'
+  | 'running'
+  | 'interrupted'
+  | 'cancelled'
+  | 'failed'
+  | 'completed';
+
+export interface CoreJobSnapshot {
+  readonly id: string;
+  readonly kind: string;
+  readonly status: CoreJobStatus;
+  readonly progress: number;
+  readonly message: string | null;
+  readonly attempt: number;
+  readonly retryable: boolean;
+  readonly durationMs: number;
+  readonly willFail: boolean;
+}
 
 export type PluginState = 'registered' | 'starting' | 'active' | 'disabled' | 'failed';
 
@@ -401,7 +441,7 @@ export interface CoreTransport {
 
 export type CoreEvent =
   | { readonly kind: 'layout-changed'; readonly revision: number; readonly state: LayoutSnapshot }
-  | { readonly kind: 'job-progress'; readonly jobId: string; readonly progress: number }
+  | { readonly kind: 'job-changed'; readonly snapshot: CoreJobSnapshot }
   | { readonly kind: 'plugin-disabled'; readonly extensionId: string; readonly reason: string };
 
 export interface LayoutSnapshot {

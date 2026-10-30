@@ -3778,6 +3778,7 @@ name = "velvet-application-core"
 version = "0.0.2"
 dependencies = [
  "velvet-asset-core",
+ "velvet-job-system",
  "velvet-layout-model",
  "velvet-persistence",
  "velvet-plugin-api",
@@ -3802,12 +3803,20 @@ dependencies = [
  "tauri-plugin-global-shortcut",
  "velvet-application-core",
  "velvet-asset-core",
+ "velvet-job-system",
  "velvet-layout-model",
  "velvet-persistence",
  "velvet-plugin-api",
  "velvet-preview-core",
  "velvet-tauri-adapter",
  "velvet-workbench-protocol",
+]
+
+[[package]]
+name = "velvet-job-system"
+version = "0.0.2"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
@@ -3823,6 +3832,7 @@ version = "0.0.2"
 dependencies = [
  "serde",
  "serde_json",
+ "velvet-job-system",
  "velvet-layout-model",
 ]
 
@@ -3865,6 +3875,7 @@ version = "0.0.2"
 dependencies = [
  "serde_json",
  "velvet-asset-core",
+ "velvet-job-system",
  "velvet-layout-model",
  "velvet-plugin-api",
  "velvet-preview-core",
