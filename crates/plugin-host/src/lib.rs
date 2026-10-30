@@ -738,6 +738,12 @@ pub trait PluginHost {
         contribution_id: String,
         context: Value,
     ) -> Result<PluginInvocationResult, PluginError>;
+    fn invoke_preview_augmentation(
+        &mut self,
+        id: &ExtensionId,
+        contribution_id: String,
+        context: Value,
+    ) -> Result<PluginInvocationResult, PluginError>;
     fn install_from_directory(
         &mut self,
         source_dir: &Path,
@@ -1223,6 +1229,58 @@ impl InMemoryPluginHost {
             }
         }
     }
+
+    fn invoke_preview_contribution(
+        &mut self,
+        id: &ExtensionId,
+        contribution_id: String,
+        expected_kinds: &[ContributionKind],
+        method: &str,
+        context: Value,
+        label: &str,
+    ) -> Result<PluginInvocationResult, PluginError> {
+        let manifest = self
+            .manifests
+            .get(id)
+            .ok_or_else(|| PluginError::NotFound(id.clone()))?;
+        let contribution = manifest
+            .contributions
+            .iter()
+            .find(|contribution| contribution.id == contribution_id)
+            .ok_or_else(|| {
+                PluginError::InvalidContribution(format!(
+                    "{label} {contribution_id} is not declared by extension {}",
+                    id.0,
+                ))
+            })?;
+        if !expected_kinds.contains(&contribution.kind) || contribution.preview.is_none() {
+            return Err(PluginError::InvalidContribution(format!(
+                "{} is not a {label} contribution",
+                contribution_id,
+            )));
+        }
+        if !manifest
+            .permission_sets
+            .iter()
+            .flat_map(|set| set.permissions.iter())
+            .any(|permission| permission == &Permission::PreviewRender)
+        {
+            return Err(PluginError::PermissionDenied {
+                extension_id: id.clone(),
+                zone: WorkbenchZone::Contextual,
+                permission: Permission::PreviewRender,
+            });
+        }
+
+        self.invoke_declared(
+            id,
+            contribution_id,
+            contribution.kind.clone(),
+            method,
+            Value::Null,
+            context,
+        )
+    }
 }
 
 impl PluginHost for InMemoryPluginHost {
@@ -1406,50 +1464,34 @@ impl PluginHost for InMemoryPluginHost {
         contribution_id: String,
         context: Value,
     ) -> Result<PluginInvocationResult, PluginError> {
-        let manifest = self
-            .manifests
-            .get(id)
-            .ok_or_else(|| PluginError::NotFound(id.clone()))?;
-        let contribution = manifest
-            .contributions
-            .iter()
-            .find(|contribution| contribution.id == contribution_id)
-            .ok_or_else(|| {
-                PluginError::InvalidContribution(format!(
-                    "preview provider {} is not declared by extension {}",
-                    contribution_id, id.0
-                ))
-            })?;
-        if contribution.kind != ContributionKind::PreviewProvider || contribution.preview.is_none()
-        {
-            return Err(PluginError::InvalidContribution(format!(
-                "{} is not a preview provider contribution",
-                contribution_id
-            )));
-        }
-        if !manifest
-            .permission_sets
-            .iter()
-            .flat_map(|set| set.permissions.iter())
-            .any(|permission| permission == &Permission::PreviewRender)
-        {
-            return Err(PluginError::PermissionDenied {
-                extension_id: id.clone(),
-                zone: WorkbenchZone::Contextual,
-                permission: Permission::PreviewRender,
-            });
-        }
-
-        self.invoke_declared(
+        self.invoke_preview_contribution(
             id,
             contribution_id,
-            ContributionKind::PreviewProvider,
+            &[ContributionKind::PreviewProvider],
             "preview.open",
-            Value::Null,
             context,
+            "preview provider",
         )
     }
 
+    fn invoke_preview_augmentation(
+        &mut self,
+        id: &ExtensionId,
+        contribution_id: String,
+        context: Value,
+    ) -> Result<PluginInvocationResult, PluginError> {
+        self.invoke_preview_contribution(
+            id,
+            contribution_id,
+            &[
+                ContributionKind::PreviewAugmentation,
+                ContributionKind::Inspector,
+            ],
+            "preview.augment",
+            context,
+            "preview augmentation",
+        )
+    }
     fn inspect_from_directory(
         &self,
         source_dir: &Path,
@@ -2238,9 +2280,9 @@ mod tests {
     use super::*;
     use velvet_layout_model::WorkbenchZone;
     use velvet_plugin_api::{
-        ContextAnchor, ContributionDescriptor, Permission, PreviewContributionDescriptor,
-        PreviewIntent, PreviewSurface, RuntimeKind, RuntimeLaunchSpec, UiSurfaceDescriptor,
-        UiSurfaceKind, ZonePermissionSet,
+        ContextAnchor, ContributionDescriptor, Permission, PreviewAugmentationSlot,
+        PreviewContributionDescriptor, PreviewIntent, PreviewSurface, RuntimeKind,
+        RuntimeLaunchSpec, UiSurfaceDescriptor, UiSurfaceKind, ZonePermissionSet,
     };
 
     static TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -2462,6 +2504,34 @@ mod tests {
                 serde_json::json!({"assetId":"asset-1"}),
             )
             .expect("preview invocation should reach the runtime process");
+        assert_eq!(result.error, None);
+        assert_eq!(result.result, Some(serde_json::json!({"accepted": true})));
+    }
+
+    #[test]
+    fn preview_augmentation_uses_the_same_permission_and_runtime_boundary() {
+        let mut manifest = preview_manifest(true);
+        manifest.contributions[0].id = "preview.metadata".into();
+        manifest.contributions[0].kind = ContributionKind::PreviewAugmentation;
+        manifest.contributions[0]
+            .preview
+            .as_mut()
+            .expect("preview metadata should exist")
+            .slot = Some(PreviewAugmentationSlot::Metadata);
+
+        let mut host = InMemoryPluginHost::default();
+        let id = manifest.id.clone();
+        host.register(manifest)
+            .expect("preview augmentation manifest should register");
+        host.activate(&id)
+            .expect("preview augmentation should activate");
+        let result = host
+            .invoke_preview_augmentation(
+                &id,
+                "preview.metadata".into(),
+                serde_json::json!({"assetId":"asset-1"}),
+            )
+            .expect("preview augmentation should reach the runtime process");
         assert_eq!(result.error, None);
         assert_eq!(result.result, Some(serde_json::json!({"accepted": true})));
     }

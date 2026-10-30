@@ -152,5 +152,6 @@ function fallbackPreview(context: PreviewContext): ResolvedPreview {
       slots: [],
     },
     diagnostic: null,
+    augmentations: [],
   };
 }

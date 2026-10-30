@@ -50,6 +50,24 @@ for await (const line of input) {
     continue;
   }
 
+  if (request.method === 'preview.augment') {
+    process.stdout.write(`${JSON.stringify({
+      protocolVersion,
+      ok: true,
+      result: {
+        sessionId: `${request.extensionId}:${request.commandId}`,
+        renderer: {
+          kind: 'ui-bridge',
+          entrypoint: 'data:text/html,%3Csmall%3EEcho%20metadata%3C%2Fsmall%3E',
+          bridgeVersion: '1',
+        },
+        commands: ['preview.inspect-metadata'],
+        slots: [],
+      },
+    })}\n`);
+    continue;
+  }
+
   process.stdout.write(`${JSON.stringify({
     protocolVersion,
     ok: true,

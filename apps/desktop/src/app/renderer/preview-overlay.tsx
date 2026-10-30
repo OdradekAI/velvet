@@ -6,6 +6,7 @@ import {
   type PreviewContext,
   type ResolvedPreview,
 } from '../../workbench/preview/preview-host.js';
+import type { CoreResolvedPreviewAugmentation } from '../../platform/protocol.js';
 import { PreviewRegistry } from '../../workbench/preview/preview-registry.js';
 import { PreviewRendererRegistry } from '../../workbench/preview/preview-renderer-registry.js';
 import { PreviewRendererHost } from './preview-renderer-host.js';
@@ -49,7 +50,15 @@ export function PreviewOverlay({
   }, [context, host, open]);
 
   const snapshot = host.snapshot;
-  const augmentations = registry.listAugmentations(context.contentKind);
+  const resolvedAugmentations = snapshot.preview?.augmentations ?? [];
+  const augmentations = resolvedAugmentations.length > 0
+    ? resolvedAugmentations
+    : registry.listAugmentations(context.contentKind).map((augmentation) => ({
+        augmentationId: augmentation.id,
+        slot: augmentation.slot,
+        session: null,
+        diagnostic: null,
+      }));
 
   return (
     <VelvetDialog
@@ -107,11 +116,28 @@ export function PreviewOverlay({
           <div data-preview-augmentations>
             {augmentations.map((augmentation) => (
               <div
-                data-preview-augmentation={augmentation.id}
+                data-preview-augmentation={augmentation.augmentationId}
                 data-preview-slot={augmentation.slot}
-                key={augmentation.id}
+                key={augmentation.augmentationId}
               >
-                {augmentation.id}
+                <strong>{augmentation.augmentationId}</strong>
+                {augmentation.diagnostic ? (
+                  <p data-preview-augmentation-error role="status">
+                    {augmentation.diagnostic}
+                  </p>
+                ) : null}
+                {augmentation.session ? (
+                  <PreviewAugmentationSession
+                    augmentation={augmentation}
+                    basePreview={snapshot.preview}
+                    context={workspaceContext}
+                    rendererRegistry={rendererRegistry}
+                  />
+                ) : (
+                  <p data-preview-augmentation-state="waiting" role="status">
+                    Waiting for the augmentation renderer.
+                  </p>
+                )}
               </div>
             ))}
           </div>
@@ -119,4 +145,54 @@ export function PreviewOverlay({
       </section>
     </VelvetDialog>
   );
+}
+
+function PreviewAugmentationSession({
+  augmentation,
+  basePreview,
+  context,
+  rendererRegistry,
+}: {
+  readonly augmentation: CoreResolvedPreviewAugmentation;
+  readonly basePreview?: ResolvedPreview;
+  readonly context?: WorkspaceContext;
+  readonly rendererRegistry?: PreviewRendererRegistry;
+}) {
+  if (!augmentation.session) {
+    return null;
+  }
+  const preview = basePreview
+    ? {
+        ...basePreview,
+        candidate: {
+          ...basePreview.candidate,
+          providerId: augmentation.augmentationId,
+        },
+        session: augmentation.session,
+        diagnostic: augmentation.diagnostic,
+        augmentations: [],
+      }
+    : undefined;
+  if (!preview) {
+    return null;
+  }
+
+  if (
+    (augmentation.session.renderer.kind === 'ui-bridge' && rendererRegistry && context) ||
+    augmentation.session.renderer.kind === 'text' ||
+    augmentation.session.renderer.kind === 'image'
+  ) {
+    if (augmentation.session.renderer.kind === 'ui-bridge') {
+      return (
+        <PreviewRendererHost
+          context={context!}
+          preview={preview}
+          registry={rendererRegistry!}
+        />
+      );
+    }
+    return <BuiltinPreviewRenderer renderer={augmentation.session.renderer} />;
+  }
+
+  return <p data-preview-augmentation-state="ready">Augmentation session ready.</p>;
 }

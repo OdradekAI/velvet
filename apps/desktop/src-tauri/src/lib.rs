@@ -920,6 +920,16 @@ struct WireResolvedPreview {
     candidate: WirePreviewCandidate,
     session: WirePreviewSession,
     diagnostic: Option<String>,
+    augmentations: Vec<WireResolvedPreviewAugmentation>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WireResolvedPreviewAugmentation {
+    augmentation_id: String,
+    slot: String,
+    session: Option<WirePreviewSession>,
+    diagnostic: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -998,41 +1008,63 @@ impl From<ResolvedPreview> for WireResolvedPreview {
                     .collect(),
                 priority: value.candidate.priority,
             },
-            session: WirePreviewSession {
-                provider_id: value.session.provider_id,
-                context: WirePreviewContext {
-                    asset_id: value.session.context.asset_id.0,
-                    content_kind: value.session.context.content_kind.0,
-                    intent: format!("{:?}", value.session.context.intent).to_lowercase(),
-                    surface: format!("{:?}", value.session.context.surface).to_lowercase(),
-                },
-                session_id: value.session.descriptor.session_id,
-                renderer: match value.session.descriptor.renderer {
-                    PreviewRenderer::Generic => WirePreviewRenderer::Generic,
-                    PreviewRenderer::Text { text, truncated } => {
-                        WirePreviewRenderer::Text { text, truncated }
-                    }
-                    PreviewRenderer::Image {
-                        mime_type,
-                        bytes,
-                        truncated,
-                    } => WirePreviewRenderer::Image {
-                        mime_type,
-                        bytes,
-                        truncated,
-                    },
-                    PreviewRenderer::UiBridge {
-                        entrypoint,
-                        bridge_version,
-                    } => WirePreviewRenderer::UiBridge {
-                        entrypoint,
-                        bridge_version,
-                    },
-                },
-                commands: value.session.descriptor.commands,
-                slots: value.session.descriptor.slots,
-            },
+            session: value.session.into(),
             diagnostic: value.diagnostic,
+            augmentations: value
+                .augmentations
+                .into_iter()
+                .map(|augmentation| WireResolvedPreviewAugmentation {
+                    augmentation_id: augmentation.augmentation_id,
+                    slot: augmentation.slot,
+                    session: augmentation.session.map(Into::into),
+                    diagnostic: augmentation.diagnostic,
+                })
+                .collect(),
+        }
+    }
+}
+
+impl From<velvet_preview_core::PreviewSession> for WirePreviewSession {
+    fn from(value: velvet_preview_core::PreviewSession) -> Self {
+        Self {
+            provider_id: value.provider_id,
+            context: WirePreviewContext {
+                asset_id: value.context.asset_id.0,
+                content_kind: value.context.content_kind.0,
+                intent: format!("{:?}", value.context.intent).to_lowercase(),
+                surface: format!("{:?}", value.context.surface).to_lowercase(),
+            },
+            session_id: value.descriptor.session_id,
+            renderer: value.descriptor.renderer.into(),
+            commands: value.descriptor.commands,
+            slots: value.descriptor.slots,
+        }
+    }
+}
+
+impl From<PreviewRenderer> for WirePreviewRenderer {
+    fn from(value: PreviewRenderer) -> Self {
+        match value {
+            PreviewRenderer::Generic => WirePreviewRenderer::Generic,
+            PreviewRenderer::Text { text, truncated } => {
+                WirePreviewRenderer::Text { text, truncated }
+            }
+            PreviewRenderer::Image {
+                mime_type,
+                bytes,
+                truncated,
+            } => WirePreviewRenderer::Image {
+                mime_type,
+                bytes,
+                truncated,
+            },
+            PreviewRenderer::UiBridge {
+                entrypoint,
+                bridge_version,
+            } => WirePreviewRenderer::UiBridge {
+                entrypoint,
+                bridge_version,
+            },
         }
     }
 }
@@ -1810,6 +1842,12 @@ mod tests {
                         },
                     },
                     diagnostic: Some("source read failed".into()),
+                    augmentations: vec![velvet_preview_core::ResolvedPreviewAugmentation {
+                        augmentation_id: "example.metadata".into(),
+                        slot: "metadata".into(),
+                        session: None,
+                        diagnostic: Some("augmentation unavailable".into()),
+                    }],
                 }),
             },
         );
@@ -1826,6 +1864,14 @@ mod tests {
         assert_eq!(
             value["response"]["preview"]["diagnostic"],
             "source read failed"
+        );
+        assert_eq!(
+            value["response"]["preview"]["augmentations"][0]["augmentationId"],
+            "example.metadata"
+        );
+        assert_eq!(
+            value["response"]["preview"]["augmentations"][0]["diagnostic"],
+            "augmentation unavailable"
         );
 
         let image = serde_json::to_value(WirePreviewRenderer::Image {

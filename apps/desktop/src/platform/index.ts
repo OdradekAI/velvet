@@ -23,6 +23,7 @@ export type {
   CorePreviewContext,
   CorePreviewSession,
   CoreResolvedPreview,
+  CoreResolvedPreviewAugmentation,
   CorePreviewContribution,
   CorePreviewContributionIntent,
   CorePreviewContributionSurface,

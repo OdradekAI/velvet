@@ -557,6 +557,14 @@ source-location resolver remains a follow-up to the Asset model decision;
 that resolver seam without adding filesystem access to the frontend or plugin
 runtime.
 
+Preview augmentation execution now uses a separate `preview.augment` runtime
+method. Rust resolves matching capability augmentations independently from the
+Primary provider, preserves one diagnostic per failed augmentation and projects
+their optional sessions through `augmentations[]`. The desktop overlay keeps a
+failed or waiting augmentation inside its declared slot while the Primary
+preview stays mounted; UI Bridge augmentation sessions reuse the same transient
+renderer host as Primary sessions.
+
 ### Optional text-language capability
 
 Language is not a P0 Workbench service. A future text-oriented application may

@@ -280,6 +280,14 @@ export interface CoreResolvedPreview {
   readonly candidate: CorePreviewCandidate;
   readonly session: CorePreviewSession;
   readonly diagnostic: string | null;
+  readonly augmentations: readonly CoreResolvedPreviewAugmentation[];
+}
+
+export interface CoreResolvedPreviewAugmentation {
+  readonly augmentationId: string;
+  readonly slot: string;
+  readonly session: CorePreviewSession | null;
+  readonly diagnostic: string | null;
 }
 
 export type CoreJobStatus =

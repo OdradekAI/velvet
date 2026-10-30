@@ -165,6 +165,15 @@ pub struct ResolvedPreview {
     pub session: PreviewSession,
     /// Non-fatal provider diagnostics preserved when the host falls back.
     pub diagnostic: Option<String>,
+    pub augmentations: Vec<ResolvedPreviewAugmentation>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolvedPreviewAugmentation {
+    pub augmentation_id: String,
+    pub slot: String,
+    pub session: Option<PreviewSession>,
+    pub diagnostic: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -382,6 +391,7 @@ impl PreviewResolver {
                         candidate,
                         session,
                         diagnostic: first_error.as_ref().map(|error| format!("{error:?}")),
+                        augmentations: Vec::new(),
                     })
                 }
                 Err(error) => {

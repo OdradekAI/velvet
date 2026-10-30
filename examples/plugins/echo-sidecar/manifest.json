@@ -97,6 +97,19 @@
         "surfaces": ["workspace"],
         "priority": 5
       }
+    },
+    {
+      "id": "echo.metadata",
+      "kind": "preview-augmentation",
+      "scope": { "kind": "capability" },
+      "namespace": "capability.velvet.example.echo",
+      "preview": {
+        "contentKinds": ["text/plain"],
+        "intents": ["quick"],
+        "surfaces": ["workspace"],
+        "priority": 1,
+        "slot": "metadata"
+      }
     }
   ],
   "permissionSets": [

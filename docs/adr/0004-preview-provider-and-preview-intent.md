@@ -106,6 +106,14 @@ renderer descriptors validated by `plugin-api`. If a built-in provider fails,
 the resolver keeps the generic fallback and carries the first provider
 diagnostic for supportability.
 
+Preview augmentations use a separate `preview.augment` runtime invocation. The
+host resolves every matching `PreviewAugmentation` or `Inspector` contribution
+in stable slot/priority/id order and returns an independent session entry with
+its own renderer, commands, loading placeholder or diagnostic. An augmentation
+failure never replaces or fails the Primary session; disabling the extension
+removes only its augmentation entries. The transport carries these entries as
+`augmentations[]` rather than overloading the Primary session's slot names.
+
 `PreviewResolver` selects one Primary provider from Asset, ContentKind, intent,
 surface and Workspace/Profile context. The deterministic order is explicit
 user choice, Profile/Workspace default, selector match, provider priority,

@@ -23,6 +23,7 @@ use velvet_preview_core::{
     BuiltinImagePreviewProvider, BuiltinTextPreviewProvider, GenericFallbackProvider,
     PreviewAssetSource, PreviewCandidate, PreviewContext, PreviewProvider, PreviewRenderer,
     PreviewRequest, PreviewResolver, PreviewSession, PreviewSessionDescriptor,
+    ResolvedPreviewAugmentation,
 };
 use velvet_workbench_protocol::{
     Command, CoreError, CoreTransport, PluginDisableReason, PluginInstallPreviewDto,
@@ -562,47 +563,7 @@ impl ApplicationCore {
                         if contribution.kind != ContributionKind::PreviewProvider {
                             return None;
                         }
-                        let preview = contribution.preview.as_ref()?;
-                        let candidate = PreviewCandidate {
-                            provider_id: format!("{}.{}", extension_id.0, contribution.id),
-                            content_kinds: preview
-                                .content_kinds
-                                .iter()
-                                .cloned()
-                                .map(ContentKindId)
-                                .collect(),
-                            intents: preview
-                                .intents
-                                .iter()
-                                .map(|intent| match intent {
-                                    velvet_plugin_api::PreviewIntent::Quick => {
-                                        velvet_preview_core::PreviewIntent::Quick
-                                    }
-                                    velvet_plugin_api::PreviewIntent::Inspect => {
-                                        velvet_preview_core::PreviewIntent::Inspect
-                                    }
-                                    velvet_plugin_api::PreviewIntent::Analyze => {
-                                        velvet_preview_core::PreviewIntent::Analyze
-                                    }
-                                })
-                                .collect(),
-                            surfaces: preview
-                                .surfaces
-                                .iter()
-                                .map(|surface| match surface {
-                                    velvet_plugin_api::PreviewSurface::Workspace => {
-                                        velvet_preview_core::PreviewSurface::Workspace
-                                    }
-                                    velvet_plugin_api::PreviewSurface::Thumbnail => {
-                                        velvet_preview_core::PreviewSurface::Thumbnail
-                                    }
-                                    velvet_plugin_api::PreviewSurface::Inspector => {
-                                        velvet_preview_core::PreviewSurface::Inspector
-                                    }
-                                })
-                                .collect(),
-                            priority: preview.priority,
-                        };
+                        let candidate = plugin_preview_candidate(&extension_id, &contribution)?;
                         Some((candidate, extension_id.clone(), contribution.id))
                     })
             })
@@ -618,12 +579,7 @@ impl ApplicationCore {
 
         let mut first_diagnostic = None;
         for (candidate, extension_id, contribution_id) in candidates {
-            let context = serde_json::json!({
-                "assetId": request.context.asset_id.0,
-                "contentKind": request.context.content_kind.0,
-                "intent": format!("{:?}", request.context.intent).to_lowercase(),
-                "surface": format!("{:?}", request.context.surface).to_lowercase(),
-            });
+            let context = preview_context_payload(&request.context);
             let result = match self
                 .plugins
                 .invoke_preview(&extension_id, contribution_id, context)
@@ -652,50 +608,237 @@ impl ApplicationCore {
                 }
                 continue;
             };
-            if !valid_preview_descriptor(&descriptor) {
-                if first_diagnostic.is_none() {
-                    first_diagnostic =
-                        Some("preview provider returned an invalid session descriptor".into());
-                }
-                continue;
-            }
-            let renderer = match descriptor.renderer {
-                PreviewRendererDescriptor::Generic => PreviewRenderer::Generic,
-                PreviewRendererDescriptor::UiBridge {
-                    entrypoint,
-                    bridge_version,
-                } => PreviewRenderer::UiBridge {
-                    entrypoint,
-                    bridge_version,
-                },
-            };
             let provider_id = candidate.provider_id.clone();
-            return Ok(velvet_preview_core::ResolvedPreview {
+            let session = match preview_session_from_descriptor(
+                provider_id,
+                request.context.clone(),
+                descriptor,
+                "preview provider",
+            ) {
+                Ok(session) => session,
+                Err(diagnostic) => {
+                    if first_diagnostic.is_none() {
+                        first_diagnostic = Some(diagnostic);
+                    }
+                    continue;
+                }
+            };
+            let mut resolved = velvet_preview_core::ResolvedPreview {
                 candidate,
-                session: PreviewSession {
-                    provider_id,
-                    context: request.context.clone(),
-                    descriptor: PreviewSessionDescriptor {
-                        session_id: descriptor.session_id,
-                        renderer,
-                        commands: descriptor.commands,
-                        slots: descriptor
-                            .slots
-                            .into_iter()
-                            .map(preview_slot_name)
-                            .collect(),
-                    },
-                },
+                session,
                 diagnostic: first_diagnostic,
-            });
+                augmentations: Vec::new(),
+            };
+            resolved.augmentations = self.resolve_preview_augmentations(&request.context);
+            return Ok(resolved);
         }
 
+        let fallback_context = request.context.clone();
         let mut fallback = self.previews.resolve(request)?;
         if first_diagnostic.is_some() {
             fallback.diagnostic = first_diagnostic;
         }
+        fallback.augmentations = self.resolve_preview_augmentations(&fallback_context);
         Ok(fallback)
     }
+
+    fn resolve_preview_augmentations(
+        &mut self,
+        context: &PreviewContext,
+    ) -> Vec<ResolvedPreviewAugmentation> {
+        let mut candidates = self
+            .plugins
+            .discover()
+            .into_iter()
+            .filter(|summary| summary.active)
+            .flat_map(|summary| {
+                let extension_id = summary.id.clone();
+                self.plugins
+                    .active_contributions(&extension_id)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter_map(move |contribution| {
+                        if !matches!(
+                            contribution.kind,
+                            ContributionKind::PreviewAugmentation | ContributionKind::Inspector
+                        ) {
+                            return None;
+                        }
+                        let slot = contribution.preview.as_ref()?.slot.clone()?;
+                        let candidate = plugin_preview_candidate(&extension_id, &contribution)?;
+                        candidate.matches(context).then_some((
+                            candidate,
+                            extension_id.clone(),
+                            contribution.id,
+                            slot,
+                        ))
+                    })
+            })
+            .collect::<Vec<_>>();
+        candidates.sort_by(|left, right| {
+            preview_slot_name(left.3.clone())
+                .cmp(&preview_slot_name(right.3.clone()))
+                .then_with(|| right.0.priority.cmp(&left.0.priority))
+                .then_with(|| left.0.provider_id.cmp(&right.0.provider_id))
+        });
+
+        candidates
+            .into_iter()
+            .map(|(candidate, extension_id, contribution_id, slot)| {
+                let augmentation_id = candidate.provider_id.clone();
+                let slot = preview_slot_name(slot);
+                let context_payload = preview_context_payload(context);
+                let result = self.plugins.invoke_preview_augmentation(
+                    &extension_id,
+                    contribution_id,
+                    context_payload,
+                );
+                match result {
+                    Err(error) => ResolvedPreviewAugmentation {
+                        augmentation_id,
+                        slot,
+                        session: None,
+                        diagnostic: Some(format!("preview augmentation failed: {error:?}")),
+                    },
+                    Ok(result) => {
+                        let Some(value) = result.result else {
+                            return ResolvedPreviewAugmentation {
+                                augmentation_id,
+                                slot,
+                                session: None,
+                                diagnostic: Some(
+                                    "preview augmentation returned no session descriptor".into(),
+                                ),
+                            };
+                        };
+                        let Ok(descriptor) = serde_json::from_value::<
+                            velvet_plugin_api::PreviewSessionDescriptor,
+                        >(value) else {
+                            return ResolvedPreviewAugmentation {
+                                augmentation_id,
+                                slot,
+                                session: None,
+                                diagnostic: Some(
+                                    "preview augmentation returned a malformed session descriptor"
+                                        .into(),
+                                ),
+                            };
+                        };
+                        match preview_session_from_descriptor(
+                            augmentation_id.clone(),
+                            context.clone(),
+                            descriptor,
+                            "preview augmentation",
+                        ) {
+                            Ok(session) => ResolvedPreviewAugmentation {
+                                augmentation_id,
+                                slot,
+                                session: Some(session),
+                                diagnostic: None,
+                            },
+                            Err(diagnostic) => ResolvedPreviewAugmentation {
+                                augmentation_id,
+                                slot,
+                                session: None,
+                                diagnostic: Some(diagnostic),
+                            },
+                        }
+                    }
+                }
+            })
+            .collect()
+    }
+}
+
+fn preview_context_payload(context: &PreviewContext) -> serde_json::Value {
+    serde_json::json!({
+        "assetId": context.asset_id.0,
+        "contentKind": context.content_kind.0,
+        "intent": format!("{:?}", context.intent).to_lowercase(),
+        "surface": format!("{:?}", context.surface).to_lowercase(),
+    })
+}
+
+fn plugin_preview_candidate(
+    extension_id: &ExtensionId,
+    contribution: &velvet_plugin_api::ContributionDescriptor,
+) -> Option<PreviewCandidate> {
+    let preview = contribution.preview.as_ref()?;
+    Some(PreviewCandidate {
+        provider_id: format!("{}.{}", extension_id.0, contribution.id),
+        content_kinds: preview
+            .content_kinds
+            .iter()
+            .cloned()
+            .map(ContentKindId)
+            .collect(),
+        intents: preview
+            .intents
+            .iter()
+            .map(|intent| match intent {
+                velvet_plugin_api::PreviewIntent::Quick => {
+                    velvet_preview_core::PreviewIntent::Quick
+                }
+                velvet_plugin_api::PreviewIntent::Inspect => {
+                    velvet_preview_core::PreviewIntent::Inspect
+                }
+                velvet_plugin_api::PreviewIntent::Analyze => {
+                    velvet_preview_core::PreviewIntent::Analyze
+                }
+            })
+            .collect(),
+        surfaces: preview
+            .surfaces
+            .iter()
+            .map(|surface| match surface {
+                velvet_plugin_api::PreviewSurface::Workspace => {
+                    velvet_preview_core::PreviewSurface::Workspace
+                }
+                velvet_plugin_api::PreviewSurface::Thumbnail => {
+                    velvet_preview_core::PreviewSurface::Thumbnail
+                }
+                velvet_plugin_api::PreviewSurface::Inspector => {
+                    velvet_preview_core::PreviewSurface::Inspector
+                }
+            })
+            .collect(),
+        priority: preview.priority,
+    })
+}
+
+fn preview_session_from_descriptor(
+    provider_id: String,
+    context: PreviewContext,
+    descriptor: velvet_plugin_api::PreviewSessionDescriptor,
+    label: &str,
+) -> Result<PreviewSession, String> {
+    if !valid_preview_descriptor(&descriptor) {
+        return Err(format!("{label} returned an invalid session descriptor"));
+    }
+    let renderer = match descriptor.renderer {
+        PreviewRendererDescriptor::Generic => PreviewRenderer::Generic,
+        PreviewRendererDescriptor::UiBridge {
+            entrypoint,
+            bridge_version,
+        } => PreviewRenderer::UiBridge {
+            entrypoint,
+            bridge_version,
+        },
+    };
+    Ok(PreviewSession {
+        provider_id,
+        context,
+        descriptor: PreviewSessionDescriptor {
+            session_id: descriptor.session_id,
+            renderer,
+            commands: descriptor.commands,
+            slots: descriptor
+                .slots
+                .into_iter()
+                .map(preview_slot_name)
+                .collect(),
+        },
+    })
 }
 
 fn preview_slot_name(slot: velvet_plugin_api::PreviewAugmentationSlot) -> String {
@@ -813,8 +956,12 @@ mod tests {
         ))
     }
 
-    struct PreviewRuntime;
-    struct PreviewProcess;
+    struct PreviewRuntime {
+        fail_augmentation: bool,
+    }
+    struct PreviewProcess {
+        fail_augmentation: bool,
+    }
 
     impl RuntimeProcess for PreviewProcess {
         fn poll(&mut self) -> RuntimeHealth {
@@ -829,17 +976,33 @@ mod tests {
             &mut self,
             invocation: &PluginInvocation,
         ) -> Result<PluginInvocationResult, RuntimeError> {
-            assert_eq!(invocation.method, "preview.open");
+            if self.fail_augmentation && invocation.method == "preview.augment" {
+                return Err(RuntimeError::InvocationFailed(
+                    "metadata renderer unavailable".into(),
+                ));
+            }
+            let (session_id, entrypoint) = match invocation.method.as_str() {
+                "preview.open" => ("preview.example:asset-1", "wasm://preview/image"),
+                "preview.augment" => (
+                    "preview.example:metadata:asset-1",
+                    "wasm://preview/metadata",
+                ),
+                other => panic!("unexpected preview invocation method: {other}"),
+            };
             Ok(PluginInvocationResult {
                 result: Some(serde_json::json!({
-                    "sessionId": "preview.example:asset-1",
+                    "sessionId": session_id,
                     "renderer": {
                         "kind": "ui-bridge",
-                        "entrypoint": "wasm://preview/image",
+                        "entrypoint": entrypoint,
                         "bridgeVersion": "1"
                     },
-                    "commands": ["preview.zoom"],
-                    "slots": ["metadata"]
+                    "commands": if invocation.method == "preview.open" {
+                        serde_json::json!(["preview.zoom"])
+                    } else {
+                        serde_json::json!(["preview.inspect-metadata"])
+                    },
+                    "slots": []
                 })),
                 error: None,
             })
@@ -852,7 +1015,9 @@ mod tests {
             _manifest: &ExtensionManifest,
             _permissions: &velvet_plugin_host::PermissionGrant,
         ) -> Result<Box<dyn RuntimeProcess>, RuntimeError> {
-            Ok(Box::new(PreviewProcess))
+            Ok(Box::new(PreviewProcess {
+                fail_augmentation: self.fail_augmentation,
+            }))
         }
     }
 
@@ -864,35 +1029,66 @@ mod tests {
             runtime: RuntimeKind::BuiltIn,
             launch: None,
             target_app: None,
-            contributions: vec![ContributionDescriptor {
-                id: "preview.image".into(),
-                kind: ContributionKind::PreviewProvider,
-                scope: ContributionScope::Capability,
-                namespace: Some("capability.preview.example".into()),
-                container: None,
-                zone: None,
-                title: None,
-                title_key: None,
-                icon: None,
-                order: None,
-                default_visible: None,
-                view_container_id: None,
-                activity_bar: None,
-                label: None,
-                label_key: None,
-                command_id: None,
-                group: None,
-                when: None,
-                anchor: None,
-                ui: None,
-                preview: Some(PreviewContributionDescriptor {
-                    content_kinds: vec!["image".into()],
-                    intents: vec![ManifestPreviewIntent::Quick],
-                    surfaces: vec![ManifestPreviewSurface::Workspace],
-                    priority: 20,
-                    slot: None,
-                }),
-            }],
+            contributions: vec![
+                ContributionDescriptor {
+                    id: "preview.image".into(),
+                    kind: ContributionKind::PreviewProvider,
+                    scope: ContributionScope::Capability,
+                    namespace: Some("capability.preview.example".into()),
+                    container: None,
+                    zone: None,
+                    title: None,
+                    title_key: None,
+                    icon: None,
+                    order: None,
+                    default_visible: None,
+                    view_container_id: None,
+                    activity_bar: None,
+                    label: None,
+                    label_key: None,
+                    command_id: None,
+                    group: None,
+                    when: None,
+                    anchor: None,
+                    ui: None,
+                    preview: Some(PreviewContributionDescriptor {
+                        content_kinds: vec!["image".into()],
+                        intents: vec![ManifestPreviewIntent::Quick],
+                        surfaces: vec![ManifestPreviewSurface::Workspace],
+                        priority: 20,
+                        slot: None,
+                    }),
+                },
+                ContributionDescriptor {
+                    id: "preview.metadata".into(),
+                    kind: ContributionKind::PreviewAugmentation,
+                    scope: ContributionScope::Capability,
+                    namespace: Some("capability.preview.example".into()),
+                    container: None,
+                    zone: None,
+                    title: None,
+                    title_key: None,
+                    icon: None,
+                    order: None,
+                    default_visible: None,
+                    view_container_id: None,
+                    activity_bar: None,
+                    label: None,
+                    label_key: None,
+                    command_id: None,
+                    group: None,
+                    when: None,
+                    anchor: None,
+                    ui: None,
+                    preview: Some(PreviewContributionDescriptor {
+                        content_kinds: vec!["image".into()],
+                        intents: vec![ManifestPreviewIntent::Quick],
+                        surfaces: vec![ManifestPreviewSurface::Workspace],
+                        priority: 5,
+                        slot: Some(velvet_plugin_api::PreviewAugmentationSlot::Metadata),
+                    }),
+                },
+            ],
             permission_sets: vec![ZonePermissionSet {
                 zone: WorkbenchZone::Contextual,
                 permissions: vec![Permission::PreviewRender],
@@ -905,7 +1101,9 @@ mod tests {
     fn preview_queries_execute_active_provider_and_project_renderer_descriptor() {
         let mut core = ApplicationCore::with_plugin_runtime(
             Arc::new(InMemoryLayoutStateStore::default()),
-            Box::new(PreviewRuntime),
+            Box::new(PreviewRuntime {
+                fail_augmentation: false,
+            }),
         );
         let manifest = preview_manifest();
         let id = manifest.id.clone();
@@ -937,7 +1135,63 @@ mod tests {
                     velvet_preview_core::PreviewRenderer::UiBridge { .. }
                 ));
                 assert_eq!(preview.session.descriptor.commands, vec!["preview.zoom"]);
-                assert_eq!(preview.session.descriptor.slots, vec!["metadata"]);
+                assert!(preview.session.descriptor.slots.is_empty());
+                assert_eq!(preview.augmentations.len(), 1);
+                assert_eq!(
+                    preview.augmentations[0].augmentation_id,
+                    "preview.example.preview.metadata"
+                );
+                assert_eq!(preview.augmentations[0].slot, "metadata");
+                assert!(preview.augmentations[0].diagnostic.is_none());
+                assert!(matches!(
+                    preview.augmentations[0]
+                        .session
+                        .as_ref()
+                        .map(|session| &session.descriptor.renderer),
+                    Some(velvet_preview_core::PreviewRenderer::UiBridge { .. })
+                ));
+            }
+            other => panic!("expected preview response, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn preview_augmentation_failure_keeps_primary_preview_usable() {
+        let mut core = ApplicationCore::with_plugin_runtime(
+            Arc::new(InMemoryLayoutStateStore::default()),
+            Box::new(PreviewRuntime {
+                fail_augmentation: true,
+            }),
+        );
+        let manifest = preview_manifest();
+        let id = manifest.id.clone();
+        core.register_plugin(manifest)
+            .expect("preview provider should register");
+        core.activate_plugin(&id)
+            .expect("preview provider should activate");
+
+        let response = core
+            .dispatch(Request::Query(Query::ResolvePreview {
+                asset_id: velvet_asset_core::AssetId("asset-1".into()),
+                content_kind: "image".into(),
+                intent: velvet_preview_core::PreviewIntent::Quick,
+                surface: velvet_preview_core::PreviewSurface::Workspace,
+            }))
+            .expect("preview query should resolve");
+        match response {
+            Response::Preview(preview) => {
+                assert_eq!(
+                    preview.candidate.provider_id,
+                    "preview.example.preview.image"
+                );
+                assert_eq!(preview.augmentations.len(), 1);
+                assert!(preview.augmentations[0].session.is_none());
+                assert_eq!(
+                    preview.augmentations[0].diagnostic.as_deref(),
+                    Some(
+                        "preview augmentation failed: RuntimeInvocation { extension_id: ExtensionId(\"preview.example\"), message: \"metadata renderer unavailable\" }",
+                    )
+                );
             }
             other => panic!("expected preview response, got {other:?}"),
         }
