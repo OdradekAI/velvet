@@ -254,6 +254,9 @@ export function NativeWorkbenchApp() {
             surface: 'workspace',
           }}
           host={currentState.app.workbench.preview}
+          commands={currentState.app.workbench.commands}
+          contextKeys={currentState.app.workbench.contextKeys}
+          jobs={currentState.app.workbench.jobs}
           onOpenChange={setPreviewOpen}
           open={previewOpen}
           registry={currentState.app.workbench.previewRegistry}

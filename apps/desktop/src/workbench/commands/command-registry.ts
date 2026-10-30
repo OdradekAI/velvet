@@ -1,4 +1,7 @@
-import type { WorkbenchAppId } from '../../platform/protocol.js';
+import type {
+  CorePreviewActionContext,
+  WorkbenchAppId,
+} from '../../platform/protocol.js';
 import {
   ContextKeyService,
   type ContextKeySnapshot,
@@ -9,12 +12,13 @@ export type CommandScope = 'workbench' | 'workbench-app';
 export interface CommandExecutionContext {
   readonly activeAppId?: WorkbenchAppId;
   readonly keys: ContextKeySnapshot;
+  readonly preview?: CorePreviewActionContext;
 }
 
 export type CommandHandler = (
   args: unknown,
   context: CommandExecutionContext,
-) => void | Promise<void>;
+) => unknown | Promise<unknown>;
 
 export interface CommandDescriptor {
   readonly id: string;
@@ -74,7 +78,7 @@ export class CommandRegistry {
     id: string,
     args: unknown,
     context: CommandExecutionContext,
-  ): Promise<void> {
+  ): Promise<unknown> {
     const command = this.resolve(id, context.activeAppId);
     if (!command) {
       throw new Error(`Command is not visible: ${id}`);
@@ -86,7 +90,7 @@ export class CommandRegistry {
       throw new Error(`Command has no host handler: ${id}`);
     }
 
-    await command.execute(args, context);
+    return command.execute(args, context);
   }
 
   private validate(command: CommandDescriptor): void {

@@ -4,6 +4,7 @@ export type {
   CorePluginContributionKind,
   CorePluginContributionScope,
   CorePluginCommandContext,
+  CorePreviewActionContext,
   CorePluginContextAnchor,
   CorePluginDisableReason,
   CorePluginHostContainer,

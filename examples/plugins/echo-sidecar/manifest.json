@@ -74,6 +74,27 @@
       "title": "Crash Echo Runtime"
     },
     {
+      "id": "echo.zoom",
+      "kind": "command",
+      "scope": { "kind": "workbench" },
+      "namespace": "workbench",
+      "title": "Zoom Echo Preview"
+    },
+    {
+      "id": "echo.inspect-metadata",
+      "kind": "command",
+      "scope": { "kind": "workbench" },
+      "namespace": "workbench",
+      "title": "Inspect Echo Metadata"
+    },
+    {
+      "id": "echo.analyze",
+      "kind": "command",
+      "scope": { "kind": "workbench" },
+      "namespace": "workbench",
+      "title": "Analyze Echo Preview"
+    },
+    {
       "id": "echo.menu",
       "kind": "context-menu",
       "scope": { "kind": "workbench" },
@@ -110,12 +131,22 @@
         "priority": 1,
         "slot": "metadata"
       }
+    },
+    {
+      "id": "echo.metadata-analysis",
+      "kind": "job",
+      "scope": { "kind": "capability" },
+      "namespace": "capability.velvet.example.echo"
     }
   ],
   "permissionSets": [
     {
       "zone": "contextual",
       "permissions": ["preview-render"]
+    },
+    {
+      "zone": "operations",
+      "permissions": ["jobs-create"]
     }
   ]
 }

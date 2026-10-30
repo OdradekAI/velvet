@@ -15,7 +15,7 @@ use velvet_plugin_api::{
     ExtensionInstallOperation, ExtensionInstallPreview, ExtensionInstallRecovery,
     ExtensionInstallRecoveryAction, ExtensionInstallRecoveryKind, ExtensionInstallRecoveryLogEntry,
     ExtensionInstallRecoveryLogStatus, ExtensionManifest, ExtensionProjection, ExtensionState,
-    ExtensionSummary, HostContainer, Permission, RuntimeKind, VersionRange,
+    ExtensionSummary, HostContainer, Permission, PreviewActionContext, RuntimeKind, VersionRange,
     MANIFEST_SCHEMA_VERSION,
 };
 
@@ -732,6 +732,13 @@ pub trait PluginHost {
         args: Value,
         context: Value,
     ) -> Result<PluginInvocationResult, PluginError>;
+    fn invoke_preview_action(
+        &mut self,
+        id: &ExtensionId,
+        command_id: String,
+        args: Value,
+        context: PreviewActionContext,
+    ) -> Result<PluginInvocationResult, PluginError>;
     fn invoke_preview(
         &mut self,
         id: &ExtensionId,
@@ -744,6 +751,8 @@ pub trait PluginHost {
         contribution_id: String,
         context: Value,
     ) -> Result<PluginInvocationResult, PluginError>;
+    fn has_permission(&self, id: &ExtensionId, permission: Permission)
+        -> Result<bool, PluginError>;
     fn install_from_directory(
         &mut self,
         source_dir: &Path,
@@ -980,6 +989,14 @@ impl InMemoryPluginHost {
             }
 
             match contribution.kind {
+                ContributionKind::Job => {
+                    if !matches!(contribution.scope, ContributionScope::Capability) {
+                        return Err(PluginError::InvalidContribution(format!(
+                            "job {} must be a capability contribution",
+                            contribution.id
+                        )));
+                    }
+                }
                 ContributionKind::PreviewProvider => {
                     let Some(preview) = contribution.preview.as_ref() else {
                         return Err(PluginError::InvalidContribution(format!(
@@ -1281,6 +1298,51 @@ impl InMemoryPluginHost {
             context,
         )
     }
+
+    fn invoke_preview_action(
+        &mut self,
+        id: &ExtensionId,
+        command_id: String,
+        args: Value,
+        context: PreviewActionContext,
+    ) -> Result<PluginInvocationResult, PluginError> {
+        if !self.has_permission(id, Permission::PreviewRender)? {
+            return Err(PluginError::PermissionDenied {
+                extension_id: id.clone(),
+                zone: WorkbenchZone::Contextual,
+                permission: Permission::PreviewRender,
+            });
+        }
+        let context = serde_json::to_value(context).map_err(|error| {
+            PluginError::InvalidContribution(format!(
+                "preview action context could not be encoded: {error}"
+            ))
+        })?;
+        self.invoke_declared(
+            id,
+            command_id,
+            ContributionKind::Command,
+            "preview.action",
+            args,
+            context,
+        )
+    }
+
+    fn has_permission(
+        &self,
+        id: &ExtensionId,
+        permission: Permission,
+    ) -> Result<bool, PluginError> {
+        let manifest = self
+            .manifests
+            .get(id)
+            .ok_or_else(|| PluginError::NotFound(id.clone()))?;
+        Ok(manifest
+            .permission_sets
+            .iter()
+            .flat_map(|set| set.permissions.iter())
+            .any(|candidate| candidate == &permission))
+    }
 }
 
 impl PluginHost for InMemoryPluginHost {
@@ -1458,6 +1520,16 @@ impl PluginHost for InMemoryPluginHost {
         )
     }
 
+    fn invoke_preview_action(
+        &mut self,
+        id: &ExtensionId,
+        command_id: String,
+        args: Value,
+        context: PreviewActionContext,
+    ) -> Result<PluginInvocationResult, PluginError> {
+        InMemoryPluginHost::invoke_preview_action(self, id, command_id, args, context)
+    }
+
     fn invoke_preview(
         &mut self,
         id: &ExtensionId,
@@ -1491,6 +1563,14 @@ impl PluginHost for InMemoryPluginHost {
             context,
             "preview augmentation",
         )
+    }
+
+    fn has_permission(
+        &self,
+        id: &ExtensionId,
+        permission: Permission,
+    ) -> Result<bool, PluginError> {
+        InMemoryPluginHost::has_permission(self, id, permission)
     }
     fn inspect_from_directory(
         &self,
@@ -2617,6 +2697,84 @@ mod tests {
             host.invoke_command(&id, "example.open".into(), Value::Null, Value::Null),
             Err(PluginError::InvalidState {
                 state: ExtensionState::Disabled,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn preview_actions_require_render_permission_and_use_the_command_boundary() {
+        let mut manifest = view_manifest(None);
+        let command = &mut manifest.contributions[0];
+        command.id = "example.analyze".into();
+        command.kind = ContributionKind::Command;
+        command.scope = ContributionScope::Workbench;
+        command.namespace = Some("workbench".into());
+        command.container = None;
+        command.zone = None;
+        command.icon = None;
+        command.default_visible = None;
+        manifest.permission_sets = vec![ZonePermissionSet {
+            zone: WorkbenchZone::Contextual,
+            permissions: vec![Permission::PreviewRender],
+        }];
+        let id = manifest.id.clone();
+
+        let mut host = InMemoryPluginHost::default();
+        host.register(manifest)
+            .expect("preview action should register");
+        host.activate(&id).expect("preview action should activate");
+        assert!(host
+            .has_permission(&id, Permission::PreviewRender)
+            .expect("permission lookup should succeed"));
+        let result = host
+            .invoke_preview_action(
+                &id,
+                "example.analyze".into(),
+                serde_json::json!({ "scope": "metadata" }),
+                velvet_plugin_api::PreviewActionContext {
+                    session_id: "preview.example:asset-1".into(),
+                    provider_id: "example.preview".into(),
+                    asset_id: "asset-1".into(),
+                    content_kind: "image".into(),
+                    intent: velvet_plugin_api::PreviewIntent::Analyze,
+                    surface: velvet_plugin_api::PreviewSurface::Workspace,
+                },
+            )
+            .expect("preview action should reach the runtime");
+        assert_eq!(result.result, Some(serde_json::json!({ "accepted": true })));
+
+        let mut denied = view_manifest(None);
+        denied.id = ExtensionId("example.denied".into());
+        denied.contributions[0].id = "example.denied".into();
+        denied.contributions[0].kind = ContributionKind::Command;
+        denied.contributions[0].scope = ContributionScope::Workbench;
+        denied.contributions[0].namespace = Some("workbench".into());
+        denied.contributions[0].container = None;
+        denied.contributions[0].zone = None;
+        denied.contributions[0].icon = None;
+        denied.contributions[0].default_visible = None;
+        let denied_id = denied.id.clone();
+        host.register(denied)
+            .expect("denied action should register");
+        host.activate(&denied_id)
+            .expect("denied action should activate");
+        assert!(matches!(
+            host.invoke_preview_action(
+                &denied_id,
+                "example.denied".into(),
+                Value::Null,
+                velvet_plugin_api::PreviewActionContext {
+                    session_id: "preview.example:asset-1".into(),
+                    provider_id: "example.preview".into(),
+                    asset_id: "asset-1".into(),
+                    content_kind: "image".into(),
+                    intent: velvet_plugin_api::PreviewIntent::Quick,
+                    surface: velvet_plugin_api::PreviewSurface::Workspace,
+                },
+            ),
+            Err(PluginError::PermissionDenied {
+                permission: Permission::PreviewRender,
                 ..
             })
         ));

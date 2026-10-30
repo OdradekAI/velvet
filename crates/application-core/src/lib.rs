@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 mod preview_source;
@@ -13,7 +14,8 @@ use velvet_persistence::{InMemoryLayoutStateStore, LayoutStateStore};
 use velvet_plugin_api::{
     ContributionKind, ExtensionId, ExtensionInstallPreview, ExtensionInstallRecovery,
     ExtensionInstallRecoveryAction, ExtensionInstallRecoveryLogEntry, ExtensionManifest,
-    ExtensionState, PreviewRendererDescriptor,
+    ExtensionState, Permission, PreviewActionContext, PreviewActionResult, PreviewIntent,
+    PreviewRendererDescriptor, PreviewSurface,
 };
 use velvet_plugin_host::{
     DisableReason, InMemoryPluginHost, JsonManifestDiscovery, ManifestDiscoveryError,
@@ -36,8 +38,21 @@ pub struct ApplicationCore {
     plugins: InMemoryPluginHost,
     previews: PreviewResolver,
     jobs: JobSystem,
+    preview_actions: BTreeMap<String, PreviewActionAuthorization>,
     layout_store: Arc<dyn LayoutStateStore>,
     plugin_directory: Option<std::path::PathBuf>,
+}
+
+const MAX_PREVIEW_ACTION_SESSIONS: usize = 128;
+
+struct PreviewActionAuthorization {
+    extension_id: ExtensionId,
+    provider_id: String,
+    asset_id: String,
+    content_kind: String,
+    intent: PreviewIntent,
+    surface: PreviewSurface,
+    commands: Vec<String>,
 }
 
 impl Default for ApplicationCore {
@@ -135,6 +150,7 @@ impl ApplicationCore {
             plugins: InMemoryPluginHost::with_runtime(runtime),
             previews: PreviewResolver::default(),
             jobs,
+            preview_actions: BTreeMap::new(),
             layout_store,
             plugin_directory,
         };
@@ -173,11 +189,19 @@ impl ApplicationCore {
         id: &ExtensionId,
         reason: DisableReason,
     ) -> Result<(), PluginError> {
-        self.plugins.disable(id, reason)
+        let result = self.plugins.disable(id, reason);
+        if result.is_ok() {
+            self.forget_preview_actions(id);
+        }
+        result
     }
 
     pub fn check_plugin_health(&mut self, id: &ExtensionId) -> Result<ExtensionState, PluginError> {
-        self.plugins.check_health(id)
+        let result = self.plugins.check_health(id);
+        if result.is_err() {
+            self.forget_preview_actions(id);
+        }
+        result
     }
 
     pub fn recover_plugin(&mut self, id: &ExtensionId) -> Result<(), PluginError> {
@@ -325,6 +349,141 @@ impl ApplicationCore {
         })
     }
 
+    pub fn invoke_preview_action(
+        &mut self,
+        extension_id: ExtensionId,
+        command_id: String,
+        args: serde_json::Value,
+        context: PreviewActionContext,
+    ) -> Result<Response, CoreError> {
+        let Some(authorization) = self.preview_actions.get(&context.session_id) else {
+            return Err(CoreError::InvalidCommand(
+                "preview action session is no longer active".into(),
+            ));
+        };
+        if authorization.extension_id != extension_id
+            || authorization.provider_id != context.provider_id
+            || authorization.asset_id != context.asset_id
+            || authorization.content_kind != context.content_kind
+            || authorization.intent != context.intent
+            || authorization.surface != context.surface
+            || !authorization.commands.iter().any(|id| id == &command_id)
+        {
+            return Err(CoreError::InvalidCommand(
+                "preview action is not declared by the active preview session".into(),
+            ));
+        }
+        let result =
+            match self
+                .plugins
+                .invoke_preview_action(&extension_id, command_id, args, context)
+            {
+                Ok(result) => result,
+                Err(error) => {
+                    let plugin_failed = self
+                        .plugins
+                        .discover()
+                        .into_iter()
+                        .find(|summary| summary.id == extension_id)
+                        .is_some_and(|summary| summary.state == ExtensionState::Failed);
+                    if plugin_failed {
+                        self.forget_preview_actions(&extension_id);
+                        return Err(plugin_error(error));
+                    }
+                    return Err(CoreError::Plugin(format!(
+                        "preview action failed: {error:?}"
+                    )));
+                }
+            };
+        let Some(value) = result.result else {
+            return Err(CoreError::InvalidCommand(
+                "preview action returned no result".into(),
+            ));
+        };
+        let action = serde_json::from_value::<PreviewActionResult>(value).map_err(|error| {
+            CoreError::InvalidCommand(format!(
+                "preview action returned an invalid result: {error}"
+            ))
+        })?;
+        match action {
+            PreviewActionResult::Accepted => Ok(Response::Accepted),
+            PreviewActionResult::Job {
+                job_kind,
+                duration_ms,
+            } => {
+                if job_kind.trim().is_empty() {
+                    return Err(CoreError::InvalidCommand(
+                        "preview action job kind cannot be empty".into(),
+                    ));
+                }
+                let job_declared = self
+                    .plugins
+                    .active_contributions(&extension_id)
+                    .map_err(plugin_error)?
+                    .into_iter()
+                    .any(|contribution| {
+                        contribution.kind == ContributionKind::Job && contribution.id == job_kind
+                    });
+                if !job_declared {
+                    return Err(CoreError::Plugin(format!(
+                        "extension {} did not declare preview job {}",
+                        extension_id.0, job_kind
+                    )));
+                }
+                if !self
+                    .plugins
+                    .has_permission(&extension_id, Permission::JobsCreate)
+                    .map_err(plugin_error)?
+                {
+                    return Err(CoreError::Plugin(format!(
+                        "extension {} lacks jobs-create permission for preview action",
+                        extension_id.0
+                    )));
+                }
+                self.create_job(job_kind, duration_ms, false)
+                    .map(Response::Job)
+                    .map_err(job_error)
+            }
+        }
+    }
+
+    fn remember_preview_actions(&mut self, extension_id: &ExtensionId, session: &PreviewSession) {
+        if session.descriptor.commands.is_empty() {
+            return;
+        }
+        if self.preview_actions.len() >= MAX_PREVIEW_ACTION_SESSIONS
+            && !self
+                .preview_actions
+                .contains_key(&session.descriptor.session_id)
+        {
+            if let Some(oldest) = self.preview_actions.keys().next().cloned() {
+                self.preview_actions.remove(&oldest);
+            }
+        }
+        self.preview_actions.insert(
+            session.descriptor.session_id.clone(),
+            PreviewActionAuthorization {
+                extension_id: extension_id.clone(),
+                provider_id: session.provider_id.clone(),
+                asset_id: session.context.asset_id.0.clone(),
+                content_kind: session.context.content_kind.0.clone(),
+                intent: plugin_preview_intent(&session.context.intent),
+                surface: plugin_preview_surface(&session.context.surface),
+                commands: session.descriptor.commands.clone(),
+            },
+        );
+    }
+
+    fn forget_preview_actions(&mut self, extension_id: &ExtensionId) {
+        self.preview_actions
+            .retain(|_, authorization| &authorization.extension_id != extension_id);
+    }
+
+    fn release_preview_session(&mut self, session_id: &str) -> Response {
+        self.preview_actions.remove(session_id);
+        Response::Accepted
+    }
+
     pub fn cancel_job(&self, id: &JobId) -> Result<velvet_job_system::JobSnapshot, JobError> {
         self.jobs.cancel(id)
     }
@@ -348,7 +507,11 @@ impl ApplicationCore {
                     .into(),
             ));
         };
-        self.plugins.uninstall_from_directory(id, plugin_directory)
+        let result = self.plugins.uninstall_from_directory(id, plugin_directory);
+        if result.is_ok() {
+            self.forget_preview_actions(id);
+        }
+        result
     }
 
     pub fn dispatch(&mut self, request: Request) -> Result<Response, CoreError> {
@@ -436,6 +599,15 @@ impl ApplicationCore {
                     .invoke_command(&extension_id, command_id, args, context)
                     .map_err(plugin_error)?;
                 Ok(Response::Accepted)
+            }
+            Request::Command(Command::InvokePreviewAction {
+                extension_id,
+                command_id,
+                args,
+                context,
+            }) => self.invoke_preview_action(extension_id, command_id, args, context),
+            Request::Command(Command::ReleasePreviewSession { session_id }) => {
+                Ok(self.release_preview_session(&session_id))
             }
             Request::Command(Command::CreateJob {
                 kind,
@@ -623,6 +795,7 @@ impl ApplicationCore {
                     continue;
                 }
             };
+            self.remember_preview_actions(&extension_id, &session);
             let mut resolved = velvet_preview_core::ResolvedPreview {
                 candidate,
                 session,
@@ -730,12 +903,15 @@ impl ApplicationCore {
                             descriptor,
                             "preview augmentation",
                         ) {
-                            Ok(session) => ResolvedPreviewAugmentation {
-                                augmentation_id,
-                                slot,
-                                session: Some(session),
-                                diagnostic: None,
-                            },
+                            Ok(session) => {
+                                self.remember_preview_actions(&extension_id, &session);
+                                ResolvedPreviewAugmentation {
+                                    augmentation_id,
+                                    slot,
+                                    session: Some(session),
+                                    diagnostic: None,
+                                }
+                            }
                             Err(diagnostic) => ResolvedPreviewAugmentation {
                                 augmentation_id,
                                 slot,
@@ -757,6 +933,32 @@ fn preview_context_payload(context: &PreviewContext) -> serde_json::Value {
         "intent": format!("{:?}", context.intent).to_lowercase(),
         "surface": format!("{:?}", context.surface).to_lowercase(),
     })
+}
+
+fn plugin_preview_intent(
+    intent: &velvet_preview_core::PreviewIntent,
+) -> velvet_plugin_api::PreviewIntent {
+    match intent {
+        velvet_preview_core::PreviewIntent::Quick => velvet_plugin_api::PreviewIntent::Quick,
+        velvet_preview_core::PreviewIntent::Inspect => velvet_plugin_api::PreviewIntent::Inspect,
+        velvet_preview_core::PreviewIntent::Analyze => velvet_plugin_api::PreviewIntent::Analyze,
+    }
+}
+
+fn plugin_preview_surface(
+    surface: &velvet_preview_core::PreviewSurface,
+) -> velvet_plugin_api::PreviewSurface {
+    match surface {
+        velvet_preview_core::PreviewSurface::Workspace => {
+            velvet_plugin_api::PreviewSurface::Workspace
+        }
+        velvet_preview_core::PreviewSurface::Thumbnail => {
+            velvet_plugin_api::PreviewSurface::Thumbnail
+        }
+        velvet_preview_core::PreviewSurface::Inspector => {
+            velvet_plugin_api::PreviewSurface::Inspector
+        }
+    }
 }
 
 fn plugin_preview_candidate(
@@ -958,9 +1160,11 @@ mod tests {
 
     struct PreviewRuntime {
         fail_augmentation: bool,
+        reject_action: bool,
     }
     struct PreviewProcess {
         fail_augmentation: bool,
+        reject_action: bool,
     }
 
     impl RuntimeProcess for PreviewProcess {
@@ -981,6 +1185,26 @@ mod tests {
                     "metadata renderer unavailable".into(),
                 ));
             }
+            if self.reject_action && invocation.method == "preview.action" {
+                return Err(RuntimeError::InvocationRejected(
+                    "preview action is unavailable".into(),
+                ));
+            }
+            if invocation.method == "preview.action" {
+                let result = if invocation.command_id == "preview.analyze" {
+                    serde_json::json!({
+                        "kind": "job",
+                        "jobKind": "preview.metadata-analysis",
+                        "durationMs": 900,
+                    })
+                } else {
+                    serde_json::json!({ "kind": "accepted" })
+                };
+                return Ok(PluginInvocationResult {
+                    result: Some(result),
+                    error: None,
+                });
+            }
             let (session_id, entrypoint) = match invocation.method.as_str() {
                 "preview.open" => ("preview.example:asset-1", "wasm://preview/image"),
                 "preview.augment" => (
@@ -1000,7 +1224,7 @@ mod tests {
                     "commands": if invocation.method == "preview.open" {
                         serde_json::json!(["preview.zoom"])
                     } else {
-                        serde_json::json!(["preview.inspect-metadata"])
+                        serde_json::json!(["preview.inspect-metadata", "preview.analyze"])
                     },
                     "slots": []
                 })),
@@ -1017,8 +1241,44 @@ mod tests {
         ) -> Result<Box<dyn RuntimeProcess>, RuntimeError> {
             Ok(Box::new(PreviewProcess {
                 fail_augmentation: self.fail_augmentation,
+                reject_action: self.reject_action,
             }))
         }
+    }
+
+    fn preview_command(id: &str, title: &str) -> ContributionDescriptor {
+        ContributionDescriptor {
+            id: id.into(),
+            kind: ContributionKind::Command,
+            scope: ContributionScope::Workbench,
+            namespace: Some("workbench".into()),
+            container: None,
+            zone: None,
+            title: Some(title.into()),
+            title_key: None,
+            icon: None,
+            order: None,
+            default_visible: None,
+            view_container_id: None,
+            activity_bar: None,
+            label: None,
+            label_key: None,
+            command_id: None,
+            group: None,
+            when: None,
+            anchor: None,
+            ui: None,
+            preview: None,
+        }
+    }
+
+    fn preview_job(id: &str) -> ContributionDescriptor {
+        let mut job = preview_command(id, id);
+        job.kind = ContributionKind::Job;
+        job.scope = ContributionScope::Capability;
+        job.namespace = Some("capability.preview.example".into());
+        job.title = None;
+        job
     }
 
     fn preview_manifest() -> ExtensionManifest {
@@ -1088,11 +1348,21 @@ mod tests {
                         slot: Some(velvet_plugin_api::PreviewAugmentationSlot::Metadata),
                     }),
                 },
+                preview_command("preview.zoom", "Zoom preview"),
+                preview_command("preview.inspect-metadata", "Inspect preview metadata"),
+                preview_command("preview.analyze", "Analyze preview metadata"),
+                preview_job("preview.metadata-analysis"),
             ],
-            permission_sets: vec![ZonePermissionSet {
-                zone: WorkbenchZone::Contextual,
-                permissions: vec![Permission::PreviewRender],
-            }],
+            permission_sets: vec![
+                ZonePermissionSet {
+                    zone: WorkbenchZone::Contextual,
+                    permissions: vec![Permission::PreviewRender],
+                },
+                ZonePermissionSet {
+                    zone: WorkbenchZone::Operations,
+                    permissions: vec![Permission::JobsCreate],
+                },
+            ],
             ..ExtensionManifest::default()
         }
     }
@@ -1103,6 +1373,7 @@ mod tests {
             Arc::new(InMemoryLayoutStateStore::default()),
             Box::new(PreviewRuntime {
                 fail_augmentation: false,
+                reject_action: false,
             }),
         );
         let manifest = preview_manifest();
@@ -1161,6 +1432,7 @@ mod tests {
             Arc::new(InMemoryLayoutStateStore::default()),
             Box::new(PreviewRuntime {
                 fail_augmentation: true,
+                reject_action: false,
             }),
         );
         let manifest = preview_manifest();
@@ -1195,6 +1467,144 @@ mod tests {
             }
             other => panic!("expected preview response, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn preview_action_hands_job_creation_to_the_rust_job_system() {
+        let mut core = ApplicationCore::with_plugin_runtime(
+            Arc::new(InMemoryLayoutStateStore::default()),
+            Box::new(PreviewRuntime {
+                fail_augmentation: false,
+                reject_action: false,
+            }),
+        );
+        let manifest = preview_manifest();
+        let id = manifest.id.clone();
+        core.register_plugin(manifest)
+            .expect("preview action provider should register");
+        core.activate_plugin(&id)
+            .expect("preview action provider should activate");
+
+        core.dispatch(Request::Query(Query::ResolvePreview {
+            asset_id: velvet_asset_core::AssetId("asset-1".into()),
+            content_kind: "image".into(),
+            intent: velvet_preview_core::PreviewIntent::Quick,
+            surface: velvet_preview_core::PreviewSurface::Workspace,
+        }))
+        .expect("preview session should authorize its actions");
+
+        let invalid_action = core.dispatch(Request::Command(Command::InvokePreviewAction {
+            extension_id: id.clone(),
+            command_id: "preview.not-declared".into(),
+            args: serde_json::Value::Null,
+            context: velvet_plugin_api::PreviewActionContext {
+                session_id: "preview.example:metadata:asset-1".into(),
+                provider_id: "preview.example.preview.metadata".into(),
+                asset_id: "asset-1".into(),
+                content_kind: "image".into(),
+                intent: velvet_plugin_api::PreviewIntent::Quick,
+                surface: velvet_plugin_api::PreviewSurface::Workspace,
+            },
+        }));
+        assert!(matches!(
+            invalid_action,
+            Err(CoreError::InvalidCommand(message))
+                if message.contains("not declared by the active preview session")
+        ));
+
+        let mismatched_context = core.dispatch(Request::Command(Command::InvokePreviewAction {
+            extension_id: id.clone(),
+            command_id: "preview.zoom".into(),
+            args: serde_json::Value::Null,
+            context: velvet_plugin_api::PreviewActionContext {
+                session_id: "preview.example:asset-1".into(),
+                provider_id: "preview.example.preview.image".into(),
+                asset_id: "asset-1".into(),
+                content_kind: "image".into(),
+                intent: velvet_plugin_api::PreviewIntent::Quick,
+                surface: velvet_plugin_api::PreviewSurface::Inspector,
+            },
+        }));
+        assert!(matches!(
+            mismatched_context,
+            Err(CoreError::InvalidCommand(message))
+                if message.contains("not declared by the active preview session")
+        ));
+
+        let response = core
+            .dispatch(Request::Command(Command::InvokePreviewAction {
+                extension_id: id,
+                command_id: "preview.analyze".into(),
+                args: serde_json::json!({ "scope": "metadata" }),
+                context: velvet_plugin_api::PreviewActionContext {
+                    session_id: "preview.example:metadata:asset-1".into(),
+                    provider_id: "preview.example.preview.metadata".into(),
+                    asset_id: "asset-1".into(),
+                    content_kind: "image".into(),
+                    intent: velvet_plugin_api::PreviewIntent::Quick,
+                    surface: velvet_plugin_api::PreviewSurface::Workspace,
+                },
+            }))
+            .expect("preview action should create a job");
+        match response {
+            Response::Job(job) => {
+                assert_eq!(job.kind, "preview.metadata-analysis");
+                assert_eq!(job.status, velvet_job_system::JobStatus::Queued);
+            }
+            other => panic!("expected job response, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejected_preview_action_keeps_the_plugin_and_session_available() {
+        let mut core = ApplicationCore::with_plugin_runtime(
+            Arc::new(InMemoryLayoutStateStore::default()),
+            Box::new(PreviewRuntime {
+                fail_augmentation: false,
+                reject_action: true,
+            }),
+        );
+        let manifest = preview_manifest();
+        let id = manifest.id.clone();
+        core.register_plugin(manifest)
+            .expect("preview action provider should register");
+        core.activate_plugin(&id)
+            .expect("preview action provider should activate");
+        core.dispatch(Request::Query(Query::ResolvePreview {
+            asset_id: velvet_asset_core::AssetId("asset-1".into()),
+            content_kind: "image".into(),
+            intent: velvet_preview_core::PreviewIntent::Quick,
+            surface: velvet_preview_core::PreviewSurface::Workspace,
+        }))
+        .expect("preview session should authorize its actions");
+
+        let error = core
+            .dispatch(Request::Command(Command::InvokePreviewAction {
+                extension_id: id.clone(),
+                command_id: "preview.zoom".into(),
+                args: serde_json::Value::Null,
+                context: velvet_plugin_api::PreviewActionContext {
+                    session_id: "preview.example:asset-1".into(),
+                    provider_id: "preview.example.preview.image".into(),
+                    asset_id: "asset-1".into(),
+                    content_kind: "image".into(),
+                    intent: velvet_plugin_api::PreviewIntent::Quick,
+                    surface: velvet_plugin_api::PreviewSurface::Workspace,
+                },
+            }))
+            .expect_err("runtime rejection should stay local to the action");
+        assert!(
+            matches!(error, CoreError::Plugin(message) if message.contains("preview action failed"))
+        );
+
+        let summary = core
+            .dispatch(Request::Query(Query::Extensions))
+            .expect("plugin inventory should remain available");
+        assert!(matches!(
+            summary,
+            Response::Extensions(extensions)
+                if extensions.iter().any(|extension| extension.id == id && extension.active)
+        ));
     }
 
     #[test]

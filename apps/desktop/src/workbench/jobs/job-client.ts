@@ -34,6 +34,12 @@ export class JobClient {
     return this.jobs.get(id);
   }
 
+  /** Records a job returned by a command/action handoff before its first event. */
+  public accept(snapshot: CoreJobSnapshot): void {
+    this.jobs.set(snapshot.id, snapshot);
+    this.emit();
+  }
+
   public subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);

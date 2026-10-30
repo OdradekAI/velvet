@@ -4,11 +4,13 @@ This is the smallest runnable external Velvet plugin. It demonstrates the
 same contracts used by an installed sidecar:
 
 - `manifest.json` declares a sidecar runtime, a ViewContainer, a UI Bridge
-  view, two commands, an asset context-menu entry, a capability-scoped
-  `PreviewProvider` and a metadata `PreviewAugmentation`.
+  view, preview commands, an asset context-menu entry, a capability-scoped
+  `PreviewProvider`, a metadata `PreviewAugmentation` and a declared analysis
+  `Job`.
 - `sidecar.mjs` keeps stdout reserved for protocol JSONL, echoes command
-  arguments/context back to the host and returns typed preview sessions for
-  `preview.open` and `preview.augment`.
+  arguments/context back to the host, returns typed preview sessions for
+  `preview.open` and `preview.augment`, and hands `echo.analyze` to the host
+  JobSystem through `preview.action`.
 - `echo.crash` exits the sidecar so the host can isolate and recover the
   extension without taking down the Workbench.
 

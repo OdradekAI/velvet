@@ -192,6 +192,37 @@ const core = {
         throw error;
       }
     }
+    if (request.kind === 'invoke-preview-action') {
+      const response = await invokeRuntime(runtime, {
+        protocolVersion: 1,
+        kind: 'invoke-command',
+        method: 'preview.action',
+        extensionId: request.extensionId,
+        commandId: request.commandId,
+        args: request.args,
+        context: request.context,
+      });
+      if (!response.ok) {
+        throw new Error(response.error ?? 'sidecar rejected the preview action');
+      }
+      if (response.result?.kind === 'job') {
+        return {
+          kind: 'job',
+          job: {
+            id: 'job-preview-000001',
+            kind: response.result.jobKind,
+            status: 'queued',
+            progress: 0,
+            message: null,
+            attempt: 1,
+            retryable: true,
+            durationMs: response.result.durationMs,
+            willFail: false,
+          },
+        };
+      }
+      return { kind: 'accepted' };
+    }
     return { kind: 'accepted' };
   },
   subscribe: (listener) => {
@@ -232,6 +263,26 @@ await commands.execute(
 );
 assert.equal(requests.at(-1).kind, 'invoke-plugin-command');
 assert.equal(requests.at(-1).commandId, 'echo.open');
+
+const previewActionResponse = await commands.execute(
+  'echo.analyze',
+  { scope: 'metadata' },
+  {
+    keys: {},
+    preview: {
+      sessionId: 'velvet.example.echo:echo.metadata',
+      providerId: 'velvet.example.echo.echo.metadata',
+      assetId: 'asset-1',
+      contentKind: 'text/plain',
+      intent: 'quick',
+      surface: 'workspace',
+    },
+  },
+);
+assert.equal(requests.at(-1).kind, 'invoke-preview-action');
+assert.equal(requests.at(-1).context.assetId, 'asset-1');
+assert.equal(previewActionResponse.kind, 'job');
+assert.equal(previewActionResponse.job.kind, 'echo.metadata-analysis');
 
 const context = new InMemoryWorkspaceContext();
 const rootElement = document.createElement('div');

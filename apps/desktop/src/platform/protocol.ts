@@ -101,6 +101,15 @@ export interface CorePluginCommandContext {
   readonly keys: Readonly<Record<string, string | number | boolean | null>>;
 }
 
+export interface CorePreviewActionContext {
+  readonly sessionId: string;
+  readonly providerId: string;
+  readonly assetId: string;
+  readonly contentKind: string;
+  readonly intent: 'quick' | 'inspect' | 'analyze';
+  readonly surface: 'workspace' | 'thumbnail' | 'inspector';
+}
+
 export type CoreRequest =
   | { readonly protocolVersion: ProtocolVersion; readonly kind: 'query-layout' }
   | { readonly protocolVersion: ProtocolVersion; readonly kind: 'query-extensions' }
@@ -191,6 +200,19 @@ export type CoreRequest =
       readonly commandId: string;
       readonly args: unknown;
       readonly context: CorePluginCommandContext;
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'invoke-preview-action';
+      readonly extensionId: string;
+      readonly commandId: string;
+      readonly args: unknown;
+      readonly context: CorePreviewActionContext;
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'release-preview-session';
+      readonly sessionId: string;
     }
   | {
       readonly protocolVersion: ProtocolVersion;

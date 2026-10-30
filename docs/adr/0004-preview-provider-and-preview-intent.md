@@ -114,6 +114,22 @@ failure never replaces or fails the Primary session; disabling the extension
 removes only its augmentation entries. The transport carries these entries as
 `augmentations[]` rather than overloading the Primary session's slot names.
 
+Session `commands[]` contains host Command ids. The desktop resolves those ids
+through `CommandRegistry` and invokes them with a bounded
+`PreviewActionContext` containing the active session and asset projection.
+Preview actions cross a dedicated `invoke-preview-action` protocol command and
+the plugin runtime's `preview.action` method. A typed `accepted` result ends at
+the action; a typed `job` result is permission-checked for `jobs-create` and
+submitted by Rust to the shared `JobSystem`, whose queued/running/progress,
+cancellation, retry and terminal events remain the authoritative projection.
+The host binds provider, asset, content kind, intent and surface to the active
+session, so a caller cannot reuse the session with a different projection. An
+invalid action result, missing permission or plugin rejection affects only that
+action and leaves the preview session mounted; an actual runtime crash still
+follows the normal plugin failure path. Closing or replacing a
+PreviewHost releases the session authorization through the transport, so late
+buttons cannot reuse an old asset context.
+
 `PreviewResolver` selects one Primary provider from Asset, ContentKind, intent,
 surface and Workspace/Profile context. The deterministic order is explicit
 user choice, Profile/Workspace default, selector match, provider priority,

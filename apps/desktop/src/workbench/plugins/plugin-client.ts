@@ -10,6 +10,7 @@ import {
   type CorePluginDisableReason,
   type CorePluginManifest,
   type CorePluginSummary,
+  type CoreResponse,
   type CoreTransport,
   type Part,
   type Zone,
@@ -158,7 +159,7 @@ export type PluginCommandHandler = (
   commandId: string,
   args: unknown,
   context: CommandExecutionContext,
-) => void | Promise<void>;
+) => unknown | Promise<unknown>;
 
 export class PluginLifecycleError extends Error {
   public constructor(
@@ -1551,13 +1552,11 @@ export class PluginClient {
       execute: async (args, context) => {
         const handler = this.commandHandlers.get(descriptor.extensionId);
         if (handler) {
-          await handler(descriptor.id, args, context);
-          return;
+          return handler(descriptor.id, args, context);
         }
 
         if (this.coreProjections.has(descriptor.extensionId)) {
-          await this.invokeCoreCommand(descriptor.extensionId, descriptor.id, args, context);
-          return;
+          return this.invokeCoreCommand(descriptor.extensionId, descriptor.id, args, context);
         }
 
         throw new PluginLifecycleError(
@@ -1748,24 +1747,34 @@ export class PluginClient {
     commandId: string,
     args: unknown,
     context: CommandExecutionContext,
-  ): Promise<void> {
-    const response = await this.core.request({
-      protocolVersion: PROTOCOL_VERSION,
-      kind: 'invoke-plugin-command',
-      extensionId,
-      commandId,
-      args,
-      context: {
-        activeAppId: context.activeAppId ?? null,
-        keys: context.keys,
-      },
-    });
-    if (response.kind !== 'accepted') {
+  ): Promise<CoreResponse> {
+    const response = context.preview
+      ? await this.core.request({
+          protocolVersion: PROTOCOL_VERSION,
+          kind: 'invoke-preview-action',
+          extensionId,
+          commandId,
+          args,
+          context: context.preview,
+        })
+      : await this.core.request({
+          protocolVersion: PROTOCOL_VERSION,
+          kind: 'invoke-plugin-command',
+          extensionId,
+          commandId,
+          args,
+          context: {
+            activeAppId: context.activeAppId ?? null,
+            keys: context.keys,
+          },
+        });
+    if (response.kind !== 'accepted' && response.kind !== 'job') {
       throw new PluginLifecycleError(
-        `Expected an accepted response for plugin command ${commandId}, received ${response.kind}`,
+        `Expected an accepted or job response for plugin command ${commandId}, received ${response.kind}`,
         extensionId,
       );
     }
+    return response;
   }
 
   private async handleCorePluginDisabled(

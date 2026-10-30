@@ -9,7 +9,8 @@ use velvet_plugin_api::{
     AppTarget, ContributionDescriptor, ExtensionId, ExtensionInstallPreview,
     ExtensionInstallRecovery, ExtensionInstallRecoveryAction, ExtensionInstallRecoveryLogEntry,
     ExtensionKind, ExtensionManifest, ExtensionSummary, ExtensionSupport, LocalizationManifest,
-    RuntimeKind, RuntimeLaunchSpec, VersionRange, WorkbenchAppDescriptor, ZonePermissionSet,
+    PreviewActionContext, RuntimeKind, RuntimeLaunchSpec, VersionRange, WorkbenchAppDescriptor,
+    ZonePermissionSet,
 };
 use velvet_preview_core::{PreviewIntent, PreviewSurface, ResolvedPreview};
 
@@ -194,6 +195,15 @@ pub enum Command {
         command_id: String,
         args: Value,
         context: Value,
+    },
+    InvokePreviewAction {
+        extension_id: ExtensionId,
+        command_id: String,
+        args: Value,
+        context: PreviewActionContext,
+    },
+    ReleasePreviewSession {
+        session_id: String,
     },
     CreateJob {
         kind: String,

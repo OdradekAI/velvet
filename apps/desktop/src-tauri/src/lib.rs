@@ -13,7 +13,8 @@ use velvet_layout_model::{
 use velvet_plugin_api::{
     ActivationEvent, AppTarget, ContributionDescriptor, ExtensionId, ExtensionInstallRecoveryAction,
     ExtensionKind, ExtensionManifest, ExtensionSupport, LocalizationManifest, RuntimeKind,
-    RuntimeLaunchSpec, VersionRange, WorkbenchAppDescriptor, ZonePermissionSet,
+    PreviewActionContext, RuntimeLaunchSpec, VersionRange, WorkbenchAppDescriptor,
+    ZonePermissionSet,
     validate_reserved_metadata,
 };
 use velvet_persistence::{JsonFileJobStateStore, JsonFileLayoutStateStore};
@@ -271,6 +272,22 @@ pub enum WireRequest {
         args: serde_json::Value,
         context: serde_json::Value,
     },
+    InvokePreviewAction {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        #[serde(rename = "extensionId")]
+        extension_id: String,
+        #[serde(rename = "commandId")]
+        command_id: String,
+        args: serde_json::Value,
+        context: PreviewActionContext,
+    },
+    ReleasePreviewSession {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        #[serde(rename = "sessionId")]
+        session_id: String,
+    },
     CreateJob {
         #[serde(rename = "protocolVersion")]
         protocol_version: u16,
@@ -483,6 +500,28 @@ impl WireRequest {
                     args,
                     context,
                 }))
+            }
+            Self::InvokePreviewAction {
+                protocol_version,
+                extension_id,
+                command_id,
+                args,
+                context,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Command(Command::InvokePreviewAction {
+                    extension_id: ExtensionId(extension_id),
+                    command_id,
+                    args,
+                    context,
+                }))
+            }
+            Self::ReleasePreviewSession {
+                protocol_version,
+                session_id,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Command(Command::ReleasePreviewSession { session_id }))
             }
             Self::CreateJob {
                 protocol_version,
@@ -1794,6 +1833,71 @@ mod tests {
                 && command_id == "sample.reader.open"
                 && args["source"] == "context-menu"
                 && context["activeAppId"] == "asset-manager"
+        ));
+    }
+
+    #[test]
+    fn wire_preview_action_invocation_preserves_typed_preview_context() {
+        let envelope: WireRequestEnvelope = serde_json::from_value(serde_json::json!({
+            "protocolVersion": 1,
+            "requestId": 18,
+            "request": {
+                "kind": "invoke-preview-action",
+                "protocolVersion": 1,
+                "extensionId": "sample.reader",
+                "commandId": "sample.reader.analyze",
+                "args": {"scope": "metadata"},
+                "context": {
+                    "sessionId": "sample.reader:asset-1",
+                    "providerId": "sample.reader.preview",
+                    "assetId": "asset-1",
+                    "contentKind": "image",
+                    "intent": "analyze",
+                    "surface": "workspace"
+                }
+            }
+        }))
+        .expect("preview action request should deserialize");
+
+        assert!(matches!(
+            envelope
+                .request
+                .into_core(1)
+                .expect("preview action request should map"),
+            Request::Command(Command::InvokePreviewAction {
+                extension_id,
+                command_id,
+                args,
+                context,
+            }) if extension_id.0 == "sample.reader"
+                && command_id == "sample.reader.analyze"
+                && args["scope"] == "metadata"
+                && context.session_id == "sample.reader:asset-1"
+                && context.intent == velvet_plugin_api::PreviewIntent::Analyze
+                && context.surface == velvet_plugin_api::PreviewSurface::Workspace
+        ));
+    }
+
+    #[test]
+    fn wire_preview_session_release_preserves_session_identifier() {
+        let envelope: WireRequestEnvelope = serde_json::from_value(serde_json::json!({
+            "protocolVersion": 1,
+            "requestId": 20,
+            "request": {
+                "kind": "release-preview-session",
+                "protocolVersion": 1,
+                "sessionId": "sample.reader:asset-1"
+            }
+        }))
+        .expect("preview session release should deserialize");
+
+        assert!(matches!(
+            envelope
+                .request
+                .into_core(1)
+                .expect("preview session release should map"),
+            Request::Command(Command::ReleasePreviewSession { session_id })
+                if session_id == "sample.reader:asset-1"
         ));
     }
 

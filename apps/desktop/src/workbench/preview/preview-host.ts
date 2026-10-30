@@ -81,7 +81,7 @@ export class PreviewHost {
       }
 
       this.setState('loading');
-      this.preview = response.preview;
+      this.replacePreview(response.preview);
       this.setState('ready');
       return response.preview;
     } catch (cause) {
@@ -90,9 +90,10 @@ export class PreviewHost {
       }
 
       this.error = cause instanceof Error ? cause.message : String(cause);
-      this.preview = fallbackPreview(context);
+      const fallback = fallbackPreview(context);
+      this.replacePreview(fallback);
       this.setState('failed');
-      return this.preview;
+      return fallback;
     }
   }
 
@@ -100,6 +101,7 @@ export class PreviewHost {
     if (this.state === 'disposed') {
       return;
     }
+    this.releaseSessions(this.preview);
     this.requestToken += 1;
     this.preview = undefined;
     this.error = undefined;
@@ -110,6 +112,7 @@ export class PreviewHost {
     if (this.state === 'disposed') {
       return;
     }
+    this.releaseSessions(this.preview);
     this.requestToken += 1;
     this.preview = undefined;
     this.setState('disposed');
@@ -119,6 +122,31 @@ export class PreviewHost {
   private ensureUsable(): void {
     if (this.state === 'disposed') {
       throw new Error('PreviewHost is disposed');
+    }
+  }
+
+  private replacePreview(preview: ResolvedPreview): void {
+    if (this.preview) {
+      this.releaseSessions(this.preview);
+    }
+    this.preview = preview;
+  }
+
+  private releaseSessions(preview: ResolvedPreview | undefined): void {
+    if (!preview) {
+      return;
+    }
+    const sessionIds = new Set([
+      preview.session.sessionId,
+      ...(preview.augmentations ?? []).flatMap((augmentation) =>
+        augmentation.session ? [augmentation.session.sessionId] : []),
+    ]);
+    for (const sessionId of sessionIds) {
+      void this.core.request({
+        protocolVersion: 1,
+        kind: 'release-preview-session',
+        sessionId,
+      }).catch(() => undefined);
     }
   }
 

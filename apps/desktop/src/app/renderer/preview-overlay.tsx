@@ -6,12 +6,20 @@ import {
   type PreviewContext,
   type ResolvedPreview,
 } from '../../workbench/preview/preview-host.js';
-import type { CoreResolvedPreviewAugmentation } from '../../platform/protocol.js';
+import type {
+  CorePreviewActionContext,
+  CoreResponse,
+  CoreResolvedPreviewAugmentation,
+  CorePreviewSession,
+} from '../../platform/protocol.js';
 import { PreviewRegistry } from '../../workbench/preview/preview-registry.js';
 import { PreviewRendererRegistry } from '../../workbench/preview/preview-renderer-registry.js';
 import { PreviewRendererHost } from './preview-renderer-host.js';
 import { BuiltinPreviewRenderer } from './builtin-preview-renderer.js';
 import type { WorkspaceContext } from '../../workbench/services/workspace-context.js';
+import { CommandRegistry } from '../../workbench/commands/command-registry.js';
+import { ContextKeyService } from '../../workbench/commands/context-key-service.js';
+import { JobClient } from '../../workbench/jobs/job-client.js';
 
 export interface PreviewOverlayProps {
   readonly open: boolean;
@@ -20,6 +28,9 @@ export interface PreviewOverlayProps {
   readonly registry: PreviewRegistry;
   readonly rendererRegistry?: PreviewRendererRegistry;
   readonly workspaceContext?: WorkspaceContext;
+  readonly commands: CommandRegistry;
+  readonly contextKeys: ContextKeyService;
+  readonly jobs: JobClient;
   readonly context: PreviewContext;
   readonly primaryRenderer?: (preview: ResolvedPreview) => ReactNode;
 }
@@ -32,6 +43,9 @@ export function PreviewOverlay({
   registry,
   rendererRegistry,
   workspaceContext,
+  commands,
+  contextKeys,
+  jobs,
   context,
   primaryRenderer,
 }: PreviewOverlayProps) {
@@ -107,6 +121,13 @@ export function PreviewOverlay({
                 </>
               )
             )}
+            <PreviewSessionActions
+              commands={commands}
+              contextKeys={contextKeys}
+              jobs={jobs}
+              session={snapshot.preview.session}
+              workspaceContext={workspaceContext}
+            />
           </div>
         ) : null}
         {snapshot.error ? (
@@ -131,6 +152,9 @@ export function PreviewOverlay({
                     augmentation={augmentation}
                     basePreview={snapshot.preview}
                     context={workspaceContext}
+                    commands={commands}
+                    contextKeys={contextKeys}
+                    jobs={jobs}
                     rendererRegistry={rendererRegistry}
                   />
                 ) : (
@@ -151,11 +175,17 @@ function PreviewAugmentationSession({
   augmentation,
   basePreview,
   context,
+  commands,
+  contextKeys,
+  jobs,
   rendererRegistry,
 }: {
   readonly augmentation: CoreResolvedPreviewAugmentation;
   readonly basePreview?: ResolvedPreview;
   readonly context?: WorkspaceContext;
+  readonly commands: CommandRegistry;
+  readonly contextKeys: ContextKeyService;
+  readonly jobs: JobClient;
   readonly rendererRegistry?: PreviewRendererRegistry;
 }) {
   if (!augmentation.session) {
@@ -177,22 +207,150 @@ function PreviewAugmentationSession({
     return null;
   }
 
-  if (
-    (augmentation.session.renderer.kind === 'ui-bridge' && rendererRegistry && context) ||
+  let renderer: ReactNode = undefined;
+  if (augmentation.session.renderer.kind === 'ui-bridge' && rendererRegistry && context) {
+    renderer = (
+      <PreviewRendererHost
+        context={context}
+        preview={preview}
+        registry={rendererRegistry}
+      />
+    );
+  } else if (
     augmentation.session.renderer.kind === 'text' ||
     augmentation.session.renderer.kind === 'image'
   ) {
-    if (augmentation.session.renderer.kind === 'ui-bridge') {
-      return (
-        <PreviewRendererHost
-          context={context!}
-          preview={preview}
-          registry={rendererRegistry!}
-        />
-      );
-    }
-    return <BuiltinPreviewRenderer renderer={augmentation.session.renderer} />;
+    renderer = <BuiltinPreviewRenderer renderer={augmentation.session.renderer} />;
   }
 
-  return <p data-preview-augmentation-state="ready">Augmentation session ready.</p>;
+  return (
+    <>
+      {renderer ?? <p data-preview-augmentation-state="ready">Augmentation session ready.</p>}
+      <PreviewSessionActions
+        commands={commands}
+        contextKeys={contextKeys}
+        jobs={jobs}
+        session={augmentation.session}
+        workspaceContext={context}
+      />
+    </>
+  );
+}
+
+function PreviewSessionActions({
+  commands,
+  contextKeys,
+  jobs,
+  session,
+  workspaceContext,
+}: {
+  readonly commands: CommandRegistry;
+  readonly contextKeys: ContextKeyService;
+  readonly jobs: JobClient;
+  readonly session: CorePreviewSession;
+  readonly workspaceContext?: WorkspaceContext;
+}) {
+  if (session.commands.length === 0) {
+    return null;
+  }
+  return (
+    <div data-preview-actions>
+      {session.commands.map((commandId) => (
+        <PreviewActionButton
+          commandId={commandId}
+          commands={commands}
+          contextKeys={contextKeys}
+          jobs={jobs}
+          key={commandId}
+          session={session}
+          workspaceContext={workspaceContext}
+        />
+      ))}
+    </div>
+  );
+}
+
+function PreviewActionButton({
+  commandId,
+  commands,
+  contextKeys,
+  jobs,
+  session,
+  workspaceContext,
+}: {
+  readonly commandId: string;
+  readonly commands: CommandRegistry;
+  readonly contextKeys: ContextKeyService;
+  readonly jobs: JobClient;
+  readonly session: CorePreviewSession;
+  readonly workspaceContext?: WorkspaceContext;
+}) {
+  const [, rerender] = useState(0);
+  const [state, setState] = useState<'idle' | 'running' | 'accepted' | 'failed'>('idle');
+  const [error, setError] = useState<string>();
+  const [jobId, setJobId] = useState<string>();
+  const activeAppId = workspaceContext?.snapshot().activeAppId;
+  const command = commands.resolve(commandId, activeAppId);
+  const job = jobId ? jobs.get(jobId) : undefined;
+
+  useEffect(() => jobs.subscribe(() => rerender((value) => value + 1)), [jobs]);
+
+  if (!command) {
+    return (
+      <span data-preview-action-state="unavailable" data-preview-action={commandId}>
+        {commandId} unavailable
+      </span>
+    );
+  }
+
+  const actionContext: CorePreviewActionContext = {
+    sessionId: session.sessionId,
+    providerId: session.providerId,
+    assetId: session.context.assetId,
+    contentKind: session.context.contentKind,
+    intent: session.context.intent,
+    surface: session.context.surface,
+  };
+
+  async function execute(): Promise<void> {
+    setState('running');
+    setError(undefined);
+    try {
+      const result = await commands.execute(
+        commandId,
+        { preview: actionContext },
+        {
+          activeAppId,
+          keys: contextKeys.snapshot(),
+          preview: actionContext,
+        },
+      );
+      if (isJobResponse(result)) {
+        jobs.accept(result.job);
+        setJobId(result.job.id);
+      }
+      setState('accepted');
+    } catch (cause) {
+      setState('failed');
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
+  return (
+    <div data-preview-action={commandId} data-preview-action-state={state}>
+      <button disabled={state === 'running'} onClick={() => void execute()} type="button">
+        {command.title}
+      </button>
+      {error ? <span data-preview-action-error role="alert">{error}</span> : null}
+      {job ? (
+        <span data-preview-action-job={job.id} role="status">
+          {job.status} · {job.progress}%
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+function isJobResponse(value: unknown): value is Extract<CoreResponse, { readonly kind: 'job' }> {
+  return Boolean(value && typeof value === 'object' && 'kind' in value && value.kind === 'job');
 }

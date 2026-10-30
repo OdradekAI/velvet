@@ -565,6 +565,20 @@ failed or waiting augmentation inside its declared slot while the Primary
 preview stays mounted; UI Bridge augmentation sessions reuse the same transient
 renderer host as Primary sessions.
 
+Preview session command ids now use the existing host CommandRegistry. The
+renderer sends a typed `PreviewActionContext` through the dedicated
+`invoke-preview-action` request; Rust invokes the plugin runtime through
+`preview.action`, validates the typed accepted/job result and checks
+`jobs-create` before submitting a deferred action to the shared JobSystem.
+Job snapshots and events remain Rust-owned and are consumed by the existing
+JobClient/OperationsPanel projection. Rust binds provider, asset, content kind,
+intent and surface to the active session. Action failures, malformed results
+and permission denials stay local to the action and do not tear down the
+preview session or Workbench shell; an actual runtime crash follows the normal
+plugin failure path. PreviewHost releases its bounded session
+authorization when a session is replaced, closed or disposed, preventing late
+action invocations from reusing an old asset projection.
+
 ### Optional text-language capability
 
 Language is not a P0 Workbench service. A future text-oriented application may

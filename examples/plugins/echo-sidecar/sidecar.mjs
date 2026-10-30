@@ -43,7 +43,7 @@ for await (const line of input) {
           entrypoint: 'data:text/html,%3Cstrong%3EEcho%20preview%3C%2Fstrong%3E',
           bridgeVersion: '1',
         },
-        commands: ['preview.zoom'],
+        commands: ['echo.zoom'],
         slots: ['metadata'],
       },
     })}\n`);
@@ -61,9 +61,25 @@ for await (const line of input) {
           entrypoint: 'data:text/html,%3Csmall%3EEcho%20metadata%3C%2Fsmall%3E',
           bridgeVersion: '1',
         },
-        commands: ['preview.inspect-metadata'],
+        commands: ['echo.inspect-metadata', 'echo.analyze'],
         slots: [],
       },
+    })}\n`);
+    continue;
+  }
+
+  if (request.method === 'preview.action') {
+    const result = request.commandId === 'echo.analyze'
+      ? {
+          kind: 'job',
+          jobKind: 'echo.metadata-analysis',
+          durationMs: 1200,
+        }
+      : { kind: 'accepted' };
+    process.stdout.write(`${JSON.stringify({
+      protocolVersion,
+      ok: true,
+      result,
     })}\n`);
     continue;
   }

@@ -245,10 +245,39 @@ pub enum PreviewRendererDescriptor {
 pub struct PreviewSessionDescriptor {
     pub session_id: String,
     pub renderer: PreviewRendererDescriptor,
+    /// Host Command ids that the preview surface may render as actions.
     #[serde(default)]
     pub commands: Vec<String>,
     #[serde(default)]
     pub slots: Vec<PreviewAugmentationSlot>,
+}
+
+/// Context passed when a host command is invoked from one preview session.
+/// The host keeps this projection bounded to the active asset and preview
+/// session; it never exposes storage handles or unrestricted source paths.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PreviewActionContext {
+    pub session_id: String,
+    pub provider_id: String,
+    pub asset_id: String,
+    pub content_kind: String,
+    pub intent: PreviewIntent,
+    pub surface: PreviewSurface,
+}
+
+/// Typed result of a preview action. A plugin may accept the action directly
+/// or ask the host to create a Rust-owned JobSystem job for deferred work.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum PreviewActionResult {
+    Accepted,
+    Job {
+        #[serde(rename = "jobKind")]
+        job_kind: String,
+        #[serde(rename = "durationMs")]
+        duration_ms: u64,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -610,6 +639,35 @@ mod tests {
             serde_json::from_value::<PreviewSessionDescriptor>(value)
                 .expect("descriptor should round-trip"),
             descriptor
+        );
+    }
+
+    #[test]
+    fn preview_action_contract_round_trips_job_handoff() {
+        let context = PreviewActionContext {
+            session_id: "preview.example:asset-1".into(),
+            provider_id: "preview.example.preview.image".into(),
+            asset_id: "asset-1".into(),
+            content_kind: "image".into(),
+            intent: PreviewIntent::Analyze,
+            surface: PreviewSurface::Workspace,
+        };
+        let value =
+            serde_json::to_value(&context).expect("preview action context should serialize");
+        assert_eq!(value["sessionId"], "preview.example:asset-1");
+        assert_eq!(value["intent"], "analyze");
+
+        let result = PreviewActionResult::Job {
+            job_kind: "histogram".into(),
+            duration_ms: 1200,
+        };
+        let value = serde_json::to_value(&result).expect("preview action result should serialize");
+        assert_eq!(value["kind"], "job");
+        assert_eq!(value["jobKind"], "histogram");
+        assert_eq!(
+            serde_json::from_value::<PreviewActionResult>(value)
+                .expect("preview action result should round-trip"),
+            result
         );
     }
 }
