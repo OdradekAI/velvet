@@ -524,6 +524,15 @@ invalidate on content/provider/decoder/settings changes. A provider or
 augmentation failure leaves generic fallback and unrelated Workbench state
 usable.
 
+The current implementation slice proves the isolated-plugin path: the
+canonical Rust manifest carries preview selectors and slots, `PluginHost`
+dispatches `preview.open` through the same timeout/crash boundary as commands,
+`ApplicationCore` performs deterministic candidate selection and descriptor
+projection, Tauri carries renderer/session metadata, and the desktop
+`PreviewRegistry` cleans provider and augmentation registrations on deactivate
+or crash. A provider still cannot replace the host-owned frame; actual
+format-specific decoding and long-running analysis remain JobSystem work.
+
 ### Optional text-language capability
 
 Language is not a P0 Workbench service. A future text-oriented application may

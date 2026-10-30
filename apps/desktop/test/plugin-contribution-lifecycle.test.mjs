@@ -8,11 +8,13 @@ import { PluginClient } from '/tmp/velvet-plugin-tests/workbench/plugins/plugin-
 import { PluginUiRegistry } from '/tmp/velvet-plugin-tests/workbench/plugins/ui-bridge.js';
 import { ViewRegistry } from '/tmp/velvet-plugin-tests/workbench/views/view-registry.js';
 import { WorkbenchAppRegistry } from '/tmp/velvet-plugin-tests/workbench/apps/workbench-app.js';
+import { PreviewRegistry } from '/tmp/velvet-plugin-tests/workbench/preview/preview-registry.js';
 
 const contextKeys = new ContextKeyService();
 const commands = new CommandRegistry(contextKeys);
 const menus = new MenuRegistry(commands, contextKeys);
 const overlays = new OverlayRegistry(contextKeys);
+const previewRegistry = new PreviewRegistry();
 const ui = new PluginUiRegistry();
 const apps = new WorkbenchAppRegistry([{
   id: 'asset-manager',
@@ -30,6 +32,8 @@ const client = new PluginClient(
   commands,
   menus,
   overlays,
+  undefined,
+  previewRegistry,
 );
 
 const appManifest = {
@@ -282,5 +286,44 @@ assert.equal(overlays.active().length, 0);
 assert.equal(ui.getDescriptor(manifest.id, 'dialog'), undefined);
 assert.equal(unmounted, true);
 assert.equal(unmountedCount, 2);
+
+const previewManifest = {
+  id: 'sample.preview-extension',
+  version: '1.0.0',
+  hostApi: '1',
+  permissions: {},
+  contributions: [
+    {
+      id: 'image-provider',
+      scope: 'capability',
+      kind: 'preview-provider',
+      preview: {
+        contentKinds: ['image'],
+        intents: ['quick'],
+        surfaces: ['workspace'],
+        priority: 20,
+      },
+    },
+    {
+      id: 'metadata',
+      scope: 'capability',
+      kind: 'preview-augmentation',
+      preview: {
+        contentKinds: ['image'],
+        intents: ['quick'],
+        surfaces: ['workspace'],
+        priority: 0,
+        slot: 'metadata',
+      },
+    },
+  ],
+};
+client.register(previewManifest);
+client.activate(previewManifest.id);
+assert.equal(previewRegistry.listProviders()[0].id, 'sample.preview-extension.image-provider');
+assert.equal(previewRegistry.listAugmentations('image')[0].slot, 'metadata');
+await client.deactivate(previewManifest.id);
+assert.equal(previewRegistry.listProviders().length, 0);
+assert.equal(previewRegistry.listAugmentations('image').length, 0);
 
 console.log('Plugin menu, overlay namespace and lifecycle tests passed.');

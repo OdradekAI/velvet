@@ -182,6 +182,76 @@ pub enum UiSurfaceKind {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PreviewIntent {
+    Quick,
+    Inspect,
+    Analyze,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PreviewSurface {
+    Workspace,
+    Thumbnail,
+    Inspector,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PreviewAugmentationSlot {
+    PreviewOverlay,
+    Inspector,
+    Metadata,
+    Histogram,
+    ToolbarAction,
+    ContextMenu,
+    AnalysisAction,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PreviewContributionDescriptor {
+    pub content_kinds: Vec<String>,
+    pub intents: Vec<PreviewIntent>,
+    pub surfaces: Vec<PreviewSurface>,
+    pub priority: i32,
+    #[serde(default)]
+    pub slot: Option<PreviewAugmentationSlot>,
+}
+
+/// Framework-neutral session returned by a preview provider runtime.
+///
+/// The host owns how this descriptor is projected into a desktop surface;
+/// providers only select a renderer entrypoint and the augmentation slots they
+/// expose. This keeps runtime responses independent from Vue, React or Tauri.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "kebab-case",
+    deny_unknown_fields,
+    rename_all_fields = "camelCase"
+)]
+pub enum PreviewRendererDescriptor {
+    Generic,
+    UiBridge {
+        entrypoint: String,
+        bridge_version: String,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PreviewSessionDescriptor {
+    pub session_id: String,
+    pub renderer: PreviewRendererDescriptor,
+    #[serde(default)]
+    pub commands: Vec<String>,
+    #[serde(default)]
+    pub slots: Vec<PreviewAugmentationSlot>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct UiSurfaceDescriptor {
     pub kind: UiSurfaceKind,
@@ -239,6 +309,8 @@ pub struct ContributionDescriptor {
     pub anchor: Option<ContextAnchor>,
     #[serde(default)]
     pub ui: Option<UiSurfaceDescriptor>,
+    #[serde(default)]
+    pub preview: Option<PreviewContributionDescriptor>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -516,5 +588,28 @@ mod tests {
         let manifest: ExtensionManifest =
             serde_json::from_value(value).expect("reserved metadata should be accepted");
         assert_eq!(manifest.extensions["x-vendor"]["feature"], true);
+    }
+
+    #[test]
+    fn preview_session_descriptor_uses_stable_wire_names() {
+        let descriptor = PreviewSessionDescriptor {
+            session_id: "sample.preview:asset-1".into(),
+            renderer: PreviewRendererDescriptor::UiBridge {
+                entrypoint: "wasm://sample/preview".into(),
+                bridge_version: "1".into(),
+            },
+            commands: vec!["preview.zoom".into()],
+            slots: vec![PreviewAugmentationSlot::PreviewOverlay],
+        };
+        let value = serde_json::to_value(&descriptor).expect("descriptor should serialize");
+        assert_eq!(value["sessionId"], "sample.preview:asset-1");
+        assert_eq!(value["renderer"]["kind"], "ui-bridge");
+        assert_eq!(value["renderer"]["bridgeVersion"], "1");
+        assert_eq!(value["slots"][0], "preview-overlay");
+        assert_eq!(
+            serde_json::from_value::<PreviewSessionDescriptor>(value)
+                .expect("descriptor should round-trip"),
+            descriptor
+        );
     }
 }

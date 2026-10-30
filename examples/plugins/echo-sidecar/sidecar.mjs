@@ -32,6 +32,24 @@ for await (const line of input) {
     process.exit(17);
   }
 
+  if (request.method === 'preview.open') {
+    process.stdout.write(`${JSON.stringify({
+      protocolVersion,
+      ok: true,
+      result: {
+        sessionId: `${request.extensionId}:${request.commandId}`,
+        renderer: {
+          kind: 'ui-bridge',
+          entrypoint: 'data:text/html,%3Cstrong%3EEcho%20preview%3C%2Fstrong%3E',
+          bridgeVersion: '1',
+        },
+        commands: ['preview.zoom'],
+        slots: ['metadata'],
+      },
+    })}\n`);
+    continue;
+  }
+
   process.stdout.write(`${JSON.stringify({
     protocolVersion,
     ok: true,

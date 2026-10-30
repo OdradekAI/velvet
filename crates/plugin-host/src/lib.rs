@@ -94,6 +94,7 @@ const RECOVERY_LOG_LIMIT: usize = 100;
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct PluginInvocation {
     pub extension_id: ExtensionId,
+    pub method: String,
     pub command_id: String,
     pub args: Value,
     pub context: Value,
@@ -302,6 +303,7 @@ impl RuntimeProcess for ChildRuntimeProcess {
         let request = RuntimeInvocationRequest {
             protocol_version: RUNTIME_PROTOCOL_VERSION,
             kind: "invoke-command",
+            method: &invocation.method,
             extension_id: &invocation.extension_id.0,
             command_id: &invocation.command_id,
             args: &invocation.args,
@@ -377,6 +379,7 @@ impl RuntimeProcess for NoopRuntimeProcess {
 struct RuntimeInvocationRequest<'a> {
     protocol_version: u16,
     kind: &'static str,
+    method: &'a str,
     extension_id: &'a str,
     command_id: &'a str,
     args: &'a Value,
@@ -729,6 +732,12 @@ pub trait PluginHost {
         args: Value,
         context: Value,
     ) -> Result<PluginInvocationResult, PluginError>;
+    fn invoke_preview(
+        &mut self,
+        id: &ExtensionId,
+        contribution_id: String,
+        context: Value,
+    ) -> Result<PluginInvocationResult, PluginError>;
     fn install_from_directory(
         &mut self,
         source_dir: &Path,
@@ -964,6 +973,54 @@ impl InMemoryPluginHost {
                 )));
             }
 
+            match contribution.kind {
+                ContributionKind::PreviewProvider => {
+                    let Some(preview) = contribution.preview.as_ref() else {
+                        return Err(PluginError::InvalidContribution(format!(
+                            "preview provider {} must declare preview metadata",
+                            contribution.id
+                        )));
+                    };
+                    if !matches!(contribution.scope, ContributionScope::Capability)
+                        || preview.slot.is_some()
+                        || preview.content_kinds.is_empty()
+                        || preview.intents.is_empty()
+                        || preview.surfaces.is_empty()
+                    {
+                        return Err(PluginError::InvalidContribution(format!(
+                            "preview provider {} must be a capability with non-empty selectors and no slot",
+                            contribution.id
+                        )));
+                    }
+                }
+                ContributionKind::PreviewAugmentation | ContributionKind::Inspector => {
+                    let Some(preview) = contribution.preview.as_ref() else {
+                        return Err(PluginError::InvalidContribution(format!(
+                            "preview augmentation {} must declare preview metadata",
+                            contribution.id
+                        )));
+                    };
+                    if !matches!(contribution.scope, ContributionScope::Capability)
+                        || preview.slot.is_none()
+                        || preview.content_kinds.is_empty()
+                        || preview.intents.is_empty()
+                        || preview.surfaces.is_empty()
+                    {
+                        return Err(PluginError::InvalidContribution(format!(
+                            "preview augmentation {} must be a capability with a slot",
+                            contribution.id
+                        )));
+                    }
+                }
+                _ if contribution.preview.is_some() => {
+                    return Err(PluginError::InvalidContribution(format!(
+                        "contribution {} cannot declare preview metadata",
+                        contribution.id
+                    )));
+                }
+                _ => {}
+            }
+
             if matches!(contribution.scope, ContributionScope::WorkbenchApp { .. })
                 && matches!(
                     contribution.container,
@@ -1083,6 +1140,87 @@ impl InMemoryPluginHost {
     fn restore_state(&mut self, id: &ExtensionId, state: ExtensionState) {
         if state != ExtensionState::Active {
             self.states.insert(id.clone(), state);
+        }
+    }
+}
+
+impl InMemoryPluginHost {
+    fn invoke_declared(
+        &mut self,
+        id: &ExtensionId,
+        contribution_id: String,
+        expected_kind: ContributionKind,
+        method: &str,
+        args: Value,
+        context: Value,
+    ) -> Result<PluginInvocationResult, PluginError> {
+        let state = self
+            .states
+            .get(id)
+            .cloned()
+            .ok_or_else(|| PluginError::NotFound(id.clone()))?;
+        if !self.active.contains(id) {
+            return Err(PluginError::InvalidState {
+                extension_id: id.clone(),
+                state,
+            });
+        }
+
+        let manifest = self
+            .manifests
+            .get(id)
+            .ok_or_else(|| PluginError::NotFound(id.clone()))?;
+        if !manifest.contributions.iter().any(|contribution| {
+            contribution.id == contribution_id && contribution.kind == expected_kind
+        }) {
+            return Err(PluginError::InvalidContribution(format!(
+                "contribution {} is not declared by extension {}",
+                contribution_id, id.0
+            )));
+        }
+
+        let invocation = PluginInvocation {
+            extension_id: id.clone(),
+            method: method.into(),
+            command_id: contribution_id,
+            args,
+            context,
+        };
+        let result = self
+            .processes
+            .get_mut(id)
+            .ok_or_else(|| PluginError::InvalidState {
+                extension_id: id.clone(),
+                state: ExtensionState::Failed,
+            })?
+            .invoke(&invocation);
+
+        match result {
+            Ok(result) => {
+                if let Some(error) = &result.error {
+                    return Err(PluginError::RuntimeInvocation {
+                        extension_id: id.clone(),
+                        message: error.clone(),
+                    });
+                }
+                Ok(result)
+            }
+            Err(RuntimeError::InvocationRejected(message)) => Err(PluginError::RuntimeInvocation {
+                extension_id: id.clone(),
+                message,
+            }),
+            Err(error) => {
+                let message = runtime_error_message(error);
+                if let Some(mut process) = self.processes.remove(id) {
+                    let _ = process.shutdown();
+                }
+                self.active.remove(id);
+                self.states.insert(id.clone(), ExtensionState::Failed);
+                Err(PluginError::RuntimeInvocation {
+                    extension_id: id.clone(),
+                    message,
+                })
+            }
         }
     }
 }
@@ -1252,73 +1390,64 @@ impl PluginHost for InMemoryPluginHost {
         args: Value,
         context: Value,
     ) -> Result<PluginInvocationResult, PluginError> {
-        let state = self
-            .states
-            .get(id)
-            .cloned()
-            .ok_or_else(|| PluginError::NotFound(id.clone()))?;
-        if !self.active.contains(id) {
-            return Err(PluginError::InvalidState {
-                extension_id: id.clone(),
-                state,
-            });
-        }
+        self.invoke_declared(
+            id,
+            command_id,
+            ContributionKind::Command,
+            "command.execute",
+            args,
+            context,
+        )
+    }
 
+    fn invoke_preview(
+        &mut self,
+        id: &ExtensionId,
+        contribution_id: String,
+        context: Value,
+    ) -> Result<PluginInvocationResult, PluginError> {
         let manifest = self
             .manifests
             .get(id)
             .ok_or_else(|| PluginError::NotFound(id.clone()))?;
-        if !manifest.contributions.iter().any(|contribution| {
-            contribution.id == command_id && contribution.kind == ContributionKind::Command
-        }) {
+        let contribution = manifest
+            .contributions
+            .iter()
+            .find(|contribution| contribution.id == contribution_id)
+            .ok_or_else(|| {
+                PluginError::InvalidContribution(format!(
+                    "preview provider {} is not declared by extension {}",
+                    contribution_id, id.0
+                ))
+            })?;
+        if contribution.kind != ContributionKind::PreviewProvider || contribution.preview.is_none()
+        {
             return Err(PluginError::InvalidContribution(format!(
-                "command {} is not declared by extension {}",
-                command_id, id.0
+                "{} is not a preview provider contribution",
+                contribution_id
             )));
         }
-
-        let invocation = PluginInvocation {
-            extension_id: id.clone(),
-            command_id,
-            args,
-            context,
-        };
-        let result = self
-            .processes
-            .get_mut(id)
-            .ok_or_else(|| PluginError::InvalidState {
+        if !manifest
+            .permission_sets
+            .iter()
+            .flat_map(|set| set.permissions.iter())
+            .any(|permission| permission == &Permission::PreviewRender)
+        {
+            return Err(PluginError::PermissionDenied {
                 extension_id: id.clone(),
-                state: ExtensionState::Failed,
-            })?
-            .invoke(&invocation);
-
-        match result {
-            Ok(result) => {
-                if let Some(error) = &result.error {
-                    return Err(PluginError::RuntimeInvocation {
-                        extension_id: id.clone(),
-                        message: error.clone(),
-                    });
-                }
-                Ok(result)
-            }
-            Err(RuntimeError::InvocationRejected(message)) => Err(PluginError::RuntimeInvocation {
-                extension_id: id.clone(),
-                message,
-            }),
-            Err(error) => {
-                let message = runtime_error_message(error);
-                if let Some(mut process) = self.processes.remove(id) {
-                    let _ = process.shutdown();
-                }
-                self.active.remove(id);
-                self.states.insert(id.clone(), ExtensionState::Failed);
-                Err(PluginError::RuntimeInvocation {
-                    extension_id: id.clone(),
-                    message,
-                })
-            }
+                zone: WorkbenchZone::Contextual,
+                permission: Permission::PreviewRender,
+            });
         }
+
+        self.invoke_declared(
+            id,
+            contribution_id,
+            ContributionKind::PreviewProvider,
+            "preview.open",
+            Value::Null,
+            context,
+        )
     }
 
     fn inspect_from_directory(
@@ -2109,8 +2238,9 @@ mod tests {
     use super::*;
     use velvet_layout_model::WorkbenchZone;
     use velvet_plugin_api::{
-        ContextAnchor, ContributionDescriptor, Permission, RuntimeKind, RuntimeLaunchSpec,
-        UiSurfaceDescriptor, UiSurfaceKind, ZonePermissionSet,
+        ContextAnchor, ContributionDescriptor, Permission, PreviewContributionDescriptor,
+        PreviewIntent, PreviewSurface, RuntimeKind, RuntimeLaunchSpec, UiSurfaceDescriptor,
+        UiSurfaceKind, ZonePermissionSet,
     };
 
     static TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -2240,10 +2370,100 @@ mod tests {
                 when: None,
                 anchor: None,
                 ui: None,
+                preview: None,
             }],
             permission_sets: vec![],
             ..ExtensionManifest::default()
         }
+    }
+
+    fn preview_manifest(with_permission: bool) -> ExtensionManifest {
+        ExtensionManifest {
+            id: ExtensionId("preview.example".into()),
+            version: "0.1.0".into(),
+            host_api: VersionRange("^1".into()),
+            runtime: RuntimeKind::BuiltIn,
+            launch: None,
+            target_app: None,
+            contributions: vec![ContributionDescriptor {
+                id: "preview.image".into(),
+                kind: ContributionKind::PreviewProvider,
+                scope: ContributionScope::Capability,
+                namespace: Some("capability.preview.example".into()),
+                container: None,
+                zone: None,
+                title: None,
+                title_key: None,
+                icon: None,
+                order: None,
+                default_visible: None,
+                view_container_id: None,
+                activity_bar: None,
+                label: None,
+                label_key: None,
+                command_id: None,
+                group: None,
+                when: None,
+                anchor: None,
+                ui: None,
+                preview: Some(PreviewContributionDescriptor {
+                    content_kinds: vec!["image".into()],
+                    intents: vec![PreviewIntent::Quick],
+                    surfaces: vec![PreviewSurface::Workspace],
+                    priority: 20,
+                    slot: None,
+                }),
+            }],
+            permission_sets: if with_permission {
+                vec![ZonePermissionSet {
+                    zone: WorkbenchZone::Contextual,
+                    permissions: vec![Permission::PreviewRender],
+                }]
+            } else {
+                vec![]
+            },
+            ..ExtensionManifest::default()
+        }
+    }
+
+    #[test]
+    fn preview_provider_requires_render_permission_and_uses_the_runtime_boundary() {
+        let mut denied_host = InMemoryPluginHost::default();
+        let denied_id = preview_manifest(false).id.clone();
+        denied_host
+            .register(preview_manifest(false))
+            .expect("preview manifest should validate before permission check");
+        denied_host
+            .activate(&denied_id)
+            .expect("built-in preview provider should activate");
+        assert!(matches!(
+            denied_host.invoke_preview(
+                &denied_id,
+                "preview.image".into(),
+                serde_json::json!({"assetId":"asset-1"}),
+            ),
+            Err(PluginError::PermissionDenied {
+                permission: Permission::PreviewRender,
+                ..
+            })
+        ));
+
+        let mut host = InMemoryPluginHost::default();
+        let manifest = preview_manifest(true);
+        let id = manifest.id.clone();
+        host.register(manifest)
+            .expect("preview manifest with permission should register");
+        host.activate(&id)
+            .expect("preview provider should activate");
+        let result = host
+            .invoke_preview(
+                &id,
+                "preview.image".into(),
+                serde_json::json!({"assetId":"asset-1"}),
+            )
+            .expect("preview invocation should reach the runtime process");
+        assert_eq!(result.error, None);
+        assert_eq!(result.result, Some(serde_json::json!({"accepted": true})));
     }
 
     #[test]
@@ -2459,6 +2679,7 @@ mod tests {
                 when: None,
                 anchor: Some(ContextAnchor::Asset),
                 ui: None,
+                preview: None,
             }],
             permission_sets: vec![],
             ..ExtensionManifest::default()
@@ -2675,6 +2896,7 @@ mod tests {
         let result = process
             .invoke(&PluginInvocation {
                 extension_id: manifest.id.clone(),
+                method: "command.execute".into(),
                 command_id: "process.invocation.open".into(),
                 args: serde_json::json!({ "source": "test" }),
                 context: serde_json::json!({ "activeAppId": null }),

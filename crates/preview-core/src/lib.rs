@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use serde::{Deserialize, Serialize};
 use velvet_asset_core::{AssetId, ContentKindId};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -22,6 +23,25 @@ pub struct PreviewContext {
     pub content_kind: ContentKindId,
     pub intent: PreviewIntent,
     pub surface: PreviewSurface,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum PreviewRenderer {
+    Generic,
+    UiBridge {
+        entrypoint: String,
+        bridge_version: String,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewSessionDescriptor {
+    pub session_id: String,
+    pub renderer: PreviewRenderer,
+    pub commands: Vec<String>,
+    pub slots: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -61,12 +81,15 @@ impl PreviewCandidate {
 pub struct PreviewSession {
     pub provider_id: String,
     pub context: PreviewContext,
+    pub descriptor: PreviewSessionDescriptor,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResolvedPreview {
     pub candidate: PreviewCandidate,
     pub session: PreviewSession,
+    /// Non-fatal provider diagnostics preserved when the host falls back.
+    pub diagnostic: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -103,6 +126,12 @@ impl PreviewProvider for GenericFallbackProvider {
         Ok(PreviewSession {
             provider_id: "builtin.generic-fallback".into(),
             context,
+            descriptor: PreviewSessionDescriptor {
+                session_id: "builtin.generic-fallback".into(),
+                renderer: PreviewRenderer::Generic,
+                commands: Vec::new(),
+                slots: Vec::new(),
+            },
         })
     }
 }
@@ -145,7 +174,13 @@ impl PreviewResolver {
         let mut first_error = None;
         for (candidate, provider) in candidates {
             match provider.open(request.context.clone()) {
-                Ok(session) => return Ok(ResolvedPreview { candidate, session }),
+                Ok(session) => {
+                    return Ok(ResolvedPreview {
+                        candidate,
+                        session,
+                        diagnostic: None,
+                    })
+                }
                 Err(error) => {
                     if first_error.is_none() {
                         first_error = Some(error);
@@ -181,6 +216,12 @@ mod tests {
             Ok(PreviewSession {
                 provider_id: "image.provider".into(),
                 context,
+                descriptor: PreviewSessionDescriptor {
+                    session_id: "image.provider:asset-1".into(),
+                    renderer: PreviewRenderer::Generic,
+                    commands: Vec::new(),
+                    slots: Vec::new(),
+                },
             })
         }
     }

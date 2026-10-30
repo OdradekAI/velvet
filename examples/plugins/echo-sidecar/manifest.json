@@ -85,7 +85,24 @@
       "commandId": "echo.open",
       "group": "example",
       "anchor": "asset"
+    },
+    {
+      "id": "echo.preview",
+      "kind": "preview-provider",
+      "scope": { "kind": "capability" },
+      "namespace": "capability.velvet.example.echo",
+      "preview": {
+        "contentKinds": ["text/plain"],
+        "intents": ["quick"],
+        "surfaces": ["workspace"],
+        "priority": 5
+      }
     }
   ],
-  "permissionSets": []
+  "permissionSets": [
+    {
+      "zone": "contextual",
+      "permissions": ["preview-render"]
+    }
+  ]
 }

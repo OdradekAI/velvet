@@ -261,11 +261,18 @@ export interface CorePreviewContext {
 export interface CorePreviewSession {
   readonly providerId: string;
   readonly context: CorePreviewContext;
+  readonly sessionId: string;
+  readonly renderer:
+    | { readonly kind: 'generic' }
+    | { readonly kind: 'ui-bridge'; readonly entrypoint: string; readonly bridgeVersion: string };
+  readonly commands: readonly string[];
+  readonly slots: readonly string[];
 }
 
 export interface CoreResolvedPreview {
   readonly candidate: CorePreviewCandidate;
   readonly session: CorePreviewSession;
+  readonly diagnostic: string | null;
 }
 
 export type CoreJobStatus =
@@ -423,6 +430,26 @@ export interface CorePluginContribution {
     readonly entrypoint: string;
     readonly bridgeVersion: string;
   } | null;
+  readonly preview: CorePreviewContribution | null;
+}
+
+export type CorePreviewContributionIntent = 'quick' | 'inspect' | 'analyze';
+export type CorePreviewContributionSurface = 'workspace' | 'thumbnail' | 'inspector';
+export type CorePreviewContributionSlot =
+  | 'preview-overlay'
+  | 'inspector'
+  | 'metadata'
+  | 'histogram'
+  | 'toolbar-action'
+  | 'context-menu'
+  | 'analysis-action';
+
+export interface CorePreviewContribution {
+  readonly contentKinds: readonly string[];
+  readonly intents: readonly CorePreviewContributionIntent[];
+  readonly surfaces: readonly CorePreviewContributionSurface[];
+  readonly priority: number;
+  readonly slot: CorePreviewContributionSlot | null;
 }
 
 export type CorePluginManifestContribution = Omit<

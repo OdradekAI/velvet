@@ -17,7 +17,7 @@ use velvet_plugin_api::{
     validate_reserved_metadata,
 };
 use velvet_persistence::{JsonFileJobStateStore, JsonFileLayoutStateStore};
-use velvet_preview_core::{PreviewIntent, PreviewSurface, ResolvedPreview};
+use velvet_preview_core::{PreviewIntent, PreviewRenderer, PreviewSurface, ResolvedPreview};
 use velvet_tauri_adapter::{CoreEventSink, TauriTransport};
 use velvet_workbench_protocol::{
     Command, CoreError, CoreTransport, Event, PluginDisableReason, Request, RequestEnvelope,
@@ -919,6 +919,7 @@ impl From<velvet_plugin_api::ExtensionSummary> for WireExtensionSummary {
 struct WireResolvedPreview {
     candidate: WirePreviewCandidate,
     session: WirePreviewSession,
+    diagnostic: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -936,6 +937,20 @@ struct WirePreviewCandidate {
 struct WirePreviewSession {
     provider_id: String,
     context: WirePreviewContext,
+    session_id: String,
+    renderer: WirePreviewRenderer,
+    commands: Vec<String>,
+    slots: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+enum WirePreviewRenderer {
+    Generic,
+    UiBridge {
+        entrypoint: String,
+        bridge_version: String,
+    },
 }
 
 #[derive(Debug, Serialize)]
@@ -980,7 +995,21 @@ impl From<ResolvedPreview> for WireResolvedPreview {
                     intent: format!("{:?}", value.session.context.intent).to_lowercase(),
                     surface: format!("{:?}", value.session.context.surface).to_lowercase(),
                 },
+                session_id: value.session.descriptor.session_id,
+                renderer: match value.session.descriptor.renderer {
+                    PreviewRenderer::Generic => WirePreviewRenderer::Generic,
+                    PreviewRenderer::UiBridge {
+                        entrypoint,
+                        bridge_version,
+                    } => WirePreviewRenderer::UiBridge {
+                        entrypoint,
+                        bridge_version,
+                    },
+                },
+                commands: value.session.descriptor.commands,
+                slots: value.session.descriptor.slots,
             },
+            diagnostic: value.diagnostic,
         }
     }
 }
@@ -1791,6 +1820,7 @@ mod tests {
                                     entrypoint: "wasm://sample/reader".into(),
                                     bridge_version: "1".into(),
                                 }),
+                                preview: None,
                             }],
                             ..velvet_plugin_api::ExtensionManifest::default()
                         },

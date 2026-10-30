@@ -248,6 +248,7 @@ mod tests {
                 when: None,
                 anchor: None,
                 ui: None,
+                preview: None,
             }],
             permission_sets: vec![],
             ..ExtensionManifest::default()

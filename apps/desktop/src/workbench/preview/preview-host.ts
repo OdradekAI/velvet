@@ -146,6 +146,11 @@ function fallbackPreview(context: PreviewContext): ResolvedPreview {
     session: {
       providerId: 'builtin.generic-fallback',
       context,
+      sessionId: 'builtin.generic-fallback',
+      renderer: { kind: 'generic' },
+      commands: [],
+      slots: [],
     },
+    diagnostic: null,
   };
 }

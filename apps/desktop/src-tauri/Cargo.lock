@@ -3777,6 +3777,7 @@ dependencies = [
 name = "velvet-application-core"
 version = "0.0.3"
 dependencies = [
+ "serde_json",
  "velvet-asset-core",
  "velvet-job-system",
  "velvet-layout-model",
@@ -3859,6 +3860,7 @@ dependencies = [
 name = "velvet-preview-core"
 version = "0.0.3"
 dependencies = [
+ "serde",
  "velvet-asset-core",
 ]
 

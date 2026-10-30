@@ -63,6 +63,17 @@ Providers never return React/Vue components, inject arbitrary DOM or replace
 the frame. Late events are ignored after session disposal or a session-id
 change.
 
+The v1 runtime seam carries `method: "preview.open"` over the existing
+isolated JSONL invocation channel. Rust validates the capability-scoped
+`PreviewProvider`, requires `preview-render`, sorts matching candidates and
+parses the provider result into the session descriptor. Invocation timeout,
+runtime failure or malformed descriptors skip that provider and leave the
+built-in generic fallback available. The desktop `PreviewRegistry` mirrors
+provider and augmentation declarations and removes them with the extension
+lifecycle; it does not execute provider code or mount arbitrary DOM. A
+fallback response carries the first non-fatal provider diagnostic so the host
+can show a usable preview and a supportable explanation at the same time.
+
 `PreviewResolver` selects one Primary provider from Asset, ContentKind, intent,
 surface and Workspace/Profile context. The deterministic order is explicit
 user choice, Profile/Workspace default, selector match, provider priority,

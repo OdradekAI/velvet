@@ -113,6 +113,26 @@ export interface ContributionDescriptor {
   readonly when?: string;
   /** Optional isolated UI surface bound to this contribution. */
   readonly ui?: PluginUiContribution;
+  readonly preview?: PreviewContributionDescriptor;
+}
+
+export type PreviewContributionIntent = 'quick' | 'inspect' | 'analyze';
+export type PreviewContributionSurface = 'workspace' | 'thumbnail' | 'inspector';
+export type PreviewContributionSlot =
+  | 'preview-overlay'
+  | 'inspector'
+  | 'metadata'
+  | 'histogram'
+  | 'toolbar-action'
+  | 'context-menu'
+  | 'analysis-action';
+
+export interface PreviewContributionDescriptor {
+  readonly contentKinds: readonly string[];
+  readonly intents: readonly PreviewContributionIntent[];
+  readonly surfaces: readonly PreviewContributionSurface[];
+  readonly priority: number;
+  readonly slot?: PreviewContributionSlot;
 }
 
 export interface ContributionQuery {

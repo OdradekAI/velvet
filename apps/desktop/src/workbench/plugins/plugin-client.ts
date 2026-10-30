@@ -60,6 +60,10 @@ import {
   type LocalizationBundleInput,
   type LocalizationBundleLoader,
 } from '../localization/localization-service.js';
+import {
+  PreviewRegistry,
+  type PreviewAugmentationSlot,
+} from '../preview/preview-registry.js';
 
 export type PluginRuntime = 'builtin' | 'wasm' | 'sidecar';
 
@@ -121,6 +125,8 @@ interface PluginRecord {
   registeredMenus: MenuContribution[];
   registeredOverlays: OverlayDescriptor[];
   overlaySurfaceBindings: PluginOverlaySurfaceBinding[];
+  registeredPreviewProviderIds: string[];
+  registeredPreviewAugmentationIds: string[];
   registeredAppId?: WorkbenchAppId;
   appSurfaceBinding?: PluginAppSurfaceBinding;
   error?: string;
@@ -183,6 +189,7 @@ export class PluginClient {
     private readonly menuRegistry?: MenuRegistry,
     private readonly overlayRegistry?: OverlayRegistry,
     private readonly localization: LocalizationService = new LocalizationService(),
+    private readonly previewRegistry?: PreviewRegistry,
   ) {
     this.ui = ui;
     this.core.subscribe((event) => {
@@ -217,6 +224,8 @@ export class PluginClient {
       registeredMenus: [],
       registeredOverlays: [],
       overlaySurfaceBindings: [],
+      registeredPreviewProviderIds: [],
+      registeredPreviewAugmentationIds: [],
       registeredAppId: undefined,
       appSurfaceBinding: undefined,
     });
@@ -238,6 +247,8 @@ export class PluginClient {
     const registeredMenus: MenuContribution[] = [];
     const registeredOverlays: OverlayDescriptor[] = [];
     const overlaySurfaceBindings: PluginOverlaySurfaceBinding[] = [];
+    const registeredPreviewProviderIds: string[] = [];
+    const registeredPreviewAugmentationIds: string[] = [];
     let registeredAppId: WorkbenchAppId | undefined;
     let appSurfaceBinding: PluginAppSurfaceBinding | undefined;
     try {
@@ -310,6 +321,52 @@ export class PluginClient {
         registeredOverlays.push(overlay);
       }
 
+      for (const descriptor of descriptors.filter(
+        (candidate) => candidate.kind === 'preview-provider' ||
+          candidate.kind === 'preview-augmentation' ||
+          candidate.kind === 'inspector-section',
+      )) {
+        if (!descriptor.preview) {
+          throw new PluginLifecycleError(
+            `Preview metadata is unavailable for ${descriptor.id}`,
+            descriptor.extensionId,
+          );
+        }
+        // Embedders that do not mount a preview surface can still activate
+        // the extension; the host registry is an optional projection sink.
+        if (!this.previewRegistry) {
+          continue;
+        }
+        const previewId = contributedId(descriptor.extensionId, descriptor.id);
+        if (descriptor.kind === 'preview-provider') {
+          this.previewRegistry.registerProvider({
+            id: previewId,
+            extensionId: descriptor.extensionId,
+            namespace: descriptor.namespace,
+            contentKinds: descriptor.preview.contentKinds,
+            intents: descriptor.preview.intents,
+            surfaces: descriptor.preview.surfaces,
+            priority: descriptor.preview.priority,
+          });
+          registeredPreviewProviderIds.push(previewId);
+        } else {
+          if (!descriptor.preview.slot) {
+            throw new PluginLifecycleError(
+              `Preview augmentation ${descriptor.id} must declare a slot`,
+              descriptor.extensionId,
+            );
+          }
+          this.previewRegistry.registerAugmentation({
+            id: previewId,
+            extensionId: descriptor.extensionId,
+            namespace: descriptor.namespace,
+            contentKinds: descriptor.preview.contentKinds,
+            slot: descriptor.preview.slot as PreviewAugmentationSlot,
+          });
+          registeredPreviewAugmentationIds.push(previewId);
+        }
+      }
+
       for (const descriptor of descriptors) {
         if (!descriptor.ui || descriptor.kind === 'app-surface') {
           continue;
@@ -362,6 +419,8 @@ export class PluginClient {
       record.registeredMenus = registeredMenus;
       record.registeredOverlays = registeredOverlays;
       record.overlaySurfaceBindings = overlaySurfaceBindings;
+      record.registeredPreviewProviderIds = registeredPreviewProviderIds;
+      record.registeredPreviewAugmentationIds = registeredPreviewAugmentationIds;
       record.registeredAppId = registeredAppId;
       record.appSurfaceBinding = appSurfaceBinding;
       record.status = 'active';
@@ -390,6 +449,14 @@ export class PluginClient {
       record.registeredMenus = [];
       record.registeredOverlays = [];
       record.overlaySurfaceBindings = [];
+      for (const previewId of [...registeredPreviewProviderIds].reverse()) {
+        this.previewRegistry?.unregisterProvider(previewId);
+      }
+      for (const previewId of [...registeredPreviewAugmentationIds].reverse()) {
+        this.previewRegistry?.unregisterAugmentation(previewId);
+      }
+      record.registeredPreviewProviderIds = [];
+      record.registeredPreviewAugmentationIds = [];
       record.registeredAppId = undefined;
       record.appSurfaceBinding = undefined;
       record.status = 'failed';
@@ -413,6 +480,12 @@ export class PluginClient {
     }
     for (const overlay of [...record.registeredOverlays].reverse()) {
       this.overlayRegistry?.unregister(overlay);
+    }
+    for (const previewId of [...record.registeredPreviewProviderIds].reverse()) {
+      this.previewRegistry?.unregisterProvider(previewId);
+    }
+    for (const previewId of [...record.registeredPreviewAugmentationIds].reverse()) {
+      this.previewRegistry?.unregisterAugmentation(previewId);
     }
     await this.ui.disposeExtension(extensionId, _reason === 'user' ? 'unmount' : _reason);
     for (const viewId of [...record.registeredViews].reverse()) {
@@ -439,6 +512,8 @@ export class PluginClient {
     record.registeredMenus = [];
     record.registeredOverlays = [];
     record.overlaySurfaceBindings = [];
+    record.registeredPreviewProviderIds = [];
+    record.registeredPreviewAugmentationIds = [];
     record.registeredAppId = undefined;
     record.appSurfaceBinding = undefined;
     this.commandHandlers.delete(extensionId);
@@ -1108,6 +1183,50 @@ export class PluginClient {
 
       if (contribution.ui) {
         this.validateUiContribution(manifest.id, contribution, contribution.ui);
+      }
+
+      if (
+        contribution.kind === 'preview-provider' ||
+        contribution.kind === 'preview-augmentation' ||
+        contribution.kind === 'inspector-section'
+      ) {
+        const preview = contribution.preview;
+        if (!preview || contribution.scope !== 'capability') {
+          throw new PluginLifecycleError(
+            `Preview contribution ${contribution.id} must be a capability with preview metadata`,
+            manifest.id,
+          );
+        }
+        if (
+          preview.contentKinds.length === 0 ||
+          preview.intents.length === 0 ||
+          preview.surfaces.length === 0
+        ) {
+          throw new PluginLifecycleError(
+            `Preview contribution ${contribution.id} must declare selectors`,
+            manifest.id,
+          );
+        }
+        if (contribution.kind === 'preview-provider' && preview.slot) {
+          throw new PluginLifecycleError(
+            `Preview provider ${contribution.id} cannot declare an augmentation slot`,
+            manifest.id,
+          );
+        }
+        if (
+          (contribution.kind === 'preview-augmentation' || contribution.kind === 'inspector-section') &&
+          !preview.slot
+        ) {
+          throw new PluginLifecycleError(
+            `Preview augmentation ${contribution.id} must declare a slot`,
+            manifest.id,
+          );
+        }
+      } else if (contribution.preview) {
+        throw new PluginLifecycleError(
+          `Contribution ${contribution.id} cannot declare preview metadata`,
+          manifest.id,
+        );
       }
     }
 
@@ -1819,6 +1938,15 @@ function coreContributionToManifest(
     when: contribution.when ?? undefined,
     anchor: contribution.anchor ?? undefined,
     ui,
+    preview: contribution.preview
+      ? {
+          contentKinds: contribution.preview.contentKinds,
+          intents: contribution.preview.intents,
+          surfaces: contribution.preview.surfaces,
+          priority: contribution.preview.priority,
+          slot: contribution.preview.slot ?? undefined,
+        }
+      : undefined,
   };
 }
 

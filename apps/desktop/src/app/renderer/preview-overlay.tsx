@@ -66,6 +66,11 @@ export function PreviewOverlay({
         ) : null}
         {snapshot.preview ? (
           <div data-preview-primary>
+            {snapshot.preview.diagnostic ? (
+              <p aria-label="Preview diagnostic" data-preview-diagnostic role="status">
+                {snapshot.preview.diagnostic}
+              </p>
+            ) : null}
             {primaryRenderer?.(snapshot.preview) ?? (
               <>
                 <strong>{snapshot.preview.session.providerId}</strong>

@@ -26,7 +26,16 @@ const core = {
             intent: 'quick',
             surface: 'workspace',
           },
+          sessionId: 'image.provider:asset-1',
+          renderer: {
+            kind: 'ui-bridge',
+            entrypoint: 'wasm://preview/image',
+            bridgeVersion: '1',
+          },
+          commands: [],
+          slots: ['metadata'],
         },
+        diagnostic: null,
       },
     };
   },
