@@ -1,10 +1,20 @@
 use std::collections::BTreeMap;
-use std::sync::RwLock;
+use std::fs::File;
+use std::io::{self, Read};
+use std::path::PathBuf;
+use std::sync::{Arc, RwLock};
 
 use velvet_asset_core::AssetId;
 use velvet_preview_core::{
     PreviewAssetContent, PreviewAssetSource, PreviewContext, PreviewReadRequest, PreviewSourceError,
 };
+
+/// Resolves an opaque Asset identity to an application-owned source location.
+/// The returned path is consumed only by the application source adapter and
+/// never crosses the preview provider seam.
+pub trait AssetSourceLocationResolver: Send + Sync {
+    fn resolve(&self, asset_id: &AssetId) -> Result<PathBuf, PreviewSourceError>;
+}
 
 /// Read-only source adapter used by the current skeleton and contract tests.
 ///
@@ -69,6 +79,85 @@ impl PreviewAssetSource for InMemoryPreviewAssetSource {
     }
 }
 
+/// Bounded filesystem adapter for trusted application composition.
+///
+/// The resolver owns source-location policy (roots, permissions and identity
+/// mapping); this adapter owns bounded reads and typed content conversion.
+/// Providers still receive only `PreviewAssetContent`.
+pub struct FilePreviewAssetSource {
+    locations: Arc<dyn AssetSourceLocationResolver>,
+}
+
+impl FilePreviewAssetSource {
+    pub fn new(locations: Arc<dyn AssetSourceLocationResolver>) -> Self {
+        Self { locations }
+    }
+}
+
+impl PreviewAssetSource for FilePreviewAssetSource {
+    fn read(
+        &self,
+        context: &PreviewContext,
+        request: PreviewReadRequest,
+    ) -> Result<PreviewAssetContent, PreviewSourceError> {
+        let path = self.locations.resolve(&context.asset_id)?;
+        let file = File::open(path).map_err(map_io_error)?;
+        let max_bytes = request.max_bytes();
+        let mut bytes = Vec::with_capacity(max_bytes.saturating_add(1));
+        file.take(max_bytes as u64 + 1)
+            .read_to_end(&mut bytes)
+            .map_err(map_io_error)?;
+        let truncated = bytes.len() > max_bytes;
+        if truncated {
+            bytes.truncate(max_bytes);
+        }
+
+        if is_text_content_kind(&context.content_kind.0) {
+            if let Some(text) = decode_bounded_utf8(&bytes) {
+                return Ok(PreviewAssetContent::Text { text, truncated });
+            }
+        }
+
+        Ok(PreviewAssetContent::Bytes { bytes, truncated })
+    }
+}
+
+fn map_io_error(error: io::Error) -> PreviewSourceError {
+    match error.kind() {
+        io::ErrorKind::NotFound => PreviewSourceError::NotFound,
+        io::ErrorKind::PermissionDenied => PreviewSourceError::PermissionDenied,
+        _ => PreviewSourceError::Failed(error.to_string()),
+    }
+}
+
+fn is_text_content_kind(content_kind: &str) -> bool {
+    content_kind.starts_with("text/")
+        || matches!(
+            content_kind,
+            "application/json"
+                | "application/javascript"
+                | "application/xml"
+                | "application/yaml"
+                | "application/x-yaml"
+                | "application/toml"
+        )
+}
+
+fn decode_bounded_utf8(bytes: &[u8]) -> Option<String> {
+    let mut end = bytes.len();
+    while end > 0 {
+        if let Ok(text) = std::str::from_utf8(&bytes[..end]) {
+            return Some(text.to_owned());
+        }
+        end -= 1;
+    }
+    if bytes.is_empty() {
+        Some(String::new())
+    } else {
+        None
+    }
+}
+
 fn bound_content(content: &PreviewAssetContent, max_bytes: usize) -> PreviewAssetContent {
     match content {
         PreviewAssetContent::Text { text, truncated } => {
@@ -98,6 +187,8 @@ fn bound_content(content: &PreviewAssetContent, max_bytes: usize) -> PreviewAsse
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn context(asset_id: &str) -> PreviewContext {
         PreviewContext {
@@ -132,5 +223,45 @@ mod tests {
             source.read(&context("missing"), PreviewReadRequest::default()),
             Err(PreviewSourceError::NotFound)
         );
+    }
+
+    struct MapAssetLocations(BTreeMap<AssetId, PathBuf>);
+
+    impl AssetSourceLocationResolver for MapAssetLocations {
+        fn resolve(&self, asset_id: &AssetId) -> Result<PathBuf, PreviewSourceError> {
+            self.0
+                .get(asset_id)
+                .cloned()
+                .ok_or(PreviewSourceError::NotFound)
+        }
+    }
+
+    #[test]
+    fn file_source_reads_bounded_text_without_exposing_the_path() {
+        let path = std::env::temp_dir().join(format!(
+            "velvet-preview-source-{}-{}.txt",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time should be valid")
+                .as_nanos()
+        ));
+        fs::write(&path, "你好 preview").expect("test source should be writable");
+
+        let mut locations = BTreeMap::new();
+        locations.insert(AssetId("asset-1".into()), path.clone());
+        let source = FilePreviewAssetSource::new(Arc::new(MapAssetLocations(locations)));
+        let content = source
+            .read(&context("asset-1"), PreviewReadRequest::new(6))
+            .expect("the file source should read the mapped asset");
+        assert_eq!(
+            content,
+            PreviewAssetContent::Text {
+                text: "你好".into(),
+                truncated: true,
+            }
+        );
+
+        fs::remove_file(path).expect("test source should be cleaned up");
     }
 }

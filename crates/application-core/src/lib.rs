@@ -2,7 +2,9 @@ use std::sync::{Arc, Mutex};
 
 mod preview_source;
 
-pub use preview_source::InMemoryPreviewAssetSource;
+pub use preview_source::{
+    AssetSourceLocationResolver, FilePreviewAssetSource, InMemoryPreviewAssetSource,
+};
 
 use velvet_asset_core::ContentKindId;
 use velvet_job_system::{JobError, JobId, JobSpec, JobStateStore, JobSystem};

@@ -552,9 +552,10 @@ projections are explicit Rust → Tauri → TypeScript DTOs: text is rendered by
 the host as bounded text, image bytes are rendered through a host-owned Blob
 URL, and a truncation flag remains visible. A missing source or provider error
 falls back to the generic preview with a diagnostic. A persistent
-source-location adapter remains a follow-up to the Asset model decision and
-must implement the same source seam rather than adding filesystem access to
-the frontend or plugin runtime.
+source-location resolver remains a follow-up to the Asset model decision;
+`FilePreviewAssetSource` already proves the bounded file-read adapter against
+that resolver seam without adding filesystem access to the frontend or plugin
+runtime.
 
 ### Optional text-language capability
 

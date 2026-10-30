@@ -91,8 +91,12 @@ The current skeleton ships a concrete `InMemoryPreviewAssetSource` adapter in
 the Asset source location/store decision is accepted. It is read-only at the
 provider seam, clamps both text and bytes to the requested limit, preserves
 UTF-8 boundaries, and returns `NotFound` or a typed failure without leaking
-storage details. A future persistence/source-location adapter will satisfy the
-same interface; `preview-core` keeps only the source seam and preview logic.
+storage details. `application-core` also exposes a bounded
+`FilePreviewAssetSource` behind an `AssetSourceLocationResolver`; the resolver
+owns source-location policy and the file adapter owns only typed bounded reads.
+The path never crosses the provider seam. A future persistence/source-location
+adapter can replace the resolver without changing `preview-core`, which keeps
+only the source seam and preview logic.
 
 The first trusted providers are host-owned text and image adapters. They return
 framework-neutral `Text` and `Image` renderer projections containing only the
