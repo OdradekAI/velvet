@@ -74,6 +74,12 @@ lifecycle; it does not execute provider code or mount arbitrary DOM. A
 fallback response carries the first non-fatal provider diagnostic so the host
 can show a usable preview and a supportable explanation at the same time.
 
+The desktop renderer path is split into two host modules. `PreviewHost` owns
+resolution and session state; `PreviewRendererRegistry` owns renderer-factory
+selection and creates a transient UI Bridge session; `PreviewRendererHost`
+owns the DOM container, size/context/theme projection and disposal. The
+transient session never enters the static View/Dialog/AppSurface registry.
+
 `PreviewResolver` selects one Primary provider from Asset, ContentKind, intent,
 surface and Workspace/Profile context. The deterministic order is explicit
 user choice, Profile/Workspace default, selector match, provider priority,

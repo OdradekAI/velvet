@@ -257,6 +257,8 @@ export function NativeWorkbenchApp() {
           onOpenChange={setPreviewOpen}
           open={previewOpen}
           registry={currentState.app.workbench.previewRegistry}
+          rendererRegistry={currentState.app.workbench.previewRenderers}
+          workspaceContext={currentState.app.workbench.context}
         />
         {commandError ? (
           <div aria-live="polite" className="velvet-command-error" role="alert">

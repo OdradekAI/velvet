@@ -4,6 +4,7 @@ import { PluginClient } from './plugins/plugin-client.js';
 import { JobClient } from './jobs/job-client.js';
 import { PreviewHost } from './preview/preview-host.js';
 import { PreviewRegistry } from './preview/preview-registry.js';
+import { PreviewRendererRegistry } from './preview/preview-renderer-registry.js';
 import type { CoreTransport } from './protocol.js';
 import {
   ActivityBarContributionRegistry,
@@ -26,6 +27,7 @@ export class Workbench {
   public readonly layout: LayoutService;
   public readonly preview: PreviewHost;
   public readonly previewRegistry = new PreviewRegistry();
+  public readonly previewRenderers = new PreviewRendererRegistry();
   public readonly plugins: PluginClient;
   public readonly jobs: JobClient;
   public readonly views = new ViewRegistry();

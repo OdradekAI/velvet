@@ -122,6 +122,29 @@ export interface PluginSurfaceSession {
   dispose(reason?: 'unmount' | 'crash' | 'incompatible'): Promise<void>;
 }
 
+/**
+ * Creates a short-lived UI Bridge session that is owned by another host
+ * registry, such as PreviewRendererRegistry. The regular PluginUiRegistry
+ * remains the owner for declared view/dialog/app surfaces; this factory keeps
+ * transient renderer sessions out of that durable contribution registry.
+ */
+export function createTransientPluginSurfaceSession(
+  descriptor: PluginSurfaceDescriptor,
+  adapter: PluginSurfaceAdapter,
+  handlers: PluginSurfaceHandlers = {},
+  localeProjection?: UiLocaleProjection,
+): PluginSurfaceSession {
+  validateUiBridgeDescriptor(descriptor);
+  return new PluginSurfaceSessionImpl(
+    surfaceKey(descriptor.extensionId, descriptor.id),
+    descriptor,
+    adapter,
+    handlers,
+    localeProjection,
+    () => undefined,
+  );
+}
+
 /** Adapts an isolated session to the WorkbenchApp AppSurface lifecycle seam. */
 export function asAppSurfaceLifecycle(
   session: PluginSurfaceSession,
@@ -308,27 +331,32 @@ export class PluginUiRegistry {
   }
 
   private validateDescriptor(descriptor: PluginSurfaceDescriptor): void {
-    if (descriptor.bridgeVersion !== SUPPORTED_UI_BRIDGE_VERSION) {
-      throw new PluginUiBridgeError(
-        `Unsupported UI bridge version: ${descriptor.bridgeVersion}`,
-        descriptor.id,
-      );
-    }
-    if (descriptor.namespace === 'workbench' && descriptor.appId) {
-      throw new PluginUiBridgeError(
-        `Global surface cannot declare an app id: ${descriptor.id}`,
-        descriptor.id,
-      );
-    }
-    if (
-      descriptor.namespace !== 'workbench' &&
-      (!descriptor.appId || descriptor.namespace !== `workbench.app.${descriptor.appId}`)
-    ) {
-      throw new PluginUiBridgeError(
-        `Plugin surface has an invalid namespace: ${descriptor.id}`,
-        descriptor.id,
-      );
-    }
+    validateUiBridgeDescriptor(descriptor);
+  }
+}
+
+function validateUiBridgeDescriptor(descriptor: PluginSurfaceDescriptor): void {
+  if (descriptor.bridgeVersion !== SUPPORTED_UI_BRIDGE_VERSION) {
+    throw new PluginUiBridgeError(
+      `Unsupported UI bridge version: ${descriptor.bridgeVersion}`,
+      descriptor.id,
+    );
+  }
+  if (descriptor.namespace === 'workbench' && descriptor.appId) {
+    throw new PluginUiBridgeError(
+      `Global surface cannot declare an app id: ${descriptor.id}`,
+      descriptor.id,
+    );
+  }
+  if (
+    descriptor.namespace !== 'workbench' &&
+    descriptor.namespace !== 'capability' &&
+    (!descriptor.appId || descriptor.namespace !== `workbench.app.${descriptor.appId}`)
+  ) {
+    throw new PluginUiBridgeError(
+      `Plugin surface has an invalid namespace: ${descriptor.id}`,
+      descriptor.id,
+    );
   }
 }
 

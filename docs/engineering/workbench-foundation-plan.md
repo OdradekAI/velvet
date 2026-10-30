@@ -533,6 +533,13 @@ projection, Tauri carries renderer/session metadata, and the desktop
 or crash. A provider still cannot replace the host-owned frame; actual
 format-specific decoding and long-running analysis remain JobSystem work.
 
+The renderer mount seam is also present in the desktop skeleton:
+`PreviewRendererRegistry` selects a host renderer factory and
+`PreviewRendererHost` mounts a transient UI Bridge session inside the
+host-owned overlay. Renderer factories are injectable and disposable, so a
+future built-in image/model renderer can be added without changing
+`PreviewHost`, plugin lifecycle or the static UI contribution registry.
+
 ### Optional text-language capability
 
 Language is not a P0 Workbench service. A future text-oriented application may

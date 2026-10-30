@@ -7,12 +7,17 @@ import {
   type ResolvedPreview,
 } from '../../workbench/preview/preview-host.js';
 import { PreviewRegistry } from '../../workbench/preview/preview-registry.js';
+import { PreviewRendererRegistry } from '../../workbench/preview/preview-renderer-registry.js';
+import { PreviewRendererHost } from './preview-renderer-host.js';
+import type { WorkspaceContext } from '../../workbench/services/workspace-context.js';
 
 export interface PreviewOverlayProps {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
   readonly host: PreviewHost;
   readonly registry: PreviewRegistry;
+  readonly rendererRegistry?: PreviewRendererRegistry;
+  readonly workspaceContext?: WorkspaceContext;
   readonly context: PreviewContext;
   readonly primaryRenderer?: (preview: ResolvedPreview) => ReactNode;
 }
@@ -23,6 +28,8 @@ export function PreviewOverlay({
   onOpenChange,
   host,
   registry,
+  rendererRegistry,
+  workspaceContext,
   context,
   primaryRenderer,
 }: PreviewOverlayProps) {
@@ -72,10 +79,20 @@ export function PreviewOverlay({
               </p>
             ) : null}
             {primaryRenderer?.(snapshot.preview) ?? (
-              <>
-                <strong>{snapshot.preview.session.providerId}</strong>
-                <p>Asset {snapshot.preview.session.context.assetId}</p>
-              </>
+              snapshot.preview.session.renderer.kind === 'ui-bridge' &&
+              rendererRegistry &&
+              workspaceContext ? (
+                <PreviewRendererHost
+                  context={workspaceContext}
+                  preview={snapshot.preview}
+                  registry={rendererRegistry}
+                />
+              ) : (
+                <>
+                  <strong>{snapshot.preview.session.providerId}</strong>
+                  <p>Asset {snapshot.preview.session.context.assetId}</p>
+                </>
+              )
             )}
           </div>
         ) : null}
