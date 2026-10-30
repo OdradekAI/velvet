@@ -14,8 +14,9 @@ use velvet_plugin_host::{
     ManifestLoadReport, PluginError, PluginHost, PluginRuntime,
 };
 use velvet_preview_core::{
-    GenericFallbackProvider, PreviewAssetSource, PreviewCandidate, PreviewContext, PreviewProvider,
-    PreviewRenderer, PreviewRequest, PreviewResolver, PreviewSession, PreviewSessionDescriptor,
+    BuiltinImagePreviewProvider, BuiltinTextPreviewProvider, GenericFallbackProvider,
+    PreviewAssetSource, PreviewCandidate, PreviewContext, PreviewProvider, PreviewRenderer,
+    PreviewRequest, PreviewResolver, PreviewSession, PreviewSessionDescriptor,
 };
 use velvet_workbench_protocol::{
     Command, CoreError, CoreTransport, PluginDisableReason, PluginInstallPreviewDto,
@@ -131,6 +132,9 @@ impl ApplicationCore {
             plugin_directory,
         };
 
+        core.previews.register(Arc::new(BuiltinTextPreviewProvider));
+        core.previews
+            .register(Arc::new(BuiltinImagePreviewProvider));
         core.previews.register(Arc::new(GenericFallbackProvider));
         core
     }
@@ -681,7 +685,9 @@ impl ApplicationCore {
         }
 
         let mut fallback = self.previews.resolve(request)?;
-        fallback.diagnostic = first_diagnostic;
+        if first_diagnostic.is_some() {
+            fallback.diagnostic = first_diagnostic;
+        }
         Ok(fallback)
     }
 }
@@ -787,6 +793,7 @@ mod tests {
         PluginInvocation, PluginInvocationResult, PluginRuntime, RuntimeError, RuntimeHealth,
         RuntimeProcess,
     };
+    use velvet_preview_core::InMemoryPreviewAssetSource;
 
     static NEXT_TEST_FILE: AtomicU64 = AtomicU64::new(0);
 
@@ -929,6 +936,53 @@ mod tests {
                 assert_eq!(preview.session.descriptor.slots, vec!["metadata"]);
             }
             other => panic!("expected preview response, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn built_in_preview_providers_use_the_injected_source_and_keep_fallback_available() {
+        let source = Arc::new(InMemoryPreviewAssetSource::default());
+        source.insert_text(
+            velvet_asset_core::AssetId("asset-text".into()),
+            "built-in text preview",
+        );
+        let mut core = ApplicationCore::default();
+        core.set_preview_asset_source(source);
+
+        let response = core
+            .dispatch(Request::Query(Query::ResolvePreview {
+                asset_id: velvet_asset_core::AssetId("asset-text".into()),
+                content_kind: "text/plain".into(),
+                intent: velvet_preview_core::PreviewIntent::Quick,
+                surface: velvet_preview_core::PreviewSurface::Workspace,
+            }))
+            .expect("the built-in preview should resolve");
+        match response {
+            Response::Preview(preview) => {
+                assert_eq!(preview.candidate.provider_id, "builtin.text");
+                assert!(matches!(
+                    preview.session.descriptor.renderer,
+                    velvet_preview_core::PreviewRenderer::Text { ref text, truncated: false }
+                        if text == "built-in text preview"
+                ));
+            }
+            other => panic!("expected preview response, got {other:?}"),
+        }
+
+        let fallback = core
+            .dispatch(Request::Query(Query::ResolvePreview {
+                asset_id: velvet_asset_core::AssetId("missing".into()),
+                content_kind: "text/plain".into(),
+                intent: velvet_preview_core::PreviewIntent::Quick,
+                surface: velvet_preview_core::PreviewSurface::Workspace,
+            }))
+            .expect("provider failure should preserve generic fallback");
+        match fallback {
+            Response::Preview(preview) => {
+                assert_eq!(preview.candidate.provider_id, "builtin.generic-fallback");
+                assert!(preview.diagnostic.is_some());
+            }
+            other => panic!("expected fallback preview response, got {other:?}"),
         }
     }
 

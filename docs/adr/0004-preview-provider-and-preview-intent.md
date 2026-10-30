@@ -86,6 +86,22 @@ content or a typed source error, and never expose filesystem paths, database
 handles or source credentials. External providers do not receive the source
 object; their runtime context remains capability-scoped and failure-isolated.
 
+The current skeleton ships a concrete `InMemoryPreviewAssetSource` adapter so
+the host and provider contracts can be exercised before the Asset source
+location/store decision is accepted. It is read-only at the provider seam,
+clamps both text and bytes to the requested limit, preserves UTF-8 boundaries,
+and returns `NotFound` or a typed failure without leaking storage details. A
+future persistence/source-location adapter will satisfy the same interface; it
+does not move source ownership into `preview-core`.
+
+The first trusted providers are host-owned text and image adapters. They return
+framework-neutral `Text` and `Image` renderer projections containing only the
+bounded content and truncation state. The desktop host renders these variants
+itself; isolated extensions remain limited to the `Generic` and `UiBridge`
+renderer descriptors validated by `plugin-api`. If a built-in provider fails,
+the resolver keeps the generic fallback and carries the first provider
+diagnostic for supportability.
+
 `PreviewResolver` selects one Primary provider from Asset, ContentKind, intent,
 surface and Workspace/Profile context. The deterministic order is explicit
 user choice, Profile/Workspace default, selector match, provider priority,

@@ -545,6 +545,17 @@ built-in providers. It clamps read requests to a host limit and returns typed
 text/bytes content or a typed source error. The application core installs the
 adapter, while preview providers receive no path or persistence handle.
 
+The current code includes a bounded in-memory source adapter that a composition
+or contract test can inject, and trusted text/image providers as the first
+executable consumers. Their renderer
+projections are explicit Rust → Tauri → TypeScript DTOs: text is rendered by
+the host as bounded text, image bytes are rendered through a host-owned Blob
+URL, and a truncation flag remains visible. A missing source or provider error
+falls back to the generic preview with a diagnostic. A persistent
+source-location adapter remains a follow-up to the Asset model decision and
+must implement the same source seam rather than adding filesystem access to
+the frontend or plugin runtime.
+
 ### Optional text-language capability
 
 Language is not a P0 Workbench service. A future text-oriented application may
@@ -653,7 +664,7 @@ bundle or message; caches are cleaned on disable, upgrade and uninstall.
 3. **Layout service**: implement versioned layout state, migrations, fixed zones and persistence tests. **Done for the current file-backed Tauri store and restart recovery slice.**
 4. **Workbench parts**: render ActivityBar, Resource Manager, Feed Workbench, PrimarySidebar, WorkspaceArea, AuxiliarySidebar, OperationsPanel and StatusBar with placeholder views. **Initial renderer slice done.**
 5. **View registry**: add built-in views and one example external view per zone. Verify that cross-zone registration is rejected. **Host registry and rejection tests done; the React shell mounts registered ViewContainers/Views with a renderer adapter seam, PluginClient projects extension views plus isolated UI Bridge sessions into that seam, and the Activity Bar now selects contributed navigation containers.**
-6. **Preview core**: implement generic image/file fallback, `PreviewResolver`, Quick/Inspect/Analyze intents and a fake provider used by contract tests. **Host slice done:** surface-aware deterministic resolution, provider-failure fallback, typed Tauri/TypeScript projection, `PreviewHost` state machine, Quick overlay and unregisterable provider/augmentation slots. Format-specific provider execution, augmentation renderer adapters and cache/job handoff remain follow-up consumers.
+6. **Preview core**: implement generic image/file fallback, `PreviewResolver`, Quick/Inspect/Analyze intents and a fake provider used by contract tests. **Host slice done:** surface-aware deterministic resolution, provider-failure fallback, typed Tauri/TypeScript projection, `PreviewHost` state machine, Quick overlay and unregisterable provider/augmentation slots. The first bounded source adapter and trusted text/image providers are implemented; persistent source-location adapters, format-specific plugin execution, augmentation renderer adapters and cache/job handoff remain follow-up consumers.
 7. **Plugin host**: load manifests, validate permissions and localization bundles, activate lazily, isolate failures and expose the UI SDK boundary. **Local discovery, install preflight, permission enforcement, host API compatibility checks, numeric version upgrades, transactional commit/rollback, crash-recovery scanning, deferred activation, retryable recovery, orphan cleanup and bounded recovery logs are implemented; marketplace policy and signing remain later work. The host localization service, fallback formatter, diagnostics, loader/plugin lifecycle seam and isolated UI Bridge locale projection are implemented; archive filesystem loading and durable Profile/Session locale ownership remain adapter work.**
 8. **Jobs and facets**: the shared Rust JobSystem lifecycle seam is now wired to OperationsPanel with persisted progress, cancellation, retry, failure and restart recovery; product-specific thumbnail, metadata and analysis providers remain follow-up consumers.
 9. **Tauri adapter**: connect typed commands, queries and events to the desktop client. No feature should bypass the protocol. **Done for the current layout slice, including native command/event serialization and global shortcut entry.**

@@ -264,6 +264,13 @@ export interface CorePreviewSession {
   readonly sessionId: string;
   readonly renderer:
     | { readonly kind: 'generic' }
+    | { readonly kind: 'text'; readonly text: string; readonly truncated: boolean }
+    | {
+        readonly kind: 'image';
+        readonly mimeType: string;
+        readonly bytes: readonly number[];
+        readonly truncated: boolean;
+      }
     | { readonly kind: 'ui-bridge'; readonly entrypoint: string; readonly bridgeVersion: string };
   readonly commands: readonly string[];
   readonly slots: readonly string[];

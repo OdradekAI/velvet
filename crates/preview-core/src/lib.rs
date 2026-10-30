@@ -1,4 +1,5 @@
-use std::sync::Arc;
+use std::collections::BTreeMap;
+use std::sync::{Arc, RwLock};
 
 use serde::{Deserialize, Serialize};
 use velvet_asset_core::{AssetId, ContentKindId};
@@ -78,6 +79,96 @@ pub trait PreviewAssetSource: Send + Sync {
     ) -> Result<PreviewAssetContent, PreviewSourceError>;
 }
 
+/// A small read-only content adapter for the current skeleton.
+///
+/// The application composition owns the source instance and can replace it
+/// with a persistence/source-location adapter once the asset store is wired.
+/// Keeping this adapter here gives built-in providers a real bounded-content
+/// implementation without making `preview-core` depend on filesystem paths
+/// or persistence handles.
+#[derive(Default)]
+pub struct InMemoryPreviewAssetSource {
+    assets: RwLock<BTreeMap<AssetId, PreviewAssetContent>>,
+}
+
+impl InMemoryPreviewAssetSource {
+    pub fn insert_text(&self, asset_id: AssetId, text: impl Into<String>) {
+        self.insert(
+            asset_id,
+            PreviewAssetContent::Text {
+                text: text.into(),
+                truncated: false,
+            },
+        );
+    }
+
+    pub fn insert_bytes(&self, asset_id: AssetId, bytes: impl Into<Vec<u8>>) {
+        self.insert(
+            asset_id,
+            PreviewAssetContent::Bytes {
+                bytes: bytes.into(),
+                truncated: false,
+            },
+        );
+    }
+
+    pub fn insert(&self, asset_id: AssetId, content: PreviewAssetContent) {
+        if let Ok(mut assets) = self.assets.write() {
+            assets.insert(asset_id, content);
+        }
+    }
+
+    pub fn remove(&self, asset_id: &AssetId) -> Option<PreviewAssetContent> {
+        self.assets
+            .write()
+            .ok()
+            .and_then(|mut assets| assets.remove(asset_id))
+    }
+}
+
+impl PreviewAssetSource for InMemoryPreviewAssetSource {
+    fn read(
+        &self,
+        context: &PreviewContext,
+        request: PreviewReadRequest,
+    ) -> Result<PreviewAssetContent, PreviewSourceError> {
+        let assets = self
+            .assets
+            .read()
+            .map_err(|_| PreviewSourceError::Failed("asset source lock poisoned".into()))?;
+        let Some(content) = assets.get(&context.asset_id) else {
+            return Err(PreviewSourceError::NotFound);
+        };
+        Ok(bound_content(content, request.max_bytes()))
+    }
+}
+
+fn bound_content(content: &PreviewAssetContent, max_bytes: usize) -> PreviewAssetContent {
+    match content {
+        PreviewAssetContent::Text { text, truncated } => {
+            if text.len() <= max_bytes {
+                return PreviewAssetContent::Text {
+                    text: text.clone(),
+                    truncated: *truncated,
+                };
+            }
+
+            let mut end = max_bytes;
+            while end > 0 && !text.is_char_boundary(end) {
+                end -= 1;
+            }
+            PreviewAssetContent::Text {
+                text: text[..end].to_string(),
+                truncated: true,
+            }
+        }
+        PreviewAssetContent::Bytes { bytes, truncated } => PreviewAssetContent::Bytes {
+            bytes: bytes[..bytes.len().min(max_bytes)].to_vec(),
+            truncated: *truncated || bytes.len() > max_bytes,
+        },
+    }
+}
+
 #[derive(Default)]
 struct UnavailablePreviewAssetSource;
 
@@ -95,6 +186,15 @@ impl PreviewAssetSource for UnavailablePreviewAssetSource {
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum PreviewRenderer {
     Generic,
+    Text {
+        text: String,
+        truncated: bool,
+    },
+    Image {
+        mime_type: String,
+        bytes: Vec<u8>,
+        truncated: bool,
+    },
     UiBridge {
         entrypoint: String,
         bridge_version: String,
@@ -176,6 +276,113 @@ pub trait PreviewProvider: Send + Sync {
         context: PreviewContext,
         source: &dyn PreviewAssetSource,
     ) -> Result<PreviewSession, PreviewError>;
+}
+
+#[derive(Default)]
+pub struct BuiltinTextPreviewProvider;
+
+impl PreviewProvider for BuiltinTextPreviewProvider {
+    fn candidate(&self) -> PreviewCandidate {
+        PreviewCandidate {
+            provider_id: "builtin.text".into(),
+            content_kinds: vec![
+                ContentKindId("text/plain".into()),
+                ContentKindId("text/markdown".into()),
+                ContentKindId("application/json".into()),
+            ],
+            intents: vec![PreviewIntent::Quick, PreviewIntent::Inspect],
+            surfaces: vec![PreviewSurface::Workspace, PreviewSurface::Inspector],
+            priority: 100,
+        }
+    }
+
+    fn open(
+        &self,
+        context: PreviewContext,
+        source: &dyn PreviewAssetSource,
+    ) -> Result<PreviewSession, PreviewError> {
+        let content = source
+            .read(
+                &context,
+                PreviewReadRequest::new(DEFAULT_PREVIEW_READ_LIMIT),
+            )
+            .map_err(|error| provider_source_error("builtin.text", error))?;
+        let PreviewAssetContent::Text { text, truncated } = content else {
+            return Err(PreviewError::ProviderFailed {
+                provider_id: "builtin.text".into(),
+                message: "text provider received binary content".into(),
+            });
+        };
+        Ok(PreviewSession {
+            provider_id: "builtin.text".into(),
+            context: context.clone(),
+            descriptor: PreviewSessionDescriptor {
+                session_id: format!("builtin.text:{}", context.asset_id),
+                renderer: PreviewRenderer::Text { text, truncated },
+                commands: Vec::new(),
+                slots: Vec::new(),
+            },
+        })
+    }
+}
+
+#[derive(Default)]
+pub struct BuiltinImagePreviewProvider;
+
+impl PreviewProvider for BuiltinImagePreviewProvider {
+    fn candidate(&self) -> PreviewCandidate {
+        PreviewCandidate {
+            provider_id: "builtin.image".into(),
+            content_kinds: vec![
+                ContentKindId("image/png".into()),
+                ContentKindId("image/jpeg".into()),
+                ContentKindId("image/webp".into()),
+                ContentKindId("image/gif".into()),
+                ContentKindId("image/svg+xml".into()),
+            ],
+            intents: vec![PreviewIntent::Quick, PreviewIntent::Inspect],
+            surfaces: vec![PreviewSurface::Workspace, PreviewSurface::Inspector],
+            priority: 100,
+        }
+    }
+
+    fn open(
+        &self,
+        context: PreviewContext,
+        source: &dyn PreviewAssetSource,
+    ) -> Result<PreviewSession, PreviewError> {
+        let content = source
+            .read(
+                &context,
+                PreviewReadRequest::new(DEFAULT_PREVIEW_READ_LIMIT),
+            )
+            .map_err(|error| provider_source_error("builtin.image", error))?;
+        let (bytes, truncated) = match content {
+            PreviewAssetContent::Bytes { bytes, truncated } => (bytes, truncated),
+            PreviewAssetContent::Text { text, truncated } => (text.into_bytes(), truncated),
+        };
+        Ok(PreviewSession {
+            provider_id: "builtin.image".into(),
+            context: context.clone(),
+            descriptor: PreviewSessionDescriptor {
+                session_id: format!("builtin.image:{}", context.asset_id),
+                renderer: PreviewRenderer::Image {
+                    mime_type: context.content_kind.0.clone(),
+                    bytes,
+                    truncated,
+                },
+                commands: Vec::new(),
+                slots: Vec::new(),
+            },
+        })
+    }
+}
+
+fn provider_source_error(provider_id: &str, error: PreviewSourceError) -> PreviewError {
+    PreviewError::ProviderFailed {
+        provider_id: provider_id.into(),
+        message: format!("source read failed: {error:?}"),
+    }
 }
 
 #[derive(Default)]
@@ -265,7 +472,7 @@ impl PreviewResolver {
                     return Ok(ResolvedPreview {
                         candidate,
                         session,
-                        diagnostic: None,
+                        diagnostic: first_error.as_ref().map(|error| format!("{error:?}")),
                     })
                 }
                 Err(error) => {
@@ -473,6 +680,65 @@ mod tests {
         assert!(matches!(
             resolver.resolve(request),
             Err(PreviewError::NoProvider { .. })
+        ));
+    }
+
+    #[test]
+    fn in_memory_source_returns_bounded_typed_content() {
+        let source = InMemoryPreviewAssetSource::default();
+        source.insert_text(AssetId("asset-1".into()), "你好 preview");
+        let context = PreviewContext {
+            asset_id: AssetId("asset-1".into()),
+            content_kind: ContentKindId("text/plain".into()),
+            intent: PreviewIntent::Quick,
+            surface: PreviewSurface::Workspace,
+        };
+
+        let content = source
+            .read(&context, PreviewReadRequest::new(6))
+            .expect("the in-memory source should find the asset");
+        assert_eq!(
+            content,
+            PreviewAssetContent::Text {
+                text: "你好".into(),
+                truncated: true,
+            }
+        );
+    }
+
+    #[test]
+    fn built_in_text_and_image_providers_return_host_renderers() {
+        let source = InMemoryPreviewAssetSource::default();
+        source.insert_text(AssetId("text-1".into()), "hello");
+        source.insert_bytes(AssetId("image-1".into()), vec![1, 2, 3]);
+
+        let text_context = PreviewContext {
+            asset_id: AssetId("text-1".into()),
+            content_kind: ContentKindId("text/plain".into()),
+            intent: PreviewIntent::Quick,
+            surface: PreviewSurface::Workspace,
+        };
+        let text = BuiltinTextPreviewProvider
+            .open(text_context, &source)
+            .expect("the built-in text provider should open");
+        assert!(matches!(
+            text.descriptor.renderer,
+            PreviewRenderer::Text { ref text, truncated: false } if text == "hello"
+        ));
+
+        let image_context = PreviewContext {
+            asset_id: AssetId("image-1".into()),
+            content_kind: ContentKindId("image/png".into()),
+            intent: PreviewIntent::Quick,
+            surface: PreviewSurface::Workspace,
+        };
+        let image = BuiltinImagePreviewProvider
+            .open(image_context, &source)
+            .expect("the built-in image provider should open");
+        assert!(matches!(
+            image.descriptor.renderer,
+            PreviewRenderer::Image { ref mime_type, ref bytes, truncated: false }
+                if mime_type == "image/png" && bytes == &[1, 2, 3]
         ));
     }
 }

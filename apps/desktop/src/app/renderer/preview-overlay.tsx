@@ -9,6 +9,7 @@ import {
 import { PreviewRegistry } from '../../workbench/preview/preview-registry.js';
 import { PreviewRendererRegistry } from '../../workbench/preview/preview-renderer-registry.js';
 import { PreviewRendererHost } from './preview-renderer-host.js';
+import { BuiltinPreviewRenderer } from './builtin-preview-renderer.js';
 import type { WorkspaceContext } from '../../workbench/services/workspace-context.js';
 
 export interface PreviewOverlayProps {
@@ -87,6 +88,9 @@ export function PreviewOverlay({
                   preview={snapshot.preview}
                   registry={rendererRegistry}
                 />
+              ) : snapshot.preview.session.renderer.kind === 'text' ||
+                snapshot.preview.session.renderer.kind === 'image' ? (
+                <BuiltinPreviewRenderer renderer={snapshot.preview.session.renderer} />
               ) : (
                 <>
                   <strong>{snapshot.preview.session.providerId}</strong>

@@ -947,8 +947,19 @@ struct WirePreviewSession {
 #[serde(tag = "kind", rename_all = "kebab-case")]
 enum WirePreviewRenderer {
     Generic,
+    Text {
+        text: String,
+        truncated: bool,
+    },
+    Image {
+        #[serde(rename = "mimeType")]
+        mime_type: String,
+        bytes: Vec<u8>,
+        truncated: bool,
+    },
     UiBridge {
         entrypoint: String,
+        #[serde(rename = "bridgeVersion")]
         bridge_version: String,
     },
 }
@@ -998,6 +1009,18 @@ impl From<ResolvedPreview> for WireResolvedPreview {
                 session_id: value.session.descriptor.session_id,
                 renderer: match value.session.descriptor.renderer {
                     PreviewRenderer::Generic => WirePreviewRenderer::Generic,
+                    PreviewRenderer::Text { text, truncated } => {
+                        WirePreviewRenderer::Text { text, truncated }
+                    }
+                    PreviewRenderer::Image {
+                        mime_type,
+                        bytes,
+                        truncated,
+                    } => WirePreviewRenderer::Image {
+                        mime_type,
+                        bytes,
+                        truncated,
+                    },
                     PreviewRenderer::UiBridge {
                         entrypoint,
                         bridge_version,
@@ -1752,6 +1775,73 @@ mod tests {
         assert_eq!(error.code, "plugin-runtime-failed");
         assert!(error.retryable);
         assert!(error.message.contains("velvet.example.echo"));
+    }
+
+    #[test]
+    fn wire_preview_renderer_preserves_builtin_content_projection() {
+        let response = WireResponseEnvelope::from_core(
+            velvet_workbench_protocol::ResponseEnvelope {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: RequestId(18),
+                response: Response::Preview(ResolvedPreview {
+                    candidate: velvet_preview_core::PreviewCandidate {
+                        provider_id: "builtin.text".into(),
+                        content_kinds: vec![velvet_asset_core::ContentKindId("text/plain".into())],
+                        intents: vec![PreviewIntent::Quick],
+                        surfaces: vec![PreviewSurface::Workspace],
+                        priority: 100,
+                    },
+                    session: velvet_preview_core::PreviewSession {
+                        provider_id: "builtin.text".into(),
+                        context: velvet_preview_core::PreviewContext {
+                            asset_id: velvet_asset_core::AssetId("asset-1".into()),
+                            content_kind: velvet_asset_core::ContentKindId("text/plain".into()),
+                            intent: PreviewIntent::Quick,
+                            surface: PreviewSurface::Workspace,
+                        },
+                        descriptor: velvet_preview_core::PreviewSessionDescriptor {
+                            session_id: "builtin.text:asset-1".into(),
+                            renderer: PreviewRenderer::Text {
+                                text: "hello".into(),
+                                truncated: true,
+                            },
+                            commands: Vec::new(),
+                            slots: Vec::new(),
+                        },
+                    },
+                    diagnostic: Some("source read failed".into()),
+                }),
+            },
+        );
+        let value = serde_json::to_value(response).expect("preview response should serialize");
+        assert_eq!(value["response"]["preview"]["session"]["renderer"]["kind"], "text");
+        assert_eq!(
+            value["response"]["preview"]["session"]["renderer"]["text"],
+            "hello"
+        );
+        assert_eq!(
+            value["response"]["preview"]["session"]["renderer"]["truncated"],
+            true
+        );
+        assert_eq!(
+            value["response"]["preview"]["diagnostic"],
+            "source read failed"
+        );
+
+        let image = serde_json::to_value(WirePreviewRenderer::Image {
+            mime_type: "image/png".into(),
+            bytes: vec![1, 2, 3],
+            truncated: false,
+        })
+        .expect("image renderer should serialize");
+        assert_eq!(image["mimeType"], "image/png");
+
+        let bridge = serde_json::to_value(WirePreviewRenderer::UiBridge {
+            entrypoint: "tauri-webview://preview".into(),
+            bridge_version: "1".into(),
+        })
+        .expect("UI Bridge renderer should serialize");
+        assert_eq!(bridge["bridgeVersion"], "1");
     }
 
     #[test]
