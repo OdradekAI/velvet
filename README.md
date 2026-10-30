@@ -7,7 +7,7 @@ Your assets and information should be understandable at a glance.
 ---
 
 > [!NOTE]
-> Velvet `0.0.2` is a Workbench foundation release. The React shell, revisioned layout model, native Tauri window boundary and extension seams are in place; the asset indexer and production extensions are still being built.
+> Velvet `0.0.3` is a Workbench foundation release. The React shell, revisioned layout model, native Tauri window boundary, external plugin lifecycle and persisted operations are in place; the asset indexer and production extensions are still being built.
 
 ## One workbench, two starting points
 

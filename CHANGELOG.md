@@ -4,6 +4,22 @@ All notable changes to Velvet (白翎) are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses [Semantic Versioning](https://semver.org/).
 
+## [0.0.3] - 2026-10-30
+
+### Added
+
+- Added the external plugin runtime path with manifest discovery, isolated sidecar startup, command invocation, contribution projection and crash recovery.
+- Added the native plugin manager flow for install, enable, disable, uninstall, permission preflight, host API compatibility checks, upgrades and transactional rollback.
+- Added startup recovery for interrupted plugin installs, orphan cleanup, retryable recovery actions and OperationsPanel recovery log filtering, clearing and export.
+- Added the Rust-owned JobSystem lifecycle through CoreTransport and Tauri, including task creation, progress events, cancellation, retry, failure state and restart recovery.
+- Added application-data persistence for job snapshots and recovery of queued or running jobs as retryable `Interrupted` jobs after restart.
+- Added real Tauri acceptance coverage for plugin startup, task progress, failure, retry, cancellation and crash/restart recovery.
+
+### Changed
+
+- Updated the desktop, Tauri and Rust workspace versions to `0.0.3`.
+- Updated the release documentation to describe the current native Workbench foundation and its remaining business-workspace scope.
+
 ## [0.0.2] - 2026-10-29
 
 ### Added
