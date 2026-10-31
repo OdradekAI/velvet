@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { LocalizationService } from '/tmp/velvet-plugin-tests/workbench/localization/localization-service.js';
+import { CoreLocalizationBundleLoader } from '/tmp/velvet-plugin-tests/workbench/localization/core-localization-loader.js';
 import { PluginUiRegistry } from '/tmp/velvet-plugin-tests/workbench/plugins/ui-bridge.js';
 import { PluginClient } from '/tmp/velvet-plugin-tests/workbench/plugins/plugin-client.js';
 
@@ -201,5 +202,85 @@ assert.equal(await persistedLocalization.setLocaleInCore(profileCore, 'zh-Hans')
 assert.equal(persistedLocalization.snapshot.locale, 'zh-Hans');
 assert.equal(persistedLocalization.snapshot.revision, 1);
 persistedLocalization.dispose();
+
+const resourceRequests = [];
+const resourceCore = {
+  async request(request) {
+    resourceRequests.push(request);
+    if (request.locale === 'fr') {
+      throw { details: { code: 'plugin-resource-not-found' } };
+    }
+    return {
+      kind: 'plugin-resource',
+      resource: {
+        schemaVersion: 1,
+        extensionId: request.extensionId,
+        locale: request.locale,
+        contentType: 'application/json',
+        bytes: [...new TextEncoder().encode(JSON.stringify({ ready: request.locale }))],
+      },
+    };
+  },
+  subscribe() {
+    return () => {};
+  },
+};
+const coreLoader = new CoreLocalizationBundleLoader(resourceCore);
+const loadedBundles = await coreLoader.load('sample.reader', manifest);
+assert.deepEqual(loadedBundles, [
+  { locale: 'en', messages: { ready: 'en' } },
+  { locale: 'zh-Hans', messages: { ready: 'zh-Hans' } },
+]);
+assert.deepEqual(resourceRequests.map((request) => request.kind), [
+  'read-plugin-localization',
+  'read-plugin-localization',
+  'read-plugin-localization',
+]);
+
+const coreProjectedLocalization = new LocalizationService('en');
+const coreProjectedClient = new PluginClient(
+  resourceCore,
+  undefined,
+  undefined,
+  '1',
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  coreProjectedLocalization,
+);
+await coreProjectedClient.applyCoreProjection({
+  summary: {
+    id: 'sample.localized',
+    version: '1.0.0',
+    active: true,
+    state: 'active',
+  },
+  manifest: {
+    manifestSchema: 1,
+    id: 'sample.localized',
+    version: '1.0.0',
+    hostApi: '^1',
+    bridgeApi: '^1',
+    runtimeProtocol: '^1',
+    runtime: 'built-in',
+    extensionKind: ['ui'],
+    launch: null,
+    activationEvents: [],
+    extensionDependencies: [],
+    targetApp: null,
+    support: { trustedWorkspace: true, virtualWorkspace: false, profiles: true },
+    requiredCapabilities: [],
+    optionalCapabilities: [],
+    localization: manifest,
+    workbenchApp: null,
+    contributions: [],
+    permissionSets: [],
+  },
+});
+assert.equal(coreProjectedLocalization.t('sample.localized', 'ready', 'Fallback'), 'en');
+assert.equal(resourceRequests.length, 6);
+await coreProjectedClient.unregister('sample.localized');
 
 console.log('Localization service tests passed.');

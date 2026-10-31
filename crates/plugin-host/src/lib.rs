@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -57,6 +57,19 @@ pub enum PluginError {
         requested: String,
     },
     UninstallFailed(String),
+    ResourceNotFound {
+        extension_id: ExtensionId,
+        locale: String,
+    },
+    ResourceDenied {
+        extension_id: ExtensionId,
+        message: String,
+    },
+    ResourceTooLarge {
+        extension_id: ExtensionId,
+        locale: String,
+        limit: usize,
+    },
     InvalidState {
         extension_id: ExtensionId,
         state: ExtensionState,
@@ -90,8 +103,152 @@ pub enum RuntimeHealth {
 const RUNTIME_PROTOCOL_VERSION: u16 = 1;
 const RUNTIME_INVOCATION_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_JOB_EVENTS: usize = 128;
+pub const MAX_PLUGIN_LOCALIZATION_BYTES: usize = 1024 * 1024;
 const RECOVERY_LOG_FILE: &str = ".plugin-recovery-log.json";
 const RECOVERY_LOG_LIMIT: usize = 100;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PluginLocalizationResource {
+    pub extension_id: ExtensionId,
+    pub locale: String,
+    pub content_type: String,
+    pub bytes: Vec<u8>,
+}
+
+/// Package resource adapter for host-owned, bounded reads.
+///
+/// The loader never accepts an arbitrary filesystem path. It derives the
+/// installed package from the validated extension id, checks the declared
+/// localization root and locale, rejects symlink escapes, and enforces a
+/// bounded payload before returning bytes to the protocol layer.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PluginResourceLoader {
+    install_root: PathBuf,
+}
+
+impl PluginResourceLoader {
+    pub fn new(install_root: impl Into<PathBuf>) -> Self {
+        Self {
+            install_root: install_root.into(),
+        }
+    }
+
+    pub fn read_localization_bundle(
+        &self,
+        extension_id: &ExtensionId,
+        manifest: &ExtensionManifest,
+        locale: &str,
+    ) -> Result<PluginLocalizationResource, PluginError> {
+        let localization =
+            manifest
+                .localization
+                .as_ref()
+                .ok_or_else(|| PluginError::ResourceDenied {
+                    extension_id: extension_id.clone(),
+                    message: "extension does not declare localization resources".into(),
+                })?;
+        if !localization
+            .supported_locales
+            .iter()
+            .any(|supported| supported == locale)
+        {
+            return Err(PluginError::ResourceNotFound {
+                extension_id: extension_id.clone(),
+                locale: locale.into(),
+            });
+        }
+        if !is_safe_extension_id(&extension_id.0)
+            || !is_safe_resource_root(&localization.resource_root)
+            || !is_safe_locale_segment(locale)
+        {
+            return Err(PluginError::ResourceDenied {
+                extension_id: extension_id.clone(),
+                message: "localization resource path is invalid".into(),
+            });
+        }
+
+        let install_root =
+            fs::canonicalize(&self.install_root).map_err(|error| PluginError::ResourceDenied {
+                extension_id: extension_id.clone(),
+                message: format!("plugin install root is unavailable: {error}"),
+            })?;
+        let package_path = self.install_root.join(&extension_id.0);
+        let package_root =
+            fs::canonicalize(&package_path).map_err(|_| PluginError::ResourceNotFound {
+                extension_id: extension_id.clone(),
+                locale: locale.into(),
+            })?;
+        if !package_root.starts_with(&install_root) {
+            return Err(PluginError::ResourceDenied {
+                extension_id: extension_id.clone(),
+                message: "plugin package escapes the install root".into(),
+            });
+        }
+
+        let resource_path = package_root
+            .join(&localization.resource_root)
+            .join(format!("{locale}.json"));
+        let canonical_resource =
+            fs::canonicalize(&resource_path).map_err(|_| PluginError::ResourceNotFound {
+                extension_id: extension_id.clone(),
+                locale: locale.into(),
+            })?;
+        if !canonical_resource.starts_with(&package_root) {
+            return Err(PluginError::ResourceDenied {
+                extension_id: extension_id.clone(),
+                message: "localization resource escapes the plugin package".into(),
+            });
+        }
+
+        let file =
+            fs::File::open(&canonical_resource).map_err(|_| PluginError::ResourceNotFound {
+                extension_id: extension_id.clone(),
+                locale: locale.into(),
+            })?;
+        let metadata = file
+            .metadata()
+            .map_err(|error| PluginError::ResourceDenied {
+                extension_id: extension_id.clone(),
+                message: format!("localization resource metadata is unavailable: {error}"),
+            })?;
+        if !metadata.is_file() {
+            return Err(PluginError::ResourceNotFound {
+                extension_id: extension_id.clone(),
+                locale: locale.into(),
+            });
+        }
+        if metadata.len() > MAX_PLUGIN_LOCALIZATION_BYTES as u64 {
+            return Err(PluginError::ResourceTooLarge {
+                extension_id: extension_id.clone(),
+                locale: locale.into(),
+                limit: MAX_PLUGIN_LOCALIZATION_BYTES,
+            });
+        }
+
+        let mut bytes =
+            Vec::with_capacity(metadata.len().min(MAX_PLUGIN_LOCALIZATION_BYTES as u64) as usize);
+        file.take((MAX_PLUGIN_LOCALIZATION_BYTES + 1) as u64)
+            .read_to_end(&mut bytes)
+            .map_err(|error| PluginError::ResourceDenied {
+                extension_id: extension_id.clone(),
+                message: format!("localization resource could not be read: {error}"),
+            })?;
+        if bytes.len() > MAX_PLUGIN_LOCALIZATION_BYTES {
+            return Err(PluginError::ResourceTooLarge {
+                extension_id: extension_id.clone(),
+                locale: locale.into(),
+                limit: MAX_PLUGIN_LOCALIZATION_BYTES,
+            });
+        }
+
+        Ok(PluginLocalizationResource {
+            extension_id: extension_id.clone(),
+            locale: locale.into(),
+            content_type: "application/json".into(),
+            bytes,
+        })
+    }
+}
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct PluginInvocation {
@@ -739,6 +896,28 @@ fn is_safe_extension_id(id: &str) -> bool {
         && id.chars().enumerate().all(|(index, character)| {
             character.is_ascii_alphanumeric() || (matches!(character, '.' | '_' | '-') && index > 0)
         })
+}
+
+fn is_safe_resource_root(root: &str) -> bool {
+    !root.is_empty()
+        && !root.starts_with('/')
+        && !root.contains('\\')
+        && root.split('/').all(|segment| {
+            !segment.is_empty()
+                && segment != "."
+                && segment != ".."
+                && segment.chars().all(|character| {
+                    character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-')
+                })
+        })
+}
+
+fn is_safe_locale_segment(locale: &str) -> bool {
+    !locale.is_empty()
+        && locale.len() <= 32
+        && locale
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
 }
 
 fn scan_recovery_paths(
@@ -2586,9 +2765,9 @@ mod tests {
     use super::*;
     use velvet_layout_model::WorkbenchZone;
     use velvet_plugin_api::{
-        ContextAnchor, ContributionDescriptor, Permission, PreviewAugmentationSlot,
-        PreviewContributionDescriptor, PreviewIntent, PreviewSurface, RuntimeKind,
-        RuntimeLaunchSpec, UiSurfaceDescriptor, UiSurfaceKind, ZonePermissionSet,
+        ContextAnchor, ContributionDescriptor, ExtensionId, LocalizationManifest, Permission,
+        PreviewAugmentationSlot, PreviewContributionDescriptor, PreviewIntent, PreviewSurface,
+        RuntimeKind, RuntimeLaunchSpec, UiSurfaceDescriptor, UiSurfaceKind, ZonePermissionSet,
     };
 
     static TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -2630,6 +2809,69 @@ mod tests {
             serde_json::to_vec_pretty(manifest).expect("the manifest should serialize"),
         )
         .expect("the manifest should be written");
+    }
+
+    #[test]
+    fn resource_loader_reads_only_declared_bounded_localization_bundles() {
+        let install_root = temporary_manifest_dir();
+        let package_root = install_root.join("example");
+        let mut manifest = view_manifest(None);
+        manifest.localization = Some(LocalizationManifest {
+            default_locale: "en".into(),
+            supported_locales: vec!["en".into(), "zh-Hans".into()],
+            resource_root: "l10n".into(),
+            bundle_schema: 1,
+        });
+        write_package(&package_root, &manifest);
+        fs::create_dir_all(package_root.join("l10n")).expect("resource directory should exist");
+        fs::write(package_root.join("l10n/en.json"), br#"{"ready":"Ready"}"#)
+            .expect("resource bundle should be written");
+
+        let loader = PluginResourceLoader::new(&install_root);
+        let resource = loader
+            .read_localization_bundle(&ExtensionId("example".into()), &manifest, "en")
+            .expect("declared bundle should load");
+        assert_eq!(resource.content_type, "application/json");
+        assert_eq!(resource.bytes, br#"{"ready":"Ready"}"#);
+        assert!(matches!(
+            loader.read_localization_bundle(&manifest.id, &manifest, "fr"),
+            Err(PluginError::ResourceNotFound { .. })
+        ));
+
+        let _ = fs::remove_dir_all(install_root);
+    }
+
+    #[test]
+    fn resource_loader_rejects_package_escape_and_oversized_bundle() {
+        let install_root = temporary_manifest_dir();
+        let package_root = install_root.join("example");
+        let mut manifest = view_manifest(None);
+        manifest.localization = Some(LocalizationManifest {
+            default_locale: "en".into(),
+            supported_locales: vec!["en".into()],
+            resource_root: "../outside".into(),
+            bundle_schema: 1,
+        });
+        write_package(&package_root, &manifest);
+        let loader = PluginResourceLoader::new(&install_root);
+        assert!(matches!(
+            loader.read_localization_bundle(&manifest.id, &manifest, "en"),
+            Err(PluginError::ResourceDenied { .. })
+        ));
+
+        manifest.localization.as_mut().unwrap().resource_root = "l10n".into();
+        fs::create_dir_all(package_root.join("l10n")).expect("resource directory should exist");
+        fs::write(
+            package_root.join("l10n/en.json"),
+            vec![b'x'; MAX_PLUGIN_LOCALIZATION_BYTES + 1],
+        )
+        .expect("large resource bundle should be written");
+        assert!(matches!(
+            loader.read_localization_bundle(&manifest.id, &manifest, "en"),
+            Err(PluginError::ResourceTooLarge { .. })
+        ));
+
+        let _ = fs::remove_dir_all(install_root);
     }
 
     impl RuntimeProcess for FakeProcess {

@@ -12,6 +12,7 @@ export type {
   CorePluginPermissionSet,
   CorePluginProjection,
   CorePluginRuntime,
+  CorePluginResource,
   CorePluginUiSurfaceKind,
   CorePluginSummary,
   CorePreviewCandidate,

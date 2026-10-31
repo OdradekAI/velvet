@@ -81,6 +81,27 @@ impl From<CoreError> for WireError {
                 expected_revision: None,
                 actual_revision: None,
             },
+            CoreError::PluginResourceNotFound {
+                extension_id,
+                locale,
+            } => Self {
+                code: "plugin-resource-not-found".into(),
+                message: format!("Localization resource {locale} is not available for {extension_id}"),
+                retryable: false,
+                expected_revision: None,
+                actual_revision: None,
+            },
+            CoreError::PluginResource {
+                extension_id,
+                locale,
+                message,
+            } => Self {
+                code: "plugin-resource-error".into(),
+                message: format!("Localization resource {locale} for {extension_id} failed: {message}"),
+                retryable: false,
+                expected_revision: None,
+                actual_revision: None,
+            },
             CoreError::PluginRuntimeFailed {
                 extension_id,
                 message,
@@ -176,6 +197,13 @@ pub enum WireRequest {
     QueryProfile {
         #[serde(rename = "protocolVersion")]
         protocol_version: u16,
+    },
+    ReadPluginLocalization {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        #[serde(rename = "extensionId")]
+        extension_id: String,
+        locale: String,
     },
     QueryExtensions {
         #[serde(rename = "protocolVersion")]
@@ -361,6 +389,17 @@ impl WireRequest {
             Self::QueryProfile { protocol_version } => {
                 validate_inner_protocol(outer_protocol_version, protocol_version)?;
                 Ok(Request::Query(velvet_workbench_protocol::Query::Profile))
+            }
+            Self::ReadPluginLocalization {
+                protocol_version,
+                extension_id,
+                locale,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Query(velvet_workbench_protocol::Query::PluginLocalization {
+                    extension_id: ExtensionId(extension_id),
+                    locale,
+                }))
             }
             Self::QueryExtensions { protocol_version } => {
                 validate_inner_protocol(outer_protocol_version, protocol_version)?;
@@ -814,6 +853,9 @@ enum WireResponse {
     Profile {
         state: velvet_workbench_protocol::ProfileState,
     },
+    PluginResource {
+        resource: velvet_workbench_protocol::PluginResourceDto,
+    },
     Extensions {
         extensions: Vec<WireExtensionSummary>,
     },
@@ -853,6 +895,7 @@ impl WireResponseEnvelope {
                 state: WireLayoutState::from(state),
             },
             Response::Profile(state) => WireResponse::Profile { state },
+            Response::PluginResource(resource) => WireResponse::PluginResource { resource },
             Response::Extensions(extensions) => WireResponse::Extensions {
                 extensions: extensions
                     .into_iter()
@@ -1641,6 +1684,54 @@ mod tests {
     }
 
     #[test]
+    fn wire_plugin_localization_request_and_resource_use_stable_names() {
+        let envelope: WireRequestEnvelope = serde_json::from_value(serde_json::json!({
+            "protocolVersion": 1,
+            "requestId": 31,
+            "request": {
+                "kind": "read-plugin-localization",
+                "protocolVersion": 1,
+                "extensionId": "sample.localized",
+                "locale": "zh-Hans"
+            }
+        }))
+        .expect("the plugin resource request should deserialize");
+        assert!(matches!(
+            envelope
+                .request
+                .into_core(1)
+                .expect("the plugin resource request should map"),
+            Request::Query(velvet_workbench_protocol::Query::PluginLocalization {
+                extension_id,
+                locale
+            }) if extension_id.0 == "sample.localized" && locale == "zh-Hans"
+        ));
+
+        let response = WireResponseEnvelope::from_core(
+            velvet_workbench_protocol::ResponseEnvelope {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: RequestId(31),
+                response: Response::PluginResource(velvet_workbench_protocol::PluginResourceDto {
+                    schema_version: velvet_workbench_protocol::PLUGIN_RESOURCE_SCHEMA_VERSION,
+                    extension_id: velvet_plugin_api::ExtensionId("sample.localized".into()),
+                    locale: "zh-Hans".into(),
+                    content_type: "application/json".into(),
+                    bytes: "{\"ready\":\"就绪\"}".as_bytes().to_vec(),
+                }),
+            },
+        );
+        let value =
+            serde_json::to_value(response).expect("the resource response should serialize");
+        assert_eq!(value["response"]["resource"]["schemaVersion"], 1);
+        assert_eq!(
+            value["response"]["resource"]["extensionId"],
+            "sample.localized"
+        );
+        assert_eq!(value["response"]["resource"]["locale"], "zh-Hans");
+        assert!(value["response"]["resource"]["bytes"].is_array());
+    }
+
+    #[test]
     fn wire_plugin_lifecycle_requests_map_to_versioned_core_commands() {
         let register: WireRequestEnvelope = serde_json::from_str(
             r#"{
@@ -2016,6 +2107,19 @@ mod tests {
         assert_eq!(error.code, "plugin-runtime-failed");
         assert!(error.retryable);
         assert!(error.message.contains("velvet.example.echo"));
+    }
+
+    #[test]
+    fn wire_missing_plugin_resource_is_non_retryable_and_path_free() {
+        let error = WireError::from(CoreError::PluginResourceNotFound {
+            extension_id: "sample.localized".into(),
+            locale: "fr".into(),
+        });
+
+        assert_eq!(error.code, "plugin-resource-not-found");
+        assert!(!error.retryable);
+        assert!(error.message.contains("sample.localized"));
+        assert!(!error.message.contains("/"));
     }
 
     #[test]

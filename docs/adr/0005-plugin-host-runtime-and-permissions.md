@@ -81,8 +81,14 @@ does not remove a contribution. Bundle caches and projections are cleaned up
 with the owning extension and cannot affect core layout or Asset identity.
 The effective locale is persisted by the Rust Profile owner under a revisioned
 `ProfileState` protocol query/command; the desktop localization service only
-hydrates and projects that state. Package/archive bundle loading remains an
-injected adapter and never grants the renderer direct filesystem access.
+hydrates and projects that state. Package/archive bundle loading is a
+host-owned adapter and never grants the renderer direct filesystem access.
+The directory-package adapter is now implemented as a bounded
+`PluginResourceLoader`: it derives the installed package from the validated
+extension id, permits only declared localization locales under `resourceRoot`,
+rejects package or symlink escapes and oversized files, and returns resource
+bytes through a typed CoreTransport DTO. Archive extraction and non-localization
+binary resources remain future adapters over the same seam.
 
 The runtime declaration is one of `builtin`, `wasm` or `sidecar`. Built-ins
 are trusted adapters; third-party runtimes remain isolated. `extensionKind`

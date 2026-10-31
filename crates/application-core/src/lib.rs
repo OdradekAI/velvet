@@ -25,7 +25,7 @@ use velvet_plugin_api::{
 use velvet_plugin_host::{
     DisableReason, InMemoryPluginHost, JsonManifestDiscovery, ManifestDiscoveryError,
     ManifestLoadReport, PluginError, PluginHost, PluginJobHandle, PluginJobInvocation,
-    PluginRuntime,
+    PluginResourceLoader, PluginRuntime,
 };
 use velvet_preview_core::{
     BuiltinImagePreviewProvider, BuiltinTextPreviewProvider, GenericFallbackProvider,
@@ -35,8 +35,9 @@ use velvet_preview_core::{
 };
 use velvet_workbench_protocol::{
     Command, CoreError, CoreTransport, PluginDisableReason, PluginInstallPreviewDto,
-    PluginProjectionDto, ProfileState, Query, Request, RequestEnvelope, RequestId, Response,
-    ResponseEnvelope, PROFILE_SCHEMA_VERSION, PROTOCOL_VERSION,
+    PluginProjectionDto, PluginResourceDto, ProfileState, Query, Request, RequestEnvelope,
+    RequestId, Response, ResponseEnvelope, PLUGIN_RESOURCE_SCHEMA_VERSION, PROFILE_SCHEMA_VERSION,
+    PROTOCOL_VERSION,
 };
 
 pub struct ApplicationCore {
@@ -49,6 +50,7 @@ pub struct ApplicationCore {
     layout_store: Arc<dyn LayoutStateStore>,
     profile_store: Arc<dyn ProfileStateStore>,
     plugin_directory: Option<std::path::PathBuf>,
+    plugin_resources: Option<PluginResourceLoader>,
 }
 
 const MAX_PREVIEW_ACTION_SESSIONS: usize = 128;
@@ -250,6 +252,7 @@ impl ApplicationCore {
             .filter(valid_profile_state)
             .unwrap_or_default();
 
+        let plugin_resources = plugin_directory.as_deref().map(PluginResourceLoader::new);
         let mut core = Self {
             layout,
             plugins: InMemoryPluginHost::with_runtime(runtime),
@@ -260,6 +263,7 @@ impl ApplicationCore {
             layout_store,
             profile_store,
             plugin_directory,
+            plugin_resources,
         };
 
         core.previews.register(Arc::new(BuiltinTextPreviewProvider));
@@ -879,6 +883,10 @@ impl ApplicationCore {
             }) => self.set_locale(expected_revision, locale),
             Request::Query(Query::Layout) => Ok(Response::Layout(self.layout.snapshot())),
             Request::Query(Query::Profile) => Ok(Response::Profile(self.profile.clone())),
+            Request::Query(Query::PluginLocalization {
+                extension_id,
+                locale,
+            }) => self.read_plugin_localization(&extension_id, &locale),
             Request::Query(Query::Extensions) => Ok(Response::Extensions(self.plugins.discover())),
             Request::Query(Query::PluginInstallRecoveries) => self
                 .inspect_plugin_install_recoveries()
@@ -1003,6 +1011,36 @@ impl ApplicationCore {
             .map_err(|error| CoreError::Profile(format!("{error:?}")))?;
         self.profile = next.clone();
         Ok(Response::Profile(next))
+    }
+
+    fn read_plugin_localization(
+        &self,
+        extension_id: &ExtensionId,
+        locale: &str,
+    ) -> Result<Response, CoreError> {
+        let loader = self
+            .plugin_resources
+            .as_ref()
+            .ok_or_else(|| CoreError::PluginResource {
+                extension_id: extension_id.0.clone(),
+                locale: locale.into(),
+                message: "plugin resources are unavailable without an installed package root"
+                    .into(),
+            })?;
+        let projection = self
+            .plugins
+            .projection(extension_id)
+            .map_err(plugin_error)?;
+        let resource = loader
+            .read_localization_bundle(extension_id, &projection.manifest, locale)
+            .map_err(|error| plugin_resource_error(extension_id, locale, error))?;
+        Ok(Response::PluginResource(PluginResourceDto {
+            schema_version: PLUGIN_RESOURCE_SCHEMA_VERSION,
+            extension_id: resource.extension_id,
+            locale: resource.locale,
+            content_type: resource.content_type,
+            bytes: resource.bytes,
+        }))
     }
 
     fn resolve_preview(
@@ -1379,6 +1417,34 @@ fn plugin_error(error: PluginError) -> CoreError {
     }
 }
 
+fn plugin_resource_error(
+    extension_id: &ExtensionId,
+    locale: &str,
+    error: PluginError,
+) -> CoreError {
+    match error {
+        PluginError::ResourceNotFound { .. } => CoreError::PluginResourceNotFound {
+            extension_id: extension_id.0.clone(),
+            locale: locale.into(),
+        },
+        PluginError::ResourceDenied { message, .. } => CoreError::PluginResource {
+            extension_id: extension_id.0.clone(),
+            locale: locale.into(),
+            message,
+        },
+        PluginError::ResourceTooLarge { limit, .. } => CoreError::PluginResource {
+            extension_id: extension_id.0.clone(),
+            locale: locale.into(),
+            message: format!("localization resource exceeds the {limit} byte limit"),
+        },
+        other => CoreError::PluginResource {
+            extension_id: extension_id.0.clone(),
+            locale: locale.into(),
+            message: format!("{other:?}"),
+        },
+    }
+}
+
 fn job_error(error: JobError) -> CoreError {
     CoreError::Job(format!("{error:?}"))
 }
@@ -1448,8 +1514,8 @@ mod tests {
     use velvet_persistence::{InMemoryProfileStateStore, JsonFileLayoutStateStore};
     use velvet_plugin_api::{
         ContributionDescriptor, ContributionKind, ContributionScope, ExtensionId,
-        ExtensionInstallRecoveryLogStatus, ExtensionManifest, HostContainer, Permission,
-        PreviewContributionDescriptor, PreviewIntent as ManifestPreviewIntent,
+        ExtensionInstallRecoveryLogStatus, ExtensionManifest, HostContainer, LocalizationManifest,
+        Permission, PreviewContributionDescriptor, PreviewIntent as ManifestPreviewIntent,
         PreviewSurface as ManifestPreviewSurface, RuntimeKind, UiSurfaceDescriptor, UiSurfaceKind,
         VersionRange, ZonePermissionSet,
     };
@@ -2662,6 +2728,66 @@ mod tests {
             }
             other => panic!("expected extension response, got {other:?}"),
         }
+
+        fs::remove_dir_all(root).expect("the plugin directory should be removed");
+    }
+
+    #[test]
+    fn application_core_reads_declared_plugin_localization_without_exposing_paths() {
+        let root = temporary_layout_path().with_extension("plugins");
+        let package = root.join("local.reader");
+        fs::create_dir_all(package.join("l10n")).expect("the plugin package should be writable");
+        let manifest = ExtensionManifest {
+            id: ExtensionId("local.reader".into()),
+            version: "1.0.0".into(),
+            host_api: VersionRange("^1".into()),
+            runtime: RuntimeKind::BuiltIn,
+            launch: None,
+            target_app: None,
+            contributions: vec![],
+            permission_sets: vec![],
+            localization: Some(LocalizationManifest {
+                default_locale: "en".into(),
+                supported_locales: vec!["en".into(), "zh-Hans".into()],
+                resource_root: "l10n".into(),
+                bundle_schema: 1,
+            }),
+            ..ExtensionManifest::default()
+        };
+        fs::write(
+            package.join("manifest.json"),
+            serde_json::to_vec(&manifest).expect("the manifest should serialize"),
+        )
+        .expect("the manifest should be written");
+        fs::write(package.join("l10n/en.json"), br#"{"ready":"Ready"}"#)
+            .expect("the localization bundle should be written");
+
+        let mut core = ApplicationCore::with_store_and_plugin_directory(
+            Arc::new(InMemoryLayoutStateStore::default()),
+            &root,
+        );
+        core.load_plugins_from_directory(&root)
+            .expect("the plugin package should be discovered");
+        let resource = core
+            .dispatch(Request::Query(Query::PluginLocalization {
+                extension_id: manifest.id.clone(),
+                locale: "en".into(),
+            }))
+            .expect("the declared localization bundle should load");
+        assert!(matches!(
+            resource,
+            Response::PluginResource(resource)
+                if resource.extension_id == manifest.id
+                    && resource.locale == "en"
+                    && resource.bytes == br#"{"ready":"Ready"}"#
+        ));
+        assert!(matches!(
+            core.dispatch(Request::Query(Query::PluginLocalization {
+                extension_id: manifest.id,
+                locale: "fr".into(),
+            })),
+            Err(CoreError::PluginResourceNotFound { .. })
+        ));
 
         fs::remove_dir_all(root).expect("the plugin directory should be removed");
     }

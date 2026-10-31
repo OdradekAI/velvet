@@ -6,6 +6,8 @@ export const PROTOCOL_VERSION = 1 as const;
 export type ProtocolVersion = typeof PROTOCOL_VERSION;
 export const PROFILE_SCHEMA_VERSION = 1 as const;
 export type ProfileSchemaVersion = typeof PROFILE_SCHEMA_VERSION;
+export const PLUGIN_RESOURCE_SCHEMA_VERSION = 1 as const;
+export type PluginResourceSchemaVersion = typeof PLUGIN_RESOURCE_SCHEMA_VERSION;
 export type WorkbenchAppId = string;
 /** Compatibility alias for older clients and migration code. */
 export type WorkspaceId = WorkbenchAppId;
@@ -115,6 +117,12 @@ export interface CorePreviewActionContext {
 export type CoreRequest =
   | { readonly protocolVersion: ProtocolVersion; readonly kind: 'query-layout' }
   | { readonly protocolVersion: ProtocolVersion; readonly kind: 'query-profile' }
+  | {
+      readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'read-plugin-localization';
+      readonly extensionId: string;
+      readonly locale: string;
+    }
   | { readonly protocolVersion: ProtocolVersion; readonly kind: 'query-extensions' }
   | {
       readonly protocolVersion: ProtocolVersion;
@@ -259,6 +267,7 @@ export type CoreRequest =
 export type CoreResponse =
   | { readonly kind: 'layout'; readonly state: LayoutSnapshot }
   | { readonly kind: 'profile'; readonly state: CoreProfileState }
+  | { readonly kind: 'plugin-resource'; readonly resource: CorePluginResource }
   | { readonly kind: 'preview'; readonly preview: CoreResolvedPreview }
   | { readonly kind: 'extensions'; readonly extensions: readonly CorePluginSummary[] }
   | { readonly kind: 'extension'; readonly extension: CorePluginSummary }
@@ -616,6 +625,14 @@ export interface CoreProfileState {
   readonly schemaVersion: ProfileSchemaVersion;
   readonly revision: number;
   readonly locale: string;
+}
+
+export interface CorePluginResource {
+  readonly schemaVersion: PluginResourceSchemaVersion;
+  readonly extensionId: string;
+  readonly locale: string;
+  readonly contentType: string;
+  readonly bytes: readonly number[];
 }
 
 export interface CoreTransport {

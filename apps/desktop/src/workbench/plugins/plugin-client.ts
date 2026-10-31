@@ -61,6 +61,7 @@ import {
   type LocalizationBundleInput,
   type LocalizationBundleLoader,
 } from '../localization/localization-service.js';
+import { CoreLocalizationBundleLoader } from '../localization/core-localization-loader.js';
 import {
   PreviewRegistry,
   type PreviewAugmentationSlot,
@@ -176,7 +177,9 @@ export class PluginClient {
   private readonly records = new Map<string, PluginRecord>();
   private readonly coreSummaries = new Map<string, CorePluginSummary>();
   private readonly coreProjections = new Map<string, CorePluginProjection>();
+  private readonly loadedLocalizationVersions = new Map<string, string>();
   private readonly commandHandlers = new Map<string, PluginCommandHandler>();
+  private readonly coreLocalizationLoader: LocalizationBundleLoader;
   public readonly ui: PluginUiRegistry;
 
   public constructor(
@@ -193,6 +196,7 @@ export class PluginClient {
     private readonly previewRegistry?: PreviewRegistry,
   ) {
     this.ui = ui;
+    this.coreLocalizationLoader = new CoreLocalizationBundleLoader(core);
     this.core.subscribe((event) => {
       if (event.kind === 'plugin-disabled') {
         void this.handleCorePluginDisabled(event.extensionId, event.reason);
@@ -519,6 +523,7 @@ export class PluginClient {
     record.appSurfaceBinding = undefined;
     this.commandHandlers.delete(extensionId);
     this.localization.unregisterExtension(extensionId);
+    this.loadedLocalizationVersions.delete(extensionId);
     record.status = 'disabled';
     this.notify();
   }
@@ -536,6 +541,7 @@ export class PluginClient {
     if (removed) {
       this.commandHandlers.delete(extensionId);
       this.localization.unregisterExtension(extensionId);
+      this.loadedLocalizationVersions.delete(extensionId);
       this.notify();
     }
     return removed;
@@ -721,6 +727,7 @@ export class PluginClient {
       if (this.records.get(projection.summary.id)?.status !== 'active') {
         this.activate(projection.summary.id);
       }
+      await this.loadCoreLocalization(projection.summary.id);
       return;
     }
 
@@ -997,6 +1004,19 @@ export class PluginClient {
 
   private projectLocalization(extensionId: string): void {
     this.ui.projectLocale(extensionId, this.localization.projection(extensionId));
+  }
+
+  private async loadCoreLocalization(extensionId: string): Promise<void> {
+    const record = this.records.get(extensionId);
+    if (!record?.manifest.localization) {
+      this.loadedLocalizationVersions.delete(extensionId);
+      return;
+    }
+    if (this.loadedLocalizationVersions.get(extensionId) === record.manifest.version) {
+      return;
+    }
+    await this.loadLocalization(extensionId, this.coreLocalizationLoader);
+    this.loadedLocalizationVersions.set(extensionId, record.manifest.version);
   }
 
   public subscribe(listener: () => void): () => void {

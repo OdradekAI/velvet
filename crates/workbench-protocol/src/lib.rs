@@ -16,6 +16,7 @@ use velvet_preview_core::{PreviewIntent, PreviewSurface, ResolvedPreview};
 
 pub const PROTOCOL_VERSION: u16 = 1;
 pub const PROFILE_SCHEMA_VERSION: u16 = 1;
+pub const PLUGIN_RESOURCE_SCHEMA_VERSION: u16 = 1;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -33,6 +34,16 @@ impl Default for ProfileState {
             locale: "en".into(),
         }
     }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PluginResourceDto {
+    pub schema_version: u16,
+    pub extension_id: ExtensionId,
+    pub locale: String,
+    pub content_type: String,
+    pub bytes: Vec<u8>,
 }
 
 /// Transport-owned mirror of the Rust plugin-api manifest.
@@ -253,6 +264,10 @@ pub enum PluginDisableReason {
 pub enum Query {
     Layout,
     Profile,
+    PluginLocalization {
+        extension_id: ExtensionId,
+        locale: String,
+    },
     Extensions,
     PluginProjection {
         extension_id: ExtensionId,
@@ -278,6 +293,7 @@ pub enum Request {
 pub enum Response {
     Layout(LayoutState),
     Profile(ProfileState),
+    PluginResource(PluginResourceDto),
     Extensions(Vec<ExtensionSummary>),
     Extension(ExtensionSummary),
     PluginInstallPreview(PluginInstallPreviewDto),
@@ -328,6 +344,15 @@ pub enum CoreError {
         actual: u64,
     },
     Profile(String),
+    PluginResourceNotFound {
+        extension_id: String,
+        locale: String,
+    },
+    PluginResource {
+        extension_id: String,
+        locale: String,
+        message: String,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -413,5 +438,26 @@ mod tests {
             "unexpected": true
         }))
         .is_err());
+    }
+
+    #[test]
+    fn plugin_resource_dto_round_trips_with_bounded_payload_shape() {
+        let resource = PluginResourceDto {
+            schema_version: PLUGIN_RESOURCE_SCHEMA_VERSION,
+            extension_id: ExtensionId("sample.localized".into()),
+            locale: "zh-Hans".into(),
+            content_type: "application/json".into(),
+            bytes: "{\"ready\":\"就绪\"}".as_bytes().to_vec(),
+        };
+
+        let json = serde_json::to_value(&resource).expect("resource should serialize");
+        assert_eq!(json["schemaVersion"], PLUGIN_RESOURCE_SCHEMA_VERSION);
+        assert_eq!(json["extensionId"], "sample.localized");
+        assert_eq!(json["locale"], "zh-Hans");
+        assert_eq!(json["contentType"], "application/json");
+        assert!(json["bytes"].is_array());
+        let decoded: PluginResourceDto =
+            serde_json::from_value(json).expect("resource should deserialize");
+        assert_eq!(decoded, resource);
     }
 }

@@ -72,6 +72,10 @@ WorkbenchApp 在 WorkspaceArea 中呈现的主界面。AppSurface 可以拥有�
 
 由 Rust Profile state 持有的工作台显示语言和 revision。桌面 LocalizationService 通过 CoreTransport 查询、设置并投影该状态；插件 bundle 只提供扩展自己的消息资源，不拥有全局 locale。
 
+## Plugin resource loader
+
+由 PluginHost 持有的受限资源读取适配器。它根据已注册扩展和声明的 resourceRoot/locale 读取有界 bundle，校验包路径、符号链接和大小后通过 CoreTransport 投影资源 DTO；桌面渲染层不直接访问插件文件系统。
+
 ## State owner
 
 对某类持久化字段或派生缓存负责的唯一模块。State owner 负责 schema、迁移、失效、恢复和对外投影；存储适配器不成为第二 owner。

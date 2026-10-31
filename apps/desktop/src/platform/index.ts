@@ -29,6 +29,7 @@ export type {
   CoreJobProvenance,
   CoreJobResult,
   CoreJobStatus,
+  CorePluginResource,
   CoreProfileState,
   CorePreviewContribution,
   CorePreviewContributionIntent,
@@ -44,12 +45,17 @@ export type {
   LayoutOrderAnchor,
   LayoutSnapshot,
   Part,
+  PluginResourceSchemaVersion,
+  ProfileSchemaVersion,
   ProtocolVersion,
   WorkbenchAppId,
   WorkspaceId,
   Zone,
 } from './protocol.js';
-export { PROFILE_SCHEMA_VERSION } from './protocol.js';
+export {
+  PLUGIN_RESOURCE_SCHEMA_VERSION,
+  PROFILE_SCHEMA_VERSION,
+} from './protocol.js';
 export {
   CoreTransportError,
   TauriCoreTransport,
