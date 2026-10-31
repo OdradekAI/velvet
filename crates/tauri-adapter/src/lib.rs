@@ -166,13 +166,51 @@ fn disable_reason_name(reason: &velvet_workbench_protocol::PluginDisableReason) 
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
     use velvet_layout_model::{LayoutCommand, WorkbenchPart};
+    use velvet_persistence::InMemoryLayoutStateStore;
     use velvet_plugin_api::{
         ContributionDescriptor, ContributionKind, ContributionScope, ExtensionId,
         ExtensionManifest, RuntimeKind, RuntimeLaunchSpec, VersionRange,
     };
+    use velvet_plugin_host::{
+        PluginInvocation, PluginInvocationResult, PluginRuntime, RuntimeError, RuntimeHealth,
+        RuntimeProcess,
+    };
     use velvet_workbench_protocol::{PluginDisableReason, Query};
+
+    struct CrashingRuntime;
+
+    struct CrashingProcess;
+
+    impl RuntimeProcess for CrashingProcess {
+        fn poll(&mut self) -> RuntimeHealth {
+            RuntimeHealth::Running
+        }
+
+        fn shutdown(&mut self) -> Result<(), RuntimeError> {
+            Ok(())
+        }
+
+        fn invoke(
+            &mut self,
+            _invocation: &PluginInvocation,
+        ) -> Result<PluginInvocationResult, RuntimeError> {
+            Err(RuntimeError::InvocationFailed("sidecar crashed".into()))
+        }
+    }
+
+    impl PluginRuntime for CrashingRuntime {
+        fn start(
+            &mut self,
+            _manifest: &ExtensionManifest,
+            _permissions: &velvet_plugin_host::PermissionGrant,
+        ) -> Result<Box<dyn RuntimeProcess>, RuntimeError> {
+            Ok(Box::new(CrashingProcess))
+        }
+    }
 
     #[test]
     fn successful_layout_commands_emit_authoritative_events() {
@@ -318,19 +356,18 @@ mod tests {
     #[test]
     fn runtime_command_failure_emits_a_crash_event_for_frontend_cleanup() {
         let sink = InMemoryEventSink::default();
-        let mut core = ApplicationCore::default();
+        let mut core = ApplicationCore::with_plugin_runtime(
+            Arc::new(InMemoryLayoutStateStore::default()),
+            Box::new(CrashingRuntime),
+        );
         let manifest = ExtensionManifest {
             id: ExtensionId("sample.crashing-sidecar".into()),
             version: "1.0.0".into(),
             host_api: VersionRange("^1".into()),
             runtime: RuntimeKind::Sidecar,
             launch: Some(RuntimeLaunchSpec {
-                program: "node".into(),
-                args: vec![concat!(
-                    env!("CARGO_MANIFEST_DIR"),
-                    "/../../examples/plugins/echo-sidecar/sidecar.mjs"
-                )
-                .into()],
+                program: "test-sidecar".into(),
+                args: Vec::new(),
             }),
             target_app: None,
             contributions: vec![ContributionDescriptor {

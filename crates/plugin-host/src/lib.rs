@@ -20,8 +20,8 @@ use velvet_plugin_api::{
     ExtensionInstallOperation, ExtensionInstallPreview, ExtensionInstallRecovery,
     ExtensionInstallRecoveryAction, ExtensionInstallRecoveryKind, ExtensionInstallRecoveryLogEntry,
     ExtensionInstallRecoveryLogStatus, ExtensionManifest, ExtensionProjection, ExtensionState,
-    ExtensionSummary, HostContainer, Permission, PreviewActionContext, RuntimeKind, VersionRange,
-    MANIFEST_SCHEMA_VERSION,
+    ExtensionSummary, HostContainer, Permission, PreviewActionContext, RuntimeKind,
+    RuntimeLaunchSpec, VersionRange, MANIFEST_SCHEMA_VERSION,
 };
 
 mod extension_storage;
@@ -114,6 +114,56 @@ pub enum RuntimeError {
 pub enum RuntimeHealth {
     Running,
     Crashed(String),
+}
+
+/// Controls how a runtime launch target is resolved.
+///
+/// `Direct` exists for trusted built-in/test composition. Installed external
+/// extensions use `PackageRelative`, which allows only a host-approved bare
+/// command or an executable that resolves inside the committed package root.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub enum RuntimeLaunchPolicy {
+    #[default]
+    Direct,
+    PackageRelative {
+        package_root: PathBuf,
+        allowed_programs: BTreeSet<String>,
+    },
+}
+
+/// Host-owned launch context. It is deliberately separate from the manifest
+/// and never crosses the Rust/TypeScript/Tauri protocol boundary.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct RuntimeLaunchContext {
+    pub policy: RuntimeLaunchPolicy,
+}
+
+impl RuntimeLaunchContext {
+    pub fn package(package_root: impl Into<PathBuf>) -> Self {
+        Self::package_with_allowlist(package_root, default_allowed_programs())
+    }
+
+    pub fn package_with_allowlist(
+        package_root: impl Into<PathBuf>,
+        allowed_programs: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        Self {
+            policy: RuntimeLaunchPolicy::PackageRelative {
+                package_root: package_root.into(),
+                allowed_programs: allowed_programs.into_iter().map(Into::into).collect(),
+            },
+        }
+    }
+}
+
+pub const DEFAULT_ALLOWED_RUNTIME_PROGRAMS: &[&str] =
+    &["bun", "deno", "node", "nodejs", "wasmer", "wasmtime"];
+
+fn default_allowed_programs() -> BTreeSet<String> {
+    DEFAULT_ALLOWED_RUNTIME_PROGRAMS
+        .iter()
+        .map(|program| (*program).to_owned())
+        .collect()
 }
 
 const RUNTIME_PROTOCOL_VERSION: u16 = 1;
@@ -788,6 +838,19 @@ pub trait PluginRuntime: Send {
         manifest: &ExtensionManifest,
         permissions: &PermissionGrant,
     ) -> Result<Box<dyn RuntimeProcess>, RuntimeError>;
+
+    fn start_with_context(
+        &mut self,
+        manifest: &ExtensionManifest,
+        permissions: &PermissionGrant,
+        _context: &RuntimeLaunchContext,
+    ) -> Result<Box<dyn RuntimeProcess>, RuntimeError> {
+        self.start(manifest, permissions)
+    }
+
+    fn requires_package_launch_context(&self) -> bool {
+        false
+    }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -823,6 +886,87 @@ impl PermissionGrant {
     }
 }
 
+fn resolve_launch_program(
+    extension_id: &ExtensionId,
+    spec: &RuntimeLaunchSpec,
+    context: &RuntimeLaunchContext,
+) -> Result<(PathBuf, Option<PathBuf>), RuntimeError> {
+    match &context.policy {
+        RuntimeLaunchPolicy::Direct => Ok((PathBuf::from(&spec.program), None)),
+        RuntimeLaunchPolicy::PackageRelative {
+            package_root,
+            allowed_programs,
+        } => {
+            let canonical_root = fs::canonicalize(package_root).map_err(|error| {
+                RuntimeError::StartFailed(format!(
+                    "runtime package root for {} is unavailable: {error}",
+                    extension_id.0
+                ))
+            })?;
+            let raw_program = Path::new(&spec.program);
+            if raw_program.is_absolute() {
+                return Err(RuntimeError::StartFailed(format!(
+                    "runtime {} must use a package-relative executable or an allowed host command",
+                    extension_id.0
+                )));
+            }
+
+            if is_bare_program(&spec.program) {
+                if allowed_programs.contains(&spec.program) {
+                    return Ok((PathBuf::from(&spec.program), Some(canonical_root)));
+                }
+                return Err(RuntimeError::StartFailed(format!(
+                    "runtime command {} is not in the host allow-list",
+                    spec.program
+                )));
+            }
+
+            if !is_explicit_relative_path(&spec.program) {
+                return Err(RuntimeError::StartFailed(
+                    "runtime executable must start with ./ or ../ when it is package-relative"
+                        .into(),
+                ));
+            }
+            let candidate =
+                fs::canonicalize(canonical_root.join(raw_program)).map_err(|error| {
+                    RuntimeError::StartFailed(format!(
+                        "runtime executable could not be resolved inside its package: {error}"
+                    ))
+                })?;
+            if !candidate.starts_with(&canonical_root) || !candidate.is_file() {
+                return Err(RuntimeError::StartFailed(
+                    "runtime executable resolves outside its committed package".into(),
+                ));
+            }
+            Ok((candidate, Some(canonical_root)))
+        }
+    }
+}
+
+fn validate_launch_context(
+    manifest: &ExtensionManifest,
+    context: &RuntimeLaunchContext,
+) -> Result<(), RuntimeError> {
+    let Some(spec) = manifest.launch.as_ref() else {
+        return Err(RuntimeError::MissingLaunchSpec(manifest.id.clone()));
+    };
+    if spec.program.trim().is_empty() {
+        return Err(RuntimeError::InvalidLaunchSpec(manifest.id.clone()));
+    }
+    resolve_launch_program(&manifest.id, spec, context).map(|_| ())
+}
+
+fn is_bare_program(program: &str) -> bool {
+    !program.is_empty() && !program.contains(['/', '\\']) && !matches!(program, "." | "..")
+}
+
+fn is_explicit_relative_path(program: &str) -> bool {
+    program.starts_with("./")
+        || program.starts_with("../")
+        || program.starts_with(".\\")
+        || program.starts_with("..\\")
+}
+
 /// Starts the declared isolated process for WASM runners and sidecars.
 /// Built-in extensions receive a no-op process so the host uses one lifecycle
 /// path for trusted and external extensions.
@@ -834,6 +978,15 @@ impl PluginRuntime for ProcessPluginRuntime {
         &mut self,
         manifest: &ExtensionManifest,
         permissions: &PermissionGrant,
+    ) -> Result<Box<dyn RuntimeProcess>, RuntimeError> {
+        self.start_with_context(manifest, permissions, &RuntimeLaunchContext::default())
+    }
+
+    fn start_with_context(
+        &mut self,
+        manifest: &ExtensionManifest,
+        permissions: &PermissionGrant,
+        context: &RuntimeLaunchContext,
     ) -> Result<Box<dyn RuntimeProcess>, RuntimeError> {
         if manifest.runtime == RuntimeKind::BuiltIn {
             return Ok(Box::new(NoopRuntimeProcess));
@@ -847,7 +1000,8 @@ impl PluginRuntime for ProcessPluginRuntime {
             return Err(RuntimeError::InvalidLaunchSpec(manifest.id.clone()));
         }
 
-        let mut command = Command::new(&spec.program);
+        let (program, package_root) = resolve_launch_program(&manifest.id, spec, context)?;
+        let mut command = Command::new(program);
         command
             .args(&spec.args)
             .env("VELVET_EXTENSION_ID", &manifest.id.0)
@@ -855,6 +1009,9 @@ impl PluginRuntime for ProcessPluginRuntime {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        if let Some(package_root) = package_root {
+            command.current_dir(package_root);
+        }
         #[cfg(unix)]
         command.process_group(0);
         #[cfg(target_os = "linux")]
@@ -927,6 +1084,10 @@ impl PluginRuntime for ProcessPluginRuntime {
             stderr_worker: Some(stderr_worker),
             stderr_tail,
         }))
+    }
+
+    fn requires_package_launch_context(&self) -> bool {
+        true
     }
 }
 
@@ -1346,7 +1507,8 @@ impl JsonManifestDiscovery {
             };
             resolve_relative_launch_args(&path, &mut manifest);
 
-            match host.register(manifest) {
+            let package_root = path.parent().unwrap_or(self.root.as_path());
+            match host.register_from_package(manifest, package_root) {
                 Ok(()) => report.loaded.push(path),
                 Err(error) => report.failures.push(ManifestLoadFailure {
                     path,
@@ -1573,6 +1735,13 @@ fn next_recovery_attempt(
 
 pub trait PluginHost {
     fn register(&mut self, manifest: ExtensionManifest) -> Result<(), PluginError>;
+    fn register_from_package(
+        &mut self,
+        manifest: ExtensionManifest,
+        _package_root: &Path,
+    ) -> Result<(), PluginError> {
+        self.register(manifest)
+    }
     fn discover(&self) -> Vec<ExtensionSummary>;
     fn projection(&self, id: &ExtensionId) -> Result<ExtensionProjection, PluginError>;
     fn activate(&mut self, id: &ExtensionId) -> Result<(), PluginError>;
@@ -1678,6 +1847,7 @@ pub trait PluginHost {
 
 pub struct InMemoryPluginHost {
     manifests: BTreeMap<ExtensionId, ExtensionManifest>,
+    package_roots: BTreeMap<ExtensionId, PathBuf>,
     active: BTreeSet<ExtensionId>,
     states: BTreeMap<ExtensionId, ExtensionState>,
     processes: BTreeMap<ExtensionId, Arc<Mutex<Box<dyn RuntimeProcess>>>>,
@@ -1709,6 +1879,7 @@ impl Default for InMemoryPluginHost {
 
         Self {
             manifests: BTreeMap::new(),
+            package_roots: BTreeMap::new(),
             active: BTreeSet::new(),
             states: BTreeMap::new(),
             processes: BTreeMap::new(),
@@ -1851,6 +2022,49 @@ impl InMemoryPluginHost {
 
     pub fn register_app(&mut self, app_id: String, api: VersionRange) {
         self.apps.insert(app_id, api);
+    }
+
+    fn register_manifest(
+        &mut self,
+        manifest: ExtensionManifest,
+        package_root: Option<&Path>,
+    ) -> Result<(), PluginError> {
+        let manifest = self.normalize_manifest(manifest)?;
+        if self.manifests.contains_key(&manifest.id) {
+            return Err(PluginError::AlreadyRegistered(manifest.id));
+        }
+
+        if package_root.is_none()
+            && manifest.runtime != RuntimeKind::BuiltIn
+            && self.runtime.requires_package_launch_context()
+        {
+            return Err(PluginError::InvalidContribution(
+                "external runtimes must be discovered or installed from a committed package".into(),
+            ));
+        }
+
+        if let Some(package_root) = package_root {
+            if manifest.runtime != RuntimeKind::BuiltIn {
+                let context = RuntimeLaunchContext::package(package_root);
+                if let Err(error) = validate_launch_context(&manifest, &context) {
+                    return Err(PluginError::InvalidContribution(runtime_error_message(
+                        error,
+                    )));
+                }
+            }
+        }
+
+        self.validate_manifest(&manifest)?;
+        if let Some(package_root) = package_root {
+            self.package_roots
+                .insert(manifest.id.clone(), package_root.to_path_buf());
+        } else {
+            self.package_roots.remove(&manifest.id);
+        }
+        self.states
+            .insert(manifest.id.clone(), ExtensionState::Registered);
+        self.manifests.insert(manifest.id.clone(), manifest);
+        Ok(())
     }
 
     fn validate_manifest(&self, manifest: &ExtensionManifest) -> Result<(), PluginError> {
@@ -2165,6 +2379,7 @@ impl InMemoryPluginHost {
 
     fn remove_registration(&mut self, id: &ExtensionId) {
         self.manifests.remove(id);
+        self.package_roots.remove(id);
         self.active.remove(id);
         self.states.remove(id);
         self.processes.remove(id);
@@ -2406,16 +2621,15 @@ impl InMemoryPluginHost {
 
 impl PluginHost for InMemoryPluginHost {
     fn register(&mut self, manifest: ExtensionManifest) -> Result<(), PluginError> {
-        let manifest = self.normalize_manifest(manifest)?;
-        if self.manifests.contains_key(&manifest.id) {
-            return Err(PluginError::AlreadyRegistered(manifest.id));
-        }
+        self.register_manifest(manifest, None)
+    }
 
-        self.validate_manifest(&manifest)?;
-        self.states
-            .insert(manifest.id.clone(), ExtensionState::Registered);
-        self.manifests.insert(manifest.id.clone(), manifest);
-        Ok(())
+    fn register_from_package(
+        &mut self,
+        manifest: ExtensionManifest,
+        package_root: &Path,
+    ) -> Result<(), PluginError> {
+        self.register_manifest(manifest, Some(package_root))
     }
 
     fn discover(&self) -> Vec<ExtensionSummary> {
@@ -2461,7 +2675,15 @@ impl PluginHost for InMemoryPluginHost {
 
         self.states.insert(id.clone(), ExtensionState::Starting);
         let permissions = PermissionGrant::from_manifest(&manifest);
-        match self.runtime.start(&manifest, &permissions) {
+        let launch_context = self
+            .package_roots
+            .get(id)
+            .map(RuntimeLaunchContext::package)
+            .unwrap_or_default();
+        match self
+            .runtime
+            .start_with_context(&manifest, &permissions, &launch_context)
+        {
             Ok(process) => {
                 self.processes
                     .insert(id.clone(), Arc::new(Mutex::new(process)));
@@ -2905,12 +3127,12 @@ impl PluginHost for InMemoryPluginHost {
             }
             return Err(PluginError::InstallFailed(error.to_string()));
         }
-        if let Err(error) = self.register(manifest) {
+        if let Err(error) = self.register_from_package(manifest, &destination) {
             let _ = fs::remove_dir_all(&destination);
             if let Some(backup_path) = &backup_path {
                 let _ = fs::rename(backup_path, &destination);
                 if let Some(previous_manifest) = previous_manifest {
-                    let _ = self.register(previous_manifest);
+                    let _ = self.register_from_package(previous_manifest, &destination);
                     if let Some(state) = previous_state {
                         self.restore_state(&id, state);
                     }
@@ -2979,7 +3201,7 @@ impl PluginHost for InMemoryPluginHost {
                 .map_err(|error| PluginError::InstallFailed(error.to_string()))?;
         }
         if let Some(previous_manifest) = backup.previous_manifest {
-            self.register(previous_manifest)?;
+            self.register_from_package(previous_manifest, &destination)?;
             if let Some(previous_state) = backup.previous_state {
                 if previous_state == ExtensionState::Active {
                     self.activate(id)?;
@@ -3169,7 +3391,7 @@ impl PluginHost for InMemoryPluginHost {
                     self.validate_manifest(&manifest)?;
                     fs::rename(staging, &destination)
                         .map_err(|error| PluginError::InstallFailed(error.to_string()))?;
-                    if let Err(error) = self.register(manifest) {
+                    if let Err(error) = self.register_from_package(manifest, &destination) {
                         let _ = fs::rename(&destination, staging);
                         return Err(error);
                     }
@@ -3193,7 +3415,7 @@ impl PluginHost for InMemoryPluginHost {
                         recovery_manifest(&destination).map_err(PluginError::InstallFailed)?;
                     self.validate_manifest(&manifest)?;
                     if !self.manifests.contains_key(id) {
-                        self.register(manifest)?;
+                        self.register_from_package(manifest, &destination)?;
                     }
                     for rollback_path in &paths.rollback {
                         if rollback_path.exists() {
@@ -3243,7 +3465,8 @@ impl PluginHost for InMemoryPluginHost {
                         return Err(PluginError::InstallFailed(error.to_string()));
                     }
                     self.remove_registration(id);
-                    if let Err(error) = self.register(previous_manifest) {
+                    if let Err(error) = self.register_from_package(previous_manifest, &destination)
+                    {
                         let _ = fs::remove_dir_all(&destination);
                         if current_backup.exists() {
                             let _ = fs::rename(&current_backup, &destination);
@@ -4725,6 +4948,107 @@ mod tests {
     }
 
     #[test]
+    fn package_launch_policy_rejects_escape_and_unlisted_host_commands() {
+        let root = temporary_manifest_dir();
+        fs::create_dir_all(&root).expect("the package root should be writable");
+        fs::write(root.join("sidecar"), b"#!/bin/sh\n").expect("the sidecar fixture should exist");
+        let extension_id = ExtensionId("package.policy".into());
+        let context = RuntimeLaunchContext::package_with_allowlist(&root, ["node"]);
+
+        let relative = RuntimeLaunchSpec {
+            program: "./sidecar".into(),
+            args: Vec::new(),
+        };
+        let resolved = resolve_launch_program(&extension_id, &relative, &context)
+            .expect("a package-relative executable should resolve");
+        assert_eq!(resolved.0, fs::canonicalize(root.join("sidecar")).unwrap());
+
+        let unlisted = RuntimeLaunchSpec {
+            program: "sh".into(),
+            args: Vec::new(),
+        };
+        let error = resolve_launch_program(&extension_id, &unlisted, &context)
+            .expect_err("an unlisted host command should be rejected");
+        assert!(format!("{error:?}").contains("allow-list"));
+
+        let escaped = RuntimeLaunchSpec {
+            program: "../sidecar".into(),
+            args: Vec::new(),
+        };
+        let error = resolve_launch_program(&extension_id, &escaped, &context)
+            .expect_err("a package escape should be rejected");
+        assert!(format!("{error:?}").contains("could not be resolved"));
+
+        let absolute = RuntimeLaunchSpec {
+            program: std::env::current_exe()
+                .expect("the test executable should be discoverable")
+                .display()
+                .to_string(),
+            args: Vec::new(),
+        };
+        let error = resolve_launch_program(&extension_id, &absolute, &context)
+            .expect_err("an absolute executable should be rejected");
+        assert!(format!("{error:?}").contains("package-relative"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn process_runtime_executes_a_package_relative_sidecar() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = temporary_manifest_dir();
+        fs::create_dir_all(&root).expect("the package root should be writable");
+        let executable = root.join("runner.sh");
+        fs::write(
+            &executable,
+            b"#!/bin/sh\nIFS= read -r line\nprintf '%s\\n' '{\"protocolVersion\":1,\"ok\":true,\"result\":{\"relative\":true}}'\n",
+        )
+        .expect("the relative sidecar should be written");
+        let mut permissions = fs::metadata(&executable)
+            .expect("the relative sidecar metadata should be available")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&executable, permissions)
+            .expect("the relative sidecar should be executable");
+
+        let mut runtime = ProcessPluginRuntime;
+        let manifest = ExtensionManifest {
+            id: ExtensionId("process.relative-sidecar".into()),
+            version: "1.0.0".into(),
+            host_api: VersionRange("^1".into()),
+            runtime: RuntimeKind::Sidecar,
+            launch: Some(RuntimeLaunchSpec {
+                program: "./runner.sh".into(),
+                args: Vec::new(),
+            }),
+            target_app: None,
+            contributions: vec![],
+            permission_sets: vec![],
+            ..ExtensionManifest::default()
+        };
+        let context = RuntimeLaunchContext::package(&root);
+        let mut process = runtime
+            .start_with_context(&manifest, &PermissionGrant::default(), &context)
+            .expect("the package-relative sidecar should start");
+        let result = process
+            .invoke(&PluginInvocation {
+                extension_id: manifest.id.clone(),
+                method: "command.execute".into(),
+                command_id: "relative.open".into(),
+                args: serde_json::json!({}),
+                context: serde_json::json!({}),
+            })
+            .expect("the package-relative sidecar should answer");
+        assert_eq!(result.result, Some(serde_json::json!({ "relative": true })));
+        process
+            .shutdown()
+            .expect("the package-relative sidecar should stop");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn process_runtime_invokes_a_versioned_jsonl_command() {
         let mut runtime = ProcessPluginRuntime;
         let manifest = ExtensionManifest {
@@ -4895,6 +5219,63 @@ mod tests {
         assert_eq!(host.discover().len(), 1);
 
         fs::remove_dir_all(root).expect("the manifest directory should be removed");
+    }
+
+    #[test]
+    fn package_discovery_rejects_unlisted_launch_commands_before_activation() {
+        let root = temporary_manifest_dir();
+        fs::create_dir_all(&root).expect("the package directory should be writable");
+        let mut manifest = view_manifest(Some(WorkbenchZone::Navigation));
+        manifest.id = ExtensionId("rejected.launch-command".into());
+        manifest.runtime = RuntimeKind::Sidecar;
+        manifest.launch = Some(RuntimeLaunchSpec {
+            program: "sh".into(),
+            args: Vec::new(),
+        });
+        fs::write(
+            root.join("manifest.json"),
+            serde_json::to_vec_pretty(&manifest).expect("the manifest should serialize"),
+        )
+        .expect("the manifest should be written");
+
+        let mut host = InMemoryPluginHost::default();
+        let report = JsonManifestDiscovery::new(&root)
+            .load_into(&mut host)
+            .expect("package discovery should complete");
+        assert!(report.loaded.is_empty());
+        assert_eq!(report.failures.len(), 1);
+        match &report.failures[0].error {
+            ManifestLoadError::Rejected(PluginError::InvalidContribution(message)) => {
+                assert!(message.contains("allow-list"));
+            }
+            other => panic!("expected an allow-list rejection, got {other:?}"),
+        }
+        assert!(host.discover().is_empty());
+        fs::remove_dir_all(root).expect("the package directory should be removed");
+    }
+
+    #[test]
+    fn process_host_rejects_unscoped_external_registration() {
+        let mut manifest = view_manifest(Some(WorkbenchZone::Navigation));
+        manifest.id = ExtensionId("rejected.unscoped-runtime".into());
+        manifest.runtime = RuntimeKind::Sidecar;
+        manifest.launch = Some(RuntimeLaunchSpec {
+            program: std::env::current_exe()
+                .expect("the test executable should be discoverable")
+                .display()
+                .to_string(),
+            args: Vec::new(),
+        });
+
+        let mut host = InMemoryPluginHost::default();
+        let error = host
+            .register(manifest)
+            .expect_err("external runtimes need a committed package root");
+        assert!(matches!(
+            error,
+            PluginError::InvalidContribution(message)
+                if message.contains("committed package")
+        ));
     }
 
     #[test]

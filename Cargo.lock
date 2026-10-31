@@ -312,7 +312,9 @@ dependencies = [
  "velvet-application-core",
  "velvet-job-system",
  "velvet-layout-model",
+ "velvet-persistence",
  "velvet-plugin-api",
+ "velvet-plugin-host",
  "velvet-workbench-protocol",
 ]
 

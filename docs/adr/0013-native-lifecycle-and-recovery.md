@@ -395,9 +395,21 @@ sidecar left behind after the Core exits is an orphan to reconcile, never an
 independent writer of extension or core state. The current sidecar adapter
 already bounds stderr, records exit evidence and cleans Unix process groups on
 shutdown; Linux additionally arms a parent-death signal before exec. Package
-launch allow-lists, equivalent parent-death/process-group behavior on other
-supported platforms and cross-platform orphan reconciliation remain
-qualification gates.
+launch allow-lists are enforced for discovered and installed packages;
+equivalent parent-death/process-group behavior on other supported platforms
+and cross-platform orphan reconciliation remain qualification gates.
+
+The planned reconciler uses a host-owned per-runtime lease rather than a
+plugin-visible callback. The lease binds extension id, committed package
+generation/digest, runtime nonce, process identity and creation time. Startup
+scans leases before optional activation, verifies a platform process
+start-token/instance identity, and kills only a matching process group or
+Job Object. PID reuse or an unreadable identity produces a quarantined
+recovery item and no kill. A confirmed orphan removes its projections,
+interrupts its in-flight Jobs and leaves committed extension snapshots
+available for restore. The lease is atomic, bounded and local; it contains no
+plugin payload or credentials. Lease persistence and the cross-platform
+adapter remain future implementation work.
 
 Before system suspend, background admission stops, runners checkpoint and Job
 snapshots persist. After wake, local work resumes when its owner and storage

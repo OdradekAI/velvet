@@ -158,11 +158,16 @@ interfaces: `PluginRuntime` starts an extension with an explicit
 `RuntimeLaunchSpec` and `RuntimeProcess` reports health, shutdown and command
 invocation. The production adapter uses a child process with the canonical
 versioned JSONL envelope and passes only the extension id and the validated
-permission grant as environment metadata. The host resolves launch targets
-from the committed package and an allow-list; an external manifest cannot
-choose an arbitrary absolute executable, inherited environment or unrestricted
-working directory. The process is attached to a process group/parent-death
-policy, has bounded stdin/stdout/stderr and reports exit code or signal.
+permission grant as environment metadata. `PluginHost` binds a discovered or
+installed manifest to its committed package root through a host-only
+`RuntimeLaunchContext`. Under the package policy, an absolute executable is
+rejected, a bare executable name must be in the host allow-list, and `./` or
+`../` targets are canonicalized and accepted only when the resulting regular
+file stays inside that package root. The process working directory is the
+canonical package root; manifest arguments remain data and are not interpreted
+as extra executable capability. The process is attached to a process
+group/parent-death policy, has bounded stdin/stdout/stderr and reports exit
+code or signal.
 Built-in extensions use the same lifecycle through a no-op process; WASM
 extensions provide their declared component/module through a host-selected
 runner. Invocation payloads and responses are typed by the negotiated runtime
@@ -172,11 +177,12 @@ exit status and Unix signal evidence, and starts sidecars in a dedicated Unix
 process group so shutdown can terminate descendants. Linux also arms
 `PR_SET_PDEATHSIG(SIGKILL)` before exec so a Core death does not leave a live
 sidecar by default. These are availability and diagnosis safeguards, not a
-security sandbox. Production qualification still requires package-relative
-executable allow-lists, equivalent parent-death/process-group semantics on
-every supported platform, and orphan reconciliation. The current manifest
-seam still accepts a launch program directly so those trust checks remain an
-explicit follow-up rather than an implicit guarantee.
+security sandbox. Package-relative resolution and the default host command
+allow-list are now enforced for discovered and installed packages. Direct
+in-memory registration remains a trusted composition seam for built-ins and
+tests; it does not qualify an external package for release. Production
+qualification still requires equivalent parent-death/process-group semantics
+on every supported platform and orphan reconciliation.
 
 Declared Job contributions use the same runtime process through a distinct
 `invoke-job` message with `method: "job.run"`. The host sends the Job input as
@@ -378,6 +384,28 @@ committed extension generations and Job snapshots, marks in-flight attempts
 interrupted and retries only when their contract permits. Sidecars must not
 survive as unsupervised writers: process-group cleanup and orphan
 reconciliation are required.
+
+Orphan reconciliation is a host-owned startup operation, never a plugin
+callback. Each external runtime will have a host-created lease containing the
+extension id, committed package generation/digest, runtime nonce, process
+identity and creation time. The lease is published atomically before launch
+and closed only after the process is reaped. On restart, `PluginHost` scans
+leases before activation, verifies the process identity using the platform's
+strongest available start-time/instance token, and terminates a process only
+when both the lease and identity match. An uncertain identity is quarantined
+and shown as a recovery item; it is never killed by PID reuse alone. A
+reconciled runtime's in-flight Jobs become `Interrupted`, its projections are
+removed, and its extension data remains committed and independently
+recoverable.
+
+The platform adapter supplies the process identity and termination primitive:
+Unix uses process groups plus parent-death where available, Windows uses a
+Job Object with kill-on-close, and platforms without an equivalent primitive
+fall back to a verified PID/start-token scan and mark the result degraded.
+Lease files are bounded, local and redacted; they contain no plugin payload or
+credentials. The current alpha has the package launch policy and Linux
+parent-death/process-group cleanup, but it does not yet persist leases or run
+the cross-platform reconciler.
 
 ## Alternatives considered
 

@@ -2260,6 +2260,18 @@ mod tests {
         job_delay_ms: u64,
     }
 
+    struct FailingStartRuntime;
+
+    impl PluginRuntime for FailingStartRuntime {
+        fn start(
+            &mut self,
+            _manifest: &ExtensionManifest,
+            _permissions: &velvet_plugin_host::PermissionGrant,
+        ) -> Result<Box<dyn RuntimeProcess>, RuntimeError> {
+            Err(RuntimeError::StartFailed("runner unavailable".into()))
+        }
+    }
+
     impl RuntimeProcess for PreviewProcess {
         fn poll(&mut self) -> RuntimeHealth {
             RuntimeHealth::Running
@@ -3467,7 +3479,10 @@ mod tests {
 
     #[test]
     fn optional_plugin_start_failure_degrades_without_entering_core_safe_mode() {
-        let mut core = ApplicationCore::default();
+        let mut core = ApplicationCore::with_plugin_runtime(
+            Arc::new(InMemoryLayoutStateStore::default()),
+            Box::new(FailingStartRuntime),
+        );
         core.register_plugin(ExtensionManifest {
             id: ExtensionId("optional.broken".into()),
             version: "1.0.0".into(),
@@ -3491,6 +3506,35 @@ mod tests {
             velvet_workbench_protocol::RecoveryMode::Degraded
         ));
         assert_eq!(core.recovery_projection().consecutive_failures, 0);
+    }
+
+    #[test]
+    fn native_registration_rejects_unscoped_external_runtime() {
+        let mut core = ApplicationCore::default();
+        let manifest = ExtensionManifest {
+            id: ExtensionId("unscoped.external".into()),
+            version: "1.0.0".into(),
+            host_api: VersionRange("^1".into()),
+            runtime: RuntimeKind::Sidecar,
+            launch: Some(velvet_plugin_api::RuntimeLaunchSpec {
+                program: "/tmp/untrusted-sidecar".into(),
+                args: Vec::new(),
+            }),
+            target_app: None,
+            contributions: Vec::new(),
+            permission_sets: Vec::new(),
+            ..ExtensionManifest::default()
+        };
+
+        let error = core
+            .dispatch(Request::Command(Command::RegisterPlugin {
+                manifest: Box::new(manifest.into()),
+            }))
+            .expect_err("native registration must require an installed package root");
+        assert!(matches!(
+            error,
+            CoreError::Plugin(message) if message.contains("committed package")
+        ));
     }
 
     #[test]

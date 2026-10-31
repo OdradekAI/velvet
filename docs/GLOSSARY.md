@@ -36,6 +36,18 @@ FeedItem 关联的内容快照、附件或解析结果。Capture 可以在保留
 
 插件向 Workbench、WorkbenchApp 或可复用能力注册的扩展能力。Contribution 必须声明目标容器、作用域和所需权限，由宿主负责生命周期和失败隔离。
 
+## RuntimeLaunchContext
+
+由 `PluginHost` 在 Rust 内部绑定给外部插件运行时的启动上下文。它包含已提交插件包根目录和宿主 allow-list；包内 `./`/`../` 可执行文件必须 canonicalize 后仍位于该根目录，绝对路径和未声明的宿主命令被拒绝。它不是 manifest 字段，也不通过 TypeScript/Tauri 协议暴露。
+
+## RuntimeLease
+
+由宿主为每个外部运行时创建的有界本地租约。租约绑定 Extension、已提交 package/data generation、runtime nonce 和平台进程身份，用于启动后关闭、异常退出诊断和重启时 orphan reconciliation；它不包含插件 payload、凭据或业务状态。
+
+## Orphan reconciliation
+
+核心重启时对未关闭 RuntimeLease 的恢复流程。宿主必须先验证 PID/start-token、process group 或 Job Object 等平台身份，再决定终止；身份不确定时进入 quarantine，不因 PID 单独匹配而杀进程。确认孤儿后移除插件投影、将其 Jobs 标为 Interrupted，同时保留已提交扩展数据。
+
 ## Contribution scope
 
 Contribution 的作用范围。`workbench` 表示全局工作台，`workbench-app` 表示一个指定的 WorkbenchApp，`capability` 表示可复用的数据、预览、处理或任务能力。
