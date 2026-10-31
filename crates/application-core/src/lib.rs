@@ -245,9 +245,8 @@ impl ApplicationCore {
         id: &ExtensionId,
         reason: DisableReason,
     ) -> Result<(), PluginError> {
-        let result = self.plugins.disable(id, reason);
         self.clear_plugin_runtime_state(id);
-        result
+        self.plugins.disable(id, reason)
     }
 
     pub fn check_plugin_health(&mut self, id: &ExtensionId) -> Result<ExtensionState, PluginError> {
@@ -679,15 +678,14 @@ impl ApplicationCore {
     }
 
     pub fn uninstall_plugin(&mut self, id: &ExtensionId) -> Result<(), PluginError> {
-        let Some(plugin_directory) = self.plugin_directory.as_deref() else {
+        let Some(plugin_directory) = self.plugin_directory.clone() else {
             return Err(PluginError::UninstallFailed(
                 "plugin uninstallation is unavailable without an application plugin directory"
                     .into(),
             ));
         };
-        let result = self.plugins.uninstall_from_directory(id, plugin_directory);
         self.clear_plugin_runtime_state(id);
-        result
+        self.plugins.uninstall_from_directory(id, &plugin_directory)
     }
 
     pub fn dispatch(&mut self, request: Request) -> Result<Response, CoreError> {
@@ -1313,7 +1311,7 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
     use velvet_layout_model::{LayoutCommand, WorkbenchPart, WorkbenchZone};
     use velvet_persistence::JsonFileLayoutStateStore;
     use velvet_plugin_api::{
@@ -1344,10 +1342,12 @@ mod tests {
     struct PreviewRuntime {
         fail_augmentation: bool,
         reject_action: bool,
+        job_delay_ms: u64,
     }
     struct PreviewProcess {
         fail_augmentation: bool,
         reject_action: bool,
+        job_delay_ms: u64,
     }
 
     impl RuntimeProcess for PreviewProcess {
@@ -1374,6 +1374,9 @@ mod tests {
                 ));
             }
             if invocation.method == "job.run" {
+                if self.job_delay_ms > 0 {
+                    std::thread::sleep(Duration::from_millis(self.job_delay_ms));
+                }
                 return Ok(PluginInvocationResult {
                     result: Some(serde_json::json!({
                         "contentType": "application/json",
@@ -1444,6 +1447,7 @@ mod tests {
             Ok(Box::new(PreviewProcess {
                 fail_augmentation: self.fail_augmentation,
                 reject_action: self.reject_action,
+                job_delay_ms: self.job_delay_ms,
             }))
         }
     }
@@ -1576,6 +1580,7 @@ mod tests {
             Box::new(PreviewRuntime {
                 fail_augmentation: false,
                 reject_action: false,
+                job_delay_ms: 0,
             }),
         );
         let manifest = preview_manifest();
@@ -1635,6 +1640,7 @@ mod tests {
             Box::new(PreviewRuntime {
                 fail_augmentation: true,
                 reject_action: false,
+                job_delay_ms: 0,
             }),
         );
         let manifest = preview_manifest();
@@ -1678,6 +1684,7 @@ mod tests {
             Box::new(PreviewRuntime {
                 fail_augmentation: false,
                 reject_action: false,
+                job_delay_ms: 0,
             }),
         );
         let manifest = preview_manifest();
@@ -1794,12 +1801,122 @@ mod tests {
     }
 
     #[test]
+    fn disabling_plugin_cancels_in_flight_job_and_retries_without_fallback() {
+        let mut core = ApplicationCore::with_plugin_runtime(
+            Arc::new(InMemoryLayoutStateStore::default()),
+            Box::new(PreviewRuntime {
+                fail_augmentation: false,
+                reject_action: false,
+                job_delay_ms: 250,
+            }),
+        );
+        let manifest = preview_manifest();
+        let id = manifest.id.clone();
+        core.register_plugin(manifest)
+            .expect("preview action provider should register");
+        core.activate_plugin(&id)
+            .expect("preview action provider should activate");
+        core.dispatch(Request::Query(Query::ResolvePreview {
+            asset_id: velvet_asset_core::AssetId("asset-1".into()),
+            content_kind: "image".into(),
+            intent: velvet_preview_core::PreviewIntent::Quick,
+            surface: velvet_preview_core::PreviewSurface::Workspace,
+        }))
+        .expect("preview session should authorize its actions");
+
+        let response = core
+            .dispatch(Request::Command(Command::InvokePreviewAction {
+                extension_id: id.clone(),
+                command_id: "preview.analyze".into(),
+                args: serde_json::json!({ "scope": "metadata" }),
+                context: velvet_plugin_api::PreviewActionContext {
+                    session_id: "preview.example:metadata:asset-1".into(),
+                    provider_id: "preview.example.preview.metadata".into(),
+                    asset_id: "asset-1".into(),
+                    content_kind: "image".into(),
+                    intent: velvet_plugin_api::PreviewIntent::Quick,
+                    surface: velvet_plugin_api::PreviewSurface::Workspace,
+                },
+            }))
+            .expect("preview action should create a job");
+        let job_id = match response {
+            Response::Job(job) => job.id,
+            other => panic!("expected job response, got {other:?}"),
+        };
+
+        for _ in 0..50 {
+            if core
+                .job_snapshots()
+                .into_iter()
+                .any(|job| job.id == job_id && job.status == velvet_job_system::JobStatus::Running)
+            {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(core.job_snapshots().into_iter().any(|job| {
+            job.id == job_id && job.status == velvet_job_system::JobStatus::Running
+        }));
+
+        core.disable_plugin(&id, DisableReason::User)
+            .expect("plugin disable should succeed");
+        let cancelled = core
+            .job_snapshots()
+            .into_iter()
+            .find(|job| job.id == job_id)
+            .expect("cancelled job should remain persisted");
+        assert_eq!(cancelled.status, velvet_job_system::JobStatus::Cancelled);
+        assert!(cancelled.retryable);
+        assert_eq!(cancelled.result, None);
+        assert_eq!(
+            cancelled.message.as_deref(),
+            Some("Cancelled because the owner was disabled")
+        );
+
+        std::thread::sleep(Duration::from_millis(300));
+        assert_eq!(
+            core.job_snapshots()
+                .into_iter()
+                .find(|job| job.id == job_id)
+                .map(|job| job.status),
+            Some(velvet_job_system::JobStatus::Cancelled)
+        );
+
+        core.retry_job(&job_id)
+            .expect("cancelled plugin job should be retryable");
+        for _ in 0..50 {
+            if core
+                .job_snapshots()
+                .into_iter()
+                .find(|job| job.id == job_id)
+                .is_some_and(|job| job.status == velvet_job_system::JobStatus::Failed)
+            {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let failed_retry = core
+            .job_snapshots()
+            .into_iter()
+            .find(|job| job.id == job_id)
+            .expect("retried job should remain persisted");
+        assert_eq!(failed_retry.status, velvet_job_system::JobStatus::Failed);
+        assert!(failed_retry.retryable);
+        assert!(failed_retry
+            .message
+            .as_deref()
+            .is_some_and(|message| message.contains("runner unavailable")));
+        assert_eq!(failed_retry.result, None);
+    }
+
+    #[test]
     fn rejected_preview_action_keeps_the_plugin_and_session_available() {
         let mut core = ApplicationCore::with_plugin_runtime(
             Arc::new(InMemoryLayoutStateStore::default()),
             Box::new(PreviewRuntime {
                 fail_augmentation: false,
                 reject_action: true,
+                job_delay_ms: 0,
             }),
         );
         let manifest = preview_manifest();

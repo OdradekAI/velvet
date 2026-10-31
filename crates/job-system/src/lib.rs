@@ -488,8 +488,18 @@ impl JobSystem {
             let Ok(Some(initial)) = system.start_attempt(&id) else {
                 return;
             };
-            let runner = system.runner_for(&initial.kind);
             let attempt = initial.attempt;
+            let Some(runner) = system.runner_for(&initial) else {
+                let _ = system.fail_attempt(
+                    &id,
+                    attempt,
+                    format!(
+                        "Job runner unavailable for owner {}",
+                        initial.provenance.owner_id
+                    ),
+                );
+                return;
+            };
             let context = JobExecutionContext {
                 id: id.clone(),
                 kind: initial.kind.clone(),
@@ -527,13 +537,16 @@ impl JobSystem {
         });
     }
 
-    fn runner_for(&self, kind: &str) -> Arc<dyn JobRunner> {
-        self.inner
-            .runners
-            .read()
-            .ok()
-            .and_then(|runners| runners.get(kind).map(|entry| entry.runner.clone()))
-            .unwrap_or_else(|| self.inner.fallback_runner.clone())
+    fn runner_for(&self, snapshot: &JobSnapshot) -> Option<Arc<dyn JobRunner>> {
+        if let Some(runner) = self.inner.runners.read().ok().and_then(|runners| {
+            runners.get(&snapshot.kind).and_then(|entry| {
+                (entry.owner_id == snapshot.provenance.owner_id).then(|| entry.runner.clone())
+            })
+        }) {
+            return Some(runner);
+        }
+
+        (snapshot.provenance.owner_id == "core").then(|| self.inner.fallback_runner.clone())
     }
 
     fn start_attempt(&self, id: &JobId) -> Result<Option<JobSnapshot>, JobError> {
@@ -793,7 +806,7 @@ mod tests {
                 duration_ms: 200,
                 will_fail: false,
                 input: serde_json::Value::Null,
-                provenance: JobProvenance::for_owner("test"),
+                provenance: JobProvenance::for_owner("core"),
             })
             .expect("submit");
         for _ in 0..20 {
@@ -817,7 +830,7 @@ mod tests {
                 duration_ms: 1_000,
                 will_fail: false,
                 input: serde_json::Value::Null,
-                provenance: JobProvenance::for_owner("test"),
+                provenance: JobProvenance::for_owner("core"),
             })
             .expect("submit");
         let cancelled = jobs.cancel(&created.id).expect("cancel");
@@ -835,7 +848,7 @@ mod tests {
                 duration_ms: 200,
                 will_fail: true,
                 input: serde_json::Value::Null,
-                provenance: JobProvenance::for_owner("test"),
+                provenance: JobProvenance::for_owner("core"),
             })
             .expect("submit");
         for _ in 0..30 {
@@ -1113,7 +1126,7 @@ mod tests {
                 duration_ms: 200,
                 will_fail: false,
                 input: serde_json::Value::Null,
-                provenance: JobProvenance::for_owner("test"),
+                provenance: JobProvenance::for_owner("sample.extension"),
             })
             .expect("job should submit");
         thread::sleep(Duration::from_millis(20));
@@ -1174,6 +1187,47 @@ mod tests {
         assert_eq!(
             jobs.snapshot(&created.id).map(|snapshot| snapshot.status),
             Some(JobStatus::Cancelled)
+        );
+    }
+
+    #[test]
+    fn retry_after_owner_cleanup_reports_missing_runner_instead_of_using_fallback() {
+        let jobs = JobSystem::default();
+        jobs.register_runner("extension.a", "owned", Arc::new(AttemptRunner))
+            .expect("runner should register");
+        let created = jobs
+            .submit(JobSpec {
+                kind: "owned".into(),
+                duration_ms: 200,
+                will_fail: false,
+                input: Value::Null,
+                provenance: JobProvenance::for_owner("extension.a"),
+            })
+            .expect("owned job should submit");
+
+        jobs.cancel_owned_jobs("extension.a")
+            .expect("owner cancellation should succeed");
+        jobs.unregister_runners("extension.a")
+            .expect("runner cleanup should succeed");
+        jobs.retry(&created.id).expect("cancelled job should retry");
+
+        for _ in 0..30 {
+            if let Some(snapshot) = jobs.snapshot(&created.id) {
+                if snapshot.status == JobStatus::Failed {
+                    assert!(snapshot.retryable);
+                    assert_eq!(snapshot.result, None);
+                    assert!(snapshot
+                        .message
+                        .as_deref()
+                        .is_some_and(|message| message.contains("runner unavailable")));
+                    return;
+                }
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        panic!(
+            "owner retry did not report its missing runner: {:?}",
+            jobs.snapshot(&created.id)
         );
     }
 }

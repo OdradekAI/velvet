@@ -34,16 +34,17 @@ recomputable independently of the extension that produced them.
 The execution seam is a Rust `JobRunner` registry keyed by owner and declared
 Job kind. Runner registrations are removed when their owner is disabled,
 crashes or uninstalls; queued and running Jobs owned by that extension are
-cancelled at the same lifecycle boundary. A runner receives an opaque `JobExecutionContext` with the Job id,
+cancelled before the runtime is shut down. A runner receives an opaque `JobExecutionContext` with the Job id,
 attempt, input, provenance, progress reporter and cooperative cancellation
 handle; it returns a typed content type and JSON payload or a typed failure. A
 plugin-backed runner uses the isolated runtime's `invoke-job`/`job.run` seam;
 runtime input and result payloads are size-checked, progress events are bounded
 and projected through the same reporter.
-The
-`JobSystem` supplies a deterministic runner as a safe fallback for unregistered
-development jobs, catches runner panics, and rejects stale progress/completion
-from an older attempt after cancellation and retry.
+The `JobSystem` supplies a deterministic runner only for Jobs owned by `core`;
+an extension-owned Job with a missing runner becomes a retryable diagnosed
+failure instead of executing under another owner or the host fallback. It
+catches runner panics and rejects stale progress/completion from an older
+attempt after cancellation and retry.
 
 `JobProvenance` is part of the persisted Job snapshot and includes the owner,
 optional Asset/content identity, input fingerprint, provider id/version,
