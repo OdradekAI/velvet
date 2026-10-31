@@ -1039,6 +1039,87 @@ mod tests {
     }
 
     #[test]
+    fn provider_version_and_settings_changes_invalidate_result_reuse() {
+        let jobs = JobSystem::default();
+        jobs.register_runner("sample.extension", "derived", Arc::new(ResultRunner))
+            .expect("runner should register");
+        let provenance = JobProvenance {
+            owner_id: "sample.extension".into(),
+            input_fingerprint: Some("sha256:asset-1".into()),
+            provider_id: Some("sample.preview".into()),
+            provider_version: Some("1.0.0".into()),
+            settings_fingerprint: Some("settings:v1".into()),
+            schema_version: JOB_SCHEMA_VERSION,
+            ..JobProvenance::default()
+        };
+        let created = jobs
+            .submit_or_reuse(JobSpec {
+                kind: "derived".into(),
+                duration_ms: 200,
+                will_fail: false,
+                input: Value::Null,
+                provenance: provenance.clone(),
+            })
+            .expect("derived job should submit");
+
+        for _ in 0..30 {
+            if jobs
+                .snapshot(&created.id)
+                .is_some_and(|snapshot| snapshot.status == JobStatus::Completed)
+            {
+                break;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(
+            jobs.snapshot(&created.id).map(|snapshot| snapshot.status),
+            Some(JobStatus::Completed)
+        );
+
+        let provider_changed = jobs
+            .submit_or_reuse(JobSpec {
+                kind: "derived".into(),
+                duration_ms: 200,
+                will_fail: false,
+                input: Value::Null,
+                provenance: JobProvenance {
+                    provider_id: Some("sample.preview.decoder".into()),
+                    ..provenance.clone()
+                },
+            })
+            .expect("provider change should create a new job");
+        assert_ne!(provider_changed.id, created.id);
+
+        let version_changed = jobs
+            .submit_or_reuse(JobSpec {
+                kind: "derived".into(),
+                duration_ms: 200,
+                will_fail: false,
+                input: Value::Null,
+                provenance: JobProvenance {
+                    provider_version: Some("1.1.0".into()),
+                    ..provenance.clone()
+                },
+            })
+            .expect("provider version change should create a new job");
+        assert_ne!(version_changed.id, created.id);
+
+        let settings_changed = jobs
+            .submit_or_reuse(JobSpec {
+                kind: "derived".into(),
+                duration_ms: 200,
+                will_fail: false,
+                input: Value::Null,
+                provenance: JobProvenance {
+                    settings_fingerprint: Some("settings:v2".into()),
+                    ..provenance
+                },
+            })
+            .expect("settings change should create a new job");
+        assert_ne!(settings_changed.id, created.id);
+    }
+
+    #[test]
     fn missing_input_fingerprint_is_always_a_cache_miss() {
         let jobs = JobSystem::default();
         jobs.register_runner("sample.extension", "uncacheable", Arc::new(ResultRunner))

@@ -68,6 +68,13 @@ misses. The lookup and submission are serialized so concurrent callers do not
 create duplicate work through this seam. Stale or incompatible results remain
 diagnosable snapshots and are never presented as a current cache hit.
 
+Until a concrete Preview or Facet consumer needs a materialized artifact store,
+the completed Job result index is the only reusable cache index. Provider and
+Facet owners do not create a second generic cache: changing content, provider
+identity/version or settings produces a new provenance and therefore a new
+Job. A future owner-specific artifact store must use the same key and declare
+its own retention, invalidation and recovery policy.
+
 ## Consequences
 
 The v0.0.3 host slice implements the shared lifecycle seam: JobSystem owns

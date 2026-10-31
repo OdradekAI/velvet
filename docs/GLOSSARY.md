@@ -143,6 +143,7 @@ WorkbenchApp 在 WorkspaceArea 中呈现的主界面。AppSurface 可以拥有�
 ## Preview cache
 
 由 PreviewProvider 或 capability owner 产生的派生结果缓存。缓存带有输入、provider、版本和设置 provenance，可以失效、重算或独立清理。
+首期复用入口是 Rust JobSystem 的完整 provenance 结果索引；具体 provider 或 AssetFacet 需要物化缓存时，必须自行声明存储 owner、保留和清理策略。
 
 ## Job
 
