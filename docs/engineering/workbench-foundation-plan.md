@@ -161,6 +161,80 @@ host's trust and recovery boundary:
    selected, add a read-only host-verified `EntitlementHandle` with bounded
    offline grace. Package signatures never become payment proofs.
 
+### Current skeleton versus target contract
+
+The two lifecycle reviews changed the implementation route, not the ownership
+model. The current repository is a contract-bearing skeleton: several seams,
+projections and narrow failure tests exist, while the durable recovery kernel
+and plugin trust/data boundaries are still absent. The following matrix is the
+baseline for sequencing work. “Partial” means that a useful seam exists but it
+must not be advertised as the target guarantee.
+
+| Target contract | Current skeleton evidence | Remaining gap | Priority |
+| --- | --- | --- | --- |
+| `RecoverySupervisor`, startup phases and two-failure Safe Mode | `ApplicationCore` composes stores and `apps/desktop/src-tauri` has typed command/event mapping | No launch receipt, monotonic phase deadlines, successful-start checkpoint, Safe Mode state or host-native `RecoverySurface` | P0 |
+| Owner snapshots, `RecoverySet` and migration rollback | Layout/Profile/Job/source stores use schema fields and temporary-file replacement; layout has local migrations | No generation metadata, commit barrier, recovery index, fsync/durability report, quarantine model or cross-owner restore | P0 |
+| Extension-owned data with host-controlled backup/migration | Plugin install has staging/rollback directories and a bounded install recovery log | No namespaced `ExtensionStorage`, backup/migration participant handles, extension generations or selective extension-state restore | P0 |
+| Per-extension runtime failure domain | `PluginHost` tracks one process per extension, health state and contribution cleanup; `JobSystem` marks restart work interrupted | Sidecar launch accepts a manifest program, stderr is discarded, process groups and parent-death cleanup are absent, and runtime events are not structured or persisted | P0 |
+| Resource-governed, restartable Jobs | `JobSystem` persists snapshots/results, supports cooperative cancellation, retry and provenance matching | No owner/device/Job budget ledger, deadlines, cancellation grace, exponential backoff policy, checkpoint contract or suspend/offline policy | P0/P1 |
+| Host diagnostics and user recovery | Plugin install recovery log and renderer recovery operations panel exist | No common `DiagnosticEvent`, bounded redaction, `DiagnosticBundle`, crash-capture adapter or lifecycle/Job/plugin correlation | P0 |
+| Versioned protocol handshake and reconnect | Rust/TypeScript envelopes carry exact `protocolVersion` and `requestId`; stale layout revisions are checked | `u16` is treated as one exact version; no major/minor negotiation, feature/schema selection, `sessionId`, sequence resync or unknown-outcome query rule | P1 |
+| Deny-by-default native boundary | Tauri command handlers map typed requests and a capability file scopes the main window | `core:default`, WebView creation permissions and `csp: null` are still alpha policy; recovery has no separate minimal capability set or negative command matrix | P0 |
+| Extension package trust and release recovery | Manifest/schema/host API checks and application release signing are separate seams | No extension signature envelope, publisher trust record, revocation/freshness/anti-downgrade or visible unsigned developer mode; updater/package staging is inactive | P1 |
+| Platform lifecycle and single-writer profile | A single `ApplicationCore` is composed for the Tauri process and renderer surfaces can suspend | No profile lock, second-instance activation forwarding, deep-link/path/volume policy, sleep/wake signal or Tier A/B runtime probe | P1 |
+
+This matrix also prevents a common false completion signal: an install
+transaction rollback protects package bytes, but it does not protect extension
+state; a Job snapshot marked `Interrupted` explains restart state, but it does
+not make the work resumable; and a sidecar process boundary limits availability
+failures, but it does not grant a security sandbox. The in-process
+`RecoverySupervisor` remains the P0 implementation. A helper process, full
+WASM component runtime, marketplace entitlement service and remote connector
+are later adapters with separate evidence, not prerequisites for this kernel.
+
+### Next implementation route
+
+The next work should follow dependency order and land as vertical slices with
+fault-injection tests:
+
+1. **P0 lifecycle kernel**: add the `RecoverySupervisor` trait, launch receipt,
+   startup phase/deadline state machine, Safe Mode decision and the minimal
+   recovery protocol/surface. Keep the journal failure-tolerant and make the
+   recovery surface usable without the normal Workbench or a plugin.
+2. **P0 durable generations**: introduce storage primitives for committed
+   generations, checksums, atomic publication and quarantine. Build the
+   recovery index and `RecoverySet` barrier, then migrate Layout/Profile/Job
+   stores to those primitives before adding new product data.
+3. **P0 extension state and runtime evidence**: define the host-owned
+   `ExtensionStorage`, backup/migration participants and `PluginDiagnosticSink`.
+   Harden the sidecar adapter with package-relative allow-lists, bounded stderr,
+   process-group cleanup, exit evidence and orphan reconciliation. Wire failure
+   events to projection/Job cleanup and late-event rejection.
+4. **P0 Job governance**: extend `JobSpec` and `JobSystem` with owner budgets,
+   deadline and cancellation-grace semantics, typed retry classes, checkpoint
+   payloads and lifecycle/network pause signals. Keep CPU/network as soft
+   scheduling budgets until measurements justify hard enforcement.
+5. **P0 recovery UX and native ACL**: implement `DiagnosticBundle`, redaction
+   and export; add a host-only recovery capability set and command-negative
+   tests; tighten the current Tauri capability/CSP policy before exposing more
+   plugin UI or native integrations.
+6. **P1 canonical transport**: evolve Rust and TypeScript together to a
+   major/minor handshake with fresh sessions, feature/schema negotiation,
+   authoritative snapshot resync and idempotency handling for unknown mutation
+   outcomes.
+7. **P1 trust, platform and release**: add extension package signatures and
+   trust records, profile locking/activation forwarding, path/volume policy,
+   crash evidence, staged package/data update rollback and Tier A/B probes.
+8. **Deferred ecosystem services**: only after the local contract is stable,
+   select a marketplace/account provider for read-only entitlement status,
+   implement a production WASM/component adapter, and evaluate an optional
+   out-of-process supervisor from measured crash/relaunch requirements.
+
+Every step must add the corresponding acceptance row before moving to the next
+boundary. Until steps 1–5 pass, Velvet should treat the plugin SDK and package
+marketplace as alpha/internal surfaces rather than promise the full recovery or
+security behavior described by the ADRs.
+
 The current React shell is a renderer slice, not the completed foundation. The
 Part/mode, three-scope layout state, WorkbenchApp/AppSurface/shared context,
 contribution scope/container, ViewContainer/View, namespace/lifecycle,
