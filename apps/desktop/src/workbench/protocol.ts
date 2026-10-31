@@ -8,6 +8,7 @@ export type {
   CorePluginDisableReason,
   CorePluginHostContainer,
   CorePluginManifest,
+  CorePluginStorageDeclaration,
   CorePluginPermission,
   CorePluginPermissionSet,
   CorePluginProjection,

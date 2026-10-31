@@ -263,18 +263,33 @@ handles rather than the application database or an arbitrary path. An
 extension may implement a `BackupParticipant` to export a bounded logical
 snapshot of its own namespace and a `MigrationParticipant` to transform a
 staged source generation into a staged destination generation. The host owns
-the snapshot index, commit barrier, checksum, quota, deadline and publication
-of the resulting `StateSnapshot` or `RecoverySet`.
+the snapshot index, checksum, quota, conflict check and publication of the
+resulting extension `StateSnapshot`. Core `RecoverySet` publication remains
+owned by the core persistence path; extension storage never becomes a member
+of that set.
+
+The alpha implementation exposes this boundary through `plugin-host` over the
+shared `StateSnapshotStore`. A manifest must declare `storage.schemaVersion`
+and `storage.quotaBytes`; the host validates the declaration, derives the
+owner namespace from the extension id, and offers transactional key/blob
+updates with generation conflict detection. Backup export and migration
+participants run before a destination generation is committed. The Rust
+protocol DTO and desktop TypeScript projection carry the declaration, but
+there is deliberately no raw Tauri storage command and no filesystem path in
+the extension API. Runtime RPC invocation, persisted extension diagnostics,
+user-facing extension restore/quarantine actions and automatic disable policy
+remain follow-up gates.
 
 Extension migration receives a read-only source generation and a host-owned
 destination writer. It may not write Asset, Workspace, Profile or Job state,
 call external network/process capabilities or publish a recovery pointer. The
-host validates the output and references before commit. A failed or interrupted
-migration quarantines only that extension store, disables the extension and
-keeps the previous generation available; it never resets core data. Rollback
-uses the previous validated package/data generation, so reverse migration is
-optional. An older package can open a newer extension schema only when its
-manifest explicitly declares that read range and the host validates it.
+host validates the output and references before commit. A participant failure
+leaves the previous committed generation authoritative; a later lifecycle
+coordinator may quarantine that extension generation and disable the extension
+without touching core data. Rollback uses the previous validated package/data
+generation, so reverse migration is optional. An older package can open a
+newer extension schema only when its manifest explicitly declares that read
+range and the host validates it.
 
 Portable export is a separate user action from internal rolling recovery. It
 excludes secrets, entitlement tokens, transient logs, caches and runtime

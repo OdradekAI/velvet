@@ -171,6 +171,8 @@ pub struct WirePluginManifest {
     required_capabilities: Vec<String>,
     optional_capabilities: Vec<String>,
     localization: Option<LocalizationManifest>,
+    #[serde(default)]
+    storage: Option<velvet_plugin_api::ExtensionStorageDeclaration>,
     workbench_app: Option<WorkbenchAppDescriptor>,
     contributions: Vec<ContributionDescriptor>,
     permission_sets: Vec<ZonePermissionSet>,
@@ -200,6 +202,7 @@ impl TryFrom<WirePluginManifest> for ExtensionManifest {
             required_capabilities: value.required_capabilities,
             optional_capabilities: value.optional_capabilities,
             localization: value.localization,
+            storage: value.storage,
             workbench_app: value.workbench_app,
             contributions: value.contributions,
             permission_sets: value.permission_sets,
@@ -1782,6 +1785,45 @@ fn extension_state_name(state: &velvet_plugin_api::ExtensionState) -> &'static s
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wire_plugin_manifest_preserves_extension_storage_declaration() {
+        let manifest = ExtensionManifest::try_from(WirePluginManifest {
+            manifest_schema: 1,
+            id: "sample.storage".into(),
+            version: "1.0.0".into(),
+            host_api: VersionRange("1".into()),
+            bridge_api: VersionRange("1".into()),
+            runtime_protocol: VersionRange("1".into()),
+            runtime: RuntimeKind::BuiltIn,
+            extension_kind: vec![ExtensionKind::Capability],
+            launch: None,
+            activation_events: Vec::new(),
+            extension_dependencies: Vec::new(),
+            target_app: None,
+            support: ExtensionSupport::default(),
+            required_capabilities: Vec::new(),
+            optional_capabilities: Vec::new(),
+            localization: None,
+            storage: Some(velvet_plugin_api::ExtensionStorageDeclaration {
+                schema_version: 2,
+                quota_bytes: 8192,
+            }),
+            workbench_app: None,
+            contributions: Vec::new(),
+            permission_sets: Vec::new(),
+            extensions: BTreeMap::new(),
+        })
+        .expect("the wire manifest should map to the domain manifest");
+
+        assert_eq!(
+            manifest.storage,
+            Some(velvet_plugin_api::ExtensionStorageDeclaration {
+                schema_version: 2,
+                quota_bytes: 8192,
+            })
+        );
+    }
 
     #[test]
     fn wire_requests_accept_camel_case_protocol_fields() {

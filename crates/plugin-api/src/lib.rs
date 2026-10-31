@@ -72,6 +72,18 @@ pub struct LocalizationManifest {
     pub bundle_schema: u16,
 }
 
+/// Declares the host-owned durable store available to an extension.
+///
+/// The extension receives a capability handle through `PluginHost`; it never
+/// receives a filesystem path or a raw Tauri command. `quota_bytes` is a
+/// bounded request, not an exemption from the host's global snapshot limit.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExtensionStorageDeclaration {
+    pub schema_version: u16,
+    pub quota_bytes: u64,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WorkbenchAppDescriptor {
@@ -375,6 +387,8 @@ pub struct ExtensionManifest {
     pub required_capabilities: Vec<String>,
     pub optional_capabilities: Vec<String>,
     pub localization: Option<LocalizationManifest>,
+    #[serde(default)]
+    pub storage: Option<ExtensionStorageDeclaration>,
     pub workbench_app: Option<WorkbenchAppDescriptor>,
     pub contributions: Vec<ContributionDescriptor>,
     pub permission_sets: Vec<ZonePermissionSet>,
@@ -402,6 +416,8 @@ struct RawExtensionManifest {
     required_capabilities: Vec<String>,
     optional_capabilities: Vec<String>,
     localization: Option<LocalizationManifest>,
+    #[serde(default)]
+    storage: Option<ExtensionStorageDeclaration>,
     workbench_app: Option<WorkbenchAppDescriptor>,
     contributions: Vec<ContributionDescriptor>,
     permission_sets: Vec<ZonePermissionSet>,
@@ -433,6 +449,7 @@ impl<'de> Deserialize<'de> for ExtensionManifest {
             required_capabilities: raw.required_capabilities,
             optional_capabilities: raw.optional_capabilities,
             localization: raw.localization,
+            storage: raw.storage,
             workbench_app: raw.workbench_app,
             contributions: raw.contributions,
             permission_sets: raw.permission_sets,
@@ -469,6 +486,7 @@ impl Default for ExtensionManifest {
             required_capabilities: Vec::new(),
             optional_capabilities: Vec::new(),
             localization: None,
+            storage: None,
             workbench_app: None,
             contributions: Vec::new(),
             permission_sets: Vec::new(),

@@ -173,11 +173,22 @@ component failure and clears that owner's projections and Jobs; it does not
 increment the core pre-ready Safe Mode counter.
 
 This slice is deliberately narrower than the full decision: native no-WebView
-recovery, migration-participant integration on top of the transaction seam,
-user-facing restore confirmation and the full cross-component
-`DiagnosticBundle` are still implementation gates. A successful renderer
+recovery, runtime-RPC invocation of extension migration participants,
+user-facing extension restore/quarantine confirmation and the full
+cross-component `DiagnosticBundle` are still implementation gates. A successful renderer
 restore or quarantine action requests a fresh startup so the selected set
 becomes live.
+
+`PluginHost` now provides the first extension-state slice on top of the same
+snapshot adapter. Each manifest-declared store uses an owner namespace of
+`extension.<id>` and scope `storage`, has a bounded quota, and commits through
+generation compare-and-swap semantics. `BackupParticipant` receives a typed
+logical view and its output is revalidated by the host; `MigrationParticipant`
+receives a read-only source and a destination transaction. Neither participant
+can publish a core `RecoverySet`, and a failed participant leaves the previous
+extension generation and all other owners untouched. This is a host seam for
+in-process tests and future runtime RPC, not yet a promise that arbitrary
+plugin code can run during startup migration.
 Optional plugin activation is recorded as a degraded component failure and does
 not block the core-ready checkpoint. The file journal is an evidence
 store, not yet a replacement for owner snapshots or a proof that writes are

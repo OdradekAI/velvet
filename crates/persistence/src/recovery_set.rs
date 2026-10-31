@@ -733,6 +733,14 @@ mod tests {
             self.inner.load_latest(owner_id, scope)
         }
 
+        fn load_previous(
+            &self,
+            owner_id: &str,
+            scope: &str,
+        ) -> Result<Option<StateSnapshot>, SnapshotError> {
+            self.inner.load_previous(owner_id, scope)
+        }
+
         fn load_generation(
             &self,
             owner_id: &str,

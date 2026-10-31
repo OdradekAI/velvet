@@ -20,6 +20,14 @@ use velvet_plugin_api::{
     MANIFEST_SCHEMA_VERSION,
 };
 
+mod extension_storage;
+
+pub use extension_storage::{
+    BackupParticipant, ExtensionStorage, ExtensionStorageError, ExtensionStorageExport,
+    ExtensionStorageTransaction, ExtensionStorageView, MigrationParticipant,
+    EXTENSION_STORAGE_SCOPE, MAX_EXTENSION_STORAGE_BYTES, MAX_EXTENSION_STORAGE_KEY_BYTES,
+};
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PluginError {
     NotFound(ExtensionId),
@@ -69,6 +77,10 @@ pub enum PluginError {
         extension_id: ExtensionId,
         locale: String,
         limit: usize,
+    },
+    ExtensionStorage {
+        extension_id: ExtensionId,
+        message: String,
     },
     InvalidState {
         extension_id: ExtensionId,
@@ -1316,6 +1328,17 @@ pub trait PluginHost {
         id: &ExtensionId,
         install_root: &Path,
     ) -> Result<(), PluginError>;
+    fn extension_storage(&self, id: &ExtensionId) -> Result<ExtensionStorage, PluginError>;
+    fn export_extension_state(
+        &self,
+        id: &ExtensionId,
+        participant: &dyn BackupParticipant,
+    ) -> Result<ExtensionStorageExport, PluginError>;
+    fn migrate_extension_state(
+        &self,
+        id: &ExtensionId,
+        participant: &dyn MigrationParticipant,
+    ) -> Result<ExtensionStorageView, PluginError>;
 }
 
 pub struct InMemoryPluginHost {
@@ -1327,6 +1350,7 @@ pub struct InMemoryPluginHost {
     host_api: VersionRange,
     apps: BTreeMap<String, VersionRange>,
     pending_installs: BTreeMap<ExtensionId, InstallBackup>,
+    extension_snapshots: Option<Arc<dyn velvet_persistence::StateSnapshotStore>>,
 }
 
 struct InstallBackup {
@@ -1356,6 +1380,7 @@ impl Default for InMemoryPluginHost {
             host_api: VersionRange("1".into()),
             apps,
             pending_installs: BTreeMap::new(),
+            extension_snapshots: None,
         }
     }
 }
@@ -1373,6 +1398,72 @@ impl InMemoryPluginHost {
             runtime,
             ..Self::default()
         }
+    }
+
+    pub fn set_extension_storage_store(
+        &mut self,
+        snapshots: Arc<dyn velvet_persistence::StateSnapshotStore>,
+    ) {
+        self.extension_snapshots = Some(snapshots);
+    }
+
+    pub fn extension_storage(&self, id: &ExtensionId) -> Result<ExtensionStorage, PluginError> {
+        let manifest = self
+            .manifests
+            .get(id)
+            .ok_or_else(|| PluginError::NotFound(id.clone()))?;
+        let declaration =
+            manifest
+                .storage
+                .as_ref()
+                .ok_or_else(|| PluginError::ExtensionStorage {
+                    extension_id: id.clone(),
+                    message: "extension did not declare host-owned storage".into(),
+                })?;
+        let snapshots =
+            self.extension_snapshots
+                .as_ref()
+                .ok_or_else(|| PluginError::ExtensionStorage {
+                    extension_id: id.clone(),
+                    message: "extension storage is unavailable before persistence is configured"
+                        .into(),
+                })?;
+        ExtensionStorage::new(
+            id.clone(),
+            declaration.schema_version,
+            declaration.quota_bytes,
+            snapshots.clone(),
+        )
+        .map_err(|error| PluginError::ExtensionStorage {
+            extension_id: id.clone(),
+            message: format!("{error:?}"),
+        })
+    }
+
+    pub fn export_extension_state(
+        &self,
+        id: &ExtensionId,
+        participant: &dyn BackupParticipant,
+    ) -> Result<ExtensionStorageExport, PluginError> {
+        self.extension_storage(id)?
+            .export_with(participant)
+            .map_err(|error| PluginError::ExtensionStorage {
+                extension_id: id.clone(),
+                message: format!("{error:?}"),
+            })
+    }
+
+    pub fn migrate_extension_state(
+        &self,
+        id: &ExtensionId,
+        participant: &dyn MigrationParticipant,
+    ) -> Result<ExtensionStorageView, PluginError> {
+        self.extension_storage(id)?
+            .migrate_with(participant)
+            .map_err(|error| PluginError::ExtensionStorage {
+                extension_id: id.clone(),
+                message: format!("{error:?}"),
+            })
     }
 
     pub fn register_app(&mut self, app_id: String, api: VersionRange) {
@@ -1394,6 +1485,20 @@ impl InMemoryPluginHost {
                 "extension id {} is invalid",
                 manifest.id.0
             )));
+        }
+
+        if let Some(storage) = &manifest.storage {
+            if storage.schema_version == 0 {
+                return Err(PluginError::InvalidContribution(
+                    "storage schemaVersion must be non-zero".into(),
+                ));
+            }
+            if storage.quota_bytes == 0 || storage.quota_bytes > MAX_EXTENSION_STORAGE_BYTES as u64
+            {
+                return Err(PluginError::InvalidContribution(format!(
+                    "storage quotaBytes must be between 1 and {MAX_EXTENSION_STORAGE_BYTES}"
+                )));
+            }
         }
 
         if manifest.extension_kind.is_empty() {
@@ -2886,6 +2991,26 @@ impl PluginHost for InMemoryPluginHost {
         self.processes.remove(id);
         Ok(())
     }
+
+    fn extension_storage(&self, id: &ExtensionId) -> Result<ExtensionStorage, PluginError> {
+        InMemoryPluginHost::extension_storage(self, id)
+    }
+
+    fn export_extension_state(
+        &self,
+        id: &ExtensionId,
+        participant: &dyn BackupParticipant,
+    ) -> Result<ExtensionStorageExport, PluginError> {
+        InMemoryPluginHost::export_extension_state(self, id, participant)
+    }
+
+    fn migrate_extension_state(
+        &self,
+        id: &ExtensionId,
+        participant: &dyn MigrationParticipant,
+    ) -> Result<ExtensionStorageView, PluginError> {
+        InMemoryPluginHost::migrate_extension_state(self, id, participant)
+    }
 }
 
 fn namespace_for(scope: &ContributionScope, extension_id: &ExtensionId) -> String {
@@ -2992,11 +3117,12 @@ mod tests {
 
     use super::*;
     use velvet_layout_model::WorkbenchZone;
+    use velvet_persistence::InMemoryStateSnapshotStore;
     use velvet_plugin_api::{
-        ContextAnchor, ContributionDescriptor, ExtensionId, LocalizationManifest, Permission,
-        PreviewAugmentationSlot, PreviewContributionDescriptor, PreviewIntent, PreviewSurface,
-        RuntimeKind, RuntimeLaunchSpec, UiSurfaceDescriptor, UiSurfaceKind, VersionRange,
-        ZonePermissionSet,
+        ContextAnchor, ContributionDescriptor, ExtensionId, ExtensionStorageDeclaration,
+        LocalizationManifest, Permission, PreviewAugmentationSlot, PreviewContributionDescriptor,
+        PreviewIntent, PreviewSurface, RuntimeKind, RuntimeLaunchSpec, UiSurfaceDescriptor,
+        UiSurfaceKind, VersionRange, ZonePermissionSet,
     };
 
     static TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -3520,6 +3646,89 @@ mod tests {
             host.register(manifest),
             Err(PluginError::InvalidContribution(message))
                 if message.contains("manifest schema")
+        ));
+    }
+
+    #[test]
+    fn host_storage_is_manifest_declared_namespaced_and_failure_isolated() {
+        struct FailingMigration;
+        impl MigrationParticipant for FailingMigration {
+            fn migrate(
+                &self,
+                _source: &ExtensionStorageView,
+                _destination: &mut ExtensionStorageTransaction,
+            ) -> Result<(), ExtensionStorageError> {
+                Err(ExtensionStorageError::Unavailable(
+                    "injected failure".into(),
+                ))
+            }
+        }
+
+        let snapshots = Arc::new(InMemoryStateSnapshotStore::default());
+        let mut host = InMemoryPluginHost::default();
+        host.set_extension_storage_store(snapshots);
+
+        let storage = Some(ExtensionStorageDeclaration {
+            schema_version: 1,
+            quota_bytes: 1024,
+        });
+        let first = ExtensionManifest {
+            id: ExtensionId("sample.one".into()),
+            storage: storage.clone(),
+            ..ExtensionManifest::default()
+        };
+        let second = ExtensionManifest {
+            id: ExtensionId("sample.two".into()),
+            storage,
+            ..ExtensionManifest::default()
+        };
+        host.register(first).unwrap();
+        host.register(second).unwrap();
+
+        let first_storage = host
+            .extension_storage(&ExtensionId("sample.one".into()))
+            .unwrap();
+        let second_storage = host
+            .extension_storage(&ExtensionId("sample.two".into()))
+            .unwrap();
+        let mut transaction = first_storage.begin_transaction().unwrap();
+        transaction.put("answer", b"42".to_vec()).unwrap();
+        let committed = transaction.commit().unwrap();
+        assert_eq!(committed.generation, 1);
+        assert!(second_storage.load().unwrap().entries.is_empty());
+        assert!(matches!(
+            host.migrate_extension_state(&ExtensionId("sample.one".into()), &FailingMigration),
+            Err(PluginError::ExtensionStorage { .. })
+        ));
+        assert_eq!(first_storage.load().unwrap().generation, 1);
+        assert!(second_storage.load().unwrap().entries.is_empty());
+    }
+
+    #[test]
+    fn undeclared_or_oversized_extension_storage_is_rejected() {
+        let mut host = InMemoryPluginHost::default();
+        host.register(ExtensionManifest {
+            id: ExtensionId("sample.no-storage".into()),
+            ..ExtensionManifest::default()
+        })
+        .unwrap();
+        assert!(matches!(
+            host.extension_storage(&ExtensionId("sample.no-storage".into())),
+            Err(PluginError::ExtensionStorage { .. })
+        ));
+
+        let invalid = ExtensionManifest {
+            id: ExtensionId("sample.too-large".into()),
+            storage: Some(ExtensionStorageDeclaration {
+                schema_version: 1,
+                quota_bytes: MAX_EXTENSION_STORAGE_BYTES as u64 + 1,
+            }),
+            ..ExtensionManifest::default()
+        };
+        assert!(matches!(
+            host.register(invalid),
+            Err(PluginError::InvalidContribution(message))
+                if message.contains("quotaBytes")
         ));
     }
 

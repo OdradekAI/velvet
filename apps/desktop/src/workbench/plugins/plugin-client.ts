@@ -7,6 +7,7 @@ import {
   type CorePluginInstallRecoveryLogEntry,
   type CorePluginLocalization,
   type CorePluginProjection,
+  type CorePluginStorageDeclaration,
   type CorePluginDisableReason,
   type CorePluginManifest,
   type CorePluginSummary,
@@ -90,6 +91,7 @@ export interface ExtensionManifest {
   readonly workbenchApp?: PluginWorkbenchApp;
   readonly targetApp?: AppTarget;
   readonly localization?: CorePluginLocalization | null;
+  readonly storage?: CorePluginStorageDeclaration | null;
   readonly contributions: readonly ManifestContribution[];
   readonly permissions: Partial<Record<Zone, readonly string[]>>;
 }
@@ -1869,6 +1871,7 @@ function manifestFromCoreProjection(projection: CorePluginProjection): Extension
     hostApi: canonical.hostApi,
     runtime: canonicalRuntime(canonical.runtime),
     localization: canonical.localization ?? undefined,
+    storage: canonical.storage ?? undefined,
     targetApp: canonical.targetApp
       ? { appId: canonical.targetApp.appId, apiRange: canonical.targetApp.api }
       : undefined,

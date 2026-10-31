@@ -3879,9 +3879,11 @@ dependencies = [
 name = "velvet-plugin-host"
 version = "0.0.4"
 dependencies = [
+ "crc32fast",
  "serde",
  "serde_json",
  "velvet-layout-model",
+ "velvet-persistence",
  "velvet-plugin-api",
  "zip",
 ]

@@ -46,6 +46,11 @@ pub trait StateSnapshotStore: Send + Sync {
         owner_id: &str,
         scope: &str,
     ) -> Result<Option<StateSnapshot>, SnapshotError>;
+    fn load_previous(
+        &self,
+        owner_id: &str,
+        scope: &str,
+    ) -> Result<Option<StateSnapshot>, SnapshotError>;
     fn load_generation(
         &self,
         owner_id: &str,
@@ -120,6 +125,58 @@ impl JsonFileStateSnapshotStore {
             .scope_dir(owner_id, scope)?
             .join(format!("{generation}.quarantine.json")))
     }
+
+    fn load_committed(
+        &self,
+        owner_id: &str,
+        scope: &str,
+        skip_latest: usize,
+    ) -> Result<Option<StateSnapshot>, SnapshotError> {
+        let directory = self.scope_dir(owner_id, scope)?;
+        let entries = match fs::read_dir(&directory) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => {
+                return Err(SnapshotError::Unavailable(format!(
+                    "snapshot directory could not be read: {error}"
+                )))
+            }
+        };
+
+        let mut snapshots = Vec::new();
+        for entry in entries {
+            let entry = entry.map_err(|error| {
+                SnapshotError::Unavailable(format!("snapshot entry could not be read: {error}"))
+            })?;
+            let path = entry.path();
+            let Some(file_name) = path.file_name().and_then(|value| value.to_str()) else {
+                continue;
+            };
+            let Some(generation_text) = file_name.strip_suffix(".snapshot.json") else {
+                continue;
+            };
+            let generation = generation_text.parse::<u64>().map_err(|_| {
+                SnapshotError::Corrupt(format!(
+                    "snapshot filename has an invalid generation: {file_name}"
+                ))
+            })?;
+            let snapshot = decode_snapshot(&fs::read(&path).map_err(|error| {
+                SnapshotError::Unavailable(format!("snapshot could not be read: {error}"))
+            })?)?;
+            validate_snapshot(&snapshot, true)?;
+            if snapshot.metadata.owner_id != owner_id
+                || snapshot.metadata.scope != scope
+                || snapshot.metadata.generation != generation
+            {
+                return Err(SnapshotError::Corrupt(
+                    "committed snapshot identity does not match its path".into(),
+                ));
+            }
+            snapshots.push(snapshot);
+        }
+        snapshots.sort_by_key(|snapshot| snapshot.metadata.generation);
+        Ok(snapshots.into_iter().rev().nth(skip_latest))
+    }
 }
 
 impl StateSnapshotStore for JsonFileStateSnapshotStore {
@@ -166,54 +223,15 @@ impl StateSnapshotStore for JsonFileStateSnapshotStore {
         owner_id: &str,
         scope: &str,
     ) -> Result<Option<StateSnapshot>, SnapshotError> {
-        let directory = self.scope_dir(owner_id, scope)?;
-        let entries = match fs::read_dir(&directory) {
-            Ok(entries) => entries,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => {
-                return Err(SnapshotError::Unavailable(format!(
-                    "snapshot directory could not be read: {error}"
-                )))
-            }
-        };
+        self.load_committed(owner_id, scope, 0)
+    }
 
-        let mut latest = None;
-        for entry in entries {
-            let entry = entry.map_err(|error| {
-                SnapshotError::Unavailable(format!("snapshot entry could not be read: {error}"))
-            })?;
-            let path = entry.path();
-            let Some(file_name) = path.file_name().and_then(|value| value.to_str()) else {
-                continue;
-            };
-            let Some(generation_text) = file_name.strip_suffix(".snapshot.json") else {
-                continue;
-            };
-            let generation = generation_text.parse::<u64>().map_err(|_| {
-                SnapshotError::Corrupt(format!(
-                    "snapshot filename has an invalid generation: {file_name}"
-                ))
-            })?;
-            let snapshot = decode_snapshot(&fs::read(&path).map_err(|error| {
-                SnapshotError::Unavailable(format!("snapshot could not be read: {error}"))
-            })?)?;
-            validate_snapshot(&snapshot, true)?;
-            if snapshot.metadata.owner_id != owner_id
-                || snapshot.metadata.scope != scope
-                || snapshot.metadata.generation != generation
-            {
-                return Err(SnapshotError::Corrupt(
-                    "committed snapshot identity does not match its path".into(),
-                ));
-            }
-            if latest
-                .as_ref()
-                .is_none_or(|current: &StateSnapshot| current.metadata.generation < generation)
-            {
-                latest = Some(snapshot);
-            }
-        }
-        Ok(latest)
+    fn load_previous(
+        &self,
+        owner_id: &str,
+        scope: &str,
+    ) -> Result<Option<StateSnapshot>, SnapshotError> {
+        self.load_committed(owner_id, scope, 1)
     }
 
     fn load_generation(
@@ -319,6 +337,35 @@ impl StateSnapshotStore for InMemoryStateSnapshotStore {
                     && snapshot.metadata.committed
             })
             .max_by_key(|snapshot| snapshot.metadata.generation)
+            .cloned()
+            .map_or(Ok(None), |snapshot| {
+                validate_snapshot(&snapshot, true)?;
+                Ok(Some(snapshot))
+            })
+    }
+
+    fn load_previous(
+        &self,
+        owner_id: &str,
+        scope: &str,
+    ) -> Result<Option<StateSnapshot>, SnapshotError> {
+        let snapshots = self
+            .snapshots
+            .lock()
+            .map_err(|_| SnapshotError::Unavailable("snapshot lock poisoned".into()))?;
+        let mut matching = snapshots
+            .values()
+            .filter(|snapshot| {
+                snapshot.metadata.owner_id == owner_id
+                    && snapshot.metadata.scope == scope
+                    && snapshot.metadata.committed
+            })
+            .collect::<Vec<_>>();
+        matching.sort_by_key(|snapshot| snapshot.metadata.generation);
+        matching
+            .into_iter()
+            .rev()
+            .nth(1)
             .cloned()
             .map_or(Ok(None), |snapshot| {
                 validate_snapshot(&snapshot, true)?;
@@ -497,6 +544,10 @@ mod tests {
         assert_eq!(
             store.load_latest("layout", "workspace").unwrap(),
             Some(snapshot(2, true))
+        );
+        assert_eq!(
+            store.load_previous("layout", "workspace").unwrap(),
+            Some(snapshot(1, true))
         );
         let _ = fs::remove_dir_all(root);
     }

@@ -12,6 +12,7 @@ export type {
   CorePluginActivationEvent,
   CorePluginExtensionKind,
   CorePluginLocalization,
+  CorePluginStorageDeclaration,
   CorePluginPermission,
   CorePluginPermissionSet,
   CorePluginProjection,

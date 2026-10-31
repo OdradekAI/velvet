@@ -440,9 +440,13 @@ impl ApplicationCore {
         let preview_locations = Arc::new(PersistentAssetSourceLocationResolver::new(
             asset_source_store,
         ));
+        let mut plugins = InMemoryPluginHost::with_runtime(runtime);
+        if let Some(snapshots) = recovery_snapshots.clone() {
+            plugins.set_extension_storage_store(snapshots);
+        }
         let mut core = Self {
             layout,
-            plugins: InMemoryPluginHost::with_runtime(runtime),
+            plugins,
             previews: PreviewResolver::default(),
             jobs,
             profile,

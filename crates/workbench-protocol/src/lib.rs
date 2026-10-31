@@ -8,9 +8,9 @@ use velvet_layout_model::{LayoutCommand, LayoutState};
 use velvet_plugin_api::{
     AppTarget, ContributionDescriptor, ExtensionId, ExtensionInstallPreview,
     ExtensionInstallRecovery, ExtensionInstallRecoveryAction, ExtensionInstallRecoveryLogEntry,
-    ExtensionKind, ExtensionManifest, ExtensionSummary, ExtensionSupport, LocalizationManifest,
-    PreviewActionContext, RuntimeKind, RuntimeLaunchSpec, VersionRange, WorkbenchAppDescriptor,
-    ZonePermissionSet,
+    ExtensionKind, ExtensionManifest, ExtensionStorageDeclaration, ExtensionSummary,
+    ExtensionSupport, LocalizationManifest, PreviewActionContext, RuntimeKind, RuntimeLaunchSpec,
+    VersionRange, WorkbenchAppDescriptor, ZonePermissionSet,
 };
 use velvet_preview_core::{PreviewIntent, PreviewSurface, ResolvedPreview};
 
@@ -72,6 +72,7 @@ pub struct PluginManifestDto {
     pub required_capabilities: Vec<String>,
     pub optional_capabilities: Vec<String>,
     pub localization: Option<LocalizationManifest>,
+    pub storage: Option<ExtensionStorageDeclaration>,
     pub workbench_app: Option<WorkbenchAppDescriptor>,
     pub contributions: Vec<ContributionDescriptor>,
     pub permission_sets: Vec<ZonePermissionSet>,
@@ -98,6 +99,7 @@ impl From<ExtensionManifest> for PluginManifestDto {
             required_capabilities: manifest.required_capabilities,
             optional_capabilities: manifest.optional_capabilities,
             localization: manifest.localization,
+            storage: manifest.storage,
             workbench_app: manifest.workbench_app,
             contributions: manifest.contributions,
             permission_sets: manifest.permission_sets,
@@ -125,6 +127,7 @@ impl From<PluginManifestDto> for ExtensionManifest {
             required_capabilities: manifest.required_capabilities,
             optional_capabilities: manifest.optional_capabilities,
             localization: manifest.localization,
+            storage: manifest.storage,
             workbench_app: manifest.workbench_app,
             contributions: manifest.contributions,
             permission_sets: manifest.permission_sets,
@@ -570,6 +573,10 @@ mod tests {
             id: ExtensionId("sample.reader".into()),
             extension_kind: vec![ExtensionKind::Ui, ExtensionKind::Capability],
             activation_events: vec![velvet_plugin_api::ActivationEvent::WorkbenchReady],
+            storage: Some(ExtensionStorageDeclaration {
+                schema_version: 1,
+                quota_bytes: 4096,
+            }),
             ..ExtensionManifest::default()
         };
 
@@ -578,6 +585,8 @@ mod tests {
         assert_eq!(json["manifestSchema"], 1);
         assert_eq!(json["bridgeApi"], "1");
         assert_eq!(json["activationEvents"][0]["kind"], "onWorkbenchReady");
+        assert_eq!(json["storage"]["schemaVersion"], 1);
+        assert_eq!(json["storage"]["quotaBytes"], 4096);
 
         let decoded: PluginManifestDto =
             serde_json::from_value(json).expect("protocol DTO should deserialize");

@@ -511,6 +511,11 @@ export interface CorePluginLocalization {
   readonly bundleSchema: number;
 }
 
+export interface CorePluginStorageDeclaration {
+  readonly schemaVersion: number;
+  readonly quotaBytes: number;
+}
+
 export interface CorePluginWorkbenchApp {
   readonly id: string;
   readonly api: string;
@@ -667,6 +672,7 @@ export interface CorePluginManifest {
   readonly requiredCapabilities: readonly string[];
   readonly optionalCapabilities: readonly string[];
   readonly localization: CorePluginLocalization | null;
+  readonly storage: CorePluginStorageDeclaration | null;
   readonly workbenchApp: CorePluginWorkbenchApp | null;
   readonly contributions: readonly CorePluginManifestContribution[];
   readonly permissionSets: readonly CorePluginPermissionSet[];
