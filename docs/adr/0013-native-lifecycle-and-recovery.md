@@ -122,13 +122,22 @@ an optional activation breach records `startup-timeout` without making the
 core unsafe. The activation loop checks the deadline between components and
 `mark_ready` performs the final boundary check.
 
+The desktop host now owns a renderer `RecoverySurface` and `RecoveryBoundary`.
+Startup/layout failures and descendant Workbench mount exceptions render the
+same projection without loading plugin UI or reading native storage. Retry
+recreates the desktop composition and re-runs startup. The surface exposes the
+host action list, but only retry is enabled in this slice; restore, optional
+state reset, component quarantine and diagnostic export remain disabled until
+their typed owner commands exist. A platform-native no-WebView surface and
+host locale integration remain separate gates.
+
 Runtime failure in an activated optional plugin also records a degraded
 component failure and clears that owner's projections and Jobs; it does not
 increment the core pre-ready Safe Mode counter.
 
-This slice is deliberately narrower than the full decision: the host-native
-`RecoverySurface`, generation snapshots/`RecoverySet`, user restore actions
-and a bounded `DiagnosticBundle` are still implementation gates. Optional
+This slice is deliberately narrower than the full decision: native no-WebView
+recovery, generation snapshots/`RecoverySet`, user restore actions and a
+bounded `DiagnosticBundle` are still implementation gates. Optional
 plugin activation is recorded as a degraded component failure
 and does not block the core-ready checkpoint. The file journal is an evidence
 store, not yet a replacement for owner snapshots or a proof that writes are

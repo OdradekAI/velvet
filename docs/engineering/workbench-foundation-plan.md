@@ -172,7 +172,7 @@ must not be advertised as the target guarantee.
 
 | Target contract | Current skeleton evidence | Remaining gap | Priority |
 | --- | --- | --- | --- |
-| `RecoverySupervisor`, startup phases and two-failure Safe Mode | `application-core` now records a versioned launch journal, phase/checkpoint/deadline state, shutdown evidence and core-migration/optional-component failures; Tauri uses the file journal and records `ExitRequested`/`Exit` | User recovery actions and host-native `RecoverySurface` are still missing | P0 (partial) |
+| `RecoverySupervisor`, startup phases and two-failure Safe Mode | `application-core` now records a versioned launch journal, phase/checkpoint/deadline state, shutdown evidence and core-migration/optional-component failures; Tauri uses the file journal and records `ExitRequested`/`Exit`; the desktop has a host-owned renderer RecoverySurface boundary | Native no-WebView recovery, typed restore/quarantine/diagnostic actions and host locale integration are still missing | P0 (partial) |
 | Owner snapshots, `RecoverySet` and migration rollback | Layout/Profile/Job/source stores use schema fields and temporary-file replacement; layout has local migrations | No generation metadata, commit barrier, recovery index, fsync/durability report, quarantine model or cross-owner restore | P0 |
 | Extension-owned data with host-controlled backup/migration | Plugin install has staging/rollback directories and a bounded install recovery log | No namespaced `ExtensionStorage`, backup/migration participant handles, extension generations or selective extension-state restore | P0 |
 | Per-extension runtime failure domain | `PluginHost` tracks one process per extension, health state and contribution cleanup; `JobSystem` marks restart work interrupted; optional activation failures now degrade the recovery projection without blocking Core | Sidecar launch accepts a manifest program, stderr is discarded, process groups and parent-death cleanup are absent, and runtime events are not structured or persisted | P0 |
@@ -419,6 +419,7 @@ apps/
           main.tsx
           demo-app.tsx
           workbench-shell.tsx
+          recovery-surface.tsx
         ui/
           velvet-ui.tsx
           tokens.css
@@ -945,7 +946,8 @@ The first lifecycle implementation slice has these acceptance results:
 | Desktop `RecoveryClient` loads the projection and accepts recovery events without reading native storage | Pass | `apps/desktop/test/recovery-client.test.mjs` |
 | Normal Tauri shutdown records intent and completion; an unfinished launch remains classifiable after forced termination | Pass | `RecoverySupervisor` shutdown receipt test and Tauri run-event wiring |
 | Core deadline breach records `startup-timeout` and enters Safe Mode; optional activation deadline remains degraded and stops scheduling more components | Pass | Injected `StartupDeadlinePolicy`/`RecoveryClock` tests and activation-loop boundary |
-| Host-native recovery UI, generation snapshots and user restore actions | Pending | Next P0 slices |
+| Renderer `RecoverySurface` catches startup/layout/Workbench mount failure, renders the projection offline and offers a retry seam | Pass | `recovery-surface.test.mjs` plus `RecoveryBoundary` mount fixture |
+| Native no-WebView recovery, typed restore/quarantine/diagnostic actions and generation snapshots | Pending | Next P0 slices |
 
 All P0 rows must pass before the native foundation is considered safe for alpha
 users. P1 rows must pass for each supported platform and package/channel before

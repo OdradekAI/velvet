@@ -365,6 +365,11 @@ button {
   color: var(--velvet-danger);
 }
 
+.velvet-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .velvet-input {
   min-width: 0;
   min-height: var(--velvet-control-height);
@@ -900,6 +905,87 @@ button {
   height: 100%;
   color: var(--velvet-text-muted);
   font-size: 13px;
+}
+
+.velvet-recovery-surface {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: 24px;
+  background: var(--velvet-surface-app);
+  color: var(--velvet-text-primary);
+}
+
+.velvet-recovery-card {
+  width: min(560px, 100%);
+  padding: 24px;
+  border: 1px solid var(--velvet-border-strong);
+  border-radius: var(--velvet-radius-md);
+  background: var(--velvet-surface-panel);
+  box-shadow: 0 18px 48px rgb(0 0 0 / 0.24);
+}
+
+.velvet-recovery-eyebrow {
+  margin: 0 0 8px;
+  color: var(--velvet-text-muted);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.velvet-recovery-card h1 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.velvet-recovery-status,
+.velvet-recovery-detail,
+.velvet-recovery-note {
+  color: var(--velvet-text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.velvet-recovery-detail {
+  overflow-wrap: anywhere;
+  color: var(--velvet-danger);
+}
+
+.velvet-recovery-meta {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 20px 0;
+}
+
+.velvet-recovery-meta div {
+  min-width: 0;
+  padding: 10px;
+  border-radius: var(--velvet-radius-sm);
+  background: var(--velvet-surface-raised);
+}
+
+.velvet-recovery-meta dt {
+  color: var(--velvet-text-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.velvet-recovery-meta dd {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
+.velvet-recovery-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.velvet-recovery-note {
+  margin: 16px 0 0;
+  font-size: 12px;
 }
 
 .velvet-native-workspace {

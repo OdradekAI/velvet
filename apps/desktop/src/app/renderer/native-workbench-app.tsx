@@ -13,16 +13,20 @@ import { JobOperationsPanel } from './job-operations-panel.js';
 import { createNativePluginPackagePicker } from '../../platform/tauri-plugin-package-picker.js';
 import { createNativeFileExporter } from '../../platform/tauri-file-exporter.js';
 import { PreviewOverlay } from './preview-overlay.js';
+import { RecoveryBoundary, RecoverySurface } from './recovery-surface.js';
+import type { CoreRecoveryProjection } from '../../platform/protocol.js';
 
 interface NativeWorkbenchState {
   readonly app: DesktopApp;
-  readonly layout: LayoutSnapshot;
+  readonly layout?: LayoutSnapshot;
 }
 
 /** Mounts the renderer against the real Rust-owned Tauri workbench. */
 export function NativeWorkbenchApp() {
   const [state, setState] = useState<NativeWorkbenchState>();
+  const [recoveryProjection, setRecoveryProjection] = useState<CoreRecoveryProjection>();
   const [startupError, setStartupError] = useState<unknown>();
+  const [startupAttempt, setStartupAttempt] = useState(0);
   const [commandError, setCommandError] = useState<unknown>();
   const [pluginManagerOpen, setPluginManagerOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -32,9 +36,18 @@ export function NativeWorkbenchApp() {
   const [fileExporter] = useState(() => createNativeFileExporter());
 
   useEffect(() => {
-    const app = createNativeTauriDesktopApp();
+    let app: DesktopApp;
+    try {
+      app = createNativeTauriDesktopApp();
+    } catch (error) {
+      setStartupError(error);
+      return undefined;
+    }
+    setState({ app });
+    setRecoveryProjection(app.workbench.recovery.snapshot());
+    const unsubscribeRecovery = app.workbench.recovery.subscribe(setRecoveryProjection);
     const unsubscribe = app.workbench.layout.subscribe((layout) => {
-      setState((current) => (current ? { ...current, layout } : current));
+      setState((current) => (current?.app === app ? { ...current, layout } : current));
     });
     let disposed = false;
 
@@ -79,9 +92,10 @@ export function NativeWorkbenchApp() {
     return () => {
       disposed = true;
       unsubscribe();
+      unsubscribeRecovery();
       void app.dispose();
     };
-  }, []);
+  }, [startupAttempt]);
 
   useEffect(() => {
     const workbench = state?.app.workbench;
@@ -150,18 +164,24 @@ export function NativeWorkbenchApp() {
     });
   }, [state?.app]);
 
+  function retryStartup(): void {
+    setStartupError(undefined);
+    setRecoveryProjection(undefined);
+    setState(undefined);
+    setStartupAttempt((attempt) => attempt + 1);
+  }
+
   if (startupError) {
     return (
-      <main className="velvet-empty-state">
-        <div>
-          <p>Velvet could not start the native workbench.</p>
-          <pre>{startupError instanceof Error ? startupError.message : String(startupError)}</pre>
-        </div>
-      </main>
+      <RecoverySurface
+        error={startupError}
+        onRetry={retryStartup}
+        projection={recoveryProjection}
+      />
     );
   }
 
-  if (!state) {
+  if (!state || !state.layout) {
     return (
       <main className="velvet-empty-state">
         <div>Starting Velvet…</div>
@@ -170,6 +190,7 @@ export function NativeWorkbenchApp() {
   }
 
   const currentState = state;
+  const currentLayout = state.layout;
 
   function reportCommandError(reason: unknown): void {
     setCommandError(reason);
@@ -194,45 +215,50 @@ export function NativeWorkbenchApp() {
   }
 
   return (
-    <WorkbenchShell
-      apps={currentState.app.workbench.apps.list()}
-      commandRegistry={currentState.app.workbench.commands}
-      contextKeys={currentState.app.workbench.contextKeys}
-      focusService={currentState.app.workbench.focus}
-      layout={currentState.layout}
-      menuRegistry={currentState.app.workbench.menus}
-      onActivateApp={activateApp}
-      onOpenPreview={() => setPreviewOpen(true)}
-      onLayoutCommand={dispatchLayout}
-      operationsContent={(
-        <div className="velvet-operations-stack">
-          <JobOperationsPanel jobs={currentState.app.workbench.jobs} />
-          <PluginRecoveryOperationsPanel
-            exportLogs={async () => {
-              const destination = await fileExporter.pickExportPath();
-              if (!destination) {
-                return undefined;
-              }
-              await currentState.app.workbench.plugins.exportCoreInstallRecoveryLog(destination);
-              return destination;
-            }}
-            plugins={currentState.app.workbench.plugins}
-          />
-        </div>
-      )}
-      titleActions={
-        <button
-          aria-label="Open Extensions"
-          className="velvet-title__action"
-          onClick={() => setPluginManagerOpen(true)}
-          type="button"
-        >
-          Extensions
-        </button>
-      }
-      viewRegistry={currentState.app.workbench.views}
-      viewRenderers={viewRenderers}
+    <RecoveryBoundary
+      key={startupAttempt}
+      onRetry={retryStartup}
+      projection={recoveryProjection}
     >
+      <WorkbenchShell
+        apps={currentState.app.workbench.apps.list()}
+        commandRegistry={currentState.app.workbench.commands}
+        contextKeys={currentState.app.workbench.contextKeys}
+        focusService={currentState.app.workbench.focus}
+        layout={currentLayout}
+        menuRegistry={currentState.app.workbench.menus}
+        onActivateApp={activateApp}
+        onOpenPreview={() => setPreviewOpen(true)}
+        onLayoutCommand={dispatchLayout}
+        operationsContent={(
+          <div className="velvet-operations-stack">
+            <JobOperationsPanel jobs={currentState.app.workbench.jobs} />
+            <PluginRecoveryOperationsPanel
+              exportLogs={async () => {
+                const destination = await fileExporter.pickExportPath();
+                if (!destination) {
+                  return undefined;
+                }
+                await currentState.app.workbench.plugins.exportCoreInstallRecoveryLog(destination);
+                return destination;
+              }}
+              plugins={currentState.app.workbench.plugins}
+            />
+          </div>
+        )}
+        titleActions={
+          <button
+            aria-label="Open Extensions"
+            className="velvet-title__action"
+            onClick={() => setPluginManagerOpen(true)}
+            type="button"
+          >
+            Extensions
+          </button>
+        }
+        viewRegistry={currentState.app.workbench.views}
+        viewRenderers={viewRenderers}
+      >
       <div className="velvet-native-workspace">
         <PluginManagerDialog
           confirmUninstall={async (extensionId) => {
@@ -280,14 +306,14 @@ export function NativeWorkbenchApp() {
         ) : null}
         <div data-app-revision={appRevision}>
           <WorkbenchAppSurfaceHost
-            appId={currentState.layout.activeApp}
+            appId={currentLayout.activeApp}
             apps={currentState.app.workbench.apps}
             context={currentState.app.workbench.context}
             dispatch={(command) => currentState.app.workbench.context.apply(command)}
             fallback={
               <div className="velvet-empty-state">
                 <div>
-                  <p>{currentState.layout.activeApp} workspace</p>
+                  <p>{currentLayout.activeApp} workspace</p>
                   <p>Rust-owned layout and native keybindings are active.</p>
                 </div>
               </div>
@@ -301,6 +327,7 @@ export function NativeWorkbenchApp() {
           plugins={currentState.app.workbench.plugins}
         />
       </div>
-    </WorkbenchShell>
+      </WorkbenchShell>
+    </RecoveryBoundary>
   );
 }
