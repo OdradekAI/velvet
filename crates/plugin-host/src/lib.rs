@@ -104,6 +104,10 @@ const RUNTIME_PROTOCOL_VERSION: u16 = 1;
 const RUNTIME_INVOCATION_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_JOB_EVENTS: usize = 128;
 pub const MAX_PLUGIN_LOCALIZATION_BYTES: usize = 1024 * 1024;
+pub const MAX_PLUGIN_ARCHIVE_BYTES: u64 = 64 * 1024 * 1024;
+pub const MAX_PLUGIN_ARCHIVE_UNCOMPRESSED_BYTES: u64 = 64 * 1024 * 1024;
+pub const MAX_PLUGIN_ARCHIVE_ENTRY_BYTES: u64 = 16 * 1024 * 1024;
+pub const MAX_PLUGIN_ARCHIVE_ENTRIES: usize = 4096;
 const RECOVERY_LOG_FILE: &str = ".plugin-recovery-log.json";
 const RECOVERY_LOG_LIMIT: usize = 100;
 
@@ -248,6 +252,184 @@ impl PluginResourceLoader {
             bytes,
         })
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PluginArchiveError {
+    ReadFailed(String),
+    InvalidArchive(String),
+    EntryRejected(String),
+    TooLarge(String),
+    MissingManifest,
+    DestinationExists,
+}
+
+/// Extracts a ZIP plugin package into a caller-owned temporary directory.
+///
+/// The adapter is deliberately separate from `PluginResourceLoader`: archive
+/// format handling ends after a validated directory package exists, while
+/// resource reads continue to use the same package-root containment checks.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ZipPluginArchiveAdapter;
+
+impl ZipPluginArchiveAdapter {
+    pub fn extract_to(
+        &self,
+        archive_path: &Path,
+        destination: &Path,
+    ) -> Result<(), PluginArchiveError> {
+        if destination.exists() {
+            return Err(PluginArchiveError::DestinationExists);
+        }
+        let file = fs::File::open(archive_path)
+            .map_err(|error| PluginArchiveError::ReadFailed(error.to_string()))?;
+        let archive_size = file
+            .metadata()
+            .map_err(|error| PluginArchiveError::ReadFailed(error.to_string()))?
+            .len();
+        if archive_size > MAX_PLUGIN_ARCHIVE_BYTES {
+            return Err(PluginArchiveError::TooLarge(format!(
+                "archive exceeds the {MAX_PLUGIN_ARCHIVE_BYTES} byte limit"
+            )));
+        }
+
+        let mut archive = zip::ZipArchive::new(file)
+            .map_err(|error| PluginArchiveError::InvalidArchive(error.to_string()))?;
+        if archive.len() > MAX_PLUGIN_ARCHIVE_ENTRIES {
+            return Err(PluginArchiveError::TooLarge(format!(
+                "archive contains more than {MAX_PLUGIN_ARCHIVE_ENTRIES} entries"
+            )));
+        }
+
+        fs::create_dir_all(destination)
+            .map_err(|error| PluginArchiveError::ReadFailed(error.to_string()))?;
+        let result = self.extract_entries(&mut archive, destination);
+        if result.is_ok() && !destination.join("manifest.json").is_file() {
+            let _ = fs::remove_dir_all(destination);
+            return Err(PluginArchiveError::MissingManifest);
+        }
+        if result.is_err() {
+            let _ = fs::remove_dir_all(destination);
+        }
+        result
+    }
+
+    fn extract_entries<R: Read + std::io::Seek>(
+        &self,
+        archive: &mut zip::ZipArchive<R>,
+        destination: &Path,
+    ) -> Result<(), PluginArchiveError> {
+        let mut seen = BTreeSet::new();
+        let mut total_uncompressed = 0_u64;
+        for index in 0..archive.len() {
+            let entry = archive
+                .by_index(index)
+                .map_err(|error| PluginArchiveError::InvalidArchive(error.to_string()))?;
+            let raw_name = entry
+                .name()
+                .map_err(|error| PluginArchiveError::InvalidArchive(error.to_string()))?
+                .into_owned();
+            let relative = safe_archive_entry_path(&raw_name).ok_or_else(|| {
+                PluginArchiveError::EntryRejected("archive entry path is unsafe".into())
+            })?;
+            if !seen.insert(relative.clone()) {
+                return Err(PluginArchiveError::EntryRejected(
+                    "archive contains duplicate entry paths".into(),
+                ));
+            }
+            if entry.encrypted() || entry.is_symlink() {
+                return Err(PluginArchiveError::EntryRejected(
+                    "encrypted and symbolic-link entries are not supported".into(),
+                ));
+            }
+
+            let target = destination.join(&relative);
+            if !target.starts_with(destination) {
+                return Err(PluginArchiveError::EntryRejected(
+                    "archive entry escapes the extraction root".into(),
+                ));
+            }
+            if entry.is_dir() {
+                fs::create_dir_all(&target)
+                    .map_err(|error| PluginArchiveError::ReadFailed(error.to_string()))?;
+                continue;
+            }
+            if !entry.is_file() {
+                return Err(PluginArchiveError::EntryRejected(
+                    "archive contains an unsupported special entry".into(),
+                ));
+            }
+
+            let declared_size = entry.size();
+            if declared_size > MAX_PLUGIN_ARCHIVE_ENTRY_BYTES {
+                return Err(PluginArchiveError::TooLarge(format!(
+                    "archive entry exceeds the {MAX_PLUGIN_ARCHIVE_ENTRY_BYTES} byte limit"
+                )));
+            }
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent)
+                    .map_err(|error| PluginArchiveError::ReadFailed(error.to_string()))?;
+            }
+            let mut output = fs::File::create(&target)
+                .map_err(|error| PluginArchiveError::ReadFailed(error.to_string()))?;
+            let mut bytes = Vec::with_capacity(declared_size as usize);
+            entry
+                .take(MAX_PLUGIN_ARCHIVE_ENTRY_BYTES + 1)
+                .read_to_end(&mut bytes)
+                .map_err(|error| PluginArchiveError::ReadFailed(error.to_string()))?;
+            if bytes.len() as u64 > MAX_PLUGIN_ARCHIVE_ENTRY_BYTES {
+                return Err(PluginArchiveError::TooLarge(format!(
+                    "archive entry exceeds the {MAX_PLUGIN_ARCHIVE_ENTRY_BYTES} byte limit"
+                )));
+            }
+            total_uncompressed = total_uncompressed
+                .checked_add(bytes.len() as u64)
+                .ok_or_else(|| {
+                    PluginArchiveError::TooLarge("archive uncompressed size overflowed".into())
+                })?;
+            if total_uncompressed > MAX_PLUGIN_ARCHIVE_UNCOMPRESSED_BYTES {
+                return Err(PluginArchiveError::TooLarge(format!(
+                    "archive exceeds the {MAX_PLUGIN_ARCHIVE_UNCOMPRESSED_BYTES} byte unpacked limit"
+                )));
+            }
+            output
+                .write_all(&bytes)
+                .map_err(|error| PluginArchiveError::ReadFailed(error.to_string()))?;
+        }
+        Ok(())
+    }
+}
+
+fn safe_archive_entry_path(raw_name: &str) -> Option<PathBuf> {
+    let trimmed = raw_name.strip_suffix('/').unwrap_or(raw_name);
+    if trimmed.is_empty()
+        || trimmed.starts_with('/')
+        || trimmed.starts_with('\\')
+        || trimmed.contains('\\')
+        || trimmed.contains('\0')
+    {
+        return None;
+    }
+
+    let mut path = PathBuf::new();
+    for segment in trimmed.split('/') {
+        if segment.is_empty() || segment == "." || segment == ".." || segment.contains(':') {
+            return None;
+        }
+        path.push(segment);
+    }
+    Some(path)
+}
+
+fn temporary_archive_directory(prefix: &str) -> PathBuf {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    std::env::temp_dir().join(format!(
+        "velvet-plugin-archive-{prefix}-{}-{nonce}",
+        std::process::id()
+    ))
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -1089,9 +1271,18 @@ pub trait PluginHost {
         source_dir: &Path,
         install_root: &Path,
     ) -> Result<ExtensionSummary, PluginError>;
+    fn install_from_archive(
+        &mut self,
+        source_archive: &Path,
+        install_root: &Path,
+    ) -> Result<ExtensionSummary, PluginError>;
     fn inspect_from_directory(
         &self,
         source_dir: &Path,
+    ) -> Result<ExtensionInstallPreview, PluginError>;
+    fn inspect_from_archive(
+        &self,
+        source_archive: &Path,
     ) -> Result<ExtensionInstallPreview, PluginError>;
     fn commit_install(&mut self, id: &ExtensionId, install_root: &Path) -> Result<(), PluginError>;
     fn rollback_install(
@@ -1977,6 +2168,27 @@ impl PluginHost for InMemoryPluginHost {
     ) -> Result<bool, PluginError> {
         InMemoryPluginHost::has_permission(self, id, permission)
     }
+
+    fn install_from_archive(
+        &mut self,
+        source_archive: &Path,
+        install_root: &Path,
+    ) -> Result<ExtensionSummary, PluginError> {
+        let extraction = install_root.join(format!(
+            ".archive-staging-{}-{}",
+            std::process::id(),
+            recovery_log_timestamp_ms()
+        ));
+        ZipPluginArchiveAdapter
+            .extract_to(source_archive, &extraction)
+            .map_err(|error| {
+                PluginError::InstallFailed(format!("archive extraction failed: {error:?}"))
+            })?;
+        let result = self.install_from_directory(&extraction, install_root);
+        let _ = fs::remove_dir_all(&extraction);
+        result
+    }
+
     fn inspect_from_directory(
         &self,
         source_dir: &Path,
@@ -2029,6 +2241,21 @@ impl PluginHost for InMemoryPluginHost {
             can_install: compatible && issues.is_empty(),
             issues,
         })
+    }
+
+    fn inspect_from_archive(
+        &self,
+        source_archive: &Path,
+    ) -> Result<ExtensionInstallPreview, PluginError> {
+        let extraction = temporary_archive_directory("inspect");
+        ZipPluginArchiveAdapter
+            .extract_to(source_archive, &extraction)
+            .map_err(|error| {
+                PluginError::InstallFailed(format!("archive extraction failed: {error:?}"))
+            })?;
+        let result = self.inspect_from_directory(&extraction);
+        let _ = fs::remove_dir_all(&extraction);
+        result
     }
 
     fn install_from_directory(
@@ -2757,6 +2984,7 @@ fn version_is_newer(requested: &str, installed: &str) -> bool {
 mod tests {
     use std::collections::VecDeque;
     use std::fs;
+    use std::io::Write;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{Arc, Mutex};
@@ -2767,7 +2995,8 @@ mod tests {
     use velvet_plugin_api::{
         ContextAnchor, ContributionDescriptor, ExtensionId, LocalizationManifest, Permission,
         PreviewAugmentationSlot, PreviewContributionDescriptor, PreviewIntent, PreviewSurface,
-        RuntimeKind, RuntimeLaunchSpec, UiSurfaceDescriptor, UiSurfaceKind, ZonePermissionSet,
+        RuntimeKind, RuntimeLaunchSpec, UiSurfaceDescriptor, UiSurfaceKind, VersionRange,
+        ZonePermissionSet,
     };
 
     static TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -2809,6 +3038,28 @@ mod tests {
             serde_json::to_vec_pretty(manifest).expect("the manifest should serialize"),
         )
         .expect("the manifest should be written");
+    }
+
+    fn write_zip_package(path: &PathBuf, manifest: &ExtensionManifest, entries: &[(&str, &[u8])]) {
+        let file = fs::File::create(path).expect("the archive should be writable");
+        let mut archive = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        archive
+            .start_file("manifest.json", options)
+            .expect("the manifest entry should start");
+        archive
+            .write_all(&serde_json::to_vec(manifest).expect("the manifest should serialize"))
+            .expect("the manifest entry should be written");
+        for (name, bytes) in entries {
+            archive
+                .start_file(*name, options)
+                .expect("the archive entry should start");
+            archive
+                .write_all(bytes)
+                .expect("the archive entry should be written");
+        }
+        archive.finish().expect("the archive should finish");
     }
 
     #[test]
@@ -2871,6 +3122,86 @@ mod tests {
             Err(PluginError::ResourceTooLarge { .. })
         ));
 
+        let _ = fs::remove_dir_all(install_root);
+    }
+
+    #[test]
+    fn zip_archive_adapter_extracts_a_directory_package_and_cleans_rejected_archives() {
+        let root = temporary_manifest_dir();
+        fs::create_dir_all(&root).expect("the archive root should be writable");
+        let archive_path = root.join("example.zip");
+        let manifest = view_manifest(None);
+        write_zip_package(
+            &archive_path,
+            &manifest,
+            &[("l10n/en.json", br#"{"ready":"Ready"}"#)],
+        );
+
+        let extraction = root.join("extracted");
+        ZipPluginArchiveAdapter
+            .extract_to(&archive_path, &extraction)
+            .expect("a valid archive should extract");
+        assert_eq!(
+            fs::read(extraction.join("manifest.json")).expect("manifest should be extracted"),
+            serde_json::to_vec(&manifest).expect("manifest should serialize")
+        );
+        assert_eq!(
+            fs::read(extraction.join("l10n/en.json")).expect("bundle should be extracted"),
+            br#"{"ready":"Ready"}"#
+        );
+
+        let rejected_archive = root.join("rejected.zip");
+        let file = fs::File::create(&rejected_archive).expect("the archive should be writable");
+        let mut archive = zip::ZipWriter::new(file);
+        archive
+            .start_file("../escape.txt", zip::write::SimpleFileOptions::default())
+            .expect("the unsafe entry should be written");
+        archive
+            .write_all(b"escape")
+            .expect("the unsafe entry should contain data");
+        archive.finish().expect("the archive should finish");
+        let rejected_extraction = root.join("rejected");
+        assert!(matches!(
+            ZipPluginArchiveAdapter.extract_to(&rejected_archive, &rejected_extraction),
+            Err(PluginArchiveError::EntryRejected(_))
+        ));
+        assert!(!rejected_extraction.exists());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn plugin_host_installs_and_previews_zip_packages_through_the_existing_transaction() {
+        let source_root = temporary_manifest_dir();
+        let install_root = temporary_manifest_dir();
+        fs::create_dir_all(&source_root).expect("source root should be writable");
+        let archive_path = source_root.join("example.zip");
+        let manifest = ExtensionManifest {
+            id: ExtensionId("example".into()),
+            version: "1.0.0".into(),
+            host_api: VersionRange("^1".into()),
+            runtime: RuntimeKind::BuiltIn,
+            launch: None,
+            contributions: Vec::new(),
+            permission_sets: Vec::new(),
+            ..ExtensionManifest::default()
+        };
+        write_zip_package(&archive_path, &manifest, &[]);
+
+        let host = InMemoryPluginHost::default();
+        let preview = host
+            .inspect_from_archive(&archive_path)
+            .expect("archive preview should validate the manifest");
+        assert_eq!(preview.manifest.id, manifest.id);
+
+        let mut host = host;
+        let installed = host
+            .install_from_archive(&archive_path, &install_root)
+            .expect("archive install should use the directory transaction");
+        assert_eq!(installed.id, manifest.id);
+        assert!(install_root.join("example/manifest.json").is_file());
+
+        let _ = fs::remove_dir_all(source_root);
         let _ = fs::remove_dir_all(install_root);
     }
 

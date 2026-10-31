@@ -76,6 +76,10 @@ WorkbenchApp 在 WorkspaceArea 中呈现的主界面。AppSurface 可以拥有�
 
 由 PluginHost 持有的受限资源读取适配器。它根据已注册扩展和声明的 resourceRoot/locale 读取有界 bundle，校验包路径、符号链接和大小后通过 CoreTransport 投影资源 DTO；桌面渲染层不直接访问插件文件系统。
 
+## Plugin archive adapter
+
+由 PluginHost 在安装阶段使用的归档输入适配器。首期支持 ZIP，将归档安全解包到临时目录后交给既有的 manifest 校验、staging、activation、commit 和 rollback 流程；归档格式处理不进入 PluginResourceLoader。
+
 ## State owner
 
 对某类持久化字段或派生缓存负责的唯一模块。State owner 负责 schema、迁移、失效、恢复和对外投影；存储适配器不成为第二 owner。

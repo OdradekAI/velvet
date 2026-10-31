@@ -75,16 +75,16 @@ export function PluginManagerDialog({
 
   const install = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const directory = sourceDir.trim();
-    if (!directory) {
-      setError('Enter the plugin package directory.');
+    const sourcePath = sourceDir.trim();
+    if (!sourcePath) {
+      setError('Enter the plugin package path.');
       return;
     }
 
     setError(undefined);
     setMessage(undefined);
-    if (!preview || previewSource !== directory) {
-      await inspectDirectory(directory);
+    if (!preview || previewSource !== sourcePath) {
+      await inspectPackage(sourcePath);
       return;
     }
     if (!preview.canInstall) {
@@ -94,7 +94,9 @@ export function PluginManagerDialog({
 
     setInstalling(true);
     try {
-      const summary = await plugins.installInCore(directory);
+      const summary = isArchivePackage(sourcePath)
+        ? await plugins.installArchiveInCore(sourcePath)
+        : await plugins.installInCore(sourcePath);
       setSourceDir('');
       setPreview(undefined);
       setPreviewSource(undefined);
@@ -113,13 +115,15 @@ export function PluginManagerDialog({
     }
   };
 
-  const inspectDirectory = async (directory: string) => {
+  const inspectPackage = async (sourcePath: string) => {
     setError(undefined);
     setMessage(undefined);
     try {
-      const nextPreview = await plugins.inspectInCore(directory);
+      const nextPreview = isArchivePackage(sourcePath)
+        ? await plugins.inspectArchiveInCore(sourcePath)
+        : await plugins.inspectInCore(sourcePath);
       setPreview(nextPreview);
-      setPreviewSource(directory);
+      setPreviewSource(sourcePath);
     } catch (reason) {
       setPreview(undefined);
       setPreviewSource(undefined);
@@ -136,7 +140,7 @@ export function PluginManagerDialog({
       const directory = await pickDirectory();
       if (directory) {
         setSourceDir(directory);
-        await inspectDirectory(directory);
+        await inspectPackage(directory);
       }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
@@ -419,10 +423,10 @@ export function PluginManagerDialog({
           </div>
         ) : null}
         <form className="velvet-plugin-manager__install" onSubmit={(event) => void install(event)}>
-          <label htmlFor="velvet-plugin-source">Plugin package directory</label>
+          <label htmlFor="velvet-plugin-source">Plugin package path</label>
           <div className="velvet-plugin-manager__install-row">
             <input
-              aria-label="Plugin package directory"
+              aria-label="Plugin package path"
               className="velvet-input"
               id="velvet-plugin-source"
               onChange={(event) => {
@@ -430,7 +434,7 @@ export function PluginManagerDialog({
                 setPreview(undefined);
                 setPreviewSource(undefined);
               }}
-              placeholder="/path/to/plugin-package"
+              placeholder="/path/to/plugin-package or .zip"
               value={sourceDir}
             />
             {pickDirectory ? (
@@ -501,5 +505,9 @@ export function PluginManagerDialog({
 
 function formatPermission(permission: string): string {
   return permission.replaceAll('-', ' ').replaceAll('.', ' ');
+}
+
+function isArchivePackage(sourcePath: string): boolean {
+  return sourcePath.toLowerCase().endsWith('.zip');
 }
 

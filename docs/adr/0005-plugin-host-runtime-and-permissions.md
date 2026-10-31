@@ -87,8 +87,10 @@ The directory-package adapter is now implemented as a bounded
 `PluginResourceLoader`: it derives the installed package from the validated
 extension id, permits only declared localization locales under `resourceRoot`,
 rejects package or symlink escapes and oversized files, and returns resource
-bytes through a typed CoreTransport DTO. Archive extraction and non-localization
-binary resources remain future adapters over the same seam.
+bytes through a typed CoreTransport DTO. ZIP archive packages now pass through
+a separate bounded extraction adapter and then reuse the directory-package
+transaction; other archive formats and non-localization binary resources remain
+future adapters over the same seam.
 
 The runtime declaration is one of `builtin`, `wasm` or `sidecar`. Built-ins
 are trusted adapters; third-party runtimes remain isolated. `extensionKind`

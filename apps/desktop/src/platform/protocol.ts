@@ -171,8 +171,18 @@ export type CoreRequest =
     }
   | {
       readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'install-plugin-archive';
+      readonly sourceArchive: string;
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
       readonly kind: 'inspect-plugin';
       readonly sourceDir: string;
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'inspect-plugin-archive';
+      readonly sourceArchive: string;
     }
   | {
       readonly protocolVersion: ProtocolVersion;

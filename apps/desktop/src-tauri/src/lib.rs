@@ -263,6 +263,12 @@ pub enum WireRequest {
         #[serde(rename = "sourceDir")]
         source_dir: String,
     },
+    InstallPluginArchive {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        #[serde(rename = "sourceArchive")]
+        source_archive: String,
+    },
     UninstallPlugin {
         #[serde(rename = "protocolVersion")]
         protocol_version: u16,
@@ -274,6 +280,12 @@ pub enum WireRequest {
         protocol_version: u16,
         #[serde(rename = "sourceDir")]
         source_dir: String,
+    },
+    InspectPluginArchive {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        #[serde(rename = "sourceArchive")]
+        source_archive: String,
     },
     CommitPluginInstall {
         #[serde(rename = "protocolVersion")]
@@ -495,6 +507,15 @@ impl WireRequest {
                 validate_inner_protocol(outer_protocol_version, protocol_version)?;
                 Ok(Request::Command(Command::InstallPlugin { source_dir }))
             }
+            Self::InstallPluginArchive {
+                protocol_version,
+                source_archive,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Command(Command::InstallPluginArchive {
+                    source_archive,
+                }))
+            }
             Self::UninstallPlugin {
                 protocol_version,
                 extension_id,
@@ -510,6 +531,15 @@ impl WireRequest {
             } => {
                 validate_inner_protocol(outer_protocol_version, protocol_version)?;
                 Ok(Request::Command(Command::InspectPlugin { source_dir }))
+            }
+            Self::InspectPluginArchive {
+                protocol_version,
+                source_archive,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Command(Command::InspectPluginArchive {
+                    source_archive,
+                }))
             }
             Self::CommitPluginInstall {
                 protocol_version,
@@ -1994,6 +2024,47 @@ mod tests {
                 .expect("the plugin uninstall request should map"),
             Request::Command(Command::UninstallPlugin { extension_id })
                 if extension_id.0 == "velvet.example.echo"
+        ));
+    }
+
+    #[test]
+    fn wire_archive_install_requests_preserve_source_paths() {
+        let inspect: WireRequestEnvelope = serde_json::from_value(serde_json::json!({
+            "protocolVersion": 1,
+            "requestId": 41,
+            "request": {
+                "kind": "inspect-plugin-archive",
+                "protocolVersion": 1,
+                "sourceArchive": "/tmp/sample.velvet-plugin.zip"
+            }
+        }))
+        .expect("archive inspect should deserialize");
+        assert!(matches!(
+            inspect
+                .request
+                .into_core(1)
+                .expect("archive inspect should map"),
+            Request::Command(Command::InspectPluginArchive { source_archive })
+                if source_archive == "/tmp/sample.velvet-plugin.zip"
+        ));
+
+        let install: WireRequestEnvelope = serde_json::from_value(serde_json::json!({
+            "protocolVersion": 1,
+            "requestId": 42,
+            "request": {
+                "kind": "install-plugin-archive",
+                "protocolVersion": 1,
+                "sourceArchive": "/tmp/sample.velvet-plugin.zip"
+            }
+        }))
+        .expect("archive install should deserialize");
+        assert!(matches!(
+            install
+                .request
+                .into_core(1)
+                .expect("archive install should map"),
+            Request::Command(Command::InstallPluginArchive { source_archive })
+                if source_archive == "/tmp/sample.velvet-plugin.zip"
         ));
     }
 

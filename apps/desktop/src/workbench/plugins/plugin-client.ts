@@ -809,12 +809,26 @@ export class PluginClient {
   }
 
   public async installInCore(sourceDir: string): Promise<CorePluginSummary> {
-    const previousSummaries = new Map(this.coreSummaries);
-    const installed = await this.requestCoreExtension({
+    return this.installCorePackage({
       protocolVersion: PROTOCOL_VERSION,
       kind: 'install-plugin',
       sourceDir,
     });
+  }
+
+  public async installArchiveInCore(sourceArchive: string): Promise<CorePluginSummary> {
+    return this.installCorePackage({
+      protocolVersion: PROTOCOL_VERSION,
+      kind: 'install-plugin-archive',
+      sourceArchive,
+    });
+  }
+
+  private async installCorePackage(
+    request: Parameters<CoreTransport['request']>[0],
+  ): Promise<CorePluginSummary> {
+    const previousSummaries = new Map(this.coreSummaries);
+    const installed = await this.requestCoreExtension(request);
     const previousSummary = previousSummaries.get(installed.id);
     const cleanupRequired = installed.state === 'registered' || installed.state === 'active';
 
@@ -861,6 +875,21 @@ export class PluginClient {
     if (response.kind !== 'plugin-install-preview') {
       throw new PluginLifecycleError(
         `Expected a plugin install preview, received ${response.kind}`,
+        'core',
+      );
+    }
+    return response.preview;
+  }
+
+  public async inspectArchiveInCore(sourceArchive: string): Promise<CorePluginInstallPreview> {
+    const response = await this.core.request({
+      protocolVersion: PROTOCOL_VERSION,
+      kind: 'inspect-plugin-archive',
+      sourceArchive,
+    });
+    if (response.kind !== 'plugin-install-preview') {
+      throw new PluginLifecycleError(
+        `Expected a plugin archive install preview, received ${response.kind}`,
         'core',
       );
     }

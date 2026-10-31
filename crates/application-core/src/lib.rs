@@ -370,11 +370,31 @@ impl ApplicationCore {
             .install_from_directory(source_dir.as_ref(), plugin_directory)
     }
 
+    pub fn install_plugin_from_archive(
+        &mut self,
+        source_archive: impl AsRef<std::path::Path>,
+    ) -> Result<velvet_plugin_api::ExtensionSummary, PluginError> {
+        let Some(plugin_directory) = self.plugin_directory.as_deref() else {
+            return Err(PluginError::InstallFailed(
+                "plugin installation is unavailable without an application plugin directory".into(),
+            ));
+        };
+        self.plugins
+            .install_from_archive(source_archive.as_ref(), plugin_directory)
+    }
+
     pub fn inspect_plugin_from_directory(
         &self,
         source_dir: impl AsRef<std::path::Path>,
     ) -> Result<ExtensionInstallPreview, PluginError> {
         self.plugins.inspect_from_directory(source_dir.as_ref())
+    }
+
+    pub fn inspect_plugin_from_archive(
+        &self,
+        source_archive: impl AsRef<std::path::Path>,
+    ) -> Result<ExtensionInstallPreview, PluginError> {
+        self.plugins.inspect_from_archive(source_archive.as_ref())
     }
 
     pub fn commit_plugin_install(&mut self, id: &ExtensionId) -> Result<(), PluginError> {
@@ -797,8 +817,17 @@ impl ApplicationCore {
                 .install_plugin_from_directory(source_dir)
                 .map(Response::Extension)
                 .map_err(plugin_error),
+            Request::Command(Command::InstallPluginArchive { source_archive }) => self
+                .install_plugin_from_archive(source_archive)
+                .map(Response::Extension)
+                .map_err(plugin_error),
             Request::Command(Command::InspectPlugin { source_dir }) => self
                 .inspect_plugin_from_directory(source_dir)
+                .map(PluginInstallPreviewDto::from)
+                .map(Response::PluginInstallPreview)
+                .map_err(plugin_error),
+            Request::Command(Command::InspectPluginArchive { source_archive }) => self
+                .inspect_plugin_from_archive(source_archive)
                 .map(PluginInstallPreviewDto::from)
                 .map(Response::PluginInstallPreview)
                 .map_err(plugin_error),

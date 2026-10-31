@@ -200,8 +200,14 @@ pub enum Command {
     InstallPlugin {
         source_dir: String,
     },
+    InstallPluginArchive {
+        source_archive: String,
+    },
     InspectPlugin {
         source_dir: String,
+    },
+    InspectPluginArchive {
+        source_archive: String,
     },
     CommitPluginInstall {
         extension_id: ExtensionId,

@@ -96,12 +96,12 @@ const core = {
     if (request.kind === 'query-plugin-install-recovery-log') {
       return { kind: 'plugin-install-recovery-log', log: [] };
     }
-    if (request.kind === 'install-plugin') {
+    if (request.kind === 'install-plugin' || request.kind === 'install-plugin-archive') {
       installed = true;
       installedState = 'registered';
       return { kind: 'extension', extension: summary('sample.installed', 'registered') };
     }
-    if (request.kind === 'inspect-plugin') {
+    if (request.kind === 'inspect-plugin' || request.kind === 'inspect-plugin-archive') {
       return {
         kind: 'plugin-install-preview',
         preview: {
@@ -210,6 +210,8 @@ await act(async () => {
 });
 assert.match(document.body.textContent ?? '', /sample\.installed installed and activated/);
 assert.match(document.body.textContent ?? '', /sample\.installed/);
+await client.inspectArchiveInCore('/tmp/sample.velvet-plugin.zip');
+assert.equal(requests.at(-1)?.kind, 'inspect-plugin-archive');
 assert.deepEqual(
   requests.slice(0, 12).map((request) => request.kind),
   [
