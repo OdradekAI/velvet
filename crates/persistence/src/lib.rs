@@ -19,8 +19,9 @@ pub use owner_snapshots::{
     PROFILE_SNAPSHOT_SCOPE,
 };
 pub use recovery_set::{
-    commit_current_recovery_set, commit_recovery_set_after_owner_change, InMemoryRecoverySetStore,
-    JsonFileRecoverySetStore, RecoverySet, RecoverySetError, RecoverySetMember, RecoverySetStore,
+    commit_current_recovery_set, commit_recovery_set_after_owner_change,
+    commit_recovery_set_after_owner_changes, InMemoryRecoverySetStore, JsonFileRecoverySetStore,
+    RecoverySet, RecoverySetError, RecoverySetMember, RecoverySetStore, RecoverySetTransaction,
     CORE_RECOVERY_SET_ID, RECOVERY_SET_FORMAT_VERSION,
 };
 pub use snapshot::{

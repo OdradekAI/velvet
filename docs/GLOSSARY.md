@@ -148,6 +148,10 @@ Asset source 当前是否可访问的 Rust 投影。移动硬盘或网络盘断�
 
 由恢复索引记录的一组相关 StateSnapshot generation。它表示一次跨 owner 变更或迁移的可恢复提交点；只有在引用校验通过并完成提交屏障后，相关 generation 才能一起成为当前状态。RecoverySet 不取代各 owner 对数据和 schema 的所有权。
 
+## RecoverySetTransaction
+
+持久化层提供的跨 owner 写入 seam。它先 stage 所有变更 owner 的 StateSnapshot，再逐个提交 payload，最后发布新的 RecoverySet 指针；指针提交前，读取者继续使用上一组或 bootstrap 时的 legacy owner 状态。
+
 ## QuarantinedState
 
 因损坏、schema 不兼容或迁移失败而暂时移出正常启动路径的原始状态。QuarantinedState 保留有限诊断元数据和原始字节，等待重试、恢复、导出或用户删除；它不应阻塞核心 Workbench 启动。

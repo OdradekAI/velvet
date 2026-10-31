@@ -6,7 +6,7 @@ use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 
 use crate::durability::{write_atomic, DurabilityMode};
-use crate::snapshot::{SnapshotError, StateSnapshotStore};
+use crate::snapshot::{SnapshotError, StateSnapshot, StateSnapshotStore};
 
 pub const RECOVERY_SET_FORMAT_VERSION: u16 = 1;
 pub const CORE_RECOVERY_SET_ID: &str = "core";
@@ -47,6 +47,112 @@ pub trait RecoverySetStore: Send + Sync {
     fn load_previous(&self, set_id: &str) -> Result<Option<RecoverySet>, RecoverySetError>;
     fn restore_previous(&self, set_id: &str) -> Result<Option<RecoverySet>, RecoverySetError>;
     fn quarantine(&self, set_id: &str, generation: u64) -> Result<(), RecoverySetError>;
+}
+
+/// Stages a related group of owner snapshots and publishes its RecoverySet
+/// pointer only after every staged generation has committed. Readers that use
+/// the pointer therefore keep seeing the previous set while the transaction
+/// is incomplete.
+pub struct RecoverySetTransaction<'a> {
+    snapshot_store: &'a dyn StateSnapshotStore,
+    set_store: &'a dyn RecoverySetStore,
+    set_id: String,
+    created_at_ms: u64,
+    scopes: Vec<(String, String)>,
+    changed: BTreeMap<String, (String, String, u64)>,
+}
+
+impl<'a> RecoverySetTransaction<'a> {
+    pub fn new(
+        snapshot_store: &'a dyn StateSnapshotStore,
+        set_store: &'a dyn RecoverySetStore,
+        set_id: impl Into<String>,
+        created_at_ms: u64,
+        scopes: &[(&str, &str)],
+    ) -> Result<Self, RecoverySetError> {
+        if scopes.is_empty() {
+            return Err(RecoverySetError::Invalid(
+                "a recovery set transaction must contain at least one owner".into(),
+            ));
+        }
+        let mut normalized = Vec::with_capacity(scopes.len());
+        let mut seen = BTreeMap::new();
+        for (owner_id, scope) in scopes {
+            validate_segment(owner_id, "owner id")?;
+            validate_segment(scope, "scope")?;
+            let key = format!("{owner_id}:{scope}");
+            if seen.insert(key, ()).is_some() {
+                return Err(RecoverySetError::Invalid(
+                    "a recovery set transaction cannot repeat an owner scope".into(),
+                ));
+            }
+            normalized.push(((*owner_id).to_owned(), (*scope).to_owned()));
+        }
+        let set_id = set_id.into();
+        validate_segment(&set_id, "recovery set id")?;
+        Ok(Self {
+            snapshot_store,
+            set_store,
+            set_id,
+            created_at_ms,
+            scopes: normalized,
+            changed: BTreeMap::new(),
+        })
+    }
+
+    pub fn stage(&mut self, snapshot: &StateSnapshot) -> Result<(), RecoverySetError> {
+        let owner_id = &snapshot.metadata.owner_id;
+        let scope = &snapshot.metadata.scope;
+        if !self.scopes.iter().any(|(expected_owner, expected_scope)| {
+            expected_owner == owner_id && expected_scope == scope
+        }) {
+            return Err(RecoverySetError::Invalid(format!(
+                "snapshot {owner_id}:{scope} is not part of the recovery set transaction"
+            )));
+        }
+        self.snapshot_store
+            .stage(snapshot)
+            .map_err(map_snapshot_error)?;
+        self.changed.insert(
+            format!("{owner_id}:{scope}"),
+            (
+                owner_id.clone(),
+                scope.clone(),
+                snapshot.metadata.generation,
+            ),
+        );
+        Ok(())
+    }
+
+    pub fn commit(self) -> Result<RecoverySet, RecoverySetError> {
+        if self.changed.is_empty() {
+            return Err(RecoverySetError::Invalid(
+                "a recovery set transaction must stage at least one snapshot".into(),
+            ));
+        }
+        for (owner_id, scope, generation) in self.changed.values() {
+            self.snapshot_store
+                .commit(owner_id, scope, *generation)
+                .map_err(map_snapshot_error)?;
+        }
+        let changed = self
+            .changed
+            .values()
+            .map(|(owner_id, scope, _)| (owner_id.as_str(), scope.as_str()))
+            .collect::<Vec<_>>();
+        commit_recovery_set_after_owner_changes(
+            self.snapshot_store,
+            self.set_store,
+            &self.set_id,
+            self.created_at_ms,
+            &self
+                .scopes
+                .iter()
+                .map(|(owner_id, scope)| (owner_id.as_str(), scope.as_str()))
+                .collect::<Vec<_>>(),
+            &changed,
+        )
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -333,13 +439,13 @@ pub fn commit_current_recovery_set(
     created_at_ms: u64,
     scopes: &[(&str, &str)],
 ) -> Result<RecoverySet, RecoverySetError> {
-    commit_recovery_set_with_owner(
+    commit_recovery_set_with_owners(
         snapshot_store,
         set_store,
         set_id,
         created_at_ms,
         scopes,
-        None,
+        &[],
     )
 }
 
@@ -352,23 +458,49 @@ pub fn commit_recovery_set_after_owner_change(
     changed_owner: &str,
     changed_scope: &str,
 ) -> Result<RecoverySet, RecoverySetError> {
-    commit_recovery_set_with_owner(
+    commit_recovery_set_after_owner_changes(
         snapshot_store,
         set_store,
         set_id,
         created_at_ms,
         scopes,
-        Some((changed_owner, changed_scope)),
+        &[(changed_owner, changed_scope)],
     )
 }
 
-fn commit_recovery_set_with_owner(
+pub fn commit_recovery_set_after_owner_changes(
     snapshot_store: &dyn StateSnapshotStore,
     set_store: &dyn RecoverySetStore,
     set_id: &str,
     created_at_ms: u64,
     scopes: &[(&str, &str)],
-    changed_owner: Option<(&str, &str)>,
+    changed_owners: &[(&str, &str)],
+) -> Result<RecoverySet, RecoverySetError> {
+    if changed_owners
+        .iter()
+        .any(|changed| !scopes.contains(changed))
+    {
+        return Err(RecoverySetError::Invalid(
+            "a changed owner must be part of the recovery set scopes".into(),
+        ));
+    }
+    commit_recovery_set_with_owners(
+        snapshot_store,
+        set_store,
+        set_id,
+        created_at_ms,
+        scopes,
+        changed_owners,
+    )
+}
+
+fn commit_recovery_set_with_owners(
+    snapshot_store: &dyn StateSnapshotStore,
+    set_store: &dyn RecoverySetStore,
+    set_id: &str,
+    created_at_ms: u64,
+    scopes: &[(&str, &str)],
+    changed_owners: &[(&str, &str)],
 ) -> Result<RecoverySet, RecoverySetError> {
     if scopes.is_empty() {
         return Err(RecoverySetError::Invalid(
@@ -378,7 +510,7 @@ fn commit_recovery_set_with_owner(
     let current = set_store.load_latest(set_id)?;
     let mut members = BTreeMap::new();
     for (owner_id, scope) in scopes {
-        let snapshot = if changed_owner == Some((*owner_id, *scope)) {
+        let snapshot = if changed_owners.contains(&(*owner_id, *scope)) {
             snapshot_store.load_latest(owner_id, scope)
         } else if let Some(current) = current.as_ref() {
             let key = format!("{owner_id}:{scope}");
@@ -522,9 +654,12 @@ fn map_snapshot_error(error: SnapshotError) -> RecoverySetError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::snapshot::{InMemoryStateSnapshotStore, StateSnapshot, StateSnapshotMetadata};
+    use crate::snapshot::{
+        InMemoryStateSnapshotStore, SnapshotError, StateSnapshot, StateSnapshotMetadata,
+        StateSnapshotStore,
+    };
     use crc32fast::hash;
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     static TEMPORARY_ROOT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -554,6 +689,66 @@ mod tests {
                 committed: false,
             },
             payload,
+        }
+    }
+
+    struct FailingCommitSnapshotStore {
+        inner: InMemoryStateSnapshotStore,
+        fail_profile_commit: AtomicBool,
+    }
+
+    impl FailingCommitSnapshotStore {
+        fn new() -> Self {
+            Self {
+                inner: InMemoryStateSnapshotStore::default(),
+                fail_profile_commit: AtomicBool::new(false),
+            }
+        }
+    }
+
+    impl StateSnapshotStore for FailingCommitSnapshotStore {
+        fn stage(&self, snapshot: &StateSnapshot) -> Result<(), SnapshotError> {
+            self.inner.stage(snapshot)
+        }
+
+        fn commit(
+            &self,
+            owner_id: &str,
+            scope: &str,
+            generation: u64,
+        ) -> Result<(), SnapshotError> {
+            if owner_id == "profile" && self.fail_profile_commit.load(Ordering::Relaxed) {
+                return Err(SnapshotError::Unavailable(
+                    "injected profile commit failure".into(),
+                ));
+            }
+            self.inner.commit(owner_id, scope, generation)
+        }
+
+        fn load_latest(
+            &self,
+            owner_id: &str,
+            scope: &str,
+        ) -> Result<Option<StateSnapshot>, SnapshotError> {
+            self.inner.load_latest(owner_id, scope)
+        }
+
+        fn load_generation(
+            &self,
+            owner_id: &str,
+            scope: &str,
+            generation: u64,
+        ) -> Result<Option<StateSnapshot>, SnapshotError> {
+            self.inner.load_generation(owner_id, scope, generation)
+        }
+
+        fn quarantine(
+            &self,
+            owner_id: &str,
+            scope: &str,
+            generation: u64,
+        ) -> Result<(), SnapshotError> {
+            self.inner.quarantine(owner_id, scope, generation)
         }
     }
 
@@ -612,5 +807,91 @@ mod tests {
             1
         );
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn multi_owner_transaction_keeps_the_previous_set_until_all_members_commit() {
+        let snapshots = InMemoryStateSnapshotStore::default();
+        let sets = InMemoryRecoverySetStore::default();
+        let scopes = [
+            ("layout", "workspace"),
+            ("profile", "user"),
+            ("job", "runtime"),
+        ];
+        for (owner, scope) in scopes {
+            snapshots.stage(&snapshot(owner, scope, 1)).unwrap();
+            snapshots.commit(owner, scope, 1).unwrap();
+        }
+        let first =
+            commit_current_recovery_set(&snapshots, &sets, CORE_RECOVERY_SET_ID, 1, &scopes)
+                .unwrap();
+
+        let mut transaction =
+            RecoverySetTransaction::new(&snapshots, &sets, CORE_RECOVERY_SET_ID, 2, &scopes)
+                .unwrap();
+        transaction
+            .stage(&snapshot("layout", "workspace", 2))
+            .unwrap();
+        transaction.stage(&snapshot("profile", "user", 2)).unwrap();
+        assert_eq!(
+            sets.load_latest(CORE_RECOVERY_SET_ID).unwrap(),
+            Some(first.clone())
+        );
+
+        let committed = transaction.commit().unwrap();
+        assert_ne!(committed.generation, first.generation);
+        assert_eq!(
+            sets.load_latest(CORE_RECOVERY_SET_ID)
+                .unwrap()
+                .unwrap()
+                .members["layout:workspace"]
+                .generation,
+            2
+        );
+        assert_eq!(
+            sets.load_latest(CORE_RECOVERY_SET_ID)
+                .unwrap()
+                .unwrap()
+                .members["profile:user"]
+                .generation,
+            2
+        );
+        assert_eq!(
+            sets.load_latest(CORE_RECOVERY_SET_ID)
+                .unwrap()
+                .unwrap()
+                .members["job:runtime"]
+                .generation,
+            1
+        );
+    }
+
+    #[test]
+    fn failed_owner_commit_does_not_publish_a_mixed_recovery_set() {
+        let snapshots = FailingCommitSnapshotStore::new();
+        let sets = InMemoryRecoverySetStore::default();
+        let scopes = [("layout", "workspace"), ("profile", "user")];
+        for (owner, scope) in scopes {
+            snapshots.stage(&snapshot(owner, scope, 1)).unwrap();
+            snapshots.commit(owner, scope, 1).unwrap();
+        }
+        let first =
+            commit_current_recovery_set(&snapshots, &sets, CORE_RECOVERY_SET_ID, 1, &scopes)
+                .unwrap();
+
+        let mut transaction =
+            RecoverySetTransaction::new(&snapshots, &sets, CORE_RECOVERY_SET_ID, 2, &scopes)
+                .unwrap();
+        transaction
+            .stage(&snapshot("layout", "workspace", 2))
+            .unwrap();
+        transaction.stage(&snapshot("profile", "user", 2)).unwrap();
+        snapshots.fail_profile_commit.store(true, Ordering::Relaxed);
+
+        assert!(matches!(
+            transaction.commit(),
+            Err(RecoverySetError::Unavailable(_))
+        ));
+        assert_eq!(sets.load_latest(CORE_RECOVERY_SET_ID).unwrap(), Some(first));
     }
 }

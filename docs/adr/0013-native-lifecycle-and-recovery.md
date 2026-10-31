@@ -173,10 +173,11 @@ component failure and clears that owner's projections and Jobs; it does not
 increment the core pre-ready Safe Mode counter.
 
 This slice is deliberately narrower than the full decision: native no-WebView
-recovery, cross-owner migration transactions beyond the per-owner set pointer,
-user-facing restore confirmation and the full cross-component `DiagnosticBundle`
-are still implementation gates. A successful renderer restore or quarantine
-action requests a fresh startup so the selected set becomes live.
+recovery, migration-participant integration on top of the transaction seam,
+user-facing restore confirmation and the full cross-component
+`DiagnosticBundle` are still implementation gates. A successful renderer
+restore or quarantine action requests a fresh startup so the selected set
+becomes live.
 Optional plugin activation is recorded as a degraded component failure and does
 not block the core-ready checkpoint. The file journal is an evidence
 store, not yet a replacement for owner snapshots or a proof that writes are
@@ -233,10 +234,14 @@ When a change spans related owners, the recovery index records a `RecoverySet`
 containing the participating owner generations and a commit barrier. A restore
 may publish one owner alone only after reference validation proves that its
 dependent owners remain compatible; otherwise it stages and commits the whole
-set. Individual owner bytes may be written before the barrier, but readers use
-only generations referenced by the last committed recovery-index pointer;
-unreferenced bytes remain staging/quarantine evidence. The recovery index never
-copies domain payloads or changes their owners.
+set. `RecoverySetTransaction` is the persistence seam for the latter case: it
+stages every changed owner, commits those bytes, and publishes the new pointer
+last. Until the first complete set exists, snapshot-backed owner adapters keep
+the legacy owner state visible; they never expose an individually committed
+bootstrap generation. Individual owner bytes may be written before the barrier,
+but readers use only generations referenced by the last committed
+recovery-index pointer; unreferenced bytes remain staging/quarantine evidence.
+The recovery index never copies domain payloads or changes their owners.
 
 Migrations are owner-specific and copy-on-write:
 

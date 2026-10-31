@@ -274,6 +274,10 @@ fn load_scoped_snapshot(
                 None => Err(PersistenceError::CorruptState),
             };
         }
+        // Until the first complete RecoverySet exists, staged or individually
+        // committed owner generations are not authoritative. Keep the legacy
+        // owner state visible so bootstrap cannot expose a mixed set.
+        return Ok(None);
     }
     snapshots
         .load_latest(owner_id, scope)
@@ -339,7 +343,7 @@ mod tests {
     use std::collections::BTreeMap;
     use std::sync::Arc;
     use velvet_job_system::InMemoryJobStateStore;
-    use velvet_layout_model::LayoutState;
+    use velvet_layout_model::{LayoutState, WorkbenchAppId};
     use velvet_workbench_protocol::ProfileState;
 
     #[test]
@@ -443,5 +447,37 @@ mod tests {
             .expect("the referenced layout should load")
             .is_some());
         assert_eq!(profile.load(), Err(PersistenceError::CorruptState));
+    }
+
+    #[test]
+    fn bootstrap_does_not_expose_an_owner_snapshot_before_the_first_recovery_set() {
+        let snapshots = Arc::new(InMemoryStateSnapshotStore::default());
+        let recovery_sets = Arc::new(InMemoryRecoverySetStore::default());
+        let legacy = Arc::new(InMemoryLayoutStateStore::default());
+        let legacy_state = LayoutState {
+            active_app: WorkbenchAppId::FeedWorkbench,
+            ..LayoutState::default()
+        };
+        legacy
+            .save(&legacy_state)
+            .expect("legacy state should save");
+        let layout = SnapshotLayoutStateStore::new(snapshots, Some(recovery_sets), legacy);
+
+        let snapshot_state = LayoutState {
+            active_app: WorkbenchAppId::AssetManager,
+            ..LayoutState::default()
+        };
+        layout
+            .save(&snapshot_state)
+            .expect("the owner snapshot should stage");
+
+        assert_eq!(
+            layout
+                .load()
+                .expect("legacy state should remain visible")
+                .expect("legacy state should exist")
+                .active_app,
+            WorkbenchAppId::FeedWorkbench
+        );
     }
 }
