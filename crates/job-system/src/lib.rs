@@ -353,6 +353,37 @@ impl JobSystem {
         Ok(before.saturating_sub(runners.len()))
     }
 
+    pub fn cancel_owned_jobs(&self, owner_id: &str) -> Result<usize, JobError> {
+        let cancelled = {
+            let mut jobs = self
+                .inner
+                .jobs
+                .lock()
+                .map_err(|_| JobError::Store("job lock poisoned".into()))?;
+            let mut cancelled = Vec::new();
+            for snapshot in jobs.values_mut() {
+                if snapshot.provenance.owner_id != owner_id
+                    || !matches!(snapshot.status, JobStatus::Queued | JobStatus::Running)
+                {
+                    continue;
+                }
+                snapshot.status = JobStatus::Cancelled;
+                snapshot.message = Some("Cancelled because the owner was disabled".into());
+                snapshot.retryable = true;
+                cancelled.push(snapshot.clone());
+            }
+            cancelled
+        };
+        if cancelled.is_empty() {
+            return Ok(0);
+        }
+        self.persist()?;
+        for snapshot in &cancelled {
+            self.emit(snapshot.clone());
+        }
+        Ok(cancelled.len())
+    }
+
     pub fn cancel(&self, id: &JobId) -> Result<JobSnapshot, JobError> {
         self.update(id, |snapshot| {
             if matches!(snapshot.status, JobStatus::Queued | JobStatus::Running) {
@@ -1119,6 +1150,30 @@ mod tests {
             jobs.unregister_runners("extension.a")
                 .expect("owner cleanup should succeed"),
             1
+        );
+    }
+
+    #[test]
+    fn disabling_an_owner_cancels_its_queued_or_running_jobs() {
+        let jobs = JobSystem::default();
+        jobs.register_runner("extension.a", "owned", Arc::new(AttemptRunner))
+            .expect("runner should register");
+        let created = jobs
+            .submit(JobSpec {
+                kind: "owned".into(),
+                duration_ms: 200,
+                will_fail: false,
+                input: Value::Null,
+                provenance: JobProvenance::for_owner("extension.a"),
+            })
+            .expect("owned job should submit");
+        let cancelled = jobs
+            .cancel_owned_jobs("extension.a")
+            .expect("owner cancellation should succeed");
+        assert_eq!(cancelled, 1);
+        assert_eq!(
+            jobs.snapshot(&created.id).map(|snapshot| snapshot.status),
+            Some(JobStatus::Cancelled)
         );
     }
 }

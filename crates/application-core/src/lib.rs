@@ -626,6 +626,7 @@ impl ApplicationCore {
 
     fn clear_plugin_runtime_state(&mut self, extension_id: &ExtensionId) {
         self.forget_preview_actions(extension_id);
+        let _ = self.jobs.cancel_owned_jobs(&extension_id.0);
         let _ = self.jobs.unregister_runners(&extension_id.0);
     }
 

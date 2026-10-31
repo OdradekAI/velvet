@@ -33,7 +33,8 @@ recomputable independently of the extension that produced them.
 
 The execution seam is a Rust `JobRunner` registry keyed by owner and declared
 Job kind. Runner registrations are removed when their owner is disabled,
-crashes or uninstalls. A runner receives an opaque `JobExecutionContext` with the Job id,
+crashes or uninstalls; queued and running Jobs owned by that extension are
+cancelled at the same lifecycle boundary. A runner receives an opaque `JobExecutionContext` with the Job id,
 attempt, input, provenance, progress reporter and cooperative cancellation
 handle; it returns a typed content type and JSON payload or a typed failure. A
 plugin-backed runner uses the isolated runtime's `invoke-job`/`job.run` seam;
