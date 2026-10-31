@@ -22,6 +22,7 @@ velvet-job-system = { path = "../../../crates/job-system" }
 velvet-layout-model = { path = "../../../crates/layout-model" }
 velvet-persistence = { path = "../../../crates/persistence" }
 velvet-plugin-api = { path = "../../../crates/plugin-api" }
+velvet-plugin-host = { path = "../../../crates/plugin-host" }
 velvet-preview-core = { path = "../../../crates/preview-core" }
 velvet-tauri-adapter = { path = "../../../crates/tauri-adapter" }
 velvet-workbench-protocol = { path = "../../../crates/workbench-protocol" }

@@ -3834,6 +3834,7 @@ dependencies = [
  "velvet-layout-model",
  "velvet-persistence",
  "velvet-plugin-api",
+ "velvet-plugin-host",
  "velvet-preview-core",
  "velvet-tauri-adapter",
  "velvet-workbench-protocol",

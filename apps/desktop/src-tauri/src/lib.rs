@@ -17,6 +17,7 @@ use velvet_plugin_api::{
     ZonePermissionSet,
     validate_reserved_metadata,
 };
+use velvet_plugin_host::JsonFileRuntimeLeaseStore;
 use velvet_persistence::{
     DurabilityMode, JsonFileAssetSourceLocationStore, JsonFileDiagnosticEventStore,
     JsonFileJobStateStore, JsonFileLayoutStateStore, JsonFileProfileStateStore,
@@ -1572,6 +1573,7 @@ pub fn run() {
             let diagnostic_events_path = app_data_dir.join("diagnostic-events.json");
             let snapshot_root = app_data_dir.join("snapshots");
             let recovery_set_root = app_data_dir.join("recovery-sets");
+            let runtime_leases_path = app_data_dir.join("runtime-leases.json");
             let plugin_directory = app_data_dir.join("plugins");
             let durability = if cfg!(unix) {
                 DurabilityMode::RequireFsync
@@ -1611,6 +1613,10 @@ pub fn run() {
                 )
                 .with_diagnostics(Arc::new(JsonFileDiagnosticEventStore::with_durability(
                     diagnostic_events_path,
+                    durability,
+                )))
+                .with_runtime_leases(Arc::new(JsonFileRuntimeLeaseStore::with_durability(
+                    runtime_leases_path,
                     durability,
                 ))),
             );

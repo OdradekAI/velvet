@@ -7,6 +7,7 @@ use std::os::unix::process::CommandExt;
 use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStderr, Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -25,11 +26,18 @@ use velvet_plugin_api::{
 };
 
 mod extension_storage;
+mod runtime_lease;
 
 pub use extension_storage::{
     BackupParticipant, ExtensionStorage, ExtensionStorageError, ExtensionStorageExport,
     ExtensionStorageTransaction, ExtensionStorageView, MigrationParticipant,
     EXTENSION_STORAGE_SCOPE, MAX_EXTENSION_STORAGE_BYTES, MAX_EXTENSION_STORAGE_KEY_BYTES,
+};
+pub use runtime_lease::{
+    ConservativeRuntimeOrphanReconciler, InMemoryRuntimeLeaseStore, JsonFileRuntimeLeaseStore,
+    RuntimeLease, RuntimeLeaseError, RuntimeLeaseState, RuntimeLeaseStore,
+    RuntimeOrphanObservation, RuntimeOrphanReconciler, RuntimeOrphanReport, RuntimeProcessIdentity,
+    MAX_RUNTIME_LEASES, MAX_RUNTIME_LEASE_STORE_BYTES, RUNTIME_LEASE_SCHEMA_VERSION,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -58,6 +66,10 @@ pub enum PluginError {
         message: String,
     },
     RuntimeInvocation {
+        extension_id: ExtensionId,
+        message: String,
+    },
+    RuntimeLease {
         extension_id: ExtensionId,
         message: String,
     },
@@ -136,6 +148,7 @@ pub enum RuntimeLaunchPolicy {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RuntimeLaunchContext {
     pub policy: RuntimeLaunchPolicy,
+    pub runtime_nonce: Option<String>,
 }
 
 impl RuntimeLaunchContext {
@@ -152,7 +165,13 @@ impl RuntimeLaunchContext {
                 package_root: package_root.into(),
                 allowed_programs: allowed_programs.into_iter().map(Into::into).collect(),
             },
+            runtime_nonce: None,
         }
+    }
+
+    pub fn with_runtime_nonce(mut self, runtime_nonce: impl Into<String>) -> Self {
+        self.runtime_nonce = Some(runtime_nonce.into());
+        self
     }
 }
 
@@ -179,6 +198,7 @@ pub const MAX_PLUGIN_DIAGNOSTICS: usize = 256;
 pub const MAX_PLUGIN_DIAGNOSTIC_MESSAGE_BYTES: usize = 512;
 const RECOVERY_LOG_FILE: &str = ".plugin-recovery-log.json";
 const RECOVERY_LOG_LIMIT: usize = 100;
+static RUNTIME_NONCE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PluginLocalizationResource {
@@ -826,6 +846,9 @@ impl PluginJobHandle {
 pub trait RuntimeProcess: Send {
     fn poll(&mut self) -> RuntimeHealth;
     fn shutdown(&mut self) -> Result<(), RuntimeError>;
+    fn identity(&self) -> Option<RuntimeProcessIdentity> {
+        None
+    }
     fn invoke(
         &mut self,
         invocation: &PluginInvocation,
@@ -1009,6 +1032,9 @@ impl PluginRuntime for ProcessPluginRuntime {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        if let Some(runtime_nonce) = &context.runtime_nonce {
+            command.env("VELVET_RUNTIME_LEASE_ID", runtime_nonce);
+        }
         if let Some(package_root) = package_root {
             command.current_dir(package_root);
         }
@@ -1153,6 +1179,13 @@ impl RuntimeProcess for ChildRuntimeProcess {
         }
 
         shutdown_result
+    }
+
+    fn identity(&self) -> Option<RuntimeProcessIdentity> {
+        Some(RuntimeProcessIdentity {
+            pid: self.child.id(),
+            process_group_id: process_group_id(self.child.id()),
+        })
     }
 
     fn invoke(
@@ -1302,6 +1335,16 @@ fn terminate_child(child: &mut Child) -> Result<(), RuntimeError> {
     child
         .kill()
         .map_err(|error| RuntimeError::ShutdownFailed(error.to_string()))
+}
+
+#[cfg(unix)]
+fn process_group_id(pid: u32) -> Option<u32> {
+    Some(pid)
+}
+
+#[cfg(not(unix))]
+fn process_group_id(_pid: u32) -> Option<u32> {
+    None
 }
 
 #[cfg(target_os = "linux")]
@@ -1842,6 +1885,9 @@ pub trait PluginHost {
         id: &ExtensionId,
         participant: &dyn MigrationParticipant,
     ) -> Result<ExtensionStorageView, PluginError>;
+    fn reconcile_runtime_orphans(&mut self) -> Result<Vec<RuntimeOrphanReport>, PluginError> {
+        Ok(Vec::new())
+    }
     fn drain_diagnostics(&mut self) -> Vec<PluginDiagnosticRecord>;
 }
 
@@ -1851,11 +1897,14 @@ pub struct InMemoryPluginHost {
     active: BTreeSet<ExtensionId>,
     states: BTreeMap<ExtensionId, ExtensionState>,
     processes: BTreeMap<ExtensionId, Arc<Mutex<Box<dyn RuntimeProcess>>>>,
+    runtime_nonces: BTreeMap<ExtensionId, String>,
     runtime: Box<dyn PluginRuntime>,
     host_api: VersionRange,
     apps: BTreeMap<String, VersionRange>,
     pending_installs: BTreeMap<ExtensionId, InstallBackup>,
     extension_snapshots: Option<Arc<dyn velvet_persistence::StateSnapshotStore>>,
+    runtime_leases: Option<Arc<dyn RuntimeLeaseStore>>,
+    orphan_reconciler: Option<Arc<dyn RuntimeOrphanReconciler>>,
     diagnostics: Arc<Mutex<PluginDiagnosticSink>>,
 }
 
@@ -1883,11 +1932,14 @@ impl Default for InMemoryPluginHost {
             active: BTreeSet::new(),
             states: BTreeMap::new(),
             processes: BTreeMap::new(),
+            runtime_nonces: BTreeMap::new(),
             runtime: Box::new(ProcessPluginRuntime),
             host_api: VersionRange("1".into()),
             apps,
             pending_installs: BTreeMap::new(),
             extension_snapshots: None,
+            runtime_leases: None,
+            orphan_reconciler: None,
             diagnostics: Arc::new(Mutex::new(PluginDiagnosticSink::default())),
         }
     }
@@ -1913,6 +1965,14 @@ impl InMemoryPluginHost {
         snapshots: Arc<dyn velvet_persistence::StateSnapshotStore>,
     ) {
         self.extension_snapshots = Some(snapshots);
+    }
+
+    pub fn set_runtime_lease_store(&mut self, leases: Arc<dyn RuntimeLeaseStore>) {
+        self.runtime_leases = Some(leases);
+    }
+
+    pub fn set_runtime_orphan_reconciler(&mut self, reconciler: Arc<dyn RuntimeOrphanReconciler>) {
+        self.orphan_reconciler = Some(reconciler);
     }
 
     pub fn drain_diagnostics(&mut self) -> Vec<PluginDiagnosticRecord> {
@@ -2022,6 +2082,120 @@ impl InMemoryPluginHost {
 
     pub fn register_app(&mut self, app_id: String, api: VersionRange) {
         self.apps.insert(app_id, api);
+    }
+
+    pub fn reconcile_runtime_orphans(&mut self) -> Result<Vec<RuntimeOrphanReport>, PluginError> {
+        let (Some(store), Some(reconciler)) = (
+            self.runtime_leases.as_ref(),
+            self.orphan_reconciler.as_ref(),
+        ) else {
+            return Ok(Vec::new());
+        };
+        let leases = store.load().map_err(|error| PluginError::RuntimeLease {
+            extension_id: ExtensionId("runtime".into()),
+            message: format!("runtime leases could not be loaded: {error:?}"),
+        })?;
+        let mut reports = Vec::with_capacity(leases.len());
+        for lease in leases {
+            let observation = reconciler.observe(&lease);
+            let mut lease_closed = false;
+            let mut quarantined = false;
+            match observation {
+                RuntimeOrphanObservation::Absent | RuntimeOrphanObservation::DifferentProcess => {
+                    lease_closed = store
+                        .close(&lease.extension_id, &lease.runtime_nonce)
+                        .is_ok();
+                    if let Some(state) = self.states.get_mut(&lease.extension_id) {
+                        *state = ExtensionState::Failed;
+                    }
+                    self.record_diagnostic(PluginDiagnosticInput {
+                        extension_id: lease.extension_id.clone(),
+                        kind: PluginDiagnosticKind::Runtime,
+                        code: "runtime-orphan-reconciled".into(),
+                        message: format!("orphan lease observed as {observation:?}"),
+                        job_id: None,
+                        attempt: None,
+                        retryable: true,
+                    });
+                }
+                RuntimeOrphanObservation::Matching => match reconciler.terminate(&lease) {
+                    Ok(()) => {
+                        lease_closed = store
+                            .close(&lease.extension_id, &lease.runtime_nonce)
+                            .is_ok();
+                        if let Some(state) = self.states.get_mut(&lease.extension_id) {
+                            *state = ExtensionState::Failed;
+                        }
+                        self.record_diagnostic(PluginDiagnosticInput {
+                            extension_id: lease.extension_id.clone(),
+                            kind: PluginDiagnosticKind::Runtime,
+                            code: "runtime-orphan-terminated".into(),
+                            message: "confirmed orphan runtime was terminated".into(),
+                            job_id: None,
+                            attempt: None,
+                            retryable: true,
+                        });
+                    }
+                    Err(error) => {
+                        quarantined = true;
+                        self.record_diagnostic(PluginDiagnosticInput {
+                            extension_id: lease.extension_id.clone(),
+                            kind: PluginDiagnosticKind::Runtime,
+                            code: "runtime-orphan-quarantined".into(),
+                            message: format!("confirmed orphan could not be terminated: {error:?}"),
+                            job_id: None,
+                            attempt: None,
+                            retryable: true,
+                        });
+                    }
+                },
+                RuntimeOrphanObservation::IdentityUncertain => {
+                    quarantined = true;
+                    self.record_diagnostic(PluginDiagnosticInput {
+                        extension_id: lease.extension_id.clone(),
+                        kind: PluginDiagnosticKind::Runtime,
+                        code: "runtime-orphan-identity-uncertain".into(),
+                        message: "runtime identity could not be verified; no process was killed"
+                            .into(),
+                        job_id: None,
+                        attempt: None,
+                        retryable: true,
+                    });
+                }
+            }
+            reports.push(RuntimeOrphanReport {
+                extension_id: lease.extension_id,
+                runtime_nonce: lease.runtime_nonce,
+                observation,
+                lease_closed,
+                quarantined,
+            });
+        }
+        Ok(reports)
+    }
+
+    fn runtime_lease_enabled(&self, manifest: &ExtensionManifest) -> bool {
+        manifest.runtime != RuntimeKind::BuiltIn
+            && self.runtime.requires_package_launch_context()
+            && self.runtime_leases.is_some()
+    }
+
+    fn close_runtime_lease(&self, id: &ExtensionId, runtime_nonce: Option<&str>) {
+        let (Some(store), Some(runtime_nonce)) = (self.runtime_leases.as_ref(), runtime_nonce)
+        else {
+            return;
+        };
+        if let Err(error) = store.close(id, runtime_nonce) {
+            self.record_diagnostic(PluginDiagnosticInput {
+                extension_id: id.clone(),
+                kind: PluginDiagnosticKind::Runtime,
+                code: "runtime-lease-close-failed".into(),
+                message: format!("runtime lease could not be closed: {error:?}"),
+                job_id: None,
+                attempt: None,
+                retryable: true,
+            });
+        }
     }
 
     fn register_manifest(
@@ -2378,6 +2552,8 @@ impl InMemoryPluginHost {
     }
 
     fn remove_registration(&mut self, id: &ExtensionId) {
+        let runtime_nonce = self.runtime_nonces.remove(id);
+        self.close_runtime_lease(id, runtime_nonce.as_deref());
         self.manifests.remove(id);
         self.package_roots.remove(id);
         self.active.remove(id);
@@ -2502,6 +2678,8 @@ impl InMemoryPluginHost {
                         let _ = process.shutdown();
                     }
                 }
+                let runtime_nonce = self.runtime_nonces.remove(id);
+                self.close_runtime_lease(id, runtime_nonce.as_deref());
                 self.active.remove(id);
                 self.states.insert(id.clone(), ExtensionState::Failed);
                 self.record_diagnostic(PluginDiagnosticInput {
@@ -2675,16 +2853,102 @@ impl PluginHost for InMemoryPluginHost {
 
         self.states.insert(id.clone(), ExtensionState::Starting);
         let permissions = PermissionGrant::from_manifest(&manifest);
-        let launch_context = self
-            .package_roots
-            .get(id)
+        let package_root = self.package_roots.get(id).cloned();
+        let runtime_lease = if self.runtime_lease_enabled(&manifest) {
+            let runtime_nonce = next_runtime_nonce(id);
+            let lease = RuntimeLease::starting(
+                manifest.id.clone(),
+                manifest.version.clone(),
+                package_root.clone(),
+                runtime_nonce.clone(),
+            );
+            let store = self
+                .runtime_leases
+                .as_ref()
+                .expect("runtime lease is enabled only with a store")
+                .clone();
+            if let Err(error) = store.publish(lease.clone()) {
+                self.states.insert(id.clone(), ExtensionState::Failed);
+                let message = format!("runtime lease could not be published: {error:?}");
+                self.record_diagnostic(PluginDiagnosticInput {
+                    extension_id: id.clone(),
+                    kind: PluginDiagnosticKind::Activation,
+                    code: "runtime-lease-publish-failed".into(),
+                    message: message.clone(),
+                    job_id: None,
+                    attempt: None,
+                    retryable: true,
+                });
+                return Err(PluginError::RuntimeLease {
+                    extension_id: id.clone(),
+                    message,
+                });
+            }
+            Some((store, lease))
+        } else {
+            None
+        };
+        let launch_context = package_root
+            .as_deref()
             .map(RuntimeLaunchContext::package)
             .unwrap_or_default();
+        let launch_context = runtime_lease
+            .as_ref()
+            .map(|(_, lease)| {
+                launch_context
+                    .clone()
+                    .with_runtime_nonce(lease.runtime_nonce.clone())
+            })
+            .unwrap_or(launch_context);
         match self
             .runtime
             .start_with_context(&manifest, &permissions, &launch_context)
         {
-            Ok(process) => {
+            Ok(mut process) => {
+                if let Some((store, lease)) = runtime_lease {
+                    let Some(identity) = process.identity() else {
+                        let _ = process.shutdown();
+                        let _ = store.close(id, &lease.runtime_nonce);
+                        self.states.insert(id.clone(), ExtensionState::Failed);
+                        let message =
+                            "external runtime did not provide a process identity for its lease"
+                                .to_owned();
+                        self.record_diagnostic(PluginDiagnosticInput {
+                            extension_id: id.clone(),
+                            kind: PluginDiagnosticKind::Activation,
+                            code: "runtime-lease-identity-missing".into(),
+                            message: message.clone(),
+                            job_id: None,
+                            attempt: None,
+                            retryable: true,
+                        });
+                        return Err(PluginError::RuntimeLease {
+                            extension_id: id.clone(),
+                            message,
+                        });
+                    };
+                    let runtime_nonce = lease.runtime_nonce.clone();
+                    if let Err(error) = store.publish(lease.running(identity)) {
+                        let _ = process.shutdown();
+                        let _ = store.close(id, &runtime_nonce);
+                        self.states.insert(id.clone(), ExtensionState::Failed);
+                        let message = format!("runtime lease could not be committed: {error:?}");
+                        self.record_diagnostic(PluginDiagnosticInput {
+                            extension_id: id.clone(),
+                            kind: PluginDiagnosticKind::Activation,
+                            code: "runtime-lease-commit-failed".into(),
+                            message: message.clone(),
+                            job_id: None,
+                            attempt: None,
+                            retryable: true,
+                        });
+                        return Err(PluginError::RuntimeLease {
+                            extension_id: id.clone(),
+                            message,
+                        });
+                    }
+                    self.runtime_nonces.insert(id.clone(), runtime_nonce);
+                }
                 self.processes
                     .insert(id.clone(), Arc::new(Mutex::new(process)));
                 self.active.insert(id.clone());
@@ -2692,6 +2956,19 @@ impl PluginHost for InMemoryPluginHost {
                 Ok(())
             }
             Err(error) => {
+                if let Some((store, lease)) = runtime_lease {
+                    if let Err(close_error) = store.close(id, &lease.runtime_nonce) {
+                        self.record_diagnostic(PluginDiagnosticInput {
+                            extension_id: id.clone(),
+                            kind: PluginDiagnosticKind::Runtime,
+                            code: "runtime-lease-close-failed".into(),
+                            message: format!("failed to close start lease: {close_error:?}"),
+                            job_id: None,
+                            attempt: None,
+                            retryable: true,
+                        });
+                    }
+                }
                 self.states.insert(id.clone(), ExtensionState::Failed);
                 let message = runtime_error_message(error);
                 self.record_diagnostic(PluginDiagnosticInput {
@@ -2721,6 +2998,8 @@ impl PluginHost for InMemoryPluginHost {
             .processes
             .remove(id)
             .and_then(|process| process.lock().ok()?.shutdown().err());
+        let runtime_nonce = self.runtime_nonces.remove(id);
+        self.close_runtime_lease(id, runtime_nonce.as_deref());
         self.states.insert(id.clone(), ExtensionState::Disabled);
         if let Some(error) = shutdown_error {
             let message = runtime_error_message(error);
@@ -2851,6 +3130,8 @@ impl PluginHost for InMemoryPluginHost {
                         let _ = process.shutdown();
                     }
                 }
+                let runtime_nonce = self.runtime_nonces.remove(id);
+                self.close_runtime_lease(id, runtime_nonce.as_deref());
                 self.active.remove(id);
                 self.states.insert(id.clone(), ExtensionState::Failed);
                 self.record_diagnostic(PluginDiagnosticInput {
@@ -3676,6 +3957,8 @@ impl PluginHost for InMemoryPluginHost {
         self.active.remove(id);
         self.states.remove(id);
         self.processes.remove(id);
+        let runtime_nonce = self.runtime_nonces.remove(id);
+        self.close_runtime_lease(id, runtime_nonce.as_deref());
         Ok(())
     }
 
@@ -3697,6 +3980,10 @@ impl PluginHost for InMemoryPluginHost {
         participant: &dyn MigrationParticipant,
     ) -> Result<ExtensionStorageView, PluginError> {
         InMemoryPluginHost::migrate_extension_state(self, id, participant)
+    }
+
+    fn reconcile_runtime_orphans(&mut self) -> Result<Vec<RuntimeOrphanReport>, PluginError> {
+        InMemoryPluginHost::reconcile_runtime_orphans(self)
     }
 
     fn drain_diagnostics(&mut self) -> Vec<PluginDiagnosticRecord> {
@@ -3771,6 +4058,15 @@ fn runtime_error_message(error: RuntimeError) -> String {
     }
 }
 
+fn next_runtime_nonce(id: &ExtensionId) -> String {
+    let sequence = RUNTIME_NONCE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    format!("{}-{}-{timestamp}-{sequence}", std::process::id(), id.0)
+}
+
 fn api_compatible(required: &VersionRange, provided: &VersionRange) -> bool {
     if required.0 == "*" || required.0 == provided.0 {
         return true;
@@ -3834,6 +4130,14 @@ mod tests {
         health: VecDeque<RuntimeHealth>,
         shutdowns: Arc<Mutex<usize>>,
         invocation_error: Option<RuntimeError>,
+    }
+
+    struct LeaseRuntime {
+        shutdowns: Arc<Mutex<usize>>,
+    }
+
+    struct LeaseProcess {
+        shutdowns: Arc<Mutex<usize>>,
     }
 
     fn temporary_manifest_dir() -> PathBuf {
@@ -4061,6 +4365,54 @@ mod tests {
                 error: None,
                 events: Vec::new(),
             })
+        }
+    }
+
+    impl RuntimeProcess for LeaseProcess {
+        fn poll(&mut self) -> RuntimeHealth {
+            RuntimeHealth::Running
+        }
+
+        fn shutdown(&mut self) -> Result<(), RuntimeError> {
+            *self
+                .shutdowns
+                .lock()
+                .expect("shutdown counter should not be poisoned") += 1;
+            Ok(())
+        }
+
+        fn identity(&self) -> Option<RuntimeProcessIdentity> {
+            Some(RuntimeProcessIdentity {
+                pid: 41_001,
+                process_group_id: Some(41_001),
+            })
+        }
+
+        fn invoke(
+            &mut self,
+            _invocation: &PluginInvocation,
+        ) -> Result<PluginInvocationResult, RuntimeError> {
+            Ok(PluginInvocationResult {
+                result: Some(serde_json::json!({ "accepted": true })),
+                error: None,
+                events: Vec::new(),
+            })
+        }
+    }
+
+    impl PluginRuntime for LeaseRuntime {
+        fn start(
+            &mut self,
+            _manifest: &ExtensionManifest,
+            _permissions: &PermissionGrant,
+        ) -> Result<Box<dyn RuntimeProcess>, RuntimeError> {
+            Ok(Box::new(LeaseProcess {
+                shutdowns: self.shutdowns.clone(),
+            }))
+        }
+
+        fn requires_package_launch_context(&self) -> bool {
+            true
         }
     }
 
@@ -5714,5 +6066,151 @@ mod tests {
         }));
 
         fs::remove_dir_all(root).expect("the orphan fixture should be removed");
+    }
+
+    #[test]
+    fn runtime_lease_is_published_during_activation_and_closed_after_disable() {
+        let package_root = temporary_manifest_dir();
+        fs::create_dir_all(&package_root).expect("the package root should exist");
+        let manifest = ExtensionManifest {
+            id: ExtensionId("lease.plugin".into()),
+            runtime: RuntimeKind::Sidecar,
+            launch: Some(RuntimeLaunchSpec {
+                program: "node".into(),
+                args: Vec::new(),
+            }),
+            ..ExtensionManifest::default()
+        };
+        let shutdowns = Arc::new(Mutex::new(0));
+        let mut host = InMemoryPluginHost::with_runtime(Box::new(LeaseRuntime {
+            shutdowns: shutdowns.clone(),
+        }));
+        let leases = Arc::new(InMemoryRuntimeLeaseStore::default());
+        host.set_runtime_lease_store(leases.clone());
+        host.register_from_package(manifest.clone(), &package_root)
+            .expect("the package should register");
+        host.activate(&manifest.id)
+            .expect("the runtime should activate");
+
+        let active_leases = leases.leases().expect("the lease store should be readable");
+        assert_eq!(active_leases.len(), 1);
+        assert_eq!(active_leases[0].extension_id, manifest.id);
+        assert_eq!(active_leases[0].state, RuntimeLeaseState::Running);
+        assert_eq!(active_leases[0].process.as_ref().unwrap().pid, 41_001);
+
+        host.disable(&manifest.id, DisableReason::User)
+            .expect("the runtime should disable");
+        assert!(leases
+            .leases()
+            .expect("the lease store should be readable")
+            .is_empty());
+        assert_eq!(*shutdowns.lock().unwrap(), 1);
+        fs::remove_dir_all(package_root).expect("the package root should be removed");
+    }
+
+    struct MatchingOrphanReconciler {
+        terminations: Arc<Mutex<usize>>,
+    }
+
+    impl RuntimeOrphanReconciler for MatchingOrphanReconciler {
+        fn observe(&self, _lease: &RuntimeLease) -> RuntimeOrphanObservation {
+            RuntimeOrphanObservation::Matching
+        }
+
+        fn terminate(&self, _lease: &RuntimeLease) -> Result<(), RuntimeLeaseError> {
+            *self
+                .terminations
+                .lock()
+                .expect("termination counter should not be poisoned") += 1;
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn confirmed_orphan_is_terminated_and_quarantined_state_stays_recoverable() {
+        let id = ExtensionId("orphan.plugin".into());
+        let manifest = ExtensionManifest {
+            id: id.clone(),
+            ..ExtensionManifest::default()
+        };
+        let store = Arc::new(InMemoryRuntimeLeaseStore::default());
+        store
+            .publish(
+                RuntimeLease::starting(
+                    id.clone(),
+                    manifest.version.clone(),
+                    None,
+                    "orphan-nonce".into(),
+                )
+                .running(RuntimeProcessIdentity {
+                    pid: 42_001,
+                    process_group_id: Some(42_001),
+                }),
+            )
+            .expect("the orphan lease should publish");
+        let terminations = Arc::new(Mutex::new(0));
+        let mut host = InMemoryPluginHost::default();
+        host.set_runtime_lease_store(store.clone());
+        host.set_runtime_orphan_reconciler(Arc::new(MatchingOrphanReconciler {
+            terminations: terminations.clone(),
+        }));
+        host.register(manifest)
+            .expect("the extension should register");
+
+        let reports = host
+            .reconcile_runtime_orphans()
+            .expect("orphan reconciliation should complete");
+        assert_eq!(reports.len(), 1);
+        assert_eq!(reports[0].observation, RuntimeOrphanObservation::Matching);
+        assert!(reports[0].lease_closed);
+        assert!(!reports[0].quarantined);
+        assert_eq!(*terminations.lock().unwrap(), 1);
+        assert!(store
+            .leases()
+            .expect("the lease store should be readable")
+            .is_empty());
+        assert_eq!(host.discover()[0].state, ExtensionState::Failed);
+        assert!(host
+            .drain_diagnostics()
+            .iter()
+            .any(|record| record.code == "runtime-orphan-terminated"));
+    }
+
+    #[test]
+    fn uncertain_orphan_never_terminates_or_closes_its_lease() {
+        let id = ExtensionId("uncertain.plugin".into());
+        let store = Arc::new(InMemoryRuntimeLeaseStore::default());
+        store
+            .publish(RuntimeLease::starting(
+                id.clone(),
+                "0.1.0".into(),
+                None,
+                "uncertain-nonce".into(),
+            ))
+            .expect("the uncertain lease should publish");
+        let mut host = InMemoryPluginHost::default();
+        host.set_runtime_lease_store(store.clone());
+        host.set_runtime_orphan_reconciler(Arc::new(ConservativeRuntimeOrphanReconciler));
+
+        let reports = host
+            .reconcile_runtime_orphans()
+            .expect("uncertain reconciliation should complete");
+        assert_eq!(
+            reports[0].observation,
+            RuntimeOrphanObservation::IdentityUncertain
+        );
+        assert!(!reports[0].lease_closed);
+        assert!(reports[0].quarantined);
+        assert_eq!(
+            store
+                .leases()
+                .expect("the lease store should be readable")
+                .len(),
+            1
+        );
+        assert!(host
+            .drain_diagnostics()
+            .iter()
+            .any(|record| record.code == "runtime-orphan-identity-uncertain"));
     }
 }

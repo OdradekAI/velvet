@@ -396,8 +396,11 @@ independent writer of extension or core state. The current sidecar adapter
 already bounds stderr, records exit evidence and cleans Unix process groups on
 shutdown; Linux additionally arms a parent-death signal before exec. Package
 launch allow-lists are enforced for discovered and installed packages;
-equivalent parent-death/process-group behavior on other supported platforms
-and cross-platform orphan reconciliation remain qualification gates.
+the host now persists a bounded per-runtime lease with a starting-to-running
+commit barrier, child process identity and atomic close on normal shutdown or
+failure cleanup. Equivalent parent-death/process-group behavior on other
+supported platforms and the production cross-platform orphan inspector remain
+qualification gates.
 
 The planned reconciler uses a host-owned per-runtime lease rather than a
 plugin-visible callback. The lease binds extension id, committed package
@@ -408,8 +411,12 @@ Job Object. PID reuse or an unreadable identity produces a quarantined
 recovery item and no kill. A confirmed orphan removes its projections,
 interrupts its in-flight Jobs and leaves committed extension snapshots
 available for restore. The lease is atomic, bounded and local; it contains no
-plugin payload or credentials. Lease persistence and the cross-platform
-adapter remain future implementation work.
+plugin payload or credentials. `PluginHost::reconcile_runtime_orphans`
+consumes a replaceable platform reconciler and applies conservative outcomes:
+confirmed matching identity can be terminated, a missing/different process is
+merely closed, and an uncertain identity is quarantined with no kill. Native
+composition wires the local lease store, while the platform inspector and
+termination primitive remain future implementation work.
 
 Before system suspend, background admission stops, runners checkpoint and Job
 snapshots persist. After wake, local work resumes when its owner and storage

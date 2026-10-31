@@ -403,9 +403,16 @@ Unix uses process groups plus parent-death where available, Windows uses a
 Job Object with kill-on-close, and platforms without an equivalent primitive
 fall back to a verified PID/start-token scan and mark the result degraded.
 Lease files are bounded, local and redacted; they contain no plugin payload or
-credentials. The current alpha has the package launch policy and Linux
-parent-death/process-group cleanup, but it does not yet persist leases or run
-the cross-platform reconciler.
+credentials. The alpha host now persists a bounded `RuntimeLeaseStore` with a
+starting-to-running commit barrier, records the child PID and Unix process
+group when available, and closes the lease after disable, crash cleanup or
+uninstall. Native composition stores the lease file with the same atomic/
+fsync policy used by other lifecycle files. `RuntimeOrphanReconciler` is a
+host-owned testable seam: a confirmed identity may be terminated, a missing
+or different process is closed without killing it, and an uncertain identity
+is quarantined without any kill. The alpha still has no production
+cross-platform identity inspector or termination adapter; until one is wired,
+stale leases remain recoverable evidence rather than an excuse to kill by PID.
 
 ## Alternatives considered
 

@@ -26,6 +26,7 @@ pub struct ApplicationRecoveryStores {
     pub snapshots: Option<Arc<dyn StateSnapshotStore>>,
     pub recovery_sets: Option<Arc<dyn RecoverySetStore>>,
     pub diagnostics: Option<Arc<dyn DiagnosticEventStore>>,
+    pub runtime_leases: Option<Arc<dyn velvet_plugin_host::RuntimeLeaseStore>>,
 }
 
 impl ApplicationRecoveryStores {
@@ -39,11 +40,20 @@ impl ApplicationRecoveryStores {
             snapshots,
             recovery_sets,
             diagnostics: None,
+            runtime_leases: None,
         }
     }
 
     pub fn with_diagnostics(mut self, diagnostics: Arc<dyn DiagnosticEventStore>) -> Self {
         self.diagnostics = Some(diagnostics);
+        self
+    }
+
+    pub fn with_runtime_leases(
+        mut self,
+        runtime_leases: Arc<dyn velvet_plugin_host::RuntimeLeaseStore>,
+    ) -> Self {
+        self.runtime_leases = Some(runtime_leases);
         self
     }
 
@@ -403,6 +413,7 @@ impl ApplicationCore {
             snapshots: recovery_snapshots,
             recovery_sets,
             diagnostics: diagnostic_store,
+            runtime_leases,
         } = recovery_stores;
         let recovery = RecoverySupervisor::new(recovery_journal, Arc::new(SystemRecoveryClock));
         let launch_started = recovery.begin_launch(env!("CARGO_PKG_VERSION"));
@@ -461,6 +472,9 @@ impl ApplicationCore {
         let mut plugins = InMemoryPluginHost::with_runtime(runtime);
         if let Some(snapshots) = recovery_snapshots.clone() {
             plugins.set_extension_storage_store(snapshots);
+        }
+        if let Some(runtime_leases) = runtime_leases {
+            plugins.set_runtime_lease_store(runtime_leases);
         }
         let (diagnostic_history, diagnostics_degraded) =
             match diagnostic_store.as_ref().map(|store| store.load()) {
@@ -765,6 +779,18 @@ impl ApplicationCore {
 
     pub fn discover_plugins(&self) -> Vec<velvet_plugin_api::ExtensionSummary> {
         self.plugins.discover()
+    }
+
+    pub fn reconcile_plugin_runtime_orphans(
+        &mut self,
+    ) -> Result<Vec<velvet_plugin_host::RuntimeOrphanReport>, PluginError> {
+        let reports = self.plugins.reconcile_runtime_orphans()?;
+        for report in &reports {
+            if report.lease_closed || report.quarantined {
+                self.clear_plugin_runtime_state(&report.extension_id);
+            }
+        }
+        Ok(reports)
     }
 
     /// Starts manifests discovered during native application startup. Other
