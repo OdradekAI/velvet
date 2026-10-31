@@ -165,6 +165,7 @@ impl JobStateStore for InMemoryJobStateStore {
 struct Inner {
     jobs: Mutex<BTreeMap<JobId, JobSnapshot>>,
     next_id: Mutex<u64>,
+    submission: Mutex<()>,
     store: Arc<dyn JobStateStore>,
     events: Mutex<Vec<JobSnapshot>>,
     runners: RwLock<BTreeMap<String, RegisteredRunner>>,
@@ -216,6 +217,7 @@ impl JobSystem {
             inner: Arc::new(Inner {
                 jobs: Mutex::new(jobs),
                 next_id: Mutex::new(next_id),
+                submission: Mutex::new(()),
                 store,
                 events: Mutex::new(Vec::new()),
                 runners: RwLock::new(BTreeMap::new()),
@@ -227,6 +229,58 @@ impl JobSystem {
     }
 
     pub fn submit(&self, spec: JobSpec) -> Result<JobSnapshot, JobError> {
+        let _submission = self
+            .inner
+            .submission
+            .lock()
+            .map_err(|_| JobError::Store("job submission lock poisoned".into()))?;
+        self.submit_locked(spec)
+    }
+
+    /// Reuses a completed result only when the producer supplied an input
+    /// fingerprint and every provenance field matches exactly. A missing
+    /// fingerprint is deliberately a cache miss so callers cannot present a
+    /// result for an unknown input as current.
+    pub fn submit_or_reuse(&self, spec: JobSpec) -> Result<JobSnapshot, JobError> {
+        let _submission = self
+            .inner
+            .submission
+            .lock()
+            .map_err(|_| JobError::Store("job submission lock poisoned".into()))?;
+        let mut spec = spec;
+        spec.provenance = normalize_provenance(spec.provenance);
+        if let Some(snapshot) = self.find_reusable_result(&spec.kind, &spec.provenance) {
+            return Ok(snapshot);
+        }
+        self.submit_locked(spec)
+    }
+
+    pub fn find_reusable_result(
+        &self,
+        kind: &str,
+        provenance: &JobProvenance,
+    ) -> Option<JobSnapshot> {
+        provenance.input_fingerprint.as_ref()?;
+        let provenance = normalize_provenance(provenance.clone());
+        self.inner
+            .jobs
+            .lock()
+            .ok()?
+            .values()
+            .filter(|snapshot| {
+                snapshot.kind == kind
+                    && snapshot.status == JobStatus::Completed
+                    && snapshot
+                        .result
+                        .as_ref()
+                        .is_some_and(|result| result.schema_version == JOB_SCHEMA_VERSION)
+                    && snapshot.provenance == provenance
+            })
+            .max_by(|left, right| (left.attempt, &left.id).cmp(&(right.attempt, &right.id)))
+            .cloned()
+    }
+
+    fn submit_locked(&self, spec: JobSpec) -> Result<JobSnapshot, JobError> {
         let id = {
             let mut next_id = self
                 .inner
@@ -842,6 +896,92 @@ mod tests {
             thread::sleep(Duration::from_millis(20));
         }
         panic!("job did not complete: {:?}", jobs.snapshot(&created.id));
+    }
+
+    #[test]
+    fn completed_results_are_reused_only_for_matching_input_provenance() {
+        let jobs = JobSystem::default();
+        jobs.register_runner("sample.extension", "cacheable", Arc::new(ResultRunner))
+            .expect("runner should register");
+        let provenance = JobProvenance {
+            owner_id: "sample.extension".into(),
+            input_fingerprint: Some("sha256:input-1".into()),
+            provider_id: Some("sample.provider".into()),
+            provider_version: Some("1.0.0".into()),
+            schema_version: JOB_SCHEMA_VERSION,
+            ..JobProvenance::default()
+        };
+        let created = jobs
+            .submit_or_reuse(JobSpec {
+                kind: "cacheable".into(),
+                duration_ms: 200,
+                will_fail: false,
+                provenance: provenance.clone(),
+            })
+            .expect("job should submit");
+
+        for _ in 0..20 {
+            if jobs
+                .snapshot(&created.id)
+                .is_some_and(|snapshot| snapshot.status == JobStatus::Completed)
+            {
+                break;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+
+        let reused = jobs
+            .submit_or_reuse(JobSpec {
+                kind: "cacheable".into(),
+                duration_ms: 10_000,
+                will_fail: true,
+                provenance,
+            })
+            .expect("matching result should be reused");
+        assert_eq!(reused.id, created.id);
+        assert_eq!(reused.status, JobStatus::Completed);
+
+        let changed_input = jobs
+            .submit_or_reuse(JobSpec {
+                kind: "cacheable".into(),
+                duration_ms: 200,
+                will_fail: false,
+                provenance: JobProvenance {
+                    input_fingerprint: Some("sha256:input-2".into()),
+                    ..reused.provenance
+                },
+            })
+            .expect("changed input should create a new job");
+        assert_ne!(changed_input.id, created.id);
+    }
+
+    #[test]
+    fn missing_input_fingerprint_is_always_a_cache_miss() {
+        let jobs = JobSystem::default();
+        jobs.register_runner("sample.extension", "uncacheable", Arc::new(ResultRunner))
+            .expect("runner should register");
+        let spec = || JobSpec {
+            kind: "uncacheable".into(),
+            duration_ms: 200,
+            will_fail: false,
+            provenance: JobProvenance::for_owner("sample.extension"),
+        };
+        let first = jobs
+            .submit_or_reuse(spec())
+            .expect("first job should submit");
+        for _ in 0..20 {
+            if jobs
+                .snapshot(&first.id)
+                .is_some_and(|snapshot| snapshot.status == JobStatus::Completed)
+            {
+                break;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        let second = jobs
+            .submit_or_reuse(spec())
+            .expect("missing fingerprint should submit a new job");
+        assert_ne!(second.id, first.id);
     }
 
     #[test]

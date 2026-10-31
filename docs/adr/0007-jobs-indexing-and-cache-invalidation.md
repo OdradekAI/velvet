@@ -47,6 +47,14 @@ one `JobResult` with its own schema version, content type and payload beside
 the snapshot. Tauri and the desktop receive this as a read-only projection;
 they never write results or provenance.
 
+The JobSystem exposes an exact provenance reuse seam for capability owners. A
+caller may submit through `submit_or_reuse`; it returns a compatible completed
+result only when an input fingerprint is present, the Job kind matches and the
+entire normalized provenance matches. Missing fingerprints are always cache
+misses. The lookup and submission are serialized so concurrent callers do not
+create duplicate work through this seam. Stale or incompatible results remain
+diagnosable snapshots and are never presented as a current cache hit.
+
 ## Consequences
 
 The v0.0.3 host slice implements the shared lifecycle seam: JobSystem owns
@@ -56,7 +64,8 @@ Queued/running work maps to retryable `Interrupted` state after a restart. The
 current slice now also proves runner registration, cooperative cancellation,
 panic isolation, persisted result payloads and provenance projection. Product
 thumbnail, indexing, feed-sync and facet-specific runners remain consumers of
-the same contract.
+the same contract. Capability owners can now opt into exact provenance reuse
+without creating a second cache or persistence owner.
 
 Positive:
 

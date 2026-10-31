@@ -357,7 +357,7 @@ impl ApplicationCore {
         will_fail: bool,
         provenance: JobProvenance,
     ) -> Result<velvet_job_system::JobSnapshot, JobError> {
-        self.jobs.submit(JobSpec {
+        self.jobs.submit_or_reuse(JobSpec {
             kind,
             duration_ms,
             will_fail,
