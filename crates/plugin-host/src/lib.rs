@@ -4,6 +4,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -88,6 +89,7 @@ pub enum RuntimeHealth {
 
 const RUNTIME_PROTOCOL_VERSION: u16 = 1;
 const RUNTIME_INVOCATION_TIMEOUT: Duration = Duration::from_secs(5);
+const MAX_JOB_EVENTS: usize = 128;
 const RECOVERY_LOG_FILE: &str = ".plugin-recovery-log.json";
 const RECOVERY_LOG_LIMIT: usize = 100;
 
@@ -104,6 +106,130 @@ pub struct PluginInvocation {
 pub struct PluginInvocationResult {
     pub result: Option<Value>,
     pub error: Option<String>,
+    #[serde(default)]
+    pub events: Vec<PluginInvocationEvent>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PluginInvocationEvent {
+    pub kind: String,
+    #[serde(default)]
+    pub progress: Option<u8>,
+    #[serde(default)]
+    pub message: Option<String>,
+}
+
+/// Runtime input for a declared Job contribution. The host owns Job
+/// lifecycle and provenance; the plugin receives a bounded JSON projection.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PluginJobInvocation {
+    pub job_id: String,
+    pub job_kind: String,
+    pub attempt: u32,
+    pub input: Value,
+    pub provenance: Value,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PluginJobResult {
+    pub content_type: String,
+    pub payload: Value,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PluginJobExecution {
+    pub result: PluginJobResult,
+    pub events: Vec<PluginInvocationEvent>,
+}
+
+/// A thread-safe handle to one active plugin runtime process. It is an
+/// adapter seam only; PluginHost remains responsible for activation,
+/// permissions and lifecycle state.
+#[derive(Clone)]
+pub struct PluginJobHandle {
+    extension_id: ExtensionId,
+    job_kind: String,
+    process: Arc<Mutex<Box<dyn RuntimeProcess>>>,
+}
+
+impl PluginJobHandle {
+    pub fn extension_id(&self) -> &ExtensionId {
+        &self.extension_id
+    }
+
+    pub fn job_kind(&self) -> &str {
+        &self.job_kind
+    }
+
+    pub fn invoke(
+        &self,
+        invocation: PluginJobInvocation,
+    ) -> Result<PluginJobExecution, PluginError> {
+        if invocation.job_kind != self.job_kind {
+            return Err(PluginError::InvalidContribution(format!(
+                "Job invocation kind {} does not match {}",
+                invocation.job_kind, self.job_kind
+            )));
+        }
+        let args = invocation.input.clone();
+        let context =
+            serde_json::to_value(&invocation).map_err(|error| PluginError::RuntimeInvocation {
+                extension_id: self.extension_id.clone(),
+                message: format!("Job invocation context could not be encoded: {error}"),
+            })?;
+        let plugin_invocation = PluginInvocation {
+            extension_id: self.extension_id.clone(),
+            method: "job.run".into(),
+            command_id: self.job_kind.clone(),
+            args,
+            context,
+        };
+        let result = self
+            .process
+            .lock()
+            .map_err(|_| PluginError::RuntimeInvocation {
+                extension_id: self.extension_id.clone(),
+                message: "plugin runtime lock poisoned".into(),
+            })?
+            .invoke(&plugin_invocation)
+            .map_err(|error| PluginError::RuntimeInvocation {
+                extension_id: self.extension_id.clone(),
+                message: runtime_error_message(error),
+            })?;
+        if let Some(error) = result.error {
+            return Err(PluginError::RuntimeInvocation {
+                extension_id: self.extension_id.clone(),
+                message: error,
+            });
+        }
+        if result.events.len() > MAX_JOB_EVENTS {
+            return Err(PluginError::RuntimeInvocation {
+                extension_id: self.extension_id.clone(),
+                message: format!(
+                    "job runtime returned too many progress events (max {MAX_JOB_EVENTS})"
+                ),
+            });
+        }
+        let payload = result
+            .result
+            .ok_or_else(|| PluginError::RuntimeInvocation {
+                extension_id: self.extension_id.clone(),
+                message: "job runtime returned no result".into(),
+            })?;
+        let job_result = serde_json::from_value::<PluginJobResult>(payload).map_err(|error| {
+            PluginError::RuntimeInvocation {
+                extension_id: self.extension_id.clone(),
+                message: format!("invalid job result: {error}"),
+            }
+        })?;
+        Ok(PluginJobExecution {
+            result: job_result,
+            events: result.events,
+        })
+    }
 }
 
 pub trait RuntimeProcess: Send {
@@ -302,7 +428,11 @@ impl RuntimeProcess for ChildRuntimeProcess {
 
         let request = RuntimeInvocationRequest {
             protocol_version: RUNTIME_PROTOCOL_VERSION,
-            kind: "invoke-command",
+            kind: if invocation.method == "job.run" {
+                "invoke-job"
+            } else {
+                "invoke-command"
+            },
             method: &invocation.method,
             extension_id: &invocation.extension_id.0,
             command_id: &invocation.command_id,
@@ -348,6 +478,7 @@ impl RuntimeProcess for ChildRuntimeProcess {
         Ok(PluginInvocationResult {
             result: response.result,
             error: response.error,
+            events: response.events,
         })
     }
 }
@@ -365,11 +496,29 @@ impl RuntimeProcess for NoopRuntimeProcess {
 
     fn invoke(
         &mut self,
-        _invocation: &PluginInvocation,
+        invocation: &PluginInvocation,
     ) -> Result<PluginInvocationResult, RuntimeError> {
+        if invocation.method == "job.run" {
+            return Ok(PluginInvocationResult {
+                result: Some(serde_json::json!({
+                    "contentType": "application/json",
+                    "payload": {
+                        "jobKind": invocation.command_id.clone(),
+                        "accepted": true,
+                    }
+                })),
+                error: None,
+                events: vec![PluginInvocationEvent {
+                    kind: "progress".into(),
+                    progress: Some(100),
+                    message: Some("Completed".into()),
+                }],
+            });
+        }
         Ok(PluginInvocationResult {
             result: Some(serde_json::json!({ "accepted": true })),
             error: None,
+            events: Vec::new(),
         })
     }
 }
@@ -393,6 +542,8 @@ struct RuntimeInvocationResponse {
     ok: bool,
     result: Option<Value>,
     error: Option<String>,
+    #[serde(default)]
+    events: Vec<PluginInvocationEvent>,
 }
 
 fn runtime_io_loop(
@@ -723,6 +874,7 @@ pub trait PluginHost {
         &self,
         id: &ExtensionId,
     ) -> Result<Vec<velvet_plugin_api::ContributionDescriptor>, PluginError>;
+    fn job_handles(&self, id: &ExtensionId) -> Result<Vec<PluginJobHandle>, PluginError>;
     fn check_health(&mut self, id: &ExtensionId) -> Result<ExtensionState, PluginError>;
     fn recover(&mut self, id: &ExtensionId) -> Result<(), PluginError>;
     fn invoke_command(
@@ -800,7 +952,7 @@ pub struct InMemoryPluginHost {
     manifests: BTreeMap<ExtensionId, ExtensionManifest>,
     active: BTreeSet<ExtensionId>,
     states: BTreeMap<ExtensionId, ExtensionState>,
-    processes: BTreeMap<ExtensionId, Box<dyn RuntimeProcess>>,
+    processes: BTreeMap<ExtensionId, Arc<Mutex<Box<dyn RuntimeProcess>>>>,
     runtime: Box<dyn PluginRuntime>,
     host_api: VersionRange,
     apps: BTreeMap<String, VersionRange>,
@@ -1209,12 +1361,19 @@ impl InMemoryPluginHost {
             args,
             context,
         };
-        let result = self
+        let process = self
             .processes
-            .get_mut(id)
+            .get(id)
+            .cloned()
             .ok_or_else(|| PluginError::InvalidState {
                 extension_id: id.clone(),
                 state: ExtensionState::Failed,
+            })?;
+        let result = process
+            .lock()
+            .map_err(|_| PluginError::RuntimeInvocation {
+                extension_id: id.clone(),
+                message: "plugin runtime lock poisoned".into(),
             })?
             .invoke(&invocation);
 
@@ -1234,8 +1393,10 @@ impl InMemoryPluginHost {
             }),
             Err(error) => {
                 let message = runtime_error_message(error);
-                if let Some(mut process) = self.processes.remove(id) {
-                    let _ = process.shutdown();
+                if let Some(process) = self.processes.remove(id) {
+                    if let Ok(mut process) = process.lock() {
+                        let _ = process.shutdown();
+                    }
                 }
                 self.active.remove(id);
                 self.states.insert(id.clone(), ExtensionState::Failed);
@@ -1404,7 +1565,8 @@ impl PluginHost for InMemoryPluginHost {
         let permissions = PermissionGrant::from_manifest(&manifest);
         match self.runtime.start(&manifest, &permissions) {
             Ok(process) => {
-                self.processes.insert(id.clone(), process);
+                self.processes
+                    .insert(id.clone(), Arc::new(Mutex::new(process)));
                 self.active.insert(id.clone());
                 self.states.insert(id.clone(), ExtensionState::Active);
                 Ok(())
@@ -1428,7 +1590,7 @@ impl PluginHost for InMemoryPluginHost {
         let shutdown_error = self
             .processes
             .remove(id)
-            .and_then(|mut process| process.shutdown().err());
+            .and_then(|process| process.lock().ok()?.shutdown().err());
         self.states.insert(id.clone(), ExtensionState::Disabled);
         if let Some(error) = shutdown_error {
             return Err(PluginError::RuntimeShutdown {
@@ -1454,12 +1616,67 @@ impl PluginHost for InMemoryPluginHost {
         Ok(manifest.contributions.clone())
     }
 
+    fn job_handles(&self, id: &ExtensionId) -> Result<Vec<PluginJobHandle>, PluginError> {
+        let state = self
+            .states
+            .get(id)
+            .cloned()
+            .ok_or_else(|| PluginError::NotFound(id.clone()))?;
+        if !self.active.contains(id) {
+            return Err(PluginError::InvalidState {
+                extension_id: id.clone(),
+                state,
+            });
+        }
+        let process = self
+            .processes
+            .get(id)
+            .cloned()
+            .ok_or_else(|| PluginError::InvalidState {
+                extension_id: id.clone(),
+                state: ExtensionState::Failed,
+            })?;
+        let manifest = self
+            .manifests
+            .get(id)
+            .ok_or_else(|| PluginError::NotFound(id.clone()))?;
+        let job_kinds = manifest
+            .contributions
+            .iter()
+            .filter(|contribution| contribution.kind == ContributionKind::Job)
+            .map(|contribution| contribution.id.clone())
+            .collect::<Vec<_>>();
+        if job_kinds.is_empty() {
+            return Ok(Vec::new());
+        }
+        if !manifest
+            .permission_sets
+            .iter()
+            .flat_map(|set| set.permissions.iter())
+            .any(|permission| permission == &Permission::JobsCreate)
+        {
+            return Err(PluginError::PermissionDenied {
+                extension_id: id.clone(),
+                zone: WorkbenchZone::Operations,
+                permission: Permission::JobsCreate,
+            });
+        }
+        Ok(job_kinds
+            .into_iter()
+            .map(|job_kind| PluginJobHandle {
+                extension_id: id.clone(),
+                job_kind,
+                process: process.clone(),
+            })
+            .collect())
+    }
+
     fn check_health(&mut self, id: &ExtensionId) -> Result<ExtensionState, PluginError> {
         if !self.manifests.contains_key(id) {
             return Err(PluginError::NotFound(id.clone()));
         }
 
-        let Some(process) = self.processes.get_mut(id) else {
+        let Some(process) = self.processes.get(id).cloned() else {
             return Ok(self
                 .states
                 .get(id)
@@ -1467,11 +1684,20 @@ impl PluginHost for InMemoryPluginHost {
                 .unwrap_or(ExtensionState::Registered));
         };
 
-        match process.poll() {
+        let health = process
+            .lock()
+            .map_err(|_| PluginError::RuntimeCrashed {
+                extension_id: id.clone(),
+                message: "plugin runtime lock poisoned".into(),
+            })?
+            .poll();
+        match health {
             RuntimeHealth::Running => Ok(ExtensionState::Active),
             RuntimeHealth::Crashed(message) => {
-                if let Some(mut process) = self.processes.remove(id) {
-                    let _ = process.shutdown();
+                if let Some(process) = self.processes.remove(id) {
+                    if let Ok(mut process) = process.lock() {
+                        let _ = process.shutdown();
+                    }
                 }
                 self.active.remove(id);
                 self.states.insert(id.clone(), ExtensionState::Failed);
@@ -2421,14 +2647,29 @@ mod tests {
 
         fn invoke(
             &mut self,
-            _invocation: &PluginInvocation,
+            invocation: &PluginInvocation,
         ) -> Result<PluginInvocationResult, RuntimeError> {
             if let Some(error) = self.invocation_error.clone() {
                 return Err(error);
             }
+            if invocation.method == "job.run" {
+                return Ok(PluginInvocationResult {
+                    result: Some(serde_json::json!({
+                        "contentType": "application/json",
+                        "payload": { "jobKind": invocation.command_id.clone() },
+                    })),
+                    error: None,
+                    events: vec![PluginInvocationEvent {
+                        kind: "progress".into(),
+                        progress: Some(50),
+                        message: Some("Halfway".into()),
+                    }],
+                });
+            }
             Ok(PluginInvocationResult {
                 result: Some(serde_json::json!({ "accepted": true })),
                 error: None,
+                events: Vec::new(),
             })
         }
     }
@@ -2546,6 +2787,76 @@ mod tests {
             },
             ..ExtensionManifest::default()
         }
+    }
+
+    fn job_manifest(with_permission: bool) -> ExtensionManifest {
+        ExtensionManifest {
+            id: ExtensionId("job.example".into()),
+            version: "0.1.0".into(),
+            host_api: VersionRange("^1".into()),
+            runtime: RuntimeKind::BuiltIn,
+            launch: None,
+            target_app: None,
+            contributions: vec![ContributionDescriptor {
+                id: "job.example.analyze".into(),
+                kind: ContributionKind::Job,
+                scope: ContributionScope::Capability,
+                namespace: Some("capability.job.example".into()),
+                container: None,
+                zone: None,
+                title: None,
+                title_key: None,
+                icon: None,
+                order: None,
+                default_visible: None,
+                view_container_id: None,
+                activity_bar: None,
+                label: None,
+                label_key: None,
+                command_id: None,
+                group: None,
+                when: None,
+                anchor: None,
+                ui: None,
+                preview: None,
+            }],
+            permission_sets: if with_permission {
+                vec![ZonePermissionSet {
+                    zone: WorkbenchZone::Operations,
+                    permissions: vec![Permission::JobsCreate],
+                }]
+            } else {
+                vec![]
+            },
+            ..ExtensionManifest::default()
+        }
+    }
+
+    #[test]
+    fn job_handles_use_a_thread_safe_runtime_boundary_and_project_progress() {
+        let mut host = InMemoryPluginHost::default();
+        let manifest = job_manifest(true);
+        let id = manifest.id.clone();
+        host.register(manifest)
+            .expect("Job manifest should register");
+        host.activate(&id).expect("Job extension should activate");
+        let handle = host
+            .job_handles(&id)
+            .expect("active Job contribution should expose a handle")
+            .pop()
+            .expect("Job contribution should have a handle");
+        let execution = handle
+            .invoke(PluginJobInvocation {
+                job_id: "job-000001".into(),
+                job_kind: "job.example.analyze".into(),
+                attempt: 1,
+                input: serde_json::json!({ "assetId": "asset-1" }),
+                provenance: serde_json::json!({ "inputFingerprint": "sha256:asset-1" }),
+            })
+            .expect("Job invocation should reach the runtime");
+        assert_eq!(execution.result.content_type, "application/json");
+        assert_eq!(execution.result.payload["jobKind"], "job.example.analyze");
+        assert_eq!(execution.events[0].progress, Some(100));
     }
 
     #[test]
@@ -3236,6 +3547,24 @@ mod tests {
                 .and_then(|result| result.get("commandId")),
             Some(&serde_json::json!("echo.open"))
         );
+
+        let job_handle = host
+            .job_handles(&id)
+            .expect("the active sidecar should expose its Job handle")
+            .into_iter()
+            .find(|handle| handle.job_kind() == "echo.metadata-analysis")
+            .expect("the declared analysis Job should be registered");
+        let job = job_handle
+            .invoke(PluginJobInvocation {
+                job_id: "job-echo-000001".into(),
+                job_kind: "echo.metadata-analysis".into(),
+                attempt: 1,
+                input: serde_json::json!({ "scope": "metadata" }),
+                provenance: serde_json::json!({ "inputFingerprint": "sha256:echo" }),
+            })
+            .expect("the sidecar Job should reach the runtime");
+        assert_eq!(job.events[0].progress, Some(50));
+        assert_eq!(job.result.payload["jobKind"], "echo.metadata-analysis");
 
         let crash = host
             .invoke_command(&id, "echo.crash".into(), Value::Null, Value::Null)

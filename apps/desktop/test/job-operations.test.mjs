@@ -43,6 +43,7 @@ const client = {
       retryable: true,
       durationMs: 2400,
       willFail,
+      input: null,
       provenance: {
         ownerId: 'core',
         assetId: null,

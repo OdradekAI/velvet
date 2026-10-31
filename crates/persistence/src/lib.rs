@@ -179,6 +179,7 @@ mod tests {
             retryable: true,
             duration_ms: 1_000,
             will_fail: false,
+            input: serde_json::Value::Null,
             provenance: velvet_job_system::JobProvenance::for_owner("test"),
             result: Some(velvet_job_system::JobResult {
                 schema_version: 1,

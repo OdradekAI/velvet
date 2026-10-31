@@ -297,6 +297,8 @@ pub enum WireRequest {
         duration_ms: u64,
         #[serde(rename = "willFail")]
         will_fail: bool,
+        #[serde(default)]
+        input: Option<serde_json::Value>,
     },
     CancelJob {
         #[serde(rename = "protocolVersion")]
@@ -528,12 +530,14 @@ impl WireRequest {
                 job_kind,
                 duration_ms,
                 will_fail,
+                input,
             } => {
                 validate_inner_protocol(outer_protocol_version, protocol_version)?;
                 Ok(Request::Command(Command::CreateJob {
                     kind: job_kind,
                     duration_ms,
                     will_fail,
+                    input: input.unwrap_or(serde_json::Value::Null),
                 }))
             }
             Self::CancelJob {
@@ -1168,6 +1172,7 @@ struct WireJobSnapshot {
     retryable: bool,
     duration_ms: u64,
     will_fail: bool,
+    input: serde_json::Value,
     provenance: WireJobProvenance,
     result: Option<WireJobResult>,
 }
@@ -1238,6 +1243,7 @@ impl From<JobSnapshot> for WireJobSnapshot {
             retryable: value.retryable,
             duration_ms: value.duration_ms,
             will_fail: value.will_fail,
+            input: value.input,
             provenance: value.provenance.into(),
             result: value.result.map(Into::into),
         }
@@ -2280,15 +2286,19 @@ mod tests {
                     "protocolVersion": 1,
                     "jobKind": "sample",
                     "durationMs": 2400,
-                    "willFail": true
+                    "willFail": true,
+                    "input": {"assetId": "asset-1"}
                 }
             }"#,
         )
         .expect("job request should deserialize");
         assert!(matches!(
             envelope.request.into_core(1).expect("job request should map"),
-            Request::Command(Command::CreateJob { kind, duration_ms, will_fail })
-                if kind == "sample" && duration_ms == 2400 && will_fail
+            Request::Command(Command::CreateJob { kind, duration_ms, will_fail, input })
+                if kind == "sample"
+                    && duration_ms == 2400
+                    && will_fail
+                    && input["assetId"] == "asset-1"
         ));
 
         let cancel: WireRequestEnvelope = serde_json::from_value(serde_json::json!({
@@ -2334,6 +2344,7 @@ mod tests {
                 retryable: true,
                 duration_ms: 2400,
                 will_fail: true,
+                input: serde_json::Value::Null,
                 provenance: velvet_job_system::JobProvenance::for_owner("test"),
                 result: None,
             }),
@@ -2359,6 +2370,7 @@ mod tests {
                     retryable: false,
                     duration_ms: 200,
                     will_fail: false,
+                    input: serde_json::Value::Null,
                     provenance: velvet_job_system::JobProvenance {
                         owner_id: "sample.extension".into(),
                         asset_id: Some("asset-1".into()),

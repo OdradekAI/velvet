@@ -19,7 +19,10 @@ for await (const line of input) {
     continue;
   }
 
-  if (request.protocolVersion !== protocolVersion || request.kind !== 'invoke-command') {
+  if (
+    request.protocolVersion !== protocolVersion ||
+    !['invoke-command', 'invoke-job'].includes(request.kind)
+  ) {
     process.stdout.write(`${JSON.stringify({
       protocolVersion,
       ok: false,
@@ -80,6 +83,23 @@ for await (const line of input) {
       protocolVersion,
       ok: true,
       result,
+    })}\n`);
+    continue;
+  }
+
+  if (request.kind === 'invoke-job' && request.method === 'job.run') {
+    process.stdout.write(`${JSON.stringify({
+      protocolVersion,
+      ok: true,
+      events: [{ kind: 'progress', progress: 50, message: 'Halfway' }],
+      result: {
+        contentType: 'application/json',
+        payload: {
+          jobKind: request.commandId,
+          input: request.args ?? null,
+          provenance: request.context?.provenance ?? null,
+        },
+      },
     })}\n`);
     continue;
   }

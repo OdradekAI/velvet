@@ -8,6 +8,7 @@ export interface CreateJobOptions {
   readonly kind: string;
   readonly durationMs: number;
   readonly willFail?: boolean;
+  readonly input?: unknown;
 }
 
 /** Renderer adapter for the Rust-owned JobSystem projection. */
@@ -68,6 +69,7 @@ export class JobClient {
       jobKind: options.kind,
       durationMs: options.durationMs,
       willFail: options.willFail ?? false,
+      input: options.input,
     });
     return this.acceptJobResponse(response);
   }

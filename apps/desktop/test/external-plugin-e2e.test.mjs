@@ -218,6 +218,7 @@ const core = {
             retryable: true,
             durationMs: response.result.durationMs,
             willFail: false,
+            input: null,
             provenance: {
               ownerId: request.extensionId,
               assetId: request.context.assetId,

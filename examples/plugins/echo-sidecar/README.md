@@ -10,7 +10,9 @@ same contracts used by an installed sidecar:
 - `sidecar.mjs` keeps stdout reserved for protocol JSONL, echoes command
   arguments/context back to the host, returns typed preview sessions for
   `preview.open` and `preview.augment`, and hands `echo.analyze` to the host
-  JobSystem through `preview.action`.
+  JobSystem through `preview.action`. Declared Jobs use the separate
+  `invoke-job`/`job.run` request kind and return typed results plus bounded
+  progress events.
 - `echo.crash` exits the sidecar so the host can isolate and recover the
   extension without taking down the Workbench.
 

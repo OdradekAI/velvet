@@ -143,9 +143,9 @@ WorkbenchApp 在 WorkspaceArea 中呈现的主界面。AppSurface 可以拥有�
 ## Job
 
 可观察、可取消、可重试的异步工作，例如缩略图生成、索引或分析。Job
-由 Rust JobSystem 统一拥有生命周期、Runner、结果和 provenance；结果带有
-schema、content type 和 payload，provenance 记录 owner、输入、provider 和
-设置指纹。
+由 Rust JobSystem 统一拥有生命周期、Runner、结果和 provenance；Runner 接收
+受限 input 并可上报进度，结果带有 schema、content type 和 payload，
+provenance 记录 owner、输入、provider 和设置指纹。
 
 ## Product extension
 

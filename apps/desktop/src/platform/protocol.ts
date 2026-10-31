@@ -220,6 +220,7 @@ export type CoreRequest =
       readonly jobKind: string;
       readonly durationMs: number;
       readonly willFail: boolean;
+      readonly input?: unknown;
     }
   | {
       readonly protocolVersion: ProtocolVersion;
@@ -330,6 +331,7 @@ export interface CoreJobSnapshot {
   readonly retryable: boolean;
   readonly durationMs: number;
   readonly willFail: boolean;
+  readonly input: unknown;
   readonly provenance: CoreJobProvenance;
   readonly result: CoreJobResult | null;
 }

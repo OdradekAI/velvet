@@ -209,6 +209,7 @@ pub enum Command {
         kind: String,
         duration_ms: u64,
         will_fail: bool,
+        input: Value,
     },
     CancelJob {
         job_id: JobId,

@@ -7,6 +7,8 @@ use std::thread;
 use std::time::Duration;
 
 pub const JOB_SCHEMA_VERSION: u16 = 1;
+pub const MAX_JOB_INPUT_BYTES: usize = 256 * 1024;
+pub const MAX_JOB_RESULT_BYTES: usize = 1024 * 1024;
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 pub struct JobId(pub String);
@@ -70,6 +72,8 @@ pub struct JobSnapshot {
     pub duration_ms: u64,
     pub will_fail: bool,
     #[serde(default)]
+    pub input: Value,
+    #[serde(default)]
     pub provenance: JobProvenance,
     #[serde(default)]
     pub result: Option<JobResult>,
@@ -80,6 +84,7 @@ pub struct JobSpec {
     pub kind: String,
     pub duration_ms: u64,
     pub will_fail: bool,
+    pub input: Value,
     pub provenance: JobProvenance,
 }
 
@@ -105,6 +110,7 @@ pub struct JobExecutionContext {
     pub attempt: u32,
     pub duration_ms: u64,
     pub will_fail: bool,
+    pub input: Value,
     pub provenance: JobProvenance,
     reporter: JobProgressReporter,
     cancellation: JobCancellation,
@@ -281,6 +287,7 @@ impl JobSystem {
     }
 
     fn submit_locked(&self, spec: JobSpec) -> Result<JobSnapshot, JobError> {
+        validate_json_size("Job input", &spec.input, MAX_JOB_INPUT_BYTES)?;
         let id = {
             let mut next_id = self
                 .inner
@@ -301,6 +308,7 @@ impl JobSystem {
             retryable: true,
             duration_ms: spec.duration_ms.clamp(200, 30_000),
             will_fail: spec.will_fail,
+            input: spec.input,
             provenance: normalize_provenance(spec.provenance),
             result: None,
         };
@@ -457,6 +465,7 @@ impl JobSystem {
                 attempt,
                 duration_ms: initial.duration_ms,
                 will_fail: initial.will_fail,
+                input: initial.input.clone(),
                 provenance: initial.provenance.clone(),
                 reporter: JobProgressReporter {
                     system: system.clone(),
@@ -553,6 +562,15 @@ impl JobSystem {
         attempt: u32,
         result: JobExecutionResult,
     ) -> Result<Option<JobSnapshot>, JobError> {
+        if let Err(error) = validate_json_size("Job result", &result.payload, MAX_JOB_RESULT_BYTES)
+        {
+            let message = match error {
+                JobError::Store(message) => message,
+                other => format!("{other:?}"),
+            };
+            let _ = self.fail_attempt(id, attempt, message);
+            return Ok(None);
+        }
         self.update_attempt(id, attempt, |snapshot| {
             snapshot.progress = 100;
             snapshot.status = JobStatus::Completed;
@@ -669,6 +687,19 @@ fn normalize_provenance(mut provenance: JobProvenance) -> JobProvenance {
     provenance
 }
 
+fn validate_json_size(field: &str, value: &Value, max_bytes: usize) -> Result<(), JobError> {
+    let bytes = serde_json::to_vec(value)
+        .map_err(|error| JobError::Store(format!("{field} could not be encoded: {error}")))?;
+    if bytes.len() > max_bytes {
+        return Err(JobError::Store(format!(
+            "{field} exceeds the {} byte limit ({} bytes)",
+            max_bytes,
+            bytes.len()
+        )));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -730,6 +761,7 @@ mod tests {
                 kind: "test".into(),
                 duration_ms: 200,
                 will_fail: false,
+                input: serde_json::Value::Null,
                 provenance: JobProvenance::for_owner("test"),
             })
             .expect("submit");
@@ -753,6 +785,7 @@ mod tests {
                 kind: "cancel".into(),
                 duration_ms: 1_000,
                 will_fail: false,
+                input: serde_json::Value::Null,
                 provenance: JobProvenance::for_owner("test"),
             })
             .expect("submit");
@@ -770,6 +803,7 @@ mod tests {
                 kind: "fail".into(),
                 duration_ms: 200,
                 will_fail: true,
+                input: serde_json::Value::Null,
                 provenance: JobProvenance::for_owner("test"),
             })
             .expect("submit");
@@ -799,6 +833,7 @@ mod tests {
                 retryable: true,
                 duration_ms: 30_000,
                 will_fail: false,
+                input: serde_json::Value::Null,
                 provenance: JobProvenance::for_owner("test"),
                 result: None,
             }])
@@ -852,6 +887,7 @@ mod tests {
                 kind: "metadata".into(),
                 duration_ms: 200,
                 will_fail: false,
+                input: serde_json::Value::Null,
                 provenance: JobProvenance {
                     owner_id: "sample.extension".into(),
                     asset_id: Some("asset-1".into()),
@@ -916,6 +952,7 @@ mod tests {
                 kind: "cacheable".into(),
                 duration_ms: 200,
                 will_fail: false,
+                input: serde_json::Value::Null,
                 provenance: provenance.clone(),
             })
             .expect("job should submit");
@@ -935,6 +972,7 @@ mod tests {
                 kind: "cacheable".into(),
                 duration_ms: 10_000,
                 will_fail: true,
+                input: serde_json::Value::Null,
                 provenance,
             })
             .expect("matching result should be reused");
@@ -946,6 +984,7 @@ mod tests {
                 kind: "cacheable".into(),
                 duration_ms: 200,
                 will_fail: false,
+                input: serde_json::Value::Null,
                 provenance: JobProvenance {
                     input_fingerprint: Some("sha256:input-2".into()),
                     ..reused.provenance
@@ -964,6 +1003,7 @@ mod tests {
             kind: "uncacheable".into(),
             duration_ms: 200,
             will_fail: false,
+            input: serde_json::Value::Null,
             provenance: JobProvenance::for_owner("sample.extension"),
         };
         let first = jobs
@@ -985,6 +1025,22 @@ mod tests {
     }
 
     #[test]
+    fn oversized_job_input_is_rejected_before_persistence() {
+        let jobs = JobSystem::default();
+        let error = jobs
+            .submit(JobSpec {
+                kind: "oversized".into(),
+                duration_ms: 200,
+                will_fail: false,
+                input: Value::String("x".repeat(MAX_JOB_INPUT_BYTES + 1)),
+                provenance: JobProvenance::for_owner("test"),
+            })
+            .expect_err("oversized input should be rejected");
+        assert!(matches!(error, JobError::Store(message) if message.contains("Job input")));
+        assert!(jobs.snapshots().is_empty());
+    }
+
+    #[test]
     fn panicking_runner_isolated_as_retryable_failure() {
         let jobs = JobSystem::default();
         jobs.register_runner("sample.extension", "panic", Arc::new(PanicRunner))
@@ -994,6 +1050,7 @@ mod tests {
                 kind: "panic".into(),
                 duration_ms: 200,
                 will_fail: false,
+                input: serde_json::Value::Null,
                 provenance: JobProvenance::for_owner("sample.extension"),
             })
             .expect("job should submit");
@@ -1024,6 +1081,7 @@ mod tests {
                 kind: "attempt".into(),
                 duration_ms: 200,
                 will_fail: false,
+                input: serde_json::Value::Null,
                 provenance: JobProvenance::for_owner("test"),
             })
             .expect("job should submit");

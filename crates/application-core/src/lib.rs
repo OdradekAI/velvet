@@ -9,7 +9,8 @@ pub use preview_source::{
 
 use velvet_asset_core::ContentKindId;
 use velvet_job_system::{
-    JobError, JobId, JobProvenance, JobSpec, JobStateStore, JobSystem, JOB_SCHEMA_VERSION,
+    JobError, JobExecutionContext, JobExecutionError, JobExecutionResult, JobId, JobProvenance,
+    JobRunner, JobSpec, JobStateStore, JobSystem, JOB_SCHEMA_VERSION,
 };
 use velvet_layout_model::{InMemoryLayoutService, LayoutService};
 use velvet_persistence::{InMemoryLayoutStateStore, LayoutStateStore};
@@ -21,7 +22,8 @@ use velvet_plugin_api::{
 };
 use velvet_plugin_host::{
     DisableReason, InMemoryPluginHost, JsonManifestDiscovery, ManifestDiscoveryError,
-    ManifestLoadReport, PluginError, PluginHost, PluginRuntime,
+    ManifestLoadReport, PluginError, PluginHost, PluginJobHandle, PluginJobInvocation,
+    PluginRuntime,
 };
 use velvet_preview_core::{
     BuiltinImagePreviewProvider, BuiltinTextPreviewProvider, GenericFallbackProvider,
@@ -55,6 +57,52 @@ struct PreviewActionAuthorization {
     intent: PreviewIntent,
     surface: PreviewSurface,
     commands: Vec<String>,
+}
+
+struct PluginJobRunner {
+    handle: PluginJobHandle,
+}
+
+impl JobRunner for PluginJobRunner {
+    fn run(&self, context: JobExecutionContext) -> Result<JobExecutionResult, JobExecutionError> {
+        if context.is_cancelled() {
+            return Err(JobExecutionError::Cancelled);
+        }
+        let invocation = PluginJobInvocation {
+            job_id: context.id.0.clone(),
+            job_kind: context.kind.clone(),
+            attempt: context.attempt,
+            input: context.input.clone(),
+            provenance: serde_json::to_value(&context.provenance).map_err(|error| {
+                JobExecutionError::Failed(format!("job provenance could not be encoded: {error}"))
+            })?,
+        };
+        let execution = self
+            .handle
+            .invoke(invocation)
+            .map_err(|error| JobExecutionError::Failed(format!("{error:?}")))?;
+        for event in execution.events {
+            if event.kind != "progress" {
+                return Err(JobExecutionError::Failed(format!(
+                    "unsupported plugin Job event kind {}",
+                    event.kind
+                )));
+            }
+            let progress = event.progress.ok_or_else(|| {
+                JobExecutionError::Failed("plugin Job progress event is missing progress".into())
+            })?;
+            if !context.report_progress(progress, event.message.unwrap_or_default()) {
+                return Err(JobExecutionError::Cancelled);
+            }
+        }
+        if context.is_cancelled() {
+            return Err(JobExecutionError::Cancelled);
+        }
+        Ok(JobExecutionResult {
+            content_type: execution.result.content_type,
+            payload: execution.result.payload,
+        })
+    }
 }
 
 impl Default for ApplicationCore {
@@ -183,7 +231,13 @@ impl ApplicationCore {
     }
 
     pub fn activate_plugin(&mut self, id: &ExtensionId) -> Result<(), PluginError> {
-        self.plugins.activate(id)
+        self.plugins.activate(id)?;
+        if let Err(error) = self.register_plugin_job_runners(id) {
+            self.clear_plugin_runtime_state(id);
+            let _ = self.plugins.disable(id, DisableReason::Incompatible);
+            return Err(error);
+        }
+        Ok(())
     }
 
     pub fn disable_plugin(
@@ -205,7 +259,13 @@ impl ApplicationCore {
     }
 
     pub fn recover_plugin(&mut self, id: &ExtensionId) -> Result<(), PluginError> {
-        self.plugins.recover(id)
+        self.plugins.recover(id)?;
+        if let Err(error) = self.register_plugin_job_runners(id) {
+            self.clear_plugin_runtime_state(id);
+            let _ = self.plugins.disable(id, DisableReason::Incompatible);
+            return Err(error);
+        }
+        Ok(())
     }
 
     pub fn discover_plugins(&self) -> Vec<velvet_plugin_api::ExtensionSummary> {
@@ -226,7 +286,7 @@ impl ApplicationCore {
             .into_iter()
             .filter(|summary| summary.state == ExtensionState::Registered)
             .filter(|summary| !recovery_ids.contains(&summary.id))
-            .filter_map(|summary| self.plugins.activate(&summary.id).err())
+            .filter_map(|summary| self.activate_plugin(&summary.id).err())
             .collect()
     }
 
@@ -357,10 +417,28 @@ impl ApplicationCore {
         will_fail: bool,
         provenance: JobProvenance,
     ) -> Result<velvet_job_system::JobSnapshot, JobError> {
+        self.create_job_with_provenance_and_input(
+            kind,
+            duration_ms,
+            will_fail,
+            provenance,
+            serde_json::Value::Null,
+        )
+    }
+
+    pub fn create_job_with_provenance_and_input(
+        &self,
+        kind: String,
+        duration_ms: u64,
+        will_fail: bool,
+        provenance: JobProvenance,
+        input: serde_json::Value,
+    ) -> Result<velvet_job_system::JobSnapshot, JobError> {
         self.jobs.submit_or_reuse(JobSpec {
             kind,
             duration_ms,
             will_fail,
+            input,
             provenance,
         })
     }
@@ -411,6 +489,7 @@ impl ApplicationCore {
             ));
         }
         let job_provenance = self.preview_job_provenance(&extension_id, &context);
+        let job_input = args.clone();
         let result =
             match self
                 .plugins
@@ -478,9 +557,15 @@ impl ApplicationCore {
                         extension_id.0
                     )));
                 }
-                self.create_job_with_provenance(job_kind, duration_ms, false, job_provenance)
-                    .map(Response::Job)
-                    .map_err(job_error)
+                self.create_job_with_provenance_and_input(
+                    job_kind,
+                    duration_ms,
+                    false,
+                    job_provenance,
+                    job_input,
+                )
+                .map(Response::Job)
+                .map_err(job_error)
             }
         }
     }
@@ -542,6 +627,33 @@ impl ApplicationCore {
     fn clear_plugin_runtime_state(&mut self, extension_id: &ExtensionId) {
         self.forget_preview_actions(extension_id);
         let _ = self.jobs.unregister_runners(&extension_id.0);
+    }
+
+    fn register_plugin_job_runners(&self, extension_id: &ExtensionId) -> Result<(), PluginError> {
+        self.jobs
+            .unregister_runners(&extension_id.0)
+            .map_err(|error| {
+                PluginError::InvalidContribution(format!(
+                    "could not clear Job runners for {}: {error:?}",
+                    extension_id.0
+                ))
+            })?;
+        for handle in self.plugins.job_handles(extension_id)? {
+            let kind = handle.job_kind().to_owned();
+            self.jobs
+                .register_runner(
+                    extension_id.0.clone(),
+                    kind.clone(),
+                    Arc::new(PluginJobRunner { handle }),
+                )
+                .map_err(|error| {
+                    PluginError::InvalidContribution(format!(
+                        "Job runner {kind} for {} could not be registered: {error:?}",
+                        extension_id.0
+                    ))
+                })?;
+        }
+        Ok(())
     }
 
     fn release_preview_session(&mut self, session_id: &str) -> Response {
@@ -676,8 +788,15 @@ impl ApplicationCore {
                 kind,
                 duration_ms,
                 will_fail,
+                input,
             }) => self
-                .create_job(kind, duration_ms, will_fail)
+                .create_job_with_provenance_and_input(
+                    kind,
+                    duration_ms,
+                    will_fail,
+                    JobProvenance::for_owner("core"),
+                    input,
+                )
                 .map(Response::Job)
                 .map_err(job_error),
             Request::Command(Command::CancelJob { job_id }) => self
@@ -1253,6 +1372,23 @@ mod tests {
                     "preview action is unavailable".into(),
                 ));
             }
+            if invocation.method == "job.run" {
+                return Ok(PluginInvocationResult {
+                    result: Some(serde_json::json!({
+                        "contentType": "application/json",
+                        "payload": {
+                            "jobKind": invocation.command_id.clone(),
+                            "accepted": true,
+                        }
+                    })),
+                    error: None,
+                    events: vec![velvet_plugin_host::PluginInvocationEvent {
+                        kind: "progress".into(),
+                        progress: Some(100),
+                        message: Some("Completed".into()),
+                    }],
+                });
+            }
             if invocation.method == "preview.action" {
                 let result = if invocation.command_id == "preview.analyze" {
                     serde_json::json!({
@@ -1266,6 +1402,7 @@ mod tests {
                 return Ok(PluginInvocationResult {
                     result: Some(result),
                     error: None,
+                    events: Vec::new(),
                 });
             }
             let (session_id, entrypoint) = match invocation.method.as_str() {
@@ -1292,6 +1429,7 @@ mod tests {
                     "slots": []
                 })),
                 error: None,
+                events: Vec::new(),
             })
         }
     }
@@ -1609,7 +1747,7 @@ mod tests {
                 },
             }))
             .expect("preview action should create a job");
-        match response {
+        let job_id = match response {
             Response::Job(job) => {
                 assert_eq!(job.kind, "preview.metadata-analysis");
                 assert_eq!(job.status, velvet_job_system::JobStatus::Queued);
@@ -1620,9 +1758,38 @@ mod tests {
                     Some("preview.example.preview.metadata")
                 );
                 assert_eq!(job.provenance.provider_version.as_deref(), Some("0.1.0"));
+                job.id
             }
             other => panic!("expected job response, got {other:?}"),
+        };
+        for _ in 0..20 {
+            if let Some(job) = core
+                .job_snapshots()
+                .into_iter()
+                .find(|job| job.id == job_id)
+            {
+                if job.status == velvet_job_system::JobStatus::Completed {
+                    assert_eq!(
+                        job.result
+                            .as_ref()
+                            .map(|result| result.content_type.as_str()),
+                        Some("application/json")
+                    );
+                    assert_eq!(
+                        job.result
+                            .as_ref()
+                            .map(|result| result.payload["accepted"].as_bool()),
+                        Some(Some(true))
+                    );
+                    return;
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
         }
+        panic!(
+            "plugin Job runner did not complete: {:?}",
+            core.job_snapshots()
+        );
     }
 
     #[test]
@@ -2322,6 +2489,7 @@ mod tests {
                 retryable: true,
                 duration_ms: 30_000,
                 will_fail: false,
+                input: serde_json::Value::Null,
                 provenance: velvet_job_system::JobProvenance::for_owner("test"),
                 result: None,
             }])

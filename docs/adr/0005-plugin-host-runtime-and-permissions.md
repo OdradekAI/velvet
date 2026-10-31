@@ -131,6 +131,20 @@ runner as the launch program. Invocation payloads and responses are typed by
 the negotiated runtime protocol; they are not an untyped second manifest or
 transport contract.
 
+Declared Job contributions use the same runtime process through a distinct
+`invoke-job` message with `method: "job.run"`. The host sends the Job input as
+`args` and a bounded context containing Job id, kind, attempt and provenance.
+The response contains a typed result (`contentType` plus JSON `payload`) with
+bounds-checked input/result projections and a bounded list of `progress`
+events. `PluginHost` exposes this process through a
+thread-safe `PluginJobHandle`; `ApplicationCore` adapts the handle to the
+Rust-owned `JobRunner` registry. Job cancellation is cooperative at the host
+boundary in protocol v1: the runner checks cancellation before invocation and
+after each returned progress event/result, and stale attempt guards prevent a
+late response from committing. The host does not kill a shared runtime process
+for an in-flight cancellation; an explicit runtime cancel message remains a
+future protocol extension.
+
 The host applies a bounded invocation timeout. A plugin-level rejection is
 returned to the caller while the extension stays active. A closed or crashed
 runtime, malformed response or timeout tears down only that process, marks the

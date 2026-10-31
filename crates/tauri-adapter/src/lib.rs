@@ -295,6 +295,7 @@ mod tests {
                     kind: "sample".into(),
                     duration_ms: 200,
                     will_fail: false,
+                    input: serde_json::Value::Null,
                 }),
             )
             .expect("job should be accepted");
