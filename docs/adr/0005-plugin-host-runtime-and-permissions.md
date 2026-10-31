@@ -169,13 +169,14 @@ runner. Invocation payloads and responses are typed by the negotiated runtime
 protocol; they are not an untyped second manifest or transport contract.
 The alpha `ProcessPluginRuntime` now captures a bounded stderr tail, reports
 exit status and Unix signal evidence, and starts sidecars in a dedicated Unix
-process group so shutdown can terminate descendants. These are availability
-and diagnosis safeguards, not a security sandbox. Production qualification
-still requires package-relative executable allow-lists, parent-death policy,
-orphan reconciliation and equivalent process-group semantics on every
-supported platform. The current manifest seam still accepts a launch program
-directly so those trust checks remain an explicit follow-up rather than an
-implicit guarantee.
+process group so shutdown can terminate descendants. Linux also arms
+`PR_SET_PDEATHSIG(SIGKILL)` before exec so a Core death does not leave a live
+sidecar by default. These are availability and diagnosis safeguards, not a
+security sandbox. Production qualification still requires package-relative
+executable allow-lists, equivalent parent-death/process-group semantics on
+every supported platform, and orphan reconciliation. The current manifest
+seam still accepts a launch program directly so those trust checks remain an
+explicit follow-up rather than an implicit guarantee.
 
 Declared Job contributions use the same runtime process through a distinct
 `invoke-job` message with `method: "job.run"`. The host sends the Job input as

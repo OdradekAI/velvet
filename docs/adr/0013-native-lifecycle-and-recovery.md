@@ -394,8 +394,10 @@ generations and Job snapshots, then marks in-flight attempts interrupted. A
 sidecar left behind after the Core exits is an orphan to reconcile, never an
 independent writer of extension or core state. The current sidecar adapter
 already bounds stderr, records exit evidence and cleans Unix process groups on
-shutdown; package launch allow-lists, parent-death handling and cross-platform
-orphan reconciliation remain qualification gates.
+shutdown; Linux additionally arms a parent-death signal before exec. Package
+launch allow-lists, equivalent parent-death/process-group behavior on other
+supported platforms and cross-platform orphan reconciliation remain
+qualification gates.
 
 Before system suspend, background admission stops, runners checkpoint and Job
 snapshots persist. After wake, local work resumes when its owner and storage

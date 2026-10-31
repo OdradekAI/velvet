@@ -857,6 +857,8 @@ impl PluginRuntime for ProcessPluginRuntime {
             .stderr(Stdio::piped());
         #[cfg(unix)]
         command.process_group(0);
+        #[cfg(target_os = "linux")]
+        configure_linux_parent_death(&mut command);
         let mut child = command
             .spawn()
             .map_err(|error| RuntimeError::StartFailed(error.to_string()))?;
@@ -1139,6 +1141,21 @@ fn terminate_child(child: &mut Child) -> Result<(), RuntimeError> {
     child
         .kill()
         .map_err(|error| RuntimeError::ShutdownFailed(error.to_string()))
+}
+
+#[cfg(target_os = "linux")]
+fn configure_linux_parent_death(command: &mut Command) {
+    // The kernel delivers SIGKILL if Core disappears before the sidecar can
+    // be reconciled. This is an availability guard; it does not sandbox the
+    // child or replace the restart/orphan policy owned by PluginHost.
+    unsafe {
+        command.pre_exec(|| {
+            if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL, 0, 0, 0) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
 }
 
 fn cleanup_exited_child_group(child: &Child) {
