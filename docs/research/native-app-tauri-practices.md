@@ -93,3 +93,7 @@ recovery and release freshness explicit.
 - Add a versioned resource policy, coordinated `RecoverySet` fault tests,
   Tauri capability-negative tests, crash-evidence fixtures and cold-start/idle
   lifecycle baselines before production qualification.
+- Apply the plugin-focused [lifecycle and recovery review](plugin-ecosystem-lifecycle-and-recovery-review.md):
+  keep sidecars as availability isolation only, add host-orchestrated
+  extension storage/backup/migration participants, and keep package trust
+  separate from paid entitlement.

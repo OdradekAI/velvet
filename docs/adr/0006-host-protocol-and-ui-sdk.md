@@ -112,6 +112,14 @@ capability/context snapshot without replaying side-effecting commands. Typed
 runtime errors, malformed DTOs, crash state and recovery remain scoped to the
 extension that owns the session.
 
+Runtime events also carry the extension package version, trust/runtime kind,
+exit code or WASM trap, budget decision, and (when applicable) Job id/attempt.
+The host-owned diagnostic sink accepts bounded structured logs and redaction
+hints; it is the only path into a `DiagnosticBundle`. Extension storage,
+backup/migration participants and a future read-only entitlement handle use
+the same versioned envelope, but none can publish a core recovery pointer or
+invoke a generic Tauri command.
+
 Active extension projections can also be queried with their declared
 ViewContainer/View metadata and isolated UI Bridge descriptors. The desktop
 adapter validates the returned namespace and reuses `ViewRegistry` and

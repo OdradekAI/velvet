@@ -264,6 +264,15 @@ exponential backoff and jitter; permission, schema, invalid-input and
 deterministic failures require explicit user retry. A repeated extension crash
 or failed recovery quarantines only that extension.
 
+The plugin-specific recovery contract is defined by ADR-0005: the default
+failure domain is one runtime process or WASM instance per extension,
+`ExtensionStorage` migrations run in staging, and extension backup participants
+cannot publish global recovery pointers. A main-process crash or power loss
+interrupts every child runtime; the next launch restores committed extension
+generations and Job snapshots, then marks in-flight attempts interrupted. A
+sidecar left behind after the Core exits is an orphan to reconcile, never an
+independent writer of extension or core state.
+
 Before system suspend, background admission stops, runners checkpoint and Job
 snapshots persist. After wake, local work resumes when its owner and storage
 are valid; offline or metered-network Jobs wait for a policy-approved network

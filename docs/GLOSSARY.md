@@ -252,6 +252,38 @@ Job 在睡眠、资源压力或进程重启前由 owner 写入的可恢复生命
 
 宿主在一次扩展会话中提供的受限上下文，包括扩展身份、取消、日志、本地化以及经授权的存储、配置、URI 和能力句柄。它不包含宿主框架对象或无限制路径。
 
+## Runtime trust
+
+插件运行时所处的信任层级。它区分应用内可信代码、能力沙箱代码、仅具备进程故障隔离的原生子进程以及显式开发模式代码；运行时形式本身不等于安全信任。
+
+## Sandbox policy
+
+宿主对插件运行时可见资源和可执行操作的约束。它描述能力是否由 WASI、平台沙箱或宿主代理强制执行，并明确哪些边界只提供崩溃隔离而不提供安全隔离。
+
+## ExtensionStorage
+
+由 PluginHost 持有的、按 ExtensionId 命名空间隔离的插件数据。插件可以通过受限句柄读写自己的数据，但不拥有应用数据库、其他 owner 的状态或恢复索引。
+
+## BackupParticipant
+
+插件对自身 ExtensionStorage 提供的备份参与能力。它可以导出有界、可迁移的插件数据表示；宿主决定快照、提交屏障、恢复顺序和是否包含在用户选择的导出中。
+
+## MigrationParticipant
+
+插件对自身数据 schema 提供的前向迁移能力。迁移读取宿主提供的旧代际并写入 staging 代际，经过宿主校验后才发布；迁移失败只隔离插件数据，不重置核心数据。
+
+## PluginTrustRecord
+
+宿主对插件包的信任记录，包含包摘要、发布者身份、签名和撤销状态、兼容范围以及可选的构建 provenance/SBOM 引用。它与付费 entitlement 分开。
+
+## Entitlement
+
+针对某个插件或功能的授权状态，例如 active、trial、grace、expired 或 unknown。Entitlement 表示账户或安装的使用权，不证明插件包完整性，也不包含支付凭据。
+
+## PluginDiagnosticSink
+
+由宿主提供的结构化插件诊断入口。它接收与扩展会话和 Job attempt 关联的有界日志、错误和恢复提示，并按宿主的脱敏、保留和导出策略处理内容。
+
 ## CapabilityGrant
 
 宿主根据扩展声明、信任状态和 Profile/Workspace 策略授予的有效能力集合。它可以被允许、提示或拒绝，并独立于 Part 或 Zone。

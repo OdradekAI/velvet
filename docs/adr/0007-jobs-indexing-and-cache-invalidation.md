@@ -53,6 +53,15 @@ failure instead of executing under another owner or the host fallback. It
 catches runner panics and rejects stale progress/completion from an older
 attempt after cancellation and retry.
 
+An isolated plugin runtime failure is a host event with extension id, runtime
+session, Job id, attempt, failure kind (`crash`, `trap`, `timeout`, malformed
+response or budget kill), exit evidence and retryability. `JobSystem` converts
+the event into an interrupted/failed Job snapshot and rejects late events; it
+does not replay an unknown external side effect. A runtime crash affects only
+Jobs owned by that extension under the default one-process-per-extension
+failure domain. A Core crash or power loss interrupts every in-flight Job and
+relies on the persisted snapshot/checkpoint path on the next launch.
+
 `JobProvenance` is part of the persisted Job snapshot and includes the owner,
 optional Asset/content identity, input fingerprint, provider id/version,
 settings fingerprint and provenance schema version. A successful runner stores

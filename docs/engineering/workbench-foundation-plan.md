@@ -136,6 +136,31 @@ out-of-process implementation remains an adapter option behind the same
 `RecoverySupervisor` contract, while crash evidence is a separate
 `CrashCaptureAdapter` seam.
 
+The plugin-specific lifecycle gate is recorded in the [plugin ecosystem
+review](../research/plugin-ecosystem-lifecycle-and-recovery-review.md) and
+ADR-0005. It is ordered as follows so SDK convenience does not outrun the
+host's trust and recovery boundary:
+
+1. **P0 contract shape**: strict manifest/handshake fixtures, declarative
+   no-runtime contributions, runtime trust/sandbox policy, capability grants
+   and per-extension failure-domain projection cleanup.
+2. **P0 state and work**: namespaced `ExtensionStorage`, host-owned
+   `JobSystem` handles, bounded `PluginDiagnosticSink`, extension checkpoint
+   and migration participants, and quarantine of extension state without core
+   reset.
+3. **P0 runtime hardening**: package-relative/allow-listed launch targets,
+   bounded stderr, process-group/parent-death cleanup and orphan sidecar
+   reconciliation. A sidecar must not be described as a security sandbox.
+4. **P1 package trust**: signed extension package envelope, publisher trust
+   record, revocation/freshness/anti-downgrade checks and developer-mode
+   unsigned-install policy. Provenance/SBOM references are separate metadata.
+5. **P1 ecosystem operations**: update/disable/uninstall retention, offline
+   package admission, marketplace review/block-list hooks and SDK simulator
+   fixtures.
+6. **Deferred P1/P2 entitlement**: only after a marketplace/account service is
+   selected, add a read-only host-verified `EntitlementHandle` with bounded
+   offline grace. Package signatures never become payment proofs.
+
 The current React shell is a renderer slice, not the completed foundation. The
 Part/mode, three-scope layout state, WorkbenchApp/AppSurface/shared context,
 contribution scope/container, ViewContainer/View, namespace/lifecycle,
@@ -785,7 +810,7 @@ bundle or message; caches are cleaned on disable, upgrade and uninstall.
 4. **Workbench parts**: render ActivityBar, Resource Manager, Feed Workbench, PrimarySidebar, WorkspaceArea, AuxiliarySidebar, OperationsPanel and StatusBar with placeholder views. **Initial renderer slice done.**
 5. **View registry**: add built-in views and one example external view per zone. Verify that cross-zone registration is rejected. **Host registry and rejection tests done; the React shell mounts registered ViewContainers/Views with a renderer adapter seam, PluginClient projects extension views plus isolated UI Bridge sessions into that seam, and the Activity Bar now selects contributed navigation containers.**
 6. **Preview core**: implement generic image/file fallback, `PreviewResolver`, Quick/Inspect/Analyze intents and a fake provider used by contract tests. **Host slice done:** surface-aware deterministic resolution, provider-failure fallback, typed Tauri/TypeScript projection, `PreviewHost` state machine, Quick overlay and unregisterable provider/augmentation slots. The bounded source adapter, versioned persistent AssetId source-location registry and trusted text/image providers are implemented; format-specific plugin execution, augmentation renderer adapters and product-specific cache consumers remain follow-up work.
-7. **Plugin host**: load manifests, validate permissions and localization bundles, activate lazily, isolate failures and expose the UI SDK boundary. **Local discovery, install preflight, permission enforcement, host API compatibility checks, numeric version upgrades, transactional commit/rollback, crash-recovery scanning, deferred activation, retryable recovery, orphan cleanup and bounded recovery logs are implemented; application release signing is a native release gate, while extension publisher signing/revocation remains a separate PluginHost policy and is not inherited from the application signer. The host localization service, fallback formatter, diagnostics, loader/plugin lifecycle seam, isolated UI Bridge locale projection, Rust-owned revisioned Profile locale persistence, bounded directory-package localization resource loader, bounded ZIP archive package adapter and native directory/ZIP package picker are implemented; other archive formats and non-localization binary resources remain follow-up adapters.**
+7. **Plugin host**: load manifests, validate permissions and localization bundles, activate lazily, isolate failures and expose the UI SDK boundary. **Local discovery, install preflight, permission enforcement, host API compatibility checks, numeric version upgrades, transactional commit/rollback, crash-recovery scanning, deferred activation, retryable recovery, orphan cleanup and bounded recovery logs are implemented; application release signing is a native release gate, while extension publisher signing/revocation remains a separate PluginHost policy and is not inherited from the application signer. The target plugin gate additionally requires explicit runtime trust/sandbox policy, declarative no-runtime contributions, namespaced `ExtensionStorage`, host-orchestrated backup/migration participants, structured diagnostic events, process-group/orphan cleanup and signed package trust records before a public SDK is released. The host localization service, fallback formatter, diagnostics, loader/plugin lifecycle seam, isolated UI Bridge locale projection, Rust-owned revisioned Profile locale persistence, bounded directory-package localization resource loader, bounded ZIP archive package adapter and native directory/ZIP package picker are implemented; other archive formats and non-localization binary resources remain follow-up adapters.**
 8. **Jobs and facets**: the shared Rust JobSystem lifecycle seam is wired to OperationsPanel with persisted progress, cancellation, retry, failure and restart recovery. It now exposes a Rust JobRunner registry, attempt-safe cooperative cancellation, panic isolation, persisted JobResult payloads, JobProvenance projection, exact provenance reuse that refuses cache hits without an input fingerprint, and an isolated plugin `invoke-job`/`job.run` adapter with typed input, result and bounded progress events. Owner cleanup revokes runners and cancels queued/running Jobs before runtime shutdown; late results are ignored, and extension-owned retries fail with a diagnostic when the owner runner is unavailable instead of using the core fallback. Provider/version/settings changes are covered as cache misses through exact provenance; no generic artifact cache is added before a concrete provider or Facet owner needs one. Product-specific thumbnail, metadata and analysis runners remain follow-up consumers.
 9. **Tauri adapter**: connect typed commands, queries and events to the desktop client. No feature should bypass the protocol. **Done for the current layout slice, including native command/event serialization and global shortcut entry.**
 
@@ -811,6 +836,11 @@ user recovery action visible beside the existing Workbench scenarios.
 | P0 | Restarted Jobs become interrupted/retryable; cancellation and late-result rejection work. | `job-system` | Fake `JobRunner`, `JobStateStore`, attempt/provenance fixtures | Resume/retry, cancel or discard Job |
 | P0 | Diagnostic export is bounded/redacted and user initiated. | `application-core`, `tauri-adapter` | Deterministic bundle and export-adapter fixtures | Export locally; upload only after separate consent |
 | P0 | Tauri capabilities and native commands are deny-by-default, typed and scoped; recovery cannot invoke arbitrary filesystem, shell, URL or process actions. | `tauri-adapter`, `application-core` | Capability/ACL fixture plus command-negative tests | Use the typed fallback, retry with a permitted action or export diagnostics |
+| P0 | Declarative, WASM, sidecar and trusted built-in forms negotiate the same typed contract; runtime trust/sandbox policy is explicit, and a sidecar is never presented as a security sandbox. | `plugin-api`, `plugin-host`, `workbench-protocol` | Manifest fixtures, trust-policy matrix and capability-negative tests | Inspect permissions, enable only with explicit trust, disable or use a safe alternative |
+| P0 | `ExtensionStorage` is namespaced and transactional; a `BackupParticipant` export and `MigrationParticipant` staging failure quarantine only extension state and cannot publish a core `RecoverySet` pointer. | `plugin-host`, `persistence`, `application-core` | Fake extension store, staged migration/export, checksum and power-loss fixtures | Retry, restore the previous extension generation, disable or discard extension state |
+| P0 | One extension runtime crash, WASM trap, timeout, malformed response or budget kill removes only that extension's projections and Jobs; a second extension continues. | `plugin-host`, `job-system` | One-process-per-extension fake runtimes, process-group and late-result fixtures | Retry/recover the extension, cancel/retry its Jobs or continue with the fallback |
+| P0 | A Core crash or forced power loss marks all child runtimes and in-flight extension Jobs interrupted; committed extension stores remain recoverable and orphan sidecars cannot write after restart. | `application-core`, `plugin-host`, `job-system` | Forced-termination harness, parent-death/orphan reconciliation and snapshot fixtures | Relaunch, resume/retry safe Jobs, quarantine the affected extension or export diagnostics |
+| P0 | Plugin logs and runtime failures produce bounded structured events correlated to extension/session/Job attempt; secrets, asset payloads and unrestricted paths are redacted. | `plugin-host`, `application-core` | Diagnostic sink fake with stderr/exit/trap/secret fixtures | Export a redacted bundle; retry or disable the extension |
 | P1 | Major/required/schema protocol mismatch fails before mutation; additive minor fields work. | `workbench-protocol`, `application-core` | Versioned wire fixtures and fake `CoreTransport` | Update, disable incompatible feature or open recovery UI |
 | P1 | Transport loss keeps the last projection read-only and performs fresh-session full resync. | `workbench-protocol`, `tauri-adapter`, `apps/desktop` | Fake transport/event sink with gaps, stale revisions and unknown outcomes | Retry reconnect or refresh projection |
 | P1 | Device → owner → Job budgets enforce hard admission and soft backpressure. | `plugin-host`, `job-system` | Budget ledger, isolated runtime and disk-pressure fakes | Cancel, retry later, evict derived cache or discard Job |
@@ -822,6 +852,9 @@ user recovery action visible beside the existing Workbench scenarios.
 | P1 | Uninstall removes binaries but retains user data until explicit deletion. | `application-core`, `tauri-adapter` | Retention fixture with external-source sentinel | Reinstall/recover or explicitly delete selected data |
 | P1 | Crash evidence, when the platform provides it, is local, bounded and redacted; lack of native capture still leaves journal/exit diagnostics. | `application-core`, `tauri-adapter` | CrashCaptureAdapter fake with OOM/signal/exception fixtures | Export diagnostics, retry or continue without upload |
 | P1 | Cold start, idle memory/disk/CPU and hidden WebView lifecycle stay within the versioned platform baseline; suspended surfaces do not run undeclared work. | `application-core`, `tauri-adapter`, `apps/desktop` | Monotonic-clock startup harness, resource probes and WebView lifecycle fake | Close/suspend a surface, retry, update runtime or continue degraded |
+| P1 | Stable/preview extension packages verify digest, publisher identity, target, capabilities, freshness, revocation and anti-downgrade before activation; unsigned local packages require visible developer mode. | `plugin-api`, `plugin-host`, `application-core`, `tauri-adapter` | Signed-package verifier fake, key-rotation/revocation/offline fixtures and developer-mode policy test | Keep the current package, inspect trust issues, install a valid offline package or disable the extension |
+| P1 | Staged extension upgrade keeps old package/data generations until the new runtime reaches a health checkpoint; failed activation or migration restores the previous pair without touching core data. | `plugin-host`, `persistence`, `application-core` | Upgrade transaction, crash/power-loss and schema-range fixtures | Resume, commit, rollback or discard the staged extension transaction |
+| P1 (marketplace) | A paid extension receives only host-verified entitlement status with bounded offline grace; package signature and publisher trust remain separate, and no payment credential crosses the plugin boundary. | `plugin-host`, `workbench-protocol`, `tauri-adapter` | Fake entitlement issuer with expiry, revocation, clock-skew, sign-out and offline fixtures | Continue in grace, renew/sign in, disable paid feature or keep data and uninstall |
 
 All P0 rows must pass before the native foundation is considered safe for alpha
 users. P1 rows must pass for each supported platform and package/channel before
@@ -949,4 +982,9 @@ only stores journal/snapshot bytes; `tauri-adapter` only translates OS,
 transport and package events; `CrashCaptureAdapter` is a separate diagnostic
 seam; `RecoverySet` coordination does not become a global backup owner; and
 every new recovery action has a deterministic owner seam and a failure-injection
-fixture before a renderer flow is added.
+fixture before a renderer flow is added. For plugin work, require that
+`PluginHost` remains the owner of trust records, capability grants, runtime
+failure domains, `ExtensionStorage` publication and diagnostic retention;
+`JobSystem` remains the owner of Job lifecycle; sidecar launch is mediated and
+process-group aware; and `BackupParticipant`/`MigrationParticipant` cannot
+write another owner's state or publish recovery pointers.

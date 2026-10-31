@@ -92,13 +92,34 @@ a separate bounded extraction adapter and then reuse the directory-package
 transaction; other archive formats and non-localization binary resources remain
 future adapters over the same seam.
 
-The runtime declaration is one of `builtin`, `wasm` or `sidecar`. Built-ins
-are trusted adapters; third-party runtimes remain isolated. `extensionKind`
-describes `ui`, `workspace` and/or `capability` contributions, while the host
-selects the actual `desktop-core` or `isolated-runtime` location. Runtime
-choice does not grant permissions or expose a frontend framework. All runtime
-adapters use the same contribution descriptors, lifecycle, capability grant
-and RPC contracts.
+The runtime declaration is one of `builtin`, `wasm` or `sidecar` in the alpha
+manifest. A target manifest major also admits a declarative/no-runtime package
+for contributions that need no executable code; it must not use a dummy
+in-process adapter. `extensionKind` describes `ui`, `workspace` and/or
+`capability` contributions, while the host selects the actual
+`desktop-core` or `isolated-runtime` location. Runtime choice does not grant
+permissions or expose a frontend framework. All runtime adapters use the same
+contribution descriptors, lifecycle, capability grant and RPC contracts.
+
+Runtime form and trust are separate fields. A built-in adapter is trusted
+application code and shares the Core failure domain; it is allowed only for
+first-party code shipped inside the signed application. WASM is the preferred
+untrusted computation form because the host can grant explicit WASI/component
+imports rather than ambient filesystem, network or process access. A sidecar
+provides a process crash boundary, but it is not a security sandbox: native
+sidecar code otherwise has the user's OS permissions. Marketplace or local
+policy must therefore distinguish `trusted-builtin`, `capability-sandboxed`,
+`process-isolated` and `unsigned-developer` trust states. An isolated UI
+surface is a renderer form layered on top of any runtime; it never receives a
+generic Tauri command channel. Tauri host plugins remain bundled privileged
+integrations and are not product extensions.
+
+The default failure domain is one runtime process or WASM instance per
+extension. Jobs within an extension may share that extension runtime; two
+extensions do not share a process unless a future policy explicitly advertises
+the larger failure domain and passes instance-containment tests. A crash, trap,
+timeout or resource kill therefore removes only the affected extension's
+projections and Jobs by default.
 
 Activation is indexed by `onWorkbenchReady`, `onApp:<app-id>`,
 `onView:<contribution-id>`, `onCommand:<contribution-id>`,
@@ -137,11 +158,19 @@ interfaces: `PluginRuntime` starts an extension with an explicit
 `RuntimeLaunchSpec` and `RuntimeProcess` reports health, shutdown and command
 invocation. The production adapter uses a child process with the canonical
 versioned JSONL envelope and passes only the extension id and the validated
-permission grant as environment metadata. Built-in extensions use the same
-lifecycle through a no-op process; WASM extensions provide their declared WASM
-runner as the launch program. Invocation payloads and responses are typed by
-the negotiated runtime protocol; they are not an untyped second manifest or
-transport contract.
+permission grant as environment metadata. The host resolves launch targets
+from the committed package and an allow-list; an external manifest cannot
+choose an arbitrary absolute executable, inherited environment or unrestricted
+working directory. The process is attached to a process group/parent-death
+policy, has bounded stdin/stdout/stderr and reports exit code or signal.
+Built-in extensions use the same lifecycle through a no-op process; WASM
+extensions provide their declared component/module through a host-selected
+runner. Invocation payloads and responses are typed by the negotiated runtime
+protocol; they are not an untyped second manifest or transport contract.
+The current alpha `ProcessPluginRuntime` is only a seam proof; production
+qualification still requires the launch allow-list, bounded stderr,
+process-group/parent-death cleanup, exit evidence and orphan reconciliation
+described above.
 
 Declared Job contributions use the same runtime process through a distinct
 `invoke-job` message with `method: "job.run"`. The host sends the Job input as
@@ -162,6 +191,15 @@ returned to the caller while the extension stays active. A closed or crashed
 runtime, malformed response or timeout tears down only that process, marks the
 extension failed and leaves it recoverable through the normal lifecycle path.
 
+`PluginHost` emits structured runtime events for start, ready, protocol
+violation, timeout, WASM trap, budget rejection, exit code/signal and process
+group termination. The event carries extension id, package version, runtime
+session, request id and (when applicable) Job id/attempt. A bounded
+`PluginDiagnosticSink` accepts extension logs and redaction hints; the host
+validates, truncates and redacts them before a `DiagnosticBundle` can include
+them. An extension cannot cause an asset payload, secret, environment dump or
+unbounded path list to be exported by writing a log line.
+
 Permission sets are checked against the declared semantic zone before a
 manifest is registered. Startup failure marks only that extension as failed;
 health polling removes a crashed extension from active contributions, and an
@@ -180,6 +218,19 @@ Relative launch
 arguments beginning with `./` or `../` resolve from the
 manifest directory, which lets a sidecar package move as one directory without
 embedding an absolute executable path.
+
+Package trust is recorded independently from application release trust. A
+stable or preview product-extension package must carry a signature binding its
+digest, `ExtensionId`, publisher key id, version, target/runtime, manifest
+schema, host API range and declared capabilities. The application signer is
+not an extension publisher. Built-in extensions inherit the signed application
+package; installed extensions require a separate publisher trust decision.
+Developer mode may admit an unsigned local package only when it is explicit,
+visible and profile-scoped. Key rotation, revocation, freshness and
+anti-downgrade checks are enforced before activation; a valid old signature
+does not override a revoked key or a newer retained generation. SLSA/in-toto
+provenance and SPDX SBOM references are separate metadata and never replace
+capability checks.
 
 The local install flow is a two-phase transaction. `inspect-plugin` parses the
 manifest and returns the requested permissions, target app, runtime and host API
@@ -203,6 +254,50 @@ the native client. The desktop projects that log into OperationsPanel; filtering
 is transient, while clear and JSON export remain typed host commands. Export
 uses a user-selected native destination and does not make the frontend a second
 persistence owner.
+
+### Extension data, backup and migration
+
+`PluginHost` owns one namespaced `ExtensionStorage` owner per extension. The
+storage API is transactional and quota-bound; it exposes opaque key/blob
+handles rather than the application database or an arbitrary path. An
+extension may implement a `BackupParticipant` to export a bounded logical
+snapshot of its own namespace and a `MigrationParticipant` to transform a
+staged source generation into a staged destination generation. The host owns
+the snapshot index, commit barrier, checksum, quota, deadline and publication
+of the resulting `StateSnapshot` or `RecoverySet`.
+
+Extension migration receives a read-only source generation and a host-owned
+destination writer. It may not write Asset, Workspace, Profile or Job state,
+call external network/process capabilities or publish a recovery pointer. The
+host validates the output and references before commit. A failed or interrupted
+migration quarantines only that extension store, disables the extension and
+keeps the previous generation available; it never resets core data. Rollback
+uses the previous validated package/data generation, so reverse migration is
+optional. An older package can open a newer extension schema only when its
+manifest explicitly declares that read range and the host validates it.
+
+Portable export is a separate user action from internal rolling recovery. It
+excludes secrets, entitlement tokens, transient logs, caches and runtime
+binaries by default. Uninstall retains extension state and snapshots until the
+user explicitly confirms deletion. A plugin cannot silently delete its
+recoverable state during deactivate, upgrade or uninstall.
+
+### Entitlement and paid extensions
+
+A package signature proves artifact integrity and publisher identity; it does
+not prove purchase. Velvet does not expose a generic “paid signature” API. If a
+future marketplace or account service is accepted, the host may expose a
+read-only `EntitlementHandle` that verifies a signed entitlement bound to
+extension id, product/feature id, issuer, account or installation scope,
+sequence, not-before and expiry. The plugin receives only `active`, `trial`,
+`grace`, `expired` or `unknown` plus bounded display metadata. Payment,
+refunds, tax, merchant-of-record and payment credentials remain outside Core.
+
+Entitlement state is allowed to degrade offline for a bounded grace period and
+must never block core startup or destroy extension data. Until a marketplace
+contract exists, the entitlement interface remains reserved/disabled. A
+plugin may use its own licensing service only through an explicit network
+capability; its self-asserted license is not Velvet-verified.
 
 ### Resource governance and runtime recovery
 
@@ -238,11 +333,32 @@ storage are valid; offline or metered-network work waits for an explicit
 network-available policy event. Wake recovery is rate-limited and cannot
 replay side-effecting commands.
 
+When an isolated runtime crashes, its running Jobs become typed
+`Interrupted`/`Failed` outcomes with a retryable decision and the host rejects
+late progress/results by extension session, Job id, attempt and provenance.
+Another extension's runtime and Jobs continue because they do not share the
+default process. A built-in panic can be caught at a Rust boundary, but an
+abort, memory-corruption fault or Core crash affects all built-ins. A forced
+shutdown or power loss terminates all child runtimes; the next launch restores
+committed extension generations and Job snapshots, marks in-flight attempts
+interrupted and retries only when their contract permits. Sidecars must not
+survive as unsupervised writers: process-group cleanup and orphan
+reconciliation are required.
+
 ## Alternatives considered
 
 1. Load arbitrary third-party Rust dynamic libraries into the Tauri process. Rejected because ABI, memory safety and crash isolation cannot be controlled by the host.
 2. Treat all extensions as frontend bundles. Rejected because decoders, indexing, filesystem access and long jobs need a controlled Rust-side capability model.
 3. Give every plugin the same unrestricted permission set. Rejected because a metadata panel should not gain network or process permissions by default.
+4. Treat a sidecar process as a security sandbox. Rejected because a native
+   child process normally inherits the user's OS authority; sidecars provide
+   availability isolation only unless a platform sandbox is added.
+5. Let plugins own global backup/restore or migration pointers. Rejected
+   because a failed extension could corrupt core recovery or mix owner
+   generations; the host must orchestrate extension-only participants.
+6. Use a package signature as a paid-license proof. Rejected because package
+   integrity, publisher trust, account entitlement and payment lifecycle have
+   different issuers, revocation and privacy requirements.
 
 ## Consequences
 
@@ -256,9 +372,26 @@ Costs:
 
 - Sidecar and WASM boundaries add serialization and packaging work.
 - Permission prompts and compatibility checks become part of the product UX.
+- A public SDK needs explicit data, trust, diagnostics and entitlement types;
+  convenience APIs cannot hide the fact that sidecars and built-ins have
+  different security guarantees.
 
 ## Deferred decisions
 
-- Which extension packages may be signed, and who is trusted to sign them?
 - Is there a marketplace in the first release or only local installation?
+- Which concrete package signature envelope (for example a COSE/DSSE-style
+  envelope) and trust metadata format will the release service publish?
+- Which platform adapters can enforce sidecar process groups, working-set and
+  network limits, and which require admission/backpressure fallbacks?
 - What is the minimum supported host API version and deprecation window?
+- Which marketplace/account service, if any, will issue and revoke
+  entitlements, and what is the offline grace policy?
+
+## References
+
+- [Plugin ecosystem lifecycle and recovery review](../research/plugin-ecosystem-lifecycle-and-recovery-review.md)
+- [WASI security](https://wasi.dev/security)
+- [Tauri security and capabilities](https://v2.tauri.app/security/)
+- [VS Code extension runtime security](https://code.visualstudio.com/docs/configure/extensions/extension-runtime-security)
+- [Eagle plugin review criteria](https://developer.eagle.cool/plugin-api/plugin-review/criteria/security-and-privacy)
+- [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)

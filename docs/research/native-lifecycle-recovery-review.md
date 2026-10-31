@@ -122,6 +122,39 @@ uninstall/reinstall cannot bypass it.
 
 The resulting changes are incorporated into ADR-0013 and the foundation plan.
 
+## Plugin developer re-review
+
+The lifecycle decisions remain valid for extensions, but the plugin ecosystem
+adds constraints that the first review did not spell out. The detailed
+analysis is in [Plugin ecosystem lifecycle and recovery review](plugin-ecosystem-lifecycle-and-recovery-review.md).
+
+- `builtin`, `wasm`, `sidecar` and isolated UI are different runtime forms;
+  `extensionKind` and contribution kind remain independent. A sidecar is a
+  process failure boundary, not a security sandbox, while a built-in adapter
+  shares the Core failure domain and is therefore first-party only.
+- The default failure domain is one runtime process or WASM instance per
+  extension. A crash, timeout, malformed response or budget kill removes only
+  that extension's projections and Jobs; a main-process crash or power loss
+  interrupts every child and is recovered from committed snapshots/checkpoints
+  on the next launch.
+- `ExtensionStorage`, `BackupParticipant` and `MigrationParticipant` let a
+  plugin preserve and evolve its own data. `PluginHost` still owns snapshot
+  publication, `RecoverySet`, quotas, validation and user restore actions;
+  plugins cannot restore core Asset, Workspace, Profile or Job state.
+- Package signature, publisher trust, provenance/SBOM and paid entitlement are
+  separate records. Velvet should not provide a generic paid-signature API;
+  an eventual marketplace may expose a read-only host-verified entitlement
+  handle with bounded offline grace.
+- Job/runtime crashes produce structured host events with extension/session/
+  Job correlation, exit or trap evidence, budget decisions and redaction. A
+  plugin log file is not the crash pipeline.
+
+The current alpha process runtime proves the intended seam but still needs
+adapter hardening before production: allow-listed package-relative launch
+targets, bounded stderr capture, process-group/parent-death cleanup, orphan
+reconciliation and typed runtime event records. These are implementation gates,
+not reasons to weaken the ownership model.
+
 ## Evidence used from VS Code
 
 The local checkout was used as an implementation reference, not as a
