@@ -12,7 +12,7 @@ import { VelvetDialog } from '../ui/velvet-ui.js';
 export interface PluginManagerDialogProps {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
-  readonly pickDirectory?: () => Promise<string | undefined>;
+  readonly pickPackage?: (selection: 'directory' | 'archive') => Promise<string | undefined>;
   readonly confirmUninstall?: (extensionId: string) => Promise<boolean>;
   readonly plugins: PluginClient;
 }
@@ -21,7 +21,7 @@ export interface PluginManagerDialogProps {
 export function PluginManagerDialog({
   open,
   onOpenChange,
-  pickDirectory,
+  pickPackage,
   confirmUninstall,
   plugins,
 }: PluginManagerDialogProps) {
@@ -131,16 +131,16 @@ export function PluginManagerDialog({
     }
   };
 
-  const chooseDirectory = async () => {
-    if (!pickDirectory) {
+  const choosePackage = async (selection: 'directory' | 'archive') => {
+    if (!pickPackage) {
       return;
     }
     setError(undefined);
     try {
-      const directory = await pickDirectory();
-      if (directory) {
-        setSourceDir(directory);
-        await inspectPackage(directory);
+      const sourcePath = await pickPackage(selection);
+      if (sourcePath) {
+        setSourceDir(sourcePath);
+        await inspectPackage(sourcePath);
       }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
@@ -437,14 +437,26 @@ export function PluginManagerDialog({
               placeholder="/path/to/plugin-package or .zip"
               value={sourceDir}
             />
-            {pickDirectory ? (
+            {pickPackage ? (
               <button
+                aria-label="Browse plugin directory package"
                 className="velvet-button velvet-button--quiet"
                 disabled={installing || busyExtensionId !== undefined}
-                onClick={() => void chooseDirectory()}
+                onClick={() => void choosePackage('directory')}
                 type="button"
               >
-                Browse…
+                Browse directory…
+              </button>
+            ) : null}
+            {pickPackage ? (
+              <button
+                aria-label="Browse ZIP plugin package"
+                className="velvet-button velvet-button--quiet"
+                disabled={installing || busyExtensionId !== undefined}
+                onClick={() => void choosePackage('archive')}
+                type="button"
+              >
+                Browse .zip…
               </button>
             ) : null}
             <button

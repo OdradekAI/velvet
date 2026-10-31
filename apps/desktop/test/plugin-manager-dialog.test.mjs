@@ -179,7 +179,9 @@ await act(async () => {
       confirmCalls.push(extensionId);
       return true;
     },
-    pickDirectory: async () => '/tmp/native-plugin',
+    pickPackage: async (selection) => selection === 'archive'
+      ? '/tmp/native-plugin.zip'
+      : '/tmp/native-plugin',
     plugins: client,
   }));
   await new Promise((resolve) => setTimeout(resolve, 10));
@@ -190,7 +192,7 @@ assert.match(document.body.textContent ?? '', /active/);
 const input = document.querySelector('#velvet-plugin-source');
 assert.ok(input);
 const browseButton = [...document.querySelectorAll('button')]
-  .find((button) => button.textContent === 'Browse…');
+  .find((button) => button.textContent === 'Browse directory…');
 assert.ok(browseButton);
 await act(async () => {
   browseButton.click();
@@ -211,6 +213,15 @@ await act(async () => {
 assert.match(document.body.textContent ?? '', /sample\.installed installed and activated/);
 assert.match(document.body.textContent ?? '', /sample\.installed/);
 await client.inspectArchiveInCore('/tmp/sample.velvet-plugin.zip');
+assert.equal(requests.at(-1)?.kind, 'inspect-plugin-archive');
+const browseArchiveButton = [...document.querySelectorAll('button')]
+  .find((button) => button.textContent === 'Browse .zip…');
+assert.ok(browseArchiveButton);
+await act(async () => {
+  browseArchiveButton.click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+});
+assert.equal(input?.value, '/tmp/native-plugin.zip');
 assert.equal(requests.at(-1)?.kind, 'inspect-plugin-archive');
 assert.deepEqual(
   requests.slice(0, 12).map((request) => request.kind),

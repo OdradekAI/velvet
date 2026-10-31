@@ -72,9 +72,10 @@ export type {
 } from './tauri-transport.js';
 export { createNativeTauriBridge, createNativeTauriTransport } from './tauri-runtime.js';
 export {
-  createNativeDirectoryPicker,
-  type DirectoryPicker,
-} from './tauri-directory-picker.js';
+  createNativePluginPackagePicker,
+  type PluginPackagePicker,
+  type PluginPackageSelection,
+} from './tauri-plugin-package-picker.js';
 export {
   TauriShortcutAdapter,
   type NativeShortcutEvent,

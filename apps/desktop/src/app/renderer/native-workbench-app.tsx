@@ -10,7 +10,7 @@ import { WorkbenchAppSurfaceHost } from './workbench-app-surface-host.js';
 import { PluginManagerDialog } from './plugin-manager-dialog.js';
 import { PluginRecoveryOperationsPanel } from './plugin-recovery-operations-panel.js';
 import { JobOperationsPanel } from './job-operations-panel.js';
-import { createNativeDirectoryPicker } from '../../platform/tauri-directory-picker.js';
+import { createNativePluginPackagePicker } from '../../platform/tauri-plugin-package-picker.js';
 import { createNativeFileExporter } from '../../platform/tauri-file-exporter.js';
 import { PreviewOverlay } from './preview-overlay.js';
 
@@ -28,7 +28,7 @@ export function NativeWorkbenchApp() {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [appRevision, setAppRevision] = useState(0);
   const [viewRenderers] = useState(() => new ViewRendererRegistry());
-  const [directoryPicker] = useState(() => createNativeDirectoryPicker());
+  const [packagePicker] = useState(() => createNativePluginPackagePicker());
   const [fileExporter] = useState(() => createNativeFileExporter());
 
   useEffect(() => {
@@ -243,7 +243,7 @@ export function NativeWorkbenchApp() {
           }}
           onOpenChange={setPluginManagerOpen}
           open={pluginManagerOpen}
-          pickDirectory={() => directoryPicker.pickDirectory()}
+          pickPackage={(selection) => packagePicker.pick(selection)}
           plugins={currentState.app.workbench.plugins}
         />
         <PreviewOverlay
