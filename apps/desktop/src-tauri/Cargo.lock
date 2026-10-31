@@ -3801,7 +3801,7 @@ dependencies = [
 
 [[package]]
 name = "velvet-application-core"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "serde_json",
  "velvet-asset-core",
@@ -3816,11 +3816,11 @@ dependencies = [
 
 [[package]]
 name = "velvet-asset-core"
-version = "0.0.3"
+version = "0.0.4"
 
 [[package]]
 name = "velvet-desktop"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "serde",
  "serde_json",
@@ -3841,7 +3841,7 @@ dependencies = [
 
 [[package]]
 name = "velvet-job-system"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "serde",
  "serde_json",
@@ -3849,14 +3849,14 @@ dependencies = [
 
 [[package]]
 name = "velvet-layout-model"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "velvet-persistence"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "serde",
  "serde_json",
@@ -3867,7 +3867,7 @@ dependencies = [
 
 [[package]]
 name = "velvet-plugin-api"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "serde",
  "serde_json",
@@ -3876,7 +3876,7 @@ dependencies = [
 
 [[package]]
 name = "velvet-plugin-host"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "serde",
  "serde_json",
@@ -3887,7 +3887,7 @@ dependencies = [
 
 [[package]]
 name = "velvet-preview-core"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "serde",
  "velvet-asset-core",
@@ -3895,7 +3895,7 @@ dependencies = [
 
 [[package]]
 name = "velvet-tauri-adapter"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "velvet-application-core",
  "velvet-workbench-protocol",
@@ -3903,7 +3903,7 @@ dependencies = [
 
 [[package]]
 name = "velvet-workbench-protocol"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "serde",
  "serde_json",

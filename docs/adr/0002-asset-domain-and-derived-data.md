@@ -60,7 +60,7 @@ Costs:
 
 ## Current implementation note
 
-The v0.0.3 foundation now persists application-owned source registrations in a
+The v0.0.4 foundation now persists application-owned source registrations in a
 versioned JSON adapter. Each registration keeps an opaque `AssetId`, a
 canonical regular-file location, a declared `ContentKind` and an optional
 source-owned content fingerprint. `application-core` owns registration,

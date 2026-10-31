@@ -4,6 +4,21 @@ All notable changes to Velvet (白翎) are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses [Semantic Versioning](https://semver.org/).
 
+## [0.0.4] - 2026-10-31
+
+### Added
+
+- Added the host-managed Preview execution path with built-in bounded text/image renderers, plugin providers, augmentations, actions and JobSystem handoff.
+- Added versioned persistent Preview source locations that resolve opaque `AssetId` values to canonical regular files across restarts without exposing paths to providers or the renderer.
+- Added Rust-owned profile locale persistence and plugin localization resource loading through CoreTransport.
+- Added bounded ZIP plugin package extraction and native directory/ZIP package selection.
+- Added exact Job provenance reuse, persisted result payloads, runner registration and plugin-job failure isolation.
+
+### Changed
+
+- Updated the desktop, Tauri and Rust workspace versions to `0.0.4`.
+- Kept Preview source fingerprints under trusted Rust source ownership so renderer requests cannot forge cache provenance.
+
 ## [0.0.3] - 2026-10-30
 
 ### Added
