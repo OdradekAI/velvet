@@ -92,6 +92,34 @@ necessary. A future helper may host one or both adapters, owns no business
 state, and falls back to the in-process journal if unavailable. Neither helper
 is a P0 packaged component.
 
+### Alpha implementation slice
+
+The first implementation slice now provides an in-process
+`RecoverySupervisor` in `application-core` backed by the persistence crate's
+versioned `RecoveryJournalStore`. It records a launch receipt, startup phase,
+last good checkpoint, abnormal pre-ready failure count and shutdown evidence
+through the supervisor API;
+two unfinished pre-ready launches enter Safe Mode, and core migration failure
+forces Safe Mode without overwriting the failed owner state. The projection is
+available through the canonical Rust protocol and the Tauri wire adapter, so a
+renderer can inspect recovery state without reading the journal directly.
+When Safe Mode is active, startup does not auto-activate discovered plugins;
+the core and recovery path remain available for an explicit user action.
+
+Runtime failure in an activated optional plugin also records a degraded
+component failure and clears that owner's projections and Jobs; it does not
+increment the core pre-ready Safe Mode counter.
+
+This slice is deliberately narrower than the full decision: phase deadlines,
+the host-native `RecoverySurface`, generation snapshots/`RecoverySet`, user
+restore actions and a bounded `DiagnosticBundle` are still implementation
+gates. Optional plugin activation is recorded as a degraded component failure
+and does not block the core-ready checkpoint. The file journal is an evidence
+store, not yet a replacement for owner snapshots or a proof that writes are
+crash-durable on every platform; the persistence durability report remains a
+follow-up acceptance test. Native close-event wiring for the shutdown intent
+and completion calls is also pending the platform lifecycle adapter.
+
 Plugin crashes and timeouts remain inside `PluginHost`; plugin-owned Jobs
 remain inside `JobSystem`; a WebView or AppSurface failure is handled by the
 desktop host adapter. None of these failures restart the whole application.

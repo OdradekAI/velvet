@@ -22,6 +22,7 @@ import { ViewRegistry } from './views/view-registry.js';
 import { FocusService } from './focus/focus-service.js';
 import { BUILTIN_WORKBENCH_APPS } from '../workspaces/index.js';
 import { LocalizationService } from './localization/localization-service.js';
+import { RecoveryClient } from './recovery/recovery-client.js';
 
 export class Workbench {
   public readonly layout: LayoutService;
@@ -36,6 +37,7 @@ export class Workbench {
   public readonly contributions = new ContributionRegistry();
   public readonly context = new InMemoryWorkspaceContext();
   public readonly localization = new LocalizationService();
+  public readonly recovery: RecoveryClient;
   public readonly focus = new FocusService();
   public readonly contextKeys: ContextKeyService;
   public readonly commands: CommandRegistry;
@@ -49,6 +51,7 @@ export class Workbench {
   private layoutSyncPromise: Promise<void> = Promise.resolve();
 
   public constructor(core: CoreTransport) {
+    this.recovery = new RecoveryClient(core);
     this.localization.bindCore(core);
     this.layout = new LayoutService(core);
     this.preview = new PreviewHost(core);

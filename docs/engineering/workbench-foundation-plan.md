@@ -172,10 +172,10 @@ must not be advertised as the target guarantee.
 
 | Target contract | Current skeleton evidence | Remaining gap | Priority |
 | --- | --- | --- | --- |
-| `RecoverySupervisor`, startup phases and two-failure Safe Mode | `ApplicationCore` composes stores and `apps/desktop/src-tauri` has typed command/event mapping | No launch receipt, monotonic phase deadlines, successful-start checkpoint, Safe Mode state or host-native `RecoverySurface` | P0 |
+| `RecoverySupervisor`, startup phases and two-failure Safe Mode | `application-core` now records a versioned launch journal, phase/checkpoint projection and core-migration/optional-component failures; Tauri uses the file journal | Phase deadlines, shutdown completion wiring, user recovery actions and host-native `RecoverySurface` are still missing | P0 (partial) |
 | Owner snapshots, `RecoverySet` and migration rollback | Layout/Profile/Job/source stores use schema fields and temporary-file replacement; layout has local migrations | No generation metadata, commit barrier, recovery index, fsync/durability report, quarantine model or cross-owner restore | P0 |
 | Extension-owned data with host-controlled backup/migration | Plugin install has staging/rollback directories and a bounded install recovery log | No namespaced `ExtensionStorage`, backup/migration participant handles, extension generations or selective extension-state restore | P0 |
-| Per-extension runtime failure domain | `PluginHost` tracks one process per extension, health state and contribution cleanup; `JobSystem` marks restart work interrupted | Sidecar launch accepts a manifest program, stderr is discarded, process groups and parent-death cleanup are absent, and runtime events are not structured or persisted | P0 |
+| Per-extension runtime failure domain | `PluginHost` tracks one process per extension, health state and contribution cleanup; `JobSystem` marks restart work interrupted; optional activation failures now degrade the recovery projection without blocking Core | Sidecar launch accepts a manifest program, stderr is discarded, process groups and parent-death cleanup are absent, and runtime events are not structured or persisted | P0 |
 | Resource-governed, restartable Jobs | `JobSystem` persists snapshots/results, supports cooperative cancellation, retry and provenance matching | No owner/device/Job budget ledger, deadlines, cancellation grace, exponential backoff policy, checkpoint contract or suspend/offline policy | P0/P1 |
 | Host diagnostics and user recovery | Plugin install recovery log and renderer recovery operations panel exist | No common `DiagnosticEvent`, bounded redaction, `DiagnosticBundle`, crash-capture adapter or lifecycle/Job/plugin correlation | P0 |
 | Versioned protocol handshake and reconnect | Rust/TypeScript envelopes carry exact `protocolVersion` and `requestId`; stale layout revisions are checked | `u16` is treated as one exact version; no major/minor negotiation, feature/schema selection, `sessionId`, sequence resync or unknown-outcome query rule | P1 |
@@ -445,6 +445,8 @@ apps/
           layout-service.ts
           layout-state.ts
           layout-migrations.ts
+        recovery/
+          recovery-client.ts
         views/
           view-descriptor.ts
           view-container.ts
@@ -929,6 +931,19 @@ user recovery action visible beside the existing Workbench scenarios.
 | P1 | Stable/preview extension packages verify digest, publisher identity, target, capabilities, freshness, revocation and anti-downgrade before activation; unsigned local packages require visible developer mode. | `plugin-api`, `plugin-host`, `application-core`, `tauri-adapter` | Signed-package verifier fake, key-rotation/revocation/offline fixtures and developer-mode policy test | Keep the current package, inspect trust issues, install a valid offline package or disable the extension |
 | P1 | Staged extension upgrade keeps old package/data generations until the new runtime reaches a health checkpoint; failed activation or migration restores the previous pair without touching core data. | `plugin-host`, `persistence`, `application-core` | Upgrade transaction, crash/power-loss and schema-range fixtures | Resume, commit, rollback or discard the staged extension transaction |
 | P1 (marketplace) | A paid extension receives only host-verified entitlement status with bounded offline grace; package signature and publisher trust remain separate, and no payment credential crosses the plugin boundary. | `plugin-host`, `workbench-protocol`, `tauri-adapter` | Fake entitlement issuer with expiry, revocation, clock-skew, sign-out and offline fixtures | Continue in grace, renew/sign in, disable paid feature or keep data and uninstall |
+
+The first lifecycle implementation slice has these acceptance results:
+
+| Slice | Result | Evidence |
+| --- | --- | --- |
+| Journal round-trip and unknown-schema rejection | Pass | `JsonFileRecoveryJournalStore` persistence test |
+| Two unfinished pre-ready launches enter Safe Mode with recovery actions | Pass | `RecoverySupervisor` deterministic-clock test |
+| Core layout migration failure enters Safe Mode and preserves the failed state | Pass | `ApplicationCore` migration fixture |
+| Optional plugin activation failure degrades without entering core Safe Mode | Pass | `ApplicationCore` plugin activation fixture |
+| Activated plugin runtime failure emits plugin-disabled and recovery-degraded evidence while leaving core data available | Pass | `tauri-adapter` runtime failure fixture |
+| Rust recovery query, Tauri response/event and TypeScript types agree | Pass | `workbench-protocol`, `tauri-adapter`, desktop Tauri compile and TypeScript typecheck |
+| Desktop `RecoveryClient` loads the projection and accepts recovery events without reading native storage | Pass | `apps/desktop/test/recovery-client.test.mjs` |
+| Phase deadlines, host-native recovery UI, generation snapshots and user restore actions | Pending | Next P0 slices |
 
 All P0 rows must pass before the native foundation is considered safe for alpha
 users. P1 rows must pass for each supported platform and package/channel before

@@ -19,7 +19,7 @@ use velvet_plugin_api::{
 };
 use velvet_persistence::{
     JsonFileAssetSourceLocationStore, JsonFileJobStateStore, JsonFileLayoutStateStore,
-    JsonFileProfileStateStore,
+    JsonFileProfileStateStore, JsonFileRecoveryJournalStore,
 };
 use velvet_preview_core::{PreviewIntent, PreviewRenderer, PreviewSurface, ResolvedPreview};
 use velvet_tauri_adapter::{CoreEventSink, TauriTransport};
@@ -77,6 +77,13 @@ impl From<CoreError> for WireError {
             },
             CoreError::Profile(message) => Self {
                 code: "profile-error".into(),
+                message,
+                retryable: true,
+                expected_revision: None,
+                actual_revision: None,
+            },
+            CoreError::Recovery(message) => Self {
+                code: "recovery-error".into(),
                 message,
                 retryable: true,
                 expected_revision: None,
@@ -210,6 +217,10 @@ pub enum WireRequest {
         #[serde(rename = "protocolVersion")]
         protocol_version: u16,
     },
+    QueryRecovery {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+    },
     ReadPluginLocalization {
         #[serde(rename = "protocolVersion")]
         protocol_version: u16,
@@ -242,7 +253,7 @@ pub enum WireRequest {
     RegisterPlugin {
         #[serde(rename = "protocolVersion")]
         protocol_version: u16,
-        manifest: WirePluginManifest,
+        manifest: Box<WirePluginManifest>,
     },
     ActivatePlugin {
         #[serde(rename = "protocolVersion")]
@@ -438,6 +449,10 @@ impl WireRequest {
                 validate_inner_protocol(outer_protocol_version, protocol_version)?;
                 Ok(Request::Query(velvet_workbench_protocol::Query::Profile))
             }
+            Self::QueryRecovery { protocol_version } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Query(velvet_workbench_protocol::Query::Recovery))
+            }
             Self::ReadPluginLocalization {
                 protocol_version,
                 extension_id,
@@ -485,7 +500,7 @@ impl WireRequest {
                 manifest,
             } => {
                 validate_inner_protocol(outer_protocol_version, protocol_version)?;
-                let manifest: ExtensionManifest = manifest
+                let manifest: ExtensionManifest = (*manifest)
                     .try_into()
                     .map_err(|message: String| WireError {
                         code: "invalid-plugin-manifest".into(),
@@ -956,6 +971,9 @@ enum WireResponse {
     Profile {
         state: velvet_workbench_protocol::ProfileState,
     },
+    Recovery {
+        projection: velvet_workbench_protocol::RecoveryProjection,
+    },
     PluginResource {
         resource: velvet_workbench_protocol::PluginResourceDto,
     },
@@ -998,6 +1016,7 @@ impl WireResponseEnvelope {
                 state: WireLayoutState::from(state),
             },
             Response::Profile(state) => WireResponse::Profile { state },
+            Response::Recovery(projection) => WireResponse::Recovery { projection },
             Response::PluginResource(resource) => WireResponse::PluginResource { resource },
             Response::Extensions(extensions) => WireResponse::Extensions {
                 extensions: extensions
@@ -1315,12 +1334,15 @@ enum WireEvent {
         revision: u64,
         state: velvet_workbench_protocol::ProfileState,
     },
+    RecoveryChanged {
+        projection: velvet_workbench_protocol::RecoveryProjection,
+    },
     PluginDisabled {
         extension_id: String,
         reason: String,
     },
     JobChanged {
-        snapshot: WireJobSnapshot,
+        snapshot: Box<WireJobSnapshot>,
     },
 }
 
@@ -1335,6 +1357,7 @@ impl From<Event> for WireEventEnvelope {
                 revision,
                 state,
             },
+            Event::RecoveryChanged { projection } => WireEvent::RecoveryChanged { projection },
             Event::PluginDisabled {
                 extension_id,
                 reason,
@@ -1343,7 +1366,7 @@ impl From<Event> for WireEventEnvelope {
                 reason,
             },
             Event::JobChanged { snapshot } => WireEvent::JobChanged {
-                snapshot: WireJobSnapshot::from(*snapshot),
+                snapshot: Box::new(WireJobSnapshot::from(*snapshot)),
             },
         };
         Self {
@@ -1508,32 +1531,42 @@ pub fn run() {
             let jobs_path = app_data_dir.join("jobs.json");
             let profile_path = app_data_dir.join("profile.json");
             let asset_sources_path = app_data_dir.join("asset-sources.json");
+            let recovery_path = app_data_dir.join("recovery-journal.json");
             let plugin_directory = app_data_dir.join("plugins");
-            let mut core = ApplicationCore::with_store_and_plugin_directory_and_job_store_and_profile_store_and_asset_source_store(
+            let mut core = ApplicationCore::with_store_and_plugin_directory_and_job_store_and_profile_store_and_asset_source_store_and_recovery_journal(
                 Arc::new(JsonFileLayoutStateStore::new(layout_path)),
                 &plugin_directory,
                 Arc::new(JsonFileJobStateStore::new(jobs_path)),
                 Arc::new(JsonFileProfileStateStore::new(profile_path)),
                 Arc::new(JsonFileAssetSourceLocationStore::new(asset_sources_path)),
+                Arc::new(JsonFileRecoveryJournalStore::new(recovery_path)),
             );
-            match core.load_plugins_from_directory(&plugin_directory) {
-                Ok(report) if !report.failures.is_empty() => {
+            core.mark_workbench_ready();
+            if core.in_safe_mode() {
+                eprintln!("Velvet entered Safe Mode; optional plugins remain inactive");
+            } else {
+                match core.load_plugins_from_directory(&plugin_directory) {
+                    Ok(report) if !report.failures.is_empty() => {
+                        eprintln!(
+                            "Velvet skipped {} invalid plugin manifest(s)",
+                            report.failures.len()
+                        );
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        eprintln!("Velvet could not scan plugin manifests: {error:?}");
+                    }
+                }
+                if let Err(error) = core.cleanup_plugin_install_recovery_orphans() {
                     eprintln!(
-                        "Velvet skipped {} invalid plugin manifest(s)",
-                        report.failures.len()
+                        "Velvet could not clean orphaned plugin recovery directories: {error:?}"
                     );
                 }
-                Ok(_) => {}
-                Err(error) => {
-                    eprintln!("Velvet could not scan plugin manifests: {error:?}");
+                for error in core.activate_registered_plugins() {
+                    eprintln!("Velvet could not start a discovered plugin: {error:?}");
                 }
             }
-            if let Err(error) = core.cleanup_plugin_install_recovery_orphans() {
-                eprintln!("Velvet could not clean orphaned plugin recovery directories: {error:?}");
-            }
-            for error in core.activate_registered_plugins() {
-                eprintln!("Velvet could not start a discovered plugin: {error:?}");
-            }
+            core.mark_ready();
             app.manage(AppState {
                 transport: Mutex::new(TauriTransport::with_event_sink(
                     core,
@@ -1786,6 +1819,49 @@ mod tests {
         let log_value = serde_json::to_value(log_response)
             .expect("plugin recovery log should serialize");
         assert_eq!(log_value["response"]["log"][0]["status"], "failed");
+    }
+
+    #[test]
+    fn wire_recovery_query_and_projection_use_stable_names() {
+        let envelope: WireRequestEnvelope = serde_json::from_str(
+            r#"{
+                "protocolVersion": 1,
+                "requestId": 29,
+                "request": {
+                    "kind": "query-recovery",
+                    "protocolVersion": 1
+                }
+            }"#,
+        )
+        .expect("the recovery query should deserialize");
+        assert!(matches!(
+            envelope
+                .request
+                .into_core(1)
+                .expect("the recovery query should map"),
+            Request::Query(velvet_workbench_protocol::Query::Recovery)
+        ));
+
+        let response = WireResponseEnvelope::from_core(
+            velvet_workbench_protocol::ResponseEnvelope {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: RequestId(29),
+                response: Response::Recovery(velvet_workbench_protocol::RecoveryProjection {
+                    schema_version: 1,
+                    mode: velvet_workbench_protocol::RecoveryMode::Safe,
+                    phase: velvet_workbench_protocol::StartupPhase::Preflight,
+                    attempt_id: 2,
+                    consecutive_failures: 2,
+                    last_failure: None,
+                    last_good: None,
+                    actions: vec![velvet_workbench_protocol::RecoveryAction::Retry],
+                }),
+            },
+        );
+        let value = serde_json::to_value(response).expect("recovery projection should serialize");
+        assert_eq!(value["response"]["kind"], "recovery");
+        assert_eq!(value["response"]["projection"]["mode"], "safe");
+        assert_eq!(value["response"]["projection"]["actions"][0], "retry");
     }
 
     #[test]

@@ -2,6 +2,9 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 mod preview_source;
+mod recovery;
+
+pub use recovery::{RecoveryClock, RecoveryError, RecoverySupervisor, SystemRecoveryClock};
 
 pub use preview_source::{
     AssetSourceLocationResolver, FilePreviewAssetSource, InMemoryPreviewAssetSource,
@@ -16,7 +19,8 @@ use velvet_job_system::{
 use velvet_layout_model::{InMemoryLayoutService, LayoutService};
 use velvet_persistence::{
     AssetSourceLocationStore, InMemoryAssetSourceLocationStore, InMemoryLayoutStateStore,
-    InMemoryProfileStateStore, LayoutStateStore, ProfileStateStore,
+    InMemoryProfileStateStore, InMemoryRecoveryJournalStore, LayoutStateStore, ProfileStateStore,
+    RecoveryJournalStore,
 };
 use velvet_plugin_api::{
     ContributionKind, ExtensionId, ExtensionInstallPreview, ExtensionInstallRecovery,
@@ -54,6 +58,7 @@ pub struct ApplicationCore {
     profile_store: Arc<dyn ProfileStateStore>,
     plugin_directory: Option<std::path::PathBuf>,
     plugin_resources: Option<PluginResourceLoader>,
+    recovery: RecoverySupervisor,
 }
 
 const MAX_PREVIEW_ACTION_SESSIONS: usize = 128;
@@ -254,6 +259,25 @@ impl ApplicationCore {
         )
     }
 
+    pub fn with_store_and_plugin_directory_and_job_store_and_profile_store_and_asset_source_store_and_recovery_journal(
+        layout_store: Arc<dyn LayoutStateStore>,
+        plugin_directory: impl Into<std::path::PathBuf>,
+        job_store: Arc<dyn JobStateStore>,
+        profile_store: Arc<dyn ProfileStateStore>,
+        asset_source_store: Arc<dyn AssetSourceLocationStore>,
+        recovery_journal: Arc<dyn RecoveryJournalStore>,
+    ) -> Self {
+        Self::with_store_and_runtime_and_plugin_directory_and_jobs_and_profile_and_recovery(
+            layout_store,
+            Box::new(velvet_plugin_host::ProcessPluginRuntime),
+            Some(plugin_directory.into()),
+            JobSystem::with_store(job_store),
+            profile_store,
+            asset_source_store,
+            recovery_journal,
+        )
+    }
+
     fn with_store_and_runtime_and_plugin_directory_and_jobs_and_profile(
         layout_store: Arc<dyn LayoutStateStore>,
         runtime: Box<dyn PluginRuntime>,
@@ -262,19 +286,66 @@ impl ApplicationCore {
         profile_store: Arc<dyn ProfileStateStore>,
         asset_source_store: Arc<dyn AssetSourceLocationStore>,
     ) -> Self {
+        Self::with_store_and_runtime_and_plugin_directory_and_jobs_and_profile_and_recovery(
+            layout_store,
+            runtime,
+            plugin_directory,
+            jobs,
+            profile_store,
+            asset_source_store,
+            Arc::new(InMemoryRecoveryJournalStore::default()),
+        )
+    }
+
+    fn with_store_and_runtime_and_plugin_directory_and_jobs_and_profile_and_recovery(
+        layout_store: Arc<dyn LayoutStateStore>,
+        runtime: Box<dyn PluginRuntime>,
+        plugin_directory: Option<std::path::PathBuf>,
+        jobs: JobSystem,
+        profile_store: Arc<dyn ProfileStateStore>,
+        asset_source_store: Arc<dyn AssetSourceLocationStore>,
+        recovery_journal: Arc<dyn RecoveryJournalStore>,
+    ) -> Self {
+        let recovery = RecoverySupervisor::new(recovery_journal, Arc::new(SystemRecoveryClock));
+        let launch_started = recovery.begin_launch(env!("CARGO_PKG_VERSION"));
         let mut layout = InMemoryLayoutService::default();
-        if let Ok(Some(state)) = layout_store.load() {
-            if let Ok(migrated) = layout.migrate(state) {
-                layout = InMemoryLayoutService::from_state(migrated);
+        match layout_store.load() {
+            Ok(Some(state)) => match layout.migrate(state) {
+                Ok(migrated) => layout = InMemoryLayoutService::from_state(migrated),
+                Err(error) => {
+                    let _ = recovery.record_failure(
+                        velvet_workbench_protocol::RecoveryFailureClass::CoreMigration,
+                        format!("layout migration failed: {error:?}"),
+                    );
+                }
+            },
+            Ok(None) => {}
+            Err(error) => {
+                let _ = recovery.record_failure(
+                    velvet_workbench_protocol::RecoveryFailureClass::StateCorrupt,
+                    format!("layout state could not be loaded: {error:?}"),
+                );
             }
         }
 
-        let profile = profile_store
-            .load()
-            .ok()
-            .flatten()
-            .filter(valid_profile_state)
-            .unwrap_or_default();
+        let profile = match profile_store.load() {
+            Ok(Some(state)) if valid_profile_state(&state) => state,
+            Ok(Some(_)) => {
+                let _ = recovery.record_failure(
+                    velvet_workbench_protocol::RecoveryFailureClass::StateCorrupt,
+                    "profile state failed validation",
+                );
+                ProfileState::default()
+            }
+            Ok(None) => ProfileState::default(),
+            Err(error) => {
+                let _ = recovery.record_failure(
+                    velvet_workbench_protocol::RecoveryFailureClass::StateCorrupt,
+                    format!("profile state could not be loaded: {error:?}"),
+                );
+                ProfileState::default()
+            }
+        };
 
         let plugin_resources = plugin_directory.as_deref().map(PluginResourceLoader::new);
         let preview_locations = Arc::new(PersistentAssetSourceLocationResolver::new(
@@ -292,7 +363,14 @@ impl ApplicationCore {
             profile_store,
             plugin_directory,
             plugin_resources,
+            recovery,
         };
+
+        if launch_started.is_ok() && !core.recovery.is_safe_mode() {
+            let _ = core
+                .recovery
+                .advance_to(velvet_workbench_protocol::StartupPhase::CoreReady);
+        }
 
         core.previews.register(Arc::new(BuiltinTextPreviewProvider));
         core.previews
@@ -301,6 +379,32 @@ impl ApplicationCore {
         core.previews
             .set_asset_source(Arc::new(FilePreviewAssetSource::new(preview_locations)));
         core
+    }
+
+    pub fn recovery_projection(&self) -> velvet_workbench_protocol::RecoveryProjection {
+        self.recovery.projection()
+    }
+
+    pub fn in_safe_mode(&self) -> bool {
+        self.recovery.is_safe_mode()
+    }
+
+    pub fn mark_workbench_ready(&self) {
+        let _ = self
+            .recovery
+            .advance_to(velvet_workbench_protocol::StartupPhase::WorkbenchReady);
+    }
+
+    pub fn mark_ready(&self) {
+        let _ = self.recovery.mark_ready();
+    }
+
+    pub fn record_recovery_failure(
+        &self,
+        class: velvet_workbench_protocol::RecoveryFailureClass,
+        message: impl Into<String>,
+    ) {
+        let _ = self.recovery.record_failure(class, message);
     }
 
     pub fn register_plugin(&mut self, manifest: ExtensionManifest) -> Result<(), PluginError> {
@@ -369,6 +473,10 @@ impl ApplicationCore {
         let result = self.plugins.check_health(id);
         if result.is_err() {
             self.clear_plugin_runtime_state(id);
+            self.record_recovery_failure(
+                velvet_workbench_protocol::RecoveryFailureClass::OptionalComponent,
+                format!("plugin {} failed its health check", id.0),
+            );
         }
         result
     }
@@ -390,19 +498,30 @@ impl ApplicationCore {
     /// Starts manifests discovered during native application startup. Other
     /// embedders may keep the host lazy and call `activate_plugin` explicitly.
     pub fn activate_registered_plugins(&mut self) -> Vec<PluginError> {
+        if self.in_safe_mode() {
+            return Vec::new();
+        }
         let recovery_ids = self
             .inspect_plugin_install_recoveries()
             .unwrap_or_default()
             .into_iter()
             .map(|recovery| recovery.extension_id)
             .collect::<Vec<_>>();
-        self.plugins
+        let failures = self
+            .plugins
             .discover()
             .into_iter()
             .filter(|summary| summary.state == ExtensionState::Registered)
             .filter(|summary| !recovery_ids.contains(&summary.id))
             .filter_map(|summary| self.activate_plugin(&summary.id).err())
-            .collect()
+            .collect::<Vec<_>>();
+        for failure in &failures {
+            self.record_recovery_failure(
+                velvet_workbench_protocol::RecoveryFailureClass::OptionalComponent,
+                format!("optional plugin activation failed: {failure:?}"),
+            );
+        }
+        failures
     }
 
     pub fn load_plugins_from_directory(
@@ -941,10 +1060,28 @@ impl ApplicationCore {
                 args,
                 context,
             }) => {
-                self.plugins
+                match self
+                    .plugins
                     .invoke_command(&extension_id, command_id, args, context)
-                    .map_err(plugin_error)?;
-                Ok(Response::Accepted)
+                {
+                    Ok(_) => Ok(Response::Accepted),
+                    Err(error) => {
+                        let plugin_failed = self
+                            .plugins
+                            .discover()
+                            .into_iter()
+                            .find(|summary| summary.id == extension_id)
+                            .is_some_and(|summary| summary.state == ExtensionState::Failed);
+                        if plugin_failed {
+                            self.clear_plugin_runtime_state(&extension_id);
+                            self.record_recovery_failure(
+                                velvet_workbench_protocol::RecoveryFailureClass::OptionalComponent,
+                                format!("plugin {} runtime invocation failed", extension_id.0),
+                            );
+                        }
+                        Err(plugin_error(error))
+                    }
+                }
             }
             Request::Command(Command::InvokePreviewAction {
                 extension_id,
@@ -984,6 +1121,7 @@ impl ApplicationCore {
             }) => self.set_locale(expected_revision, locale),
             Request::Query(Query::Layout) => Ok(Response::Layout(self.layout.snapshot())),
             Request::Query(Query::Profile) => Ok(Response::Profile(self.profile.clone())),
+            Request::Query(Query::Recovery) => Ok(Response::Recovery(self.recovery_projection())),
             Request::Query(Query::PluginLocalization {
                 extension_id,
                 locale,
@@ -1628,6 +1766,13 @@ impl InProcessCoreTransport {
             .map(|core| core.drain_job_events())
             .unwrap_or_default()
     }
+
+    pub fn recovery_projection(&self) -> velvet_workbench_protocol::RecoveryProjection {
+        self.core
+            .lock()
+            .map(|core| core.recovery_projection())
+            .unwrap_or_else(|_| RecoverySupervisor::default().projection())
+    }
 }
 
 impl CoreTransport for InProcessCoreTransport {
@@ -1647,10 +1792,10 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
-    use velvet_layout_model::{LayoutCommand, WorkbenchPart, WorkbenchZone};
+    use velvet_layout_model::{LayoutCommand, LayoutState, WorkbenchPart, WorkbenchZone};
     use velvet_persistence::{
-        InMemoryProfileStateStore, JsonFileAssetSourceLocationStore, JsonFileJobStateStore,
-        JsonFileLayoutStateStore,
+        InMemoryLayoutStateStore, InMemoryProfileStateStore, JsonFileAssetSourceLocationStore,
+        JsonFileJobStateStore, JsonFileLayoutStateStore, LayoutStateStore,
     };
     use velvet_plugin_api::{
         ContributionDescriptor, ContributionKind, ContributionScope, ExtensionId,
@@ -2570,6 +2715,67 @@ mod tests {
     }
 
     #[test]
+    fn recovery_query_returns_the_authoritative_startup_projection() {
+        let mut core = ApplicationCore::default();
+        let response = core
+            .dispatch(Request::Query(Query::Recovery))
+            .expect("recovery query should succeed");
+
+        match response {
+            Response::Recovery(projection) => {
+                assert_eq!(projection.schema_version, 1);
+                assert_eq!(projection.attempt_id, 1);
+                assert!(matches!(
+                    projection.phase,
+                    velvet_workbench_protocol::StartupPhase::CoreReady
+                ));
+            }
+            other => panic!("expected a recovery projection, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn core_migration_failure_enters_safe_mode_without_overwriting_the_failed_state() {
+        let store = Arc::new(InMemoryLayoutStateStore::default());
+        let invalid = LayoutState {
+            schema_version: 99,
+            ..LayoutState::default()
+        };
+        store
+            .save(&invalid)
+            .expect("the invalid layout fixture should be writable");
+
+        let mut core = ApplicationCore::with_store(store.clone());
+        let projection = core.recovery_projection();
+        assert_eq!(
+            projection.mode,
+            velvet_workbench_protocol::RecoveryMode::Safe
+        );
+        assert!(matches!(
+            projection.last_failure.map(|failure| failure.class),
+            Some(velvet_workbench_protocol::RecoveryFailureClass::CoreMigration)
+        ));
+        assert_eq!(
+            store
+                .load()
+                .expect("the failed layout should remain readable")
+                .expect("the failed layout should remain present")
+                .schema_version,
+            99
+        );
+
+        core.register_plugin(ExtensionManifest {
+            id: ExtensionId("safe-mode.plugin".into()),
+            runtime: RuntimeKind::BuiltIn,
+            launch: None,
+            ..ExtensionManifest::default()
+        })
+        .expect("the safe-mode plugin fixture should register");
+        assert!(core.activate_registered_plugins().is_empty());
+        assert!(!core.discover_plugins()[0].active);
+    }
+
+    #[test]
     fn layout_state_is_restored_when_application_core_restarts() {
         let path = temporary_layout_path();
         let first_store = Arc::new(JsonFileLayoutStateStore::new(&path));
@@ -2725,6 +2931,34 @@ mod tests {
             }
             other => panic!("expected extension response, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn optional_plugin_start_failure_degrades_without_entering_core_safe_mode() {
+        let mut core = ApplicationCore::default();
+        core.register_plugin(ExtensionManifest {
+            id: ExtensionId("optional.broken".into()),
+            version: "1.0.0".into(),
+            host_api: VersionRange("^1".into()),
+            runtime: RuntimeKind::Sidecar,
+            launch: Some(velvet_plugin_api::RuntimeLaunchSpec {
+                program: "/velvet/test/does-not-exist".into(),
+                args: Vec::new(),
+            }),
+            target_app: None,
+            contributions: Vec::new(),
+            permission_sets: Vec::new(),
+            ..ExtensionManifest::default()
+        })
+        .expect("optional plugin should register");
+
+        let failures = core.activate_registered_plugins();
+        assert_eq!(failures.len(), 1);
+        assert!(matches!(
+            core.recovery_projection().mode,
+            velvet_workbench_protocol::RecoveryMode::Degraded
+        ));
+        assert_eq!(core.recovery_projection().consecutive_failures, 0);
     }
 
     #[test]

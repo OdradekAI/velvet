@@ -29,6 +29,13 @@ export type {
   CoreJobProvenance,
   CoreJobResult,
   CoreJobStatus,
+  CoreRecoveryAction,
+  CoreRecoveryCheckpoint,
+  CoreRecoveryFailure,
+  CoreRecoveryFailureClass,
+  CoreRecoveryMode,
+  CoreRecoveryProjection,
+  CoreStartupPhase,
   CorePluginResource,
   CoreProfileState,
   CorePreviewContribution,
@@ -55,6 +62,7 @@ export type {
 export {
   PLUGIN_RESOURCE_SCHEMA_VERSION,
   PROFILE_SCHEMA_VERSION,
+  RECOVERY_SCHEMA_VERSION,
 } from './protocol.js';
 export {
   CoreTransportError,

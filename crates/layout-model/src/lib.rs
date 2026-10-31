@@ -302,6 +302,7 @@ pub enum LayoutCommand {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum LayoutError {
+    UnsupportedSchema(u32),
     UnknownPart(WorkbenchPart),
     UnknownView(String),
     UnknownContainer(String),
@@ -509,6 +510,9 @@ impl LayoutService for InMemoryLayoutService {
     }
 
     fn migrate(&self, mut state: LayoutState) -> Result<LayoutState, LayoutError> {
+        if state.schema_version > 1 {
+            return Err(LayoutError::UnsupportedSchema(state.schema_version));
+        }
         state.schema_version = 1;
         Ok(state)
     }
@@ -630,6 +634,19 @@ mod tests {
     fn default_layout_starts_in_asset_manager() {
         let service = InMemoryLayoutService::default();
         assert_eq!(service.snapshot().active_app, WorkbenchAppId::AssetManager);
+    }
+
+    #[test]
+    fn future_layout_schema_is_preserved_for_recovery_instead_of_reset() {
+        let service = InMemoryLayoutService::default();
+        let state = LayoutState {
+            schema_version: 99,
+            ..LayoutState::default()
+        };
+        assert_eq!(
+            service.migrate(state),
+            Err(LayoutError::UnsupportedSchema(99))
+        );
     }
 
     #[test]

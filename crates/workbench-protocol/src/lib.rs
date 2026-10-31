@@ -17,6 +17,7 @@ use velvet_preview_core::{PreviewIntent, PreviewSurface, ResolvedPreview};
 pub const PROTOCOL_VERSION: u16 = 1;
 pub const PROFILE_SCHEMA_VERSION: u16 = 1;
 pub const PLUGIN_RESOURCE_SCHEMA_VERSION: u16 = 1;
+pub const RECOVERY_SCHEMA_VERSION: u16 = 1;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -158,6 +159,116 @@ pub struct PluginInstallPreviewDto {
     pub issues: Vec<String>,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum StartupPhase {
+    Preflight,
+    RecoveringState,
+    CoreReady,
+    WorkbenchReady,
+    OptionalActivation,
+    Ready,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RecoveryMode {
+    Starting,
+    Safe,
+    Degraded,
+    Ready,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RecoveryFailureClass {
+    AbnormalExit,
+    StartupTimeout,
+    CoreMigration,
+    StateCorrupt,
+    JournalUnavailable,
+    OptionalComponent,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RecoveryAction {
+    Retry,
+    DisableRecentComponent,
+    RestoreSnapshot,
+    ResetOptionalState,
+    ExportDiagnostics,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RecoveryFailure {
+    pub class: RecoveryFailureClass,
+    pub phase: StartupPhase,
+    pub message: String,
+    pub at_ms: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RecoveryCheckpoint {
+    pub attempt_id: u64,
+    pub phase: StartupPhase,
+    pub at_ms: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RecoveryProjection {
+    pub schema_version: u16,
+    pub mode: RecoveryMode,
+    pub phase: StartupPhase,
+    pub attempt_id: u64,
+    pub consecutive_failures: u32,
+    pub last_failure: Option<RecoveryFailure>,
+    pub last_good: Option<RecoveryCheckpoint>,
+    pub actions: Vec<RecoveryAction>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RecoveryLaunchReceipt {
+    pub attempt_id: u64,
+    pub app_version: String,
+    pub phase: StartupPhase,
+    pub started_at_ms: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RecoveryJournalState {
+    pub schema_version: u16,
+    pub next_attempt_id: u64,
+    pub consecutive_failures: u32,
+    pub safe_mode_forced: bool,
+    pub active_launch: Option<RecoveryLaunchReceipt>,
+    pub last_failure: Option<RecoveryFailure>,
+    pub last_good: Option<RecoveryCheckpoint>,
+    pub shutdown_intent_at_ms: Option<u64>,
+    pub shutdown_complete_at_ms: Option<u64>,
+}
+
+impl Default for RecoveryJournalState {
+    fn default() -> Self {
+        Self {
+            schema_version: RECOVERY_SCHEMA_VERSION,
+            next_attempt_id: 1,
+            consecutive_failures: 0,
+            safe_mode_forced: false,
+            active_launch: None,
+            last_failure: None,
+            last_good: None,
+            shutdown_intent_at_ms: None,
+            shutdown_complete_at_ms: None,
+        }
+    }
+}
+
 impl From<ExtensionInstallPreview> for PluginInstallPreviewDto {
     fn from(preview: ExtensionInstallPreview) -> Self {
         Self {
@@ -278,6 +389,7 @@ pub enum PluginDisableReason {
 pub enum Query {
     Layout,
     Profile,
+    Recovery,
     PluginLocalization {
         extension_id: ExtensionId,
         locale: String,
@@ -312,6 +424,7 @@ pub enum Request {
 pub enum Response {
     Layout(LayoutState),
     Profile(ProfileState),
+    Recovery(RecoveryProjection),
     PluginResource(PluginResourceDto),
     Extensions(Vec<ExtensionSummary>),
     Extension(ExtensionSummary),
@@ -334,6 +447,9 @@ pub enum Event {
     ProfileChanged {
         revision: u64,
         state: ProfileState,
+    },
+    RecoveryChanged {
+        projection: RecoveryProjection,
     },
     PluginDisabled {
         extension_id: String,
@@ -363,6 +479,7 @@ pub enum CoreError {
         actual: u64,
     },
     Profile(String),
+    Recovery(String),
     PluginResourceNotFound {
         extension_id: String,
         locale: String,
@@ -483,5 +600,33 @@ mod tests {
         let decoded: PluginResourceDto =
             serde_json::from_value(json).expect("resource should deserialize");
         assert_eq!(decoded, resource);
+    }
+
+    #[test]
+    fn recovery_projection_uses_stable_wire_names() {
+        let projection = RecoveryProjection {
+            schema_version: RECOVERY_SCHEMA_VERSION,
+            mode: RecoveryMode::Safe,
+            phase: StartupPhase::Preflight,
+            attempt_id: 2,
+            consecutive_failures: 2,
+            last_failure: Some(RecoveryFailure {
+                class: RecoveryFailureClass::AbnormalExit,
+                phase: StartupPhase::Preflight,
+                message: "previous launch did not complete".into(),
+                at_ms: 42,
+            }),
+            last_good: None,
+            actions: vec![RecoveryAction::Retry, RecoveryAction::RestoreSnapshot],
+        };
+        let json = serde_json::to_value(&projection).expect("recovery should serialize");
+        assert_eq!(json["schemaVersion"], RECOVERY_SCHEMA_VERSION);
+        assert_eq!(json["mode"], "safe");
+        assert_eq!(json["phase"], "preflight");
+        assert_eq!(json["lastFailure"]["class"], "abnormal-exit");
+        assert_eq!(json["actions"][1], "restore-snapshot");
+        let decoded: RecoveryProjection =
+            serde_json::from_value(json).expect("recovery should deserialize");
+        assert_eq!(decoded, projection);
     }
 }

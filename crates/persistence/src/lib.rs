@@ -4,12 +4,86 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use velvet_job_system::{JobSnapshot, JobStateStore};
 use velvet_layout_model::LayoutState;
-use velvet_workbench_protocol::ProfileState;
+use velvet_workbench_protocol::{ProfileState, RecoveryJournalState, RECOVERY_SCHEMA_VERSION};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PersistenceError {
     Unavailable,
     CorruptState,
+}
+
+/// Storage adapter for the lifecycle journal. The application core owns the
+/// recovery state machine; this trait only persists its versioned bytes.
+pub trait RecoveryJournalStore: Send + Sync {
+    fn load(&self) -> Result<RecoveryJournalState, PersistenceError>;
+    fn save(&self, state: &RecoveryJournalState) -> Result<(), PersistenceError>;
+}
+
+#[derive(Default)]
+pub struct InMemoryRecoveryJournalStore {
+    state: std::sync::Mutex<RecoveryJournalState>,
+}
+
+impl RecoveryJournalStore for InMemoryRecoveryJournalStore {
+    fn load(&self) -> Result<RecoveryJournalState, PersistenceError> {
+        self.state
+            .lock()
+            .map(|state| state.clone())
+            .map_err(|_| PersistenceError::Unavailable)
+    }
+
+    fn save(&self, state: &RecoveryJournalState) -> Result<(), PersistenceError> {
+        self.state
+            .lock()
+            .map(|mut current| *current = state.clone())
+            .map_err(|_| PersistenceError::Unavailable)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct JsonFileRecoveryJournalStore {
+    path: PathBuf,
+}
+
+impl JsonFileRecoveryJournalStore {
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        Self { path: path.into() }
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl RecoveryJournalStore for JsonFileRecoveryJournalStore {
+    fn load(&self) -> Result<RecoveryJournalState, PersistenceError> {
+        let bytes = match fs::read(&self.path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(RecoveryJournalState::default())
+            }
+            Err(_) => return Err(PersistenceError::Unavailable),
+        };
+        let state = serde_json::from_slice::<RecoveryJournalState>(&bytes)
+            .map_err(|_| PersistenceError::CorruptState)?;
+        if state.schema_version != RECOVERY_SCHEMA_VERSION {
+            return Err(PersistenceError::CorruptState);
+        }
+        Ok(state)
+    }
+
+    fn save(&self, state: &RecoveryJournalState) -> Result<(), PersistenceError> {
+        if state.schema_version != RECOVERY_SCHEMA_VERSION {
+            return Err(PersistenceError::CorruptState);
+        }
+        if let Some(parent) = self.path.parent() {
+            fs::create_dir_all(parent).map_err(|_| PersistenceError::Unavailable)?;
+        }
+        let bytes = serde_json::to_vec_pretty(state).map_err(|_| PersistenceError::CorruptState)?;
+        let temporary = self.path.with_extension("json.tmp");
+        fs::write(&temporary, bytes).map_err(|_| PersistenceError::Unavailable)?;
+        fs::rename(temporary, &self.path).map_err(|_| PersistenceError::Unavailable)
+    }
 }
 
 pub const ASSET_SOURCE_LOCATION_SCHEMA_VERSION: u16 = 1;
@@ -407,6 +481,29 @@ mod tests {
 
         store.save(&jobs).expect("jobs should be written");
         assert_eq!(store.load().expect("jobs should be readable"), jobs);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn recovery_journal_round_trips_and_rejects_unknown_schema() {
+        let path = temporary_path("recovery-journal-round-trip");
+        let store = JsonFileRecoveryJournalStore::new(&path);
+        let state = RecoveryJournalState {
+            next_attempt_id: 4,
+            consecutive_failures: 1,
+            ..RecoveryJournalState::default()
+        };
+        store
+            .save(&state)
+            .expect("recovery journal should be written");
+        assert_eq!(
+            store.load().expect("recovery journal should be readable"),
+            state
+        );
+
+        fs::write(&path, br#"{"schemaVersion":99,"nextAttemptId":1,"consecutiveFailures":0,"safeModeForced":false,"activeLaunch":null,"lastFailure":null,"lastGood":null,"shutdownIntentAtMs":null,"shutdownCompleteAtMs":null}"#)
+            .expect("invalid recovery journal should be writable");
+        assert_eq!(store.load(), Err(PersistenceError::CorruptState));
         let _ = fs::remove_file(path);
     }
 }

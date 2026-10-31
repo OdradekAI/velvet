@@ -64,6 +64,10 @@ impl CoreTransport for TauriTransport {
             Request::Command(Command::Layout(_)) | Request::Command(Command::LayoutAt { .. })
         );
         let emits_profile_event = matches!(&request, Request::Command(Command::SetLocale { .. }));
+        let emits_recovery_event = matches!(
+            &request,
+            Request::Query(velvet_workbench_protocol::Query::Recovery)
+        );
         let disabled_extension = match &request {
             Request::Command(Command::DisablePlugin {
                 extension_id,
@@ -78,6 +82,9 @@ impl CoreTransport for TauriTransport {
                     self.event_sink.emit(Event::PluginDisabled {
                         extension_id: extension_id.clone(),
                         reason: "crash".into(),
+                    });
+                    self.event_sink.emit(Event::RecoveryChanged {
+                        projection: self.inner.recovery_projection(),
                     });
                 }
                 return Err(error);
@@ -104,6 +111,14 @@ impl CoreTransport for TauriTransport {
                 self.event_sink.emit(Event::ProfileChanged {
                     revision: state.revision,
                     state: state.clone(),
+                });
+            }
+        }
+
+        if emits_recovery_event {
+            if let Response::Recovery(projection) = &response {
+                self.event_sink.emit(Event::RecoveryChanged {
+                    projection: projection.clone(),
                 });
             }
         }
@@ -204,6 +219,23 @@ mod tests {
         assert!(matches!(
             sink.events().as_slice(),
             [Event::ProfileChanged { revision: 1, state }] if state.locale == "zh-Hans"
+        ));
+    }
+
+    #[test]
+    fn recovery_query_projects_the_same_typed_contract_as_rust_core() {
+        let sink = InMemoryEventSink::default();
+        let transport = TauriTransport::with_event_sink(ApplicationCore::default(), sink.clone());
+        let response = transport
+            .dispatch(RequestId(10), Request::Query(Query::Recovery))
+            .expect("recovery query should succeed");
+
+        assert!(
+            matches!(response, Response::Recovery(projection) if projection.schema_version == 1)
+        );
+        assert!(matches!(
+            sink.events().as_slice(),
+            [Event::RecoveryChanged { projection }] if projection.schema_version == 1
         ));
     }
 
@@ -311,11 +343,17 @@ mod tests {
             error,
             CoreError::PluginRuntimeFailed { extension_id, .. } if extension_id == id.0
         ));
-        assert!(matches!(
-            sink.events().as_slice(),
-            [Event::PluginDisabled { extension_id, reason }] if extension_id == "sample.crashing-sidecar"
-                && reason == "crash"
-        ));
+        let events = sink.events();
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::PluginDisabled { extension_id, reason }
+                if extension_id == "sample.crashing-sidecar" && reason == "crash"
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::RecoveryChanged { projection }
+                if projection.mode == velvet_workbench_protocol::RecoveryMode::Degraded
+        )));
     }
 
     #[test]

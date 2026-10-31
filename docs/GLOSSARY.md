@@ -68,6 +68,10 @@ WorkbenchApp 在 WorkspaceArea 中呈现的主界面。AppSurface 可以拥有�
 
 宿主拥有的生命周期恢复边界。它负责记录有限的启动、就绪和退出证据，识别异常退出，并把恢复决定交给 `ApplicationCore` 的 Safe Mode 策略；它不拥有 Asset、Workspace、Profile 或 Job 的权威数据，也不执行网络上传或声称从进程内部监督活进程。P0 使用进程内实现；只有在自动重启成为已验证需求时，才增加外部实现。崩溃证据由独立的 CrashCaptureAdapter 负责。
 
+## RecoveryJournalStore
+
+由 `persistence` 提供的生命周期证据存储适配器。它只保存带 schema 的 launch receipt、startup phase、last-good checkpoint、失败计数和 shutdown evidence；它不解释 Asset、Workspace、Profile、Job 或 Extension 数据，也不因 journal 损坏而用默认值覆盖业务状态。
+
 ## CrashCaptureAdapter
 
 负责把平台提供的本地崩溃证据转换为有界、脱敏的诊断记录的宿主适配器。它不决定 Safe Mode、不拥有业务状态、不自动上传数据，也不等同于 RecoverySupervisor；某个平台没有可靠的 native crash capture 时可以只记录退出码、信号和启动 journal。

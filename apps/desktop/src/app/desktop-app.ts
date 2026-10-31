@@ -22,6 +22,7 @@ export function createDesktopApp(core: CoreTransport): DesktopApp {
   return {
     workbench,
     async start() {
+      await workbench.recovery.load();
       const layout = await workbench.layout.load();
       await workbench.localization.loadFromCore(core);
       return layout;
@@ -30,6 +31,7 @@ export function createDesktopApp(core: CoreTransport): DesktopApp {
       workbench.layout.dispose();
       workbench.localization.dispose();
       workbench.jobs.dispose();
+      workbench.recovery.dispose();
       if (isDisposableTransport(core)) {
         await core.dispose();
       }

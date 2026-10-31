@@ -30,6 +30,12 @@ mirrors of the Rust `plugin-api` types; the desktop TypeScript contract and
 Tauri wire types map those DTOs explicitly rather than importing the domain
 Manifest as a transport owner.
 
+The lifecycle slice also exposes a versioned `RecoveryProjection` through a
+`query-recovery` query and `recovery-changed` event. The desktop
+`RecoveryClient` owns that projection and subscribes through `CoreTransport`;
+it never reads the lifecycle journal or persistence files. Recovery actions
+remain host policy and are not exposed as arbitrary renderer commands.
+
 The canonical envelope also carries a negotiated feature set, `sessionId`,
 message kind (`command`, `query`, `response`, `event`, `handle`, `error` or
 `cancel`), method, typed payload, revision/sequence and deadline. Request ids

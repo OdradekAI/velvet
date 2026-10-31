@@ -8,6 +8,8 @@ export const PROFILE_SCHEMA_VERSION = 1 as const;
 export type ProfileSchemaVersion = typeof PROFILE_SCHEMA_VERSION;
 export const PLUGIN_RESOURCE_SCHEMA_VERSION = 1 as const;
 export type PluginResourceSchemaVersion = typeof PLUGIN_RESOURCE_SCHEMA_VERSION;
+export const RECOVERY_SCHEMA_VERSION = 1 as const;
+export type RecoverySchemaVersion = typeof RECOVERY_SCHEMA_VERSION;
 export type WorkbenchAppId = string;
 /** Compatibility alias for older clients and migration code. */
 export type WorkspaceId = WorkbenchAppId;
@@ -117,6 +119,7 @@ export interface CorePreviewActionContext {
 export type CoreRequest =
   | { readonly protocolVersion: ProtocolVersion; readonly kind: 'query-layout' }
   | { readonly protocolVersion: ProtocolVersion; readonly kind: 'query-profile' }
+  | { readonly protocolVersion: ProtocolVersion; readonly kind: 'query-recovery' }
   | {
       readonly protocolVersion: ProtocolVersion;
       readonly kind: 'read-plugin-localization';
@@ -296,6 +299,7 @@ export type CoreRequest =
 export type CoreResponse =
   | { readonly kind: 'layout'; readonly state: LayoutSnapshot }
   | { readonly kind: 'profile'; readonly state: CoreProfileState }
+  | { readonly kind: 'recovery'; readonly projection: CoreRecoveryProjection }
   | { readonly kind: 'plugin-resource'; readonly resource: CorePluginResource }
   | { readonly kind: 'preview'; readonly preview: CoreResolvedPreview }
   | { readonly kind: 'extensions'; readonly extensions: readonly CorePluginSummary[] }
@@ -399,6 +403,52 @@ export interface CoreJobResult {
   readonly schemaVersion: number;
   readonly contentType: string;
   readonly payload: unknown;
+}
+
+export type CoreStartupPhase =
+  | 'preflight'
+  | 'recovering-state'
+  | 'core-ready'
+  | 'workbench-ready'
+  | 'optional-activation'
+  | 'ready';
+export type CoreRecoveryMode = 'starting' | 'safe' | 'degraded' | 'ready';
+export type CoreRecoveryFailureClass =
+  | 'abnormal-exit'
+  | 'startup-timeout'
+  | 'core-migration'
+  | 'state-corrupt'
+  | 'journal-unavailable'
+  | 'optional-component';
+export type CoreRecoveryAction =
+  | 'retry'
+  | 'disable-recent-component'
+  | 'restore-snapshot'
+  | 'reset-optional-state'
+  | 'export-diagnostics';
+
+export interface CoreRecoveryFailure {
+  readonly class: CoreRecoveryFailureClass;
+  readonly phase: CoreStartupPhase;
+  readonly message: string;
+  readonly atMs: number;
+}
+
+export interface CoreRecoveryCheckpoint {
+  readonly attemptId: number;
+  readonly phase: CoreStartupPhase;
+  readonly atMs: number;
+}
+
+export interface CoreRecoveryProjection {
+  readonly schemaVersion: RecoverySchemaVersion;
+  readonly mode: CoreRecoveryMode;
+  readonly phase: CoreStartupPhase;
+  readonly attemptId: number;
+  readonly consecutiveFailures: number;
+  readonly lastFailure: CoreRecoveryFailure | null;
+  readonly lastGood: CoreRecoveryCheckpoint | null;
+  readonly actions: readonly CoreRecoveryAction[];
 }
 
 export type PluginState = 'registered' | 'starting' | 'active' | 'disabled' | 'failed';
@@ -672,6 +722,7 @@ export interface CoreTransport {
 export type CoreEvent =
   | { readonly kind: 'layout-changed'; readonly revision: number; readonly state: LayoutSnapshot }
   | { readonly kind: 'profile-changed'; readonly revision: number; readonly state: CoreProfileState }
+  | { readonly kind: 'recovery-changed'; readonly projection: CoreRecoveryProjection }
   | { readonly kind: 'job-changed'; readonly snapshot: CoreJobSnapshot }
   | { readonly kind: 'plugin-disabled'; readonly extensionId: string; readonly reason: string };
 
