@@ -13,7 +13,9 @@ use velvet_job_system::{
     JobRunner, JobSpec, JobStateStore, JobSystem, JOB_SCHEMA_VERSION,
 };
 use velvet_layout_model::{InMemoryLayoutService, LayoutService};
-use velvet_persistence::{InMemoryLayoutStateStore, LayoutStateStore};
+use velvet_persistence::{
+    InMemoryLayoutStateStore, InMemoryProfileStateStore, LayoutStateStore, ProfileStateStore,
+};
 use velvet_plugin_api::{
     ContributionKind, ExtensionId, ExtensionInstallPreview, ExtensionInstallRecovery,
     ExtensionInstallRecoveryAction, ExtensionInstallRecoveryLogEntry, ExtensionManifest,
@@ -33,8 +35,8 @@ use velvet_preview_core::{
 };
 use velvet_workbench_protocol::{
     Command, CoreError, CoreTransport, PluginDisableReason, PluginInstallPreviewDto,
-    PluginProjectionDto, Query, Request, RequestEnvelope, RequestId, Response, ResponseEnvelope,
-    PROTOCOL_VERSION,
+    PluginProjectionDto, ProfileState, Query, Request, RequestEnvelope, RequestId, Response,
+    ResponseEnvelope, PROFILE_SCHEMA_VERSION, PROTOCOL_VERSION,
 };
 
 pub struct ApplicationCore {
@@ -42,8 +44,10 @@ pub struct ApplicationCore {
     plugins: InMemoryPluginHost,
     previews: PreviewResolver,
     jobs: JobSystem,
+    profile: ProfileState,
     preview_actions: BTreeMap<String, PreviewActionAuthorization>,
     layout_store: Arc<dyn LayoutStateStore>,
+    profile_store: Arc<dyn ProfileStateStore>,
     plugin_directory: Option<std::path::PathBuf>,
 }
 
@@ -131,6 +135,19 @@ impl ApplicationCore {
         )
     }
 
+    pub fn with_store_and_profile_store(
+        layout_store: Arc<dyn LayoutStateStore>,
+        profile_store: Arc<dyn ProfileStateStore>,
+    ) -> Self {
+        Self::with_store_and_runtime_and_plugin_directory_and_jobs_and_profile(
+            layout_store,
+            Box::new(velvet_plugin_host::ProcessPluginRuntime),
+            None,
+            JobSystem::default(),
+            profile_store,
+        )
+    }
+
     pub fn with_plugin_runtime(
         layout_store: Arc<dyn LayoutStateStore>,
         runtime: Box<dyn PluginRuntime>,
@@ -188,6 +205,37 @@ impl ApplicationCore {
         plugin_directory: Option<std::path::PathBuf>,
         jobs: JobSystem,
     ) -> Self {
+        Self::with_store_and_runtime_and_plugin_directory_and_jobs_and_profile(
+            layout_store,
+            runtime,
+            plugin_directory,
+            jobs,
+            Arc::new(InMemoryProfileStateStore::default()),
+        )
+    }
+
+    pub fn with_store_and_plugin_directory_and_job_store_and_profile_store(
+        layout_store: Arc<dyn LayoutStateStore>,
+        plugin_directory: impl Into<std::path::PathBuf>,
+        job_store: Arc<dyn JobStateStore>,
+        profile_store: Arc<dyn ProfileStateStore>,
+    ) -> Self {
+        Self::with_store_and_runtime_and_plugin_directory_and_jobs_and_profile(
+            layout_store,
+            Box::new(velvet_plugin_host::ProcessPluginRuntime),
+            Some(plugin_directory.into()),
+            JobSystem::with_store(job_store),
+            profile_store,
+        )
+    }
+
+    fn with_store_and_runtime_and_plugin_directory_and_jobs_and_profile(
+        layout_store: Arc<dyn LayoutStateStore>,
+        runtime: Box<dyn PluginRuntime>,
+        plugin_directory: Option<std::path::PathBuf>,
+        jobs: JobSystem,
+        profile_store: Arc<dyn ProfileStateStore>,
+    ) -> Self {
         let mut layout = InMemoryLayoutService::default();
         if let Ok(Some(state)) = layout_store.load() {
             if let Ok(migrated) = layout.migrate(state) {
@@ -195,13 +243,22 @@ impl ApplicationCore {
             }
         }
 
+        let profile = profile_store
+            .load()
+            .ok()
+            .flatten()
+            .filter(valid_profile_state)
+            .unwrap_or_default();
+
         let mut core = Self {
             layout,
             plugins: InMemoryPluginHost::with_runtime(runtime),
             previews: PreviewResolver::default(),
             jobs,
+            profile,
             preview_actions: BTreeMap::new(),
             layout_store,
+            profile_store,
             plugin_directory,
         };
 
@@ -679,6 +736,10 @@ impl ApplicationCore {
         self.jobs.snapshots()
     }
 
+    pub fn profile_state(&self) -> ProfileState {
+        self.profile.clone()
+    }
+
     pub fn drain_job_events(&self) -> Vec<velvet_job_system::JobSnapshot> {
         self.jobs.drain_events()
     }
@@ -812,7 +873,12 @@ impl ApplicationCore {
                 .retry_job(&job_id)
                 .map(Response::Job)
                 .map_err(job_error),
+            Request::Command(Command::SetLocale {
+                locale,
+                expected_revision,
+            }) => self.set_locale(expected_revision, locale),
             Request::Query(Query::Layout) => Ok(Response::Layout(self.layout.snapshot())),
+            Request::Query(Query::Profile) => Ok(Response::Profile(self.profile.clone())),
             Request::Query(Query::Extensions) => Ok(Response::Extensions(self.plugins.discover())),
             Request::Query(Query::PluginInstallRecoveries) => self
                 .inspect_plugin_install_recoveries()
@@ -901,6 +967,42 @@ impl ApplicationCore {
             .map_err(|error| CoreError::Layout(format!("{error:?}")))?;
         self.layout = next_layout;
         Ok(Response::Layout(state))
+    }
+
+    fn set_locale(
+        &mut self,
+        expected_revision: Option<u64>,
+        locale: String,
+    ) -> Result<Response, CoreError> {
+        if !valid_locale(&locale) {
+            return Err(CoreError::Profile(format!("invalid locale: {locale}")));
+        }
+        if let Some(expected) = expected_revision {
+            if expected != self.profile.revision {
+                return Err(CoreError::StaleRevision {
+                    expected,
+                    actual: self.profile.revision,
+                });
+            }
+        }
+        if locale == self.profile.locale {
+            return Ok(Response::Profile(self.profile.clone()));
+        }
+
+        let next = ProfileState {
+            schema_version: PROFILE_SCHEMA_VERSION,
+            revision: self
+                .profile
+                .revision
+                .checked_add(1)
+                .ok_or_else(|| CoreError::Profile("profile revision exhausted".into()))?,
+            locale,
+        };
+        self.profile_store
+            .save(&next)
+            .map_err(|error| CoreError::Profile(format!("{error:?}")))?;
+        self.profile = next.clone();
+        Ok(Response::Profile(next))
     }
 
     fn resolve_preview(
@@ -1281,6 +1383,30 @@ fn job_error(error: JobError) -> CoreError {
     CoreError::Job(format!("{error:?}"))
 }
 
+fn valid_profile_state(state: &ProfileState) -> bool {
+    state.schema_version == PROFILE_SCHEMA_VERSION && valid_locale(&state.locale)
+}
+
+fn valid_locale(locale: &str) -> bool {
+    let mut segments = locale.split('-');
+    let Some(language) = segments.next() else {
+        return false;
+    };
+    if !(2..=8).contains(&language.len())
+        || !language
+            .chars()
+            .all(|character| character.is_ascii_alphabetic())
+    {
+        return false;
+    }
+    segments.all(|segment| {
+        (1..=8).contains(&segment.len())
+            && segment
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric())
+    })
+}
+
 #[derive(Clone)]
 pub struct InProcessCoreTransport {
     core: Arc<Mutex<ApplicationCore>>,
@@ -1319,7 +1445,7 @@ mod tests {
     use std::sync::Arc;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
     use velvet_layout_model::{LayoutCommand, WorkbenchPart, WorkbenchZone};
-    use velvet_persistence::JsonFileLayoutStateStore;
+    use velvet_persistence::{InMemoryProfileStateStore, JsonFileLayoutStateStore};
     use velvet_plugin_api::{
         ContributionDescriptor, ContributionKind, ContributionScope, ExtensionId,
         ExtensionInstallRecoveryLogStatus, ExtensionManifest, HostContainer, Permission,
@@ -2083,6 +2209,60 @@ mod tests {
                 actual: 1,
             }
         );
+    }
+
+    #[test]
+    fn profile_locale_is_rust_owned_revisioned_and_persisted() {
+        let profile_store = Arc::new(InMemoryProfileStateStore::default());
+        let mut core = ApplicationCore::with_store_and_profile_store(
+            Arc::new(InMemoryLayoutStateStore::default()),
+            profile_store.clone(),
+        );
+
+        assert_eq!(
+            core.dispatch(Request::Query(Query::Profile))
+                .expect("profile query should succeed"),
+            Response::Profile(ProfileState::default())
+        );
+        let changed = core
+            .dispatch(Request::Command(Command::SetLocale {
+                locale: "zh-Hans".into(),
+                expected_revision: Some(0),
+            }))
+            .expect("locale change should succeed");
+        assert_eq!(
+            changed,
+            Response::Profile(ProfileState {
+                schema_version: PROFILE_SCHEMA_VERSION,
+                revision: 1,
+                locale: "zh-Hans".into(),
+            })
+        );
+        assert_eq!(
+            profile_store
+                .load()
+                .expect("profile store should load")
+                .expect("changed profile should be persisted")
+                .locale,
+            "zh-Hans"
+        );
+        assert!(matches!(
+            core.dispatch(Request::Command(Command::SetLocale {
+                locale: "fr".into(),
+                expected_revision: Some(0),
+            })),
+            Err(CoreError::StaleRevision {
+                expected: 0,
+                actual: 1,
+            })
+        ));
+        assert!(matches!(
+            core.dispatch(Request::Command(Command::SetLocale {
+                locale: "not a locale".into(),
+                expected_revision: Some(1),
+            })),
+            Err(CoreError::Profile(_))
+        ));
     }
 
     #[test]

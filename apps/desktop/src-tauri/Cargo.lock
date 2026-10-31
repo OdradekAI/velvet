@@ -3836,6 +3836,7 @@ dependencies = [
  "serde_json",
  "velvet-job-system",
  "velvet-layout-model",
+ "velvet-workbench-protocol",
 ]
 
 [[package]]

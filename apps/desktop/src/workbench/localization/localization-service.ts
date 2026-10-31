@@ -1,4 +1,9 @@
-import type { CorePluginLocalization } from '../../platform/protocol.js';
+import type {
+  CorePluginLocalization,
+  CoreProfileState,
+  CoreTransport,
+} from '../../platform/protocol.js';
+import { PROFILE_SCHEMA_VERSION } from '../../platform/protocol.js';
 
 export type LocalizationValue = string | number | boolean | Date;
 export type LocalizationArguments = Readonly<Record<string, LocalizationValue>>;
@@ -77,6 +82,7 @@ export class LocalizationService {
   private readonly diagnostics: LocalizationDiagnostic[] = [];
   private currentLocale: string;
   private currentRevision = 0;
+  private coreUnsubscribe: (() => void) | undefined;
 
   public constructor(initialLocale = 'en') {
     this.currentLocale = normalizeLocale(initialLocale) ?? 'en';
@@ -113,6 +119,45 @@ export class LocalizationService {
     this.currentRevision += 1;
     this.notify();
     return true;
+  }
+
+  /** Binds the host projection so Profile/Session locale remains authoritative. */
+  public bindCore(core: CoreTransport): void {
+    this.coreUnsubscribe?.();
+    this.coreUnsubscribe = core.subscribe((event) => {
+      if (event.kind === 'profile-changed') {
+        this.applyProfile(event.state);
+      }
+    });
+  }
+
+  public async loadFromCore(core: CoreTransport): Promise<LocalizationSnapshot> {
+    const response = await core.request({
+      protocolVersion: 1,
+      kind: 'query-profile',
+    });
+    if (response.kind !== 'profile') {
+      throw new Error(`Expected a profile response, received ${response.kind}`);
+    }
+    this.applyProfile(response.state);
+    return this.snapshot;
+  }
+
+  public async setLocaleInCore(core: CoreTransport, locale: string): Promise<boolean> {
+    const normalized = normalizeLocale(locale);
+    if (!normalized) {
+      return this.setLocale(locale);
+    }
+    const response = await core.request({
+      protocolVersion: 1,
+      kind: 'set-locale',
+      locale: normalized,
+      expectedRevision: this.currentRevision,
+    });
+    if (response.kind !== 'profile') {
+      throw new Error(`Expected a profile response, received ${response.kind}`);
+    }
+    return this.applyProfile(response.state);
   }
 
   /** Registers valid bundles and keeps a broken bundle local to its extension. */
@@ -196,6 +241,12 @@ export class LocalizationService {
       this.notify();
     }
     return removed;
+  }
+
+  public dispose(): void {
+    this.coreUnsubscribe?.();
+    this.coreUnsubscribe = undefined;
+    this.listeners.clear();
   }
 
   /** Returns the selected bundle for UI Bridge projection, if one is loaded. */
@@ -313,6 +364,24 @@ export class LocalizationService {
         // One extension's localization projection must not block the host.
       }
     }
+  }
+
+  private applyProfile(state: CoreProfileState): boolean {
+    const locale = normalizeLocale(state.locale);
+    if (
+      state.schemaVersion !== PROFILE_SCHEMA_VERSION ||
+      !locale ||
+      state.revision < this.currentRevision
+    ) {
+      return false;
+    }
+    const changed = locale !== this.currentLocale || state.revision !== this.currentRevision;
+    this.currentLocale = locale;
+    this.currentRevision = state.revision;
+    if (changed) {
+      this.notify();
+    }
+    return true;
   }
 }
 

@@ -22,10 +22,13 @@ export function createDesktopApp(core: CoreTransport): DesktopApp {
   return {
     workbench,
     async start() {
-      return workbench.layout.load();
+      const layout = await workbench.layout.load();
+      await workbench.localization.loadFromCore(core);
+      return layout;
     },
     async dispose() {
       workbench.layout.dispose();
+      workbench.localization.dispose();
       workbench.jobs.dispose();
       if (isDisposableTransport(core)) {
         await core.dispose();

@@ -9,3 +9,4 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 velvet-job-system = { path = "../job-system" }
 velvet-layout-model = { path = "../layout-model" }
+velvet-workbench-protocol = { path = "../workbench-protocol" }

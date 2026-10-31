@@ -165,4 +165,41 @@ assert.equal(pluginLocalization.t('sample.localized', 'ready', 'Fallback'), 'Rea
 await pluginClient.unregister('sample.localized');
 assert.equal(pluginLocalization.projection('sample.localized'), undefined);
 
+let profileState = { schemaVersion: 1, revision: 0, locale: 'en' };
+let profileListener;
+const profileCore = {
+  async request(request) {
+    if (request.kind === 'query-profile') {
+      return { kind: 'profile', state: profileState };
+    }
+    assert.equal(request.kind, 'set-locale');
+    assert.equal(request.expectedRevision, profileState.revision);
+    profileState = {
+      schemaVersion: 1,
+      revision: profileState.revision + 1,
+      locale: request.locale,
+    };
+    profileListener?.({
+      kind: 'profile-changed',
+      revision: profileState.revision,
+      state: profileState,
+    });
+    return { kind: 'profile', state: profileState };
+  },
+  subscribe(listener) {
+    profileListener = listener;
+    return () => {
+      profileListener = undefined;
+    };
+  },
+};
+const persistedLocalization = new LocalizationService('en');
+persistedLocalization.bindCore(profileCore);
+await persistedLocalization.loadFromCore(profileCore);
+assert.equal(persistedLocalization.snapshot.locale, 'en');
+assert.equal(await persistedLocalization.setLocaleInCore(profileCore, 'zh-Hans'), true);
+assert.equal(persistedLocalization.snapshot.locale, 'zh-Hans');
+assert.equal(persistedLocalization.snapshot.revision, 1);
+persistedLocalization.dispose();
+
 console.log('Localization service tests passed.');

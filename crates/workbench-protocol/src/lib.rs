@@ -15,6 +15,25 @@ use velvet_plugin_api::{
 use velvet_preview_core::{PreviewIntent, PreviewSurface, ResolvedPreview};
 
 pub const PROTOCOL_VERSION: u16 = 1;
+pub const PROFILE_SCHEMA_VERSION: u16 = 1;
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProfileState {
+    pub schema_version: u16,
+    pub revision: u64,
+    pub locale: String,
+}
+
+impl Default for ProfileState {
+    fn default() -> Self {
+        Self {
+            schema_version: PROFILE_SCHEMA_VERSION,
+            revision: 0,
+            locale: "en".into(),
+        }
+    }
+}
 
 /// Transport-owned mirror of the Rust plugin-api manifest.
 ///
@@ -217,6 +236,10 @@ pub enum Command {
     RetryJob {
         job_id: JobId,
     },
+    SetLocale {
+        locale: String,
+        expected_revision: Option<u64>,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -229,6 +252,7 @@ pub enum PluginDisableReason {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Query {
     Layout,
+    Profile,
     Extensions,
     PluginProjection {
         extension_id: ExtensionId,
@@ -253,6 +277,7 @@ pub enum Request {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Response {
     Layout(LayoutState),
+    Profile(ProfileState),
     Extensions(Vec<ExtensionSummary>),
     Extension(ExtensionSummary),
     PluginInstallPreview(PluginInstallPreviewDto),
@@ -270,6 +295,10 @@ pub enum Event {
     LayoutChanged {
         revision: u64,
         state: LayoutState,
+    },
+    ProfileChanged {
+        revision: u64,
+        state: ProfileState,
     },
     PluginDisabled {
         extension_id: String,
@@ -298,6 +327,7 @@ pub enum CoreError {
         expected: u64,
         actual: u64,
     },
+    Profile(String),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -357,5 +387,31 @@ mod tests {
         let decoded: PluginManifestDto =
             serde_json::from_value(json).expect("protocol DTO should deserialize");
         assert_eq!(ExtensionManifest::from(decoded), manifest);
+    }
+
+    #[test]
+    fn profile_state_round_trips_with_canonical_wire_names() {
+        let state = ProfileState {
+            schema_version: PROFILE_SCHEMA_VERSION,
+            revision: 4,
+            locale: "zh-Hans".into(),
+        };
+
+        let json = serde_json::to_value(&state).expect("profile state should serialize");
+        assert_eq!(json["schemaVersion"], PROFILE_SCHEMA_VERSION);
+        assert_eq!(json["revision"], 4);
+        assert_eq!(json["locale"], "zh-Hans");
+        assert!(json.get("schema_version").is_none());
+
+        let decoded: ProfileState =
+            serde_json::from_value(json).expect("profile state should deserialize");
+        assert_eq!(decoded, state);
+        assert!(serde_json::from_value::<ProfileState>(serde_json::json!({
+            "schemaVersion": PROFILE_SCHEMA_VERSION,
+            "revision": 4,
+            "locale": "zh-Hans",
+            "unexpected": true
+        }))
+        .is_err());
     }
 }

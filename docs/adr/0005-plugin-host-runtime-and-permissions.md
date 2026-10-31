@@ -79,6 +79,10 @@ the host fallback chain `requested exact locale → language subtag → extensio
 defaultLocale → defaultMessage`; a missing translation emits a diagnostic but
 does not remove a contribution. Bundle caches and projections are cleaned up
 with the owning extension and cannot affect core layout or Asset identity.
+The effective locale is persisted by the Rust Profile owner under a revisioned
+`ProfileState` protocol query/command; the desktop localization service only
+hydrates and projects that state. Package/archive bundle loading remains an
+injected adapter and never grants the renderer direct filesystem access.
 
 The runtime declaration is one of `builtin`, `wasm` or `sidecar`. Built-ins
 are trusted adapters; third-party runtimes remain isolated. `extensionKind`

@@ -68,6 +68,10 @@ WorkbenchApp 在 WorkspaceArea 中呈现的主界面。AppSurface 可以拥有�
 
 持久化状态的生命周期范围，包括 Profile、Workspace、Session/Window 和 Extension。Scope 决定状态由谁拥有、何时恢复以及何时失效。
 
+## Profile locale
+
+由 Rust Profile state 持有的工作台显示语言和 revision。桌面 LocalizationService 通过 CoreTransport 查询、设置并投影该状态；插件 bundle 只提供扩展自己的消息资源，不拥有全局 locale。
+
 ## State owner
 
 对某类持久化字段或派生缓存负责的唯一模块。State owner 负责 schema、迁移、失效、恢复和对外投影；存储适配器不成为第二 owner。

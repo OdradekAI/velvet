@@ -17,7 +17,9 @@ use velvet_plugin_api::{
     ZonePermissionSet,
     validate_reserved_metadata,
 };
-use velvet_persistence::{JsonFileJobStateStore, JsonFileLayoutStateStore};
+use velvet_persistence::{
+    JsonFileJobStateStore, JsonFileLayoutStateStore, JsonFileProfileStateStore,
+};
 use velvet_preview_core::{PreviewIntent, PreviewRenderer, PreviewSurface, ResolvedPreview};
 use velvet_tauri_adapter::{CoreEventSink, TauriTransport};
 use velvet_workbench_protocol::{
@@ -67,10 +69,17 @@ impl From<CoreError> for WireError {
             },
             CoreError::StaleRevision { expected, actual } => Self {
                 code: "stale-revision".into(),
-                message: format!("Expected layout revision {expected}, received {actual}"),
+                message: format!("Expected revision {expected}, received {actual}"),
                 retryable: true,
                 expected_revision: Some(expected),
                 actual_revision: Some(actual),
+            },
+            CoreError::Profile(message) => Self {
+                code: "profile-error".into(),
+                message,
+                retryable: true,
+                expected_revision: None,
+                actual_revision: None,
             },
             CoreError::PluginRuntimeFailed {
                 extension_id,
@@ -161,6 +170,10 @@ impl TryFrom<WirePluginManifest> for ExtensionManifest {
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum WireRequest {
     QueryLayout {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+    },
+    QueryProfile {
         #[serde(rename = "protocolVersion")]
         protocol_version: u16,
     },
@@ -312,6 +325,13 @@ pub enum WireRequest {
         #[serde(rename = "jobId")]
         job_id: String,
     },
+    SetLocale {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        locale: String,
+        #[serde(rename = "expectedRevision")]
+        expected_revision: Option<u64>,
+    },
     LayoutCommand {
         #[serde(rename = "protocolVersion")]
         protocol_version: u16,
@@ -337,6 +357,10 @@ impl WireRequest {
             Self::QueryLayout { protocol_version } => {
                 validate_inner_protocol(outer_protocol_version, protocol_version)?;
                 Ok(Request::Query(velvet_workbench_protocol::Query::Layout))
+            }
+            Self::QueryProfile { protocol_version } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Query(velvet_workbench_protocol::Query::Profile))
             }
             Self::QueryExtensions { protocol_version } => {
                 validate_inner_protocol(outer_protocol_version, protocol_version)?;
@@ -558,6 +582,17 @@ impl WireRequest {
                     job_id: JobId(job_id),
                 }))
             }
+            Self::SetLocale {
+                protocol_version,
+                locale,
+                expected_revision,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Command(Command::SetLocale {
+                    locale,
+                    expected_revision,
+                }))
+            }
             Self::LayoutCommand {
                 protocol_version,
                 command,
@@ -776,6 +811,9 @@ enum WireResponse {
     Layout {
         state: WireLayoutState,
     },
+    Profile {
+        state: velvet_workbench_protocol::ProfileState,
+    },
     Extensions {
         extensions: Vec<WireExtensionSummary>,
     },
@@ -814,6 +852,7 @@ impl WireResponseEnvelope {
             Response::Layout(state) => WireResponse::Layout {
                 state: WireLayoutState::from(state),
             },
+            Response::Profile(state) => WireResponse::Profile { state },
             Response::Extensions(extensions) => WireResponse::Extensions {
                 extensions: extensions
                     .into_iter()
@@ -1126,6 +1165,10 @@ enum WireEvent {
         revision: u64,
         state: WireLayoutState,
     },
+    ProfileChanged {
+        revision: u64,
+        state: velvet_workbench_protocol::ProfileState,
+    },
     PluginDisabled {
         extension_id: String,
         reason: String,
@@ -1141,6 +1184,10 @@ impl From<Event> for WireEventEnvelope {
             Event::LayoutChanged { revision, state } => WireEvent::LayoutChanged {
                 revision,
                 state: WireLayoutState::from(state),
+            },
+            Event::ProfileChanged { revision, state } => WireEvent::ProfileChanged {
+                revision,
+                state,
             },
             Event::PluginDisabled {
                 extension_id,
@@ -1313,11 +1360,13 @@ pub fn run() {
                 .expect("Velvet app data directory should be available");
             let layout_path = app_data_dir.join("workbench-layout.json");
             let jobs_path = app_data_dir.join("jobs.json");
+            let profile_path = app_data_dir.join("profile.json");
             let plugin_directory = app_data_dir.join("plugins");
-            let mut core = ApplicationCore::with_store_and_plugin_directory_and_job_store(
+            let mut core = ApplicationCore::with_store_and_plugin_directory_and_job_store_and_profile_store(
                 Arc::new(JsonFileLayoutStateStore::new(layout_path)),
                 &plugin_directory,
                 Arc::new(JsonFileJobStateStore::new(jobs_path)),
+                Arc::new(JsonFileProfileStateStore::new(profile_path)),
             );
             match core.load_plugins_from_directory(&plugin_directory) {
                 Ok(report) if !report.failures.is_empty() => {

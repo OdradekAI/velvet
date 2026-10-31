@@ -4,6 +4,8 @@
  */
 export const PROTOCOL_VERSION = 1 as const;
 export type ProtocolVersion = typeof PROTOCOL_VERSION;
+export const PROFILE_SCHEMA_VERSION = 1 as const;
+export type ProfileSchemaVersion = typeof PROFILE_SCHEMA_VERSION;
 export type WorkbenchAppId = string;
 /** Compatibility alias for older clients and migration code. */
 export type WorkspaceId = WorkbenchAppId;
@@ -112,6 +114,7 @@ export interface CorePreviewActionContext {
 
 export type CoreRequest =
   | { readonly protocolVersion: ProtocolVersion; readonly kind: 'query-layout' }
+  | { readonly protocolVersion: ProtocolVersion; readonly kind: 'query-profile' }
   | { readonly protocolVersion: ProtocolVersion; readonly kind: 'query-extensions' }
   | {
       readonly protocolVersion: ProtocolVersion;
@@ -234,6 +237,12 @@ export type CoreRequest =
     }
   | {
       readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'set-locale';
+      readonly locale: string;
+      readonly expectedRevision?: number;
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
       readonly kind: 'layout-command';
       readonly command: LayoutCommand;
       readonly expectedRevision?: number;
@@ -249,6 +258,7 @@ export type CoreRequest =
 
 export type CoreResponse =
   | { readonly kind: 'layout'; readonly state: LayoutSnapshot }
+  | { readonly kind: 'profile'; readonly state: CoreProfileState }
   | { readonly kind: 'preview'; readonly preview: CoreResolvedPreview }
   | { readonly kind: 'extensions'; readonly extensions: readonly CorePluginSummary[] }
   | { readonly kind: 'extension'; readonly extension: CorePluginSummary }
@@ -602,6 +612,12 @@ export interface CoreError {
   readonly actualRevision?: number;
 }
 
+export interface CoreProfileState {
+  readonly schemaVersion: ProfileSchemaVersion;
+  readonly revision: number;
+  readonly locale: string;
+}
+
 export interface CoreTransport {
   request(request: CoreRequest): Promise<CoreResponse>;
   subscribe(listener: (event: CoreEvent) => void): () => void;
@@ -609,6 +625,7 @@ export interface CoreTransport {
 
 export type CoreEvent =
   | { readonly kind: 'layout-changed'; readonly revision: number; readonly state: LayoutSnapshot }
+  | { readonly kind: 'profile-changed'; readonly revision: number; readonly state: CoreProfileState }
   | { readonly kind: 'job-changed'; readonly snapshot: CoreJobSnapshot }
   | { readonly kind: 'plugin-disabled'; readonly extensionId: string; readonly reason: string };
 

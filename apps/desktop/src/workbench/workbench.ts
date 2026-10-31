@@ -49,6 +49,7 @@ export class Workbench {
   private layoutSyncPromise: Promise<void> = Promise.resolve();
 
   public constructor(core: CoreTransport) {
+    this.localization.bindCore(core);
     this.layout = new LayoutService(core);
     this.preview = new PreviewHost(core);
     this.contextKeys = new ContextKeyService();

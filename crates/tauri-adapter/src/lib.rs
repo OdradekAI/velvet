@@ -63,6 +63,7 @@ impl CoreTransport for TauriTransport {
             &request,
             Request::Command(Command::Layout(_)) | Request::Command(Command::LayoutAt { .. })
         );
+        let emits_profile_event = matches!(&request, Request::Command(Command::SetLocale { .. }));
         let disabled_extension = match &request {
             Request::Command(Command::DisablePlugin {
                 extension_id,
@@ -92,6 +93,15 @@ impl CoreTransport for TauriTransport {
         if emits_layout_event {
             if let Response::Layout(state) = &response {
                 self.event_sink.emit(Event::LayoutChanged {
+                    revision: state.revision,
+                    state: state.clone(),
+                });
+            }
+        }
+
+        if emits_profile_event {
+            if let Response::Profile(state) = &response {
+                self.event_sink.emit(Event::ProfileChanged {
                     revision: state.revision,
                     state: state.clone(),
                 });
@@ -171,6 +181,30 @@ mod tests {
 
         assert!(matches!(error, CoreError::StaleRevision { .. }));
         assert!(sink.events().is_empty());
+    }
+
+    #[test]
+    fn locale_commands_emit_authoritative_profile_events() {
+        let sink = InMemoryEventSink::default();
+        let transport = TauriTransport::with_event_sink(ApplicationCore::default(), sink.clone());
+        let response = transport
+            .dispatch(
+                RequestId(1),
+                Request::Command(Command::SetLocale {
+                    locale: "zh-Hans".into(),
+                    expected_revision: Some(0),
+                }),
+            )
+            .expect("locale command should succeed");
+
+        assert!(matches!(
+            response,
+            Response::Profile(state) if state.locale == "zh-Hans" && state.revision == 1
+        ));
+        assert!(matches!(
+            sink.events().as_slice(),
+            [Event::ProfileChanged { revision: 1, state }] if state.locale == "zh-Hans"
+        ));
     }
 
     #[test]

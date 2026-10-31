@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use velvet_job_system::{JobSnapshot, JobStateStore};
 use velvet_layout_model::LayoutState;
+use velvet_workbench_protocol::ProfileState;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PersistenceError {
@@ -77,6 +78,68 @@ impl LayoutStateStore for InMemoryLayoutStateStore {
             .lock()
             .map(|mut current| *current = Some(state.clone()))
             .map_err(|_| PersistenceError::Unavailable)
+    }
+}
+
+pub trait ProfileStateStore: Send + Sync {
+    fn load(&self) -> Result<Option<ProfileState>, PersistenceError>;
+    fn save(&self, state: &ProfileState) -> Result<(), PersistenceError>;
+}
+
+#[derive(Default)]
+pub struct InMemoryProfileStateStore {
+    state: std::sync::Mutex<Option<ProfileState>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct JsonFileProfileStateStore {
+    path: PathBuf,
+}
+
+impl JsonFileProfileStateStore {
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        Self { path: path.into() }
+    }
+}
+
+impl ProfileStateStore for InMemoryProfileStateStore {
+    fn load(&self) -> Result<Option<ProfileState>, PersistenceError> {
+        self.state
+            .lock()
+            .map(|state| state.clone())
+            .map_err(|_| PersistenceError::Unavailable)
+    }
+
+    fn save(&self, state: &ProfileState) -> Result<(), PersistenceError> {
+        self.state
+            .lock()
+            .map(|mut current| *current = Some(state.clone()))
+            .map_err(|_| PersistenceError::Unavailable)
+    }
+}
+
+impl ProfileStateStore for JsonFileProfileStateStore {
+    fn load(&self) -> Result<Option<ProfileState>, PersistenceError> {
+        let bytes = match fs::read(&self.path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(_) => return Err(PersistenceError::Unavailable),
+        };
+
+        serde_json::from_slice(&bytes)
+            .map(Some)
+            .map_err(|_| PersistenceError::CorruptState)
+    }
+
+    fn save(&self, state: &ProfileState) -> Result<(), PersistenceError> {
+        if let Some(parent) = self.path.parent() {
+            fs::create_dir_all(parent).map_err(|_| PersistenceError::Unavailable)?;
+        }
+
+        let bytes = serde_json::to_vec_pretty(state).map_err(|_| PersistenceError::CorruptState)?;
+        let temporary_path = self.path.with_extension("json.tmp");
+        fs::write(&temporary_path, bytes).map_err(|_| PersistenceError::Unavailable)?;
+        fs::rename(temporary_path, &self.path).map_err(|_| PersistenceError::Unavailable)
     }
 }
 
@@ -161,6 +224,27 @@ mod tests {
         let store = JsonFileLayoutStateStore::new(path);
 
         assert_eq!(store.load().expect("missing files are valid"), None);
+    }
+
+    #[test]
+    fn file_store_round_trips_profile_locale() {
+        let path = temporary_path("profile-round-trip");
+        let store = JsonFileProfileStateStore::new(&path);
+        let state = ProfileState {
+            schema_version: velvet_workbench_protocol::PROFILE_SCHEMA_VERSION,
+            revision: 3,
+            locale: "zh-Hans".into(),
+        };
+
+        store.save(&state).expect("profile should be written");
+        assert_eq!(
+            store
+                .load()
+                .expect("profile should be readable")
+                .expect("written profile should exist"),
+            state
+        );
+        let _ = fs::remove_file(path);
     }
 
     #[test]

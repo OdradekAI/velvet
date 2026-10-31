@@ -29,6 +29,7 @@ export type {
   CoreJobProvenance,
   CoreJobResult,
   CoreJobStatus,
+  CoreProfileState,
   CorePreviewContribution,
   CorePreviewContributionIntent,
   CorePreviewContributionSurface,
@@ -48,6 +49,7 @@ export type {
   WorkspaceId,
   Zone,
 } from './protocol.js';
+export { PROFILE_SCHEMA_VERSION } from './protocol.js';
 export {
   CoreTransportError,
   TauriCoreTransport,
