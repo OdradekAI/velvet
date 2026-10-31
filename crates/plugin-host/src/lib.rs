@@ -35,9 +35,10 @@ pub use extension_storage::{
 };
 pub use runtime_lease::{
     ConservativeRuntimeOrphanReconciler, InMemoryRuntimeLeaseStore, JsonFileRuntimeLeaseStore,
-    RuntimeLease, RuntimeLeaseError, RuntimeLeaseState, RuntimeLeaseStore,
-    RuntimeOrphanObservation, RuntimeOrphanReconciler, RuntimeOrphanReport, RuntimeProcessIdentity,
-    MAX_RUNTIME_LEASES, MAX_RUNTIME_LEASE_STORE_BYTES, RUNTIME_LEASE_SCHEMA_VERSION,
+    PlatformRuntimeOrphanReconciler, RuntimeLease, RuntimeLeaseError, RuntimeLeaseState,
+    RuntimeLeaseStore, RuntimeOrphanObservation, RuntimeOrphanReconciler, RuntimeOrphanReport,
+    RuntimeProcessIdentity, MAX_RUNTIME_LEASES, MAX_RUNTIME_LEASE_STORE_BYTES,
+    RUNTIME_LEASE_SCHEMA_VERSION,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1104,6 +1105,7 @@ impl PluginRuntime for ProcessPluginRuntime {
         };
 
         Ok(Box::new(ChildRuntimeProcess {
+            start_token: process_start_token(child.id()),
             child,
             requests: Some(requests),
             worker: Some(worker),
@@ -1126,6 +1128,7 @@ enum RuntimeIoRequest {
 }
 
 struct ChildRuntimeProcess {
+    start_token: Option<String>,
     child: Child,
     requests: Option<Sender<RuntimeIoRequest>>,
     worker: Option<JoinHandle<()>>,
@@ -1185,6 +1188,7 @@ impl RuntimeProcess for ChildRuntimeProcess {
         Some(RuntimeProcessIdentity {
             pid: self.child.id(),
             process_group_id: process_group_id(self.child.id()),
+            start_token: self.start_token.clone(),
         })
     }
 
@@ -1344,6 +1348,18 @@ fn process_group_id(pid: u32) -> Option<u32> {
 
 #[cfg(not(unix))]
 fn process_group_id(_pid: u32) -> Option<u32> {
+    None
+}
+
+#[cfg(target_os = "linux")]
+fn process_start_token(pid: u32) -> Option<String> {
+    let contents = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let (_, fields) = contents.rsplit_once(") ")?;
+    fields.split_whitespace().nth(19).map(ToOwned::to_owned)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn process_start_token(_pid: u32) -> Option<String> {
     None
 }
 
@@ -4385,6 +4401,7 @@ mod tests {
             Some(RuntimeProcessIdentity {
                 pid: 41_001,
                 process_group_id: Some(41_001),
+                start_token: Some("test-token".into()),
             })
         }
 
@@ -6145,6 +6162,7 @@ mod tests {
                 .running(RuntimeProcessIdentity {
                     pid: 42_001,
                     process_group_id: Some(42_001),
+                    start_token: Some("orphan-token".into()),
                 }),
             )
             .expect("the orphan lease should publish");

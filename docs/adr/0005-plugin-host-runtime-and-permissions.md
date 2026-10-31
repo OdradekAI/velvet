@@ -410,9 +410,10 @@ uninstall. Native composition stores the lease file with the same atomic/
 fsync policy used by other lifecycle files. `RuntimeOrphanReconciler` is a
 host-owned testable seam: a confirmed identity may be terminated, a missing
 or different process is closed without killing it, and an uncertain identity
-is quarantined without any kill. The alpha still has no production
-cross-platform identity inspector or termination adapter; until one is wired,
-stale leases remain recoverable evidence rather than an excuse to kill by PID.
+is quarantined without any kill. Linux now supplies a `/proc` start-token and
+process-group adapter; macOS and Windows remain conservative until their
+native instance-token/Job Object adapters are wired. Stale leases therefore
+remain recoverable evidence rather than an excuse to kill by PID.
 
 ## Alternatives considered
 

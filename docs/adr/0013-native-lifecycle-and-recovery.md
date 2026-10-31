@@ -399,8 +399,8 @@ launch allow-lists are enforced for discovered and installed packages;
 the host now persists a bounded per-runtime lease with a starting-to-running
 commit barrier, child process identity and atomic close on normal shutdown or
 failure cleanup. Equivalent parent-death/process-group behavior on other
-supported platforms and the production cross-platform orphan inspector remain
-qualification gates.
+supported platforms remain qualification gates; Linux now verifies the
+`/proc/<pid>/stat` start token and process group before termination.
 
 The planned reconciler uses a host-owned per-runtime lease rather than a
 plugin-visible callback. The lease binds extension id, committed package
@@ -415,8 +415,9 @@ plugin payload or credentials. `PluginHost::reconcile_runtime_orphans`
 consumes a replaceable platform reconciler and applies conservative outcomes:
 confirmed matching identity can be terminated, a missing/different process is
 merely closed, and an uncertain identity is quarantined with no kill. Native
-composition wires the local lease store, while the platform inspector and
-termination primitive remain future implementation work.
+composition wires the local lease store and the Linux platform reconciler;
+macOS/Windows identity and termination primitives remain future implementation
+work and degrade to quarantine when unavailable.
 
 Before system suspend, background admission stops, runners checkpoint and Job
 snapshots persist. After wake, local work resumes when its owner and storage

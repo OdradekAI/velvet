@@ -1621,6 +1621,18 @@ pub fn run() {
                 ))),
             );
             core.mark_workbench_ready();
+            match core.reconcile_plugin_runtime_orphans() {
+                Ok(reports) if !reports.is_empty() => {
+                    eprintln!(
+                        "Velvet reconciled {} persisted plugin runtime lease(s)",
+                        reports.len()
+                    );
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    eprintln!("Velvet could not reconcile plugin runtime leases: {error:?}");
+                }
+            }
             if core.in_safe_mode() {
                 eprintln!("Velvet entered Safe Mode; optional plugins remain inactive");
             } else if !core.begin_optional_activation() {

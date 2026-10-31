@@ -475,6 +475,9 @@ impl ApplicationCore {
         }
         if let Some(runtime_leases) = runtime_leases {
             plugins.set_runtime_lease_store(runtime_leases);
+            plugins.set_runtime_orphan_reconciler(Arc::new(
+                velvet_plugin_host::PlatformRuntimeOrphanReconciler,
+            ));
         }
         let (diagnostic_history, diagnostics_degraded) =
             match diagnostic_store.as_ref().map(|store| store.load()) {

@@ -26,6 +26,10 @@ pub struct RuntimeProcessIdentity {
     pub pid: u32,
     #[serde(default)]
     pub process_group_id: Option<u32>,
+    /// Linux `/proc/<pid>/stat` start time in clock ticks. Other platforms
+    /// leave this unset until they expose an equivalent instance token.
+    #[serde(default)]
+    pub start_token: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -281,6 +285,72 @@ pub trait RuntimeOrphanReconciler: Send + Sync {
     fn terminate(&self, lease: &RuntimeLease) -> Result<(), RuntimeLeaseError>;
 }
 
+/// Uses the strongest identity primitive available on the current platform.
+/// Linux can verify PID reuse with `/proc`; other platforms conservatively
+/// report an uncertain identity until their native process adapter is wired.
+#[derive(Default)]
+pub struct PlatformRuntimeOrphanReconciler;
+
+impl RuntimeOrphanReconciler for PlatformRuntimeOrphanReconciler {
+    fn observe(&self, lease: &RuntimeLease) -> RuntimeOrphanObservation {
+        let Some(expected) = lease.process.as_ref() else {
+            return RuntimeOrphanObservation::IdentityUncertain;
+        };
+        match inspect_process(expected.pid) {
+            None => RuntimeOrphanObservation::Absent,
+            Some(actual) if process_identity_matches(expected, &actual) => {
+                RuntimeOrphanObservation::Matching
+            }
+            Some(_) if cfg!(target_os = "linux") && expected.start_token.is_some() => {
+                RuntimeOrphanObservation::DifferentProcess
+            }
+            Some(_) => RuntimeOrphanObservation::IdentityUncertain,
+        }
+    }
+
+    fn terminate(&self, lease: &RuntimeLease) -> Result<(), RuntimeLeaseError> {
+        if self.observe(lease) != RuntimeOrphanObservation::Matching {
+            return Err(RuntimeLeaseError::Invalid(
+                "runtime identity changed before termination".into(),
+            ));
+        }
+        let Some(process) = lease.process.as_ref() else {
+            return Err(RuntimeLeaseError::Invalid(
+                "runtime lease has no process identity".into(),
+            ));
+        };
+        #[cfg(unix)]
+        {
+            let group = process.process_group_id.ok_or_else(|| {
+                RuntimeLeaseError::Unavailable(
+                    "runtime process group is unavailable on this platform".into(),
+                )
+            })?;
+            if group == 0 || group > i32::MAX as u32 {
+                return Err(RuntimeLeaseError::Invalid(
+                    "runtime process group id is outside the safe kill range".into(),
+                ));
+            }
+            let result = unsafe { libc::kill(-(group as i32), libc::SIGKILL) };
+            if result != 0 {
+                let error = std::io::Error::last_os_error();
+                if error.raw_os_error() == Some(libc::ESRCH) {
+                    return Ok(());
+                }
+                return Err(RuntimeLeaseError::Unavailable(error.to_string()));
+            }
+            Ok(())
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = process;
+            Err(RuntimeLeaseError::Unavailable(
+                "no platform runtime termination primitive is configured".into(),
+            ))
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct ConservativeRuntimeOrphanReconciler;
 
@@ -303,6 +373,48 @@ pub struct RuntimeOrphanReport {
     pub observation: RuntimeOrphanObservation,
     pub lease_closed: bool,
     pub quarantined: bool,
+}
+
+fn process_identity_matches(
+    expected: &RuntimeProcessIdentity,
+    actual: &RuntimeProcessIdentity,
+) -> bool {
+    expected.pid == actual.pid
+        && expected.process_group_id == actual.process_group_id
+        && expected.start_token.is_some()
+        && expected.start_token == actual.start_token
+}
+
+#[cfg(target_os = "linux")]
+fn inspect_process(pid: u32) -> Option<RuntimeProcessIdentity> {
+    let contents = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let (_, fields) = contents.rsplit_once(") ")?;
+    let fields = fields.split_whitespace().collect::<Vec<_>>();
+    let process_group_id = fields.get(2)?.parse::<u32>().ok()?;
+    let start_token = fields.get(19)?.to_owned();
+    Some(RuntimeProcessIdentity {
+        pid,
+        process_group_id: Some(process_group_id),
+        start_token: Some(start_token),
+    })
+}
+
+#[cfg(all(unix, not(target_os = "linux")))]
+fn inspect_process(pid: u32) -> Option<RuntimeProcessIdentity> {
+    let result = unsafe { libc::kill(pid as i32, 0) };
+    if result != 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
+        return None;
+    }
+    Some(RuntimeProcessIdentity {
+        pid,
+        process_group_id: None,
+        start_token: None,
+    })
+}
+
+#[cfg(not(unix))]
+fn inspect_process(_pid: u32) -> Option<RuntimeProcessIdentity> {
+    None
 }
 
 fn validate_store_state(state: &RuntimeLeaseStoreState) -> Result<(), RuntimeLeaseError> {
@@ -375,6 +487,7 @@ mod tests {
         .running(RuntimeProcessIdentity {
             pid: 100,
             process_group_id: Some(100),
+            start_token: Some("100".into()),
         });
         store
             .publish(lease.clone())
@@ -405,5 +518,61 @@ mod tests {
             store.publish(lease),
             Err(RuntimeLeaseError::Invalid(_))
         ));
+    }
+
+    #[test]
+    fn platform_reconciler_never_kills_an_absent_process() {
+        let lease = RuntimeLease::starting(
+            ExtensionId("example.plugin".into()),
+            "1.0.0".into(),
+            None,
+            "nonce-absent".into(),
+        )
+        .running(RuntimeProcessIdentity {
+            pid: u32::MAX,
+            process_group_id: Some(u32::MAX),
+            start_token: Some("missing".into()),
+        });
+        let reconciler = PlatformRuntimeOrphanReconciler;
+        assert!(matches!(
+            reconciler.observe(&lease),
+            RuntimeOrphanObservation::Absent | RuntimeOrphanObservation::IdentityUncertain
+        ));
+        assert!(matches!(
+            reconciler.terminate(&lease),
+            Err(RuntimeLeaseError::Invalid(_))
+        ));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_reconciler_uses_process_start_token_to_reject_pid_reuse() {
+        let process = inspect_process(std::process::id()).expect("the test process should exist");
+        let lease = RuntimeLease::starting(
+            ExtensionId("example.plugin".into()),
+            "1.0.0".into(),
+            None,
+            "nonce-current".into(),
+        )
+        .running(process.clone());
+        let reconciler = PlatformRuntimeOrphanReconciler;
+        assert_eq!(
+            reconciler.observe(&lease),
+            RuntimeOrphanObservation::Matching
+        );
+
+        let mut reused = process;
+        reused.start_token = Some("different-start-time".into());
+        let reused_lease = RuntimeLease::starting(
+            ExtensionId("example.plugin".into()),
+            "1.0.0".into(),
+            None,
+            "nonce-reused".into(),
+        )
+        .running(reused);
+        assert_eq!(
+            reconciler.observe(&reused_lease),
+            RuntimeOrphanObservation::DifferentProcess
+        );
     }
 }
