@@ -106,6 +106,11 @@ renderer can inspect recovery state without reading the journal directly.
 When Safe Mode is active, startup does not auto-activate discovered plugins;
 the core and recovery path remain available for an explicit user action.
 
+The Tauri composition root now records `ExitRequested` as shutdown intent and
+`Exit` as shutdown completion through the same core-owned supervisor. This
+keeps normal close evidence out of command handlers and leaves an unfinished
+launch receipt available to classify forced termination on the next start.
+
 Runtime failure in an activated optional plugin also records a degraded
 component failure and clears that owner's projections and Jobs; it does not
 increment the core pre-ready Safe Mode counter.
@@ -117,8 +122,8 @@ gates. Optional plugin activation is recorded as a degraded component failure
 and does not block the core-ready checkpoint. The file journal is an evidence
 store, not yet a replacement for owner snapshots or a proof that writes are
 crash-durable on every platform; the persistence durability report remains a
-follow-up acceptance test. Native close-event wiring for the shutdown intent
-and completion calls is also pending the platform lifecycle adapter.
+follow-up acceptance test. Shutdown completion is only evidence from the Tauri
+event loop; it is not a proof against power loss or an OS-level kill.
 
 Plugin crashes and timeouts remain inside `PluginHost`; plugin-owned Jobs
 remain inside `JobSystem`; a WebView or AppSurface failure is handled by the

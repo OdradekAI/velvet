@@ -55,6 +55,14 @@ impl TauriTransport {
             event_sink: Arc::new(event_sink),
         }
     }
+
+    pub fn record_shutdown_intent(&self) -> Result<(), velvet_application_core::RecoveryError> {
+        self.inner.record_shutdown_intent()
+    }
+
+    pub fn record_shutdown_complete(&self) -> Result<(), velvet_application_core::RecoveryError> {
+        self.inner.record_shutdown_complete()
+    }
 }
 
 impl CoreTransport for TauriTransport {
@@ -236,6 +244,26 @@ mod tests {
         assert!(matches!(
             sink.events().as_slice(),
             [Event::RecoveryChanged { projection }] if projection.schema_version == 1
+        ));
+    }
+
+    #[test]
+    fn shutdown_hooks_close_the_core_launch_receipt() {
+        let transport = TauriTransport::new(ApplicationCore::default());
+        transport
+            .record_shutdown_intent()
+            .expect("shutdown intent should be accepted");
+        transport
+            .record_shutdown_complete()
+            .expect("shutdown completion should be accepted");
+
+        let response = transport
+            .dispatch(RequestId(11), Request::Query(Query::Recovery))
+            .expect("recovery query should succeed");
+        assert!(matches!(
+            response,
+            Response::Recovery(projection)
+                if projection.mode == velvet_workbench_protocol::RecoveryMode::Ready
         ));
     }
 

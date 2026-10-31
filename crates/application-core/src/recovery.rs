@@ -118,11 +118,14 @@ impl RecoverySupervisor {
 
     pub fn advance_to(&self, phase: StartupPhase) -> Result<RecoveryProjection, RecoveryError> {
         self.update(|inner, now| {
+            let safe_mode = inner.state.safe_mode_forced
+                || inner.state.consecutive_failures >= SAFE_MODE_FAILURE_THRESHOLD;
             let Some(launch) = inner.state.active_launch.as_mut() else {
                 return;
             };
             launch.phase = phase.clone();
-            if phase == StartupPhase::WorkbenchReady || phase == StartupPhase::Ready {
+            if !safe_mode && (phase == StartupPhase::WorkbenchReady || phase == StartupPhase::Ready)
+            {
                 inner.state.last_good = Some(RecoveryCheckpoint {
                     attempt_id: launch.attempt_id,
                     phase,
@@ -381,5 +384,50 @@ mod tests {
             projection.last_good.as_ref().map(|value| &value.phase),
             Some(&StartupPhase::WorkbenchReady)
         );
+    }
+
+    #[test]
+    fn completed_shutdown_closes_the_launch_receipt_for_the_next_start() {
+        let journal = Arc::new(InMemoryRecoveryJournalStore::default());
+        let clock = Arc::new(TestClock(AtomicU64::new(1)));
+        let first = RecoverySupervisor::new(journal.clone(), clock.clone());
+        first.begin_launch("test").expect("launch should start");
+        first
+            .record_shutdown_intent()
+            .expect("shutdown intent should persist");
+        let projection = first
+            .record_shutdown_complete()
+            .expect("shutdown completion should persist");
+        assert_eq!(projection.mode, RecoveryMode::Ready);
+
+        let second = RecoverySupervisor::new(journal, clock);
+        let projection = second
+            .begin_launch("test")
+            .expect("next launch should start");
+        assert_eq!(projection.consecutive_failures, 0);
+        assert_eq!(projection.mode, RecoveryMode::Starting);
+    }
+
+    #[test]
+    fn safe_mode_remains_active_until_an_explicit_recovery_action() {
+        let journal = Arc::new(InMemoryRecoveryJournalStore::default());
+        let clock = Arc::new(TestClock(AtomicU64::new(1)));
+        let first = RecoverySupervisor::new(journal.clone(), clock.clone());
+        first.begin_launch("test").expect("launch should start");
+        drop(first);
+        let second = RecoverySupervisor::new(journal.clone(), clock.clone());
+        second.begin_launch("test").expect("retry should start");
+        drop(second);
+
+        let third = RecoverySupervisor::new(journal, clock);
+        let projection = third
+            .begin_launch("test")
+            .expect("safe launch should start");
+        assert_eq!(projection.mode, RecoveryMode::Safe);
+        let after_checkpoint = third
+            .advance_to(StartupPhase::WorkbenchReady)
+            .expect("safe mode should still expose a projection");
+        assert_eq!(after_checkpoint.mode, RecoveryMode::Safe);
+        assert_eq!(after_checkpoint.consecutive_failures, 2);
     }
 }

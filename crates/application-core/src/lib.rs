@@ -390,13 +390,31 @@ impl ApplicationCore {
     }
 
     pub fn mark_workbench_ready(&self) {
+        if self.recovery.is_safe_mode() {
+            return;
+        }
         let _ = self
             .recovery
             .advance_to(velvet_workbench_protocol::StartupPhase::WorkbenchReady);
     }
 
     pub fn mark_ready(&self) {
+        if self.recovery.is_safe_mode() {
+            return;
+        }
         let _ = self.recovery.mark_ready();
+    }
+
+    pub fn record_shutdown_intent(
+        &self,
+    ) -> Result<velvet_workbench_protocol::RecoveryProjection, RecoveryError> {
+        self.recovery.record_shutdown_intent()
+    }
+
+    pub fn record_shutdown_complete(
+        &self,
+    ) -> Result<velvet_workbench_protocol::RecoveryProjection, RecoveryError> {
+        self.recovery.record_shutdown_complete()
     }
 
     pub fn record_recovery_failure(
@@ -1773,6 +1791,22 @@ impl InProcessCoreTransport {
             .map(|core| core.recovery_projection())
             .unwrap_or_else(|_| RecoverySupervisor::default().projection())
     }
+
+    pub fn record_shutdown_intent(&self) -> Result<(), RecoveryError> {
+        self.core
+            .lock()
+            .map_err(|_| RecoveryError::InvalidState("core lock poisoned".into()))?
+            .record_shutdown_intent()
+            .map(|_| ())
+    }
+
+    pub fn record_shutdown_complete(&self) -> Result<(), RecoveryError> {
+        self.core
+            .lock()
+            .map_err(|_| RecoveryError::InvalidState("core lock poisoned".into()))?
+            .record_shutdown_complete()
+            .map(|_| ())
+    }
 }
 
 impl CoreTransport for InProcessCoreTransport {
@@ -2755,6 +2789,9 @@ mod tests {
             projection.last_failure.map(|failure| failure.class),
             Some(velvet_workbench_protocol::RecoveryFailureClass::CoreMigration)
         ));
+        core.mark_workbench_ready();
+        core.mark_ready();
+        assert!(core.in_safe_mode());
         assert_eq!(
             store
                 .load()

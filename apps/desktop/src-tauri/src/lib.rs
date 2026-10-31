@@ -1576,8 +1576,29 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![velvet_core_request])
-        .run(tauri::generate_context!())
-        .expect("error while running the Velvet Tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building the Velvet Tauri application")
+        .run(|app, event| match event {
+            tauri::RunEvent::ExitRequested { .. } => {
+                if let Some(state) = app.try_state::<AppState>() {
+                    if let Ok(transport) = state.transport.lock() {
+                        if let Err(error) = transport.record_shutdown_intent() {
+                            eprintln!("Velvet could not persist shutdown intent: {error:?}");
+                        }
+                    }
+                }
+            }
+            tauri::RunEvent::Exit => {
+                if let Some(state) = app.try_state::<AppState>() {
+                    if let Ok(transport) = state.transport.lock() {
+                        if let Err(error) = transport.record_shutdown_complete() {
+                            eprintln!("Velvet could not persist shutdown completion: {error:?}");
+                        }
+                    }
+                }
+            }
+            _ => {}
+        });
 }
 
 fn validate_inner_protocol(outer: u16, inner: u16) -> Result<(), WireError> {
