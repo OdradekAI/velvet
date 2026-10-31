@@ -132,6 +132,10 @@ Asset source 当前是否可访问的 Rust 投影。移动硬盘或网络盘断�
 
 由某个状态 owner 产生的、带有 scope、schema version、generation、校验和和提交标记的持久化状态代。快照可以独立校验、迁移、恢复或淘汰；它不改变 owner 归属。
 
+## StateSnapshotStore
+
+由 `persistence` 提供的通用快照存储适配器。它只负责 owner/scope 路径校验、有界 payload、校验和、staged 到 committed 的原子发布和 quarantine；它不决定领域 schema、跨 owner 提交或恢复动作。
+
 ## RecoverySet
 
 由恢复索引记录的一组相关 StateSnapshot generation。它表示一次跨 owner 变更或迁移的可恢复提交点；只有在引用校验通过并完成提交屏障后，相关 generation 才能一起成为当前状态。RecoverySet 不取代各 owner 对数据和 schema 的所有权。

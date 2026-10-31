@@ -265,6 +265,7 @@ dependencies = [
 name = "velvet-persistence"
 version = "0.0.4"
 dependencies = [
+ "crc32fast",
  "serde",
  "serde_json",
  "velvet-job-system",

@@ -134,13 +134,23 @@ projection, a schema and timestamp, truncates failure text to a bounded
 length, and never uploads data. A platform-native no-WebView surface and host
 locale integration remain separate gates.
 
+The persistence crate now provides a framework-independent `StateSnapshotStore`
+primitive. It validates owner and scope segments, bounds payloads, records a
+schema, generation, checksum and committed marker, publishes staged snapshots
+through same-directory atomic replacement and can quarantine a staged or
+committed generation. Its in-memory implementation is used by fault-injection
+tests. This is a storage seam only; `ApplicationCore` has not yet migrated
+Layout, Profile or Job ownership to it, and no cross-owner `RecoverySet` is
+published by this slice.
+
 Runtime failure in an activated optional plugin also records a degraded
 component failure and clears that owner's projections and Jobs; it does not
 increment the core pre-ready Safe Mode counter.
 
 This slice is deliberately narrower than the full decision: native no-WebView
-recovery, generation snapshots/`RecoverySet`, user restore actions and the
-full cross-component `DiagnosticBundle` are still implementation gates.
+recovery, owner integration with generation snapshots/`RecoverySet`, user
+restore actions and the full cross-component `DiagnosticBundle` are still
+implementation gates.
 Optional plugin activation is recorded as a degraded component failure and does
 not block the core-ready checkpoint. The file journal is an evidence
 store, not yet a replacement for owner snapshots or a proof that writes are

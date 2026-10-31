@@ -6,6 +6,14 @@ use velvet_job_system::{JobSnapshot, JobStateStore};
 use velvet_layout_model::LayoutState;
 use velvet_workbench_protocol::{ProfileState, RecoveryJournalState, RECOVERY_SCHEMA_VERSION};
 
+mod snapshot;
+
+pub use snapshot::{
+    InMemoryStateSnapshotStore, JsonFileStateSnapshotStore, SnapshotError, StateSnapshot,
+    StateSnapshotMetadata, StateSnapshotStore, MAX_STATE_SNAPSHOT_BYTES,
+    STATE_SNAPSHOT_FORMAT_VERSION,
+};
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PersistenceError {
     Unavailable,
