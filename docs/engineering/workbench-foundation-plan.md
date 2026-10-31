@@ -552,11 +552,13 @@ text/image providers as the first executable consumers. Their renderer
 projections are explicit Rust → Tauri → TypeScript DTOs: text is rendered by
 the host as bounded text, image bytes are rendered through a host-owned Blob
 URL, and a truncation flag remains visible. A missing source or provider error
-falls back to the generic preview with a diagnostic. A persistent
-source-location resolver remains a follow-up to the Asset model decision;
-`FilePreviewAssetSource` already proves the bounded file-read adapter against
-that resolver seam without adding filesystem access to the frontend or plugin
-runtime.
+falls back to the generic preview with a diagnostic. The versioned persistent
+source-location resolver now registers canonical regular files by opaque
+`AssetId`, persists declared content kind and optional source fingerprints,
+and exposes an AssetId-only Preview query; paths remain inside the Rust source
+adapter and corrupt or missing locations stay isolated. Format-specific
+decoding, richer source reconciliation and product-specific cache consumers
+remain follow-up work.
 
 The source seam now also exposes an optional complete-content
 `ContentFingerprint`. Asset/source owners provide it without exposing paths;
@@ -695,7 +697,7 @@ bundle or message; caches are cleaned on disable, upgrade and uninstall.
 3. **Layout service**: implement versioned layout state, migrations, fixed zones and persistence tests. **Done for the current file-backed Tauri store and restart recovery slice.**
 4. **Workbench parts**: render ActivityBar, Resource Manager, Feed Workbench, PrimarySidebar, WorkspaceArea, AuxiliarySidebar, OperationsPanel and StatusBar with placeholder views. **Initial renderer slice done.**
 5. **View registry**: add built-in views and one example external view per zone. Verify that cross-zone registration is rejected. **Host registry and rejection tests done; the React shell mounts registered ViewContainers/Views with a renderer adapter seam, PluginClient projects extension views plus isolated UI Bridge sessions into that seam, and the Activity Bar now selects contributed navigation containers.**
-6. **Preview core**: implement generic image/file fallback, `PreviewResolver`, Quick/Inspect/Analyze intents and a fake provider used by contract tests. **Host slice done:** surface-aware deterministic resolution, provider-failure fallback, typed Tauri/TypeScript projection, `PreviewHost` state machine, Quick overlay and unregisterable provider/augmentation slots. The first bounded source adapter and trusted text/image providers are implemented; persistent source-location adapters, format-specific plugin execution, augmentation renderer adapters and product-specific cache consumers remain follow-up work.
+6. **Preview core**: implement generic image/file fallback, `PreviewResolver`, Quick/Inspect/Analyze intents and a fake provider used by contract tests. **Host slice done:** surface-aware deterministic resolution, provider-failure fallback, typed Tauri/TypeScript projection, `PreviewHost` state machine, Quick overlay and unregisterable provider/augmentation slots. The bounded source adapter, versioned persistent AssetId source-location registry and trusted text/image providers are implemented; format-specific plugin execution, augmentation renderer adapters and product-specific cache consumers remain follow-up work.
 7. **Plugin host**: load manifests, validate permissions and localization bundles, activate lazily, isolate failures and expose the UI SDK boundary. **Local discovery, install preflight, permission enforcement, host API compatibility checks, numeric version upgrades, transactional commit/rollback, crash-recovery scanning, deferred activation, retryable recovery, orphan cleanup and bounded recovery logs are implemented; marketplace policy and signing remain later work. The host localization service, fallback formatter, diagnostics, loader/plugin lifecycle seam, isolated UI Bridge locale projection, Rust-owned revisioned Profile locale persistence, bounded directory-package localization resource loader, bounded ZIP archive package adapter and native directory/ZIP package picker are implemented; other archive formats and non-localization binary resources remain follow-up adapters.**
 8. **Jobs and facets**: the shared Rust JobSystem lifecycle seam is wired to OperationsPanel with persisted progress, cancellation, retry, failure and restart recovery. It now exposes a Rust JobRunner registry, attempt-safe cooperative cancellation, panic isolation, persisted JobResult payloads, JobProvenance projection, exact provenance reuse that refuses cache hits without an input fingerprint, and an isolated plugin `invoke-job`/`job.run` adapter with typed input, result and bounded progress events. Owner cleanup revokes runners and cancels queued/running Jobs before runtime shutdown; late results are ignored, and extension-owned retries fail with a diagnostic when the owner runner is unavailable instead of using the core fallback. Provider/version/settings changes are covered as cache misses through exact provenance; no generic artifact cache is added before a concrete provider or Facet owner needs one. Product-specific thumbnail, metadata and analysis runners remain follow-up consumers.
 9. **Tauri adapter**: connect typed commands, queries and events to the desktop client. No feature should bypass the protocol. **Done for the current layout slice, including native command/event serialization and global shortcut entry.**

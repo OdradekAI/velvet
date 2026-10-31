@@ -18,7 +18,8 @@ use velvet_plugin_api::{
     validate_reserved_metadata,
 };
 use velvet_persistence::{
-    JsonFileJobStateStore, JsonFileLayoutStateStore, JsonFileProfileStateStore,
+    JsonFileAssetSourceLocationStore, JsonFileJobStateStore, JsonFileLayoutStateStore,
+    JsonFileProfileStateStore,
 };
 use velvet_preview_core::{PreviewIntent, PreviewRenderer, PreviewSurface, ResolvedPreview};
 use velvet_tauri_adapter::{CoreEventSink, TauriTransport};
@@ -99,6 +100,17 @@ impl From<CoreError> for WireError {
                 code: "plugin-resource-error".into(),
                 message: format!("Localization resource {locale} for {extension_id} failed: {message}"),
                 retryable: false,
+                expected_revision: None,
+                actual_revision: None,
+            },
+            CoreError::AssetSource {
+                asset_id,
+                message,
+                retryable,
+            } => Self {
+                code: "asset-source-error".into(),
+                message: format!("Preview source for asset {asset_id} failed: {message}"),
+                retryable,
                 expected_revision: None,
                 actual_revision: None,
             },
@@ -275,6 +287,22 @@ pub enum WireRequest {
         #[serde(rename = "extensionId")]
         extension_id: String,
     },
+    RegisterPreviewAsset {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        #[serde(rename = "assetId")]
+        asset_id: String,
+        #[serde(rename = "sourcePath")]
+        source_path: String,
+        #[serde(rename = "contentKind")]
+        content_kind: String,
+    },
+    RemovePreviewAsset {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        #[serde(rename = "assetId")]
+        asset_id: String,
+    },
     InspectPlugin {
         #[serde(rename = "protocolVersion")]
         protocol_version: u16,
@@ -386,6 +414,14 @@ pub enum WireRequest {
         asset_id: String,
         #[serde(rename = "contentKind")]
         content_kind: String,
+        intent: String,
+        surface: String,
+    },
+    ResolvePreviewAsset {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        #[serde(rename = "assetId")]
+        asset_id: String,
         intent: String,
         surface: String,
     },
@@ -523,6 +559,28 @@ impl WireRequest {
                 validate_inner_protocol(outer_protocol_version, protocol_version)?;
                 Ok(Request::Command(Command::UninstallPlugin {
                     extension_id: ExtensionId(extension_id),
+                }))
+            }
+            Self::RegisterPreviewAsset {
+                protocol_version,
+                asset_id,
+                source_path,
+                content_kind,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Command(Command::RegisterPreviewAsset {
+                    asset_id: velvet_asset_core::AssetId(asset_id),
+                    source_path,
+                    content_kind,
+                }))
+            }
+            Self::RemovePreviewAsset {
+                protocol_version,
+                asset_id,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Command(Command::RemovePreviewAsset {
+                    asset_id: velvet_asset_core::AssetId(asset_id),
                 }))
             }
             Self::InspectPlugin {
@@ -685,6 +743,21 @@ impl WireRequest {
                     velvet_workbench_protocol::Query::ResolvePreview {
                         asset_id: velvet_asset_core::AssetId(asset_id),
                         content_kind,
+                        intent: parse_preview_intent(&intent)?,
+                        surface: parse_preview_surface(&surface)?,
+                    },
+                ))
+            }
+            Self::ResolvePreviewAsset {
+                protocol_version,
+                asset_id,
+                intent,
+                surface,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Query(
+                    velvet_workbench_protocol::Query::ResolvePreviewAsset {
+                        asset_id: velvet_asset_core::AssetId(asset_id),
                         intent: parse_preview_intent(&intent)?,
                         surface: parse_preview_surface(&surface)?,
                     },
@@ -1434,12 +1507,14 @@ pub fn run() {
             let layout_path = app_data_dir.join("workbench-layout.json");
             let jobs_path = app_data_dir.join("jobs.json");
             let profile_path = app_data_dir.join("profile.json");
+            let asset_sources_path = app_data_dir.join("asset-sources.json");
             let plugin_directory = app_data_dir.join("plugins");
-            let mut core = ApplicationCore::with_store_and_plugin_directory_and_job_store_and_profile_store(
+            let mut core = ApplicationCore::with_store_and_plugin_directory_and_job_store_and_profile_store_and_asset_source_store(
                 Arc::new(JsonFileLayoutStateStore::new(layout_path)),
                 &plugin_directory,
                 Arc::new(JsonFileJobStateStore::new(jobs_path)),
                 Arc::new(JsonFileProfileStateStore::new(profile_path)),
+                Arc::new(JsonFileAssetSourceLocationStore::new(asset_sources_path)),
             );
             match core.load_plugins_from_directory(&plugin_directory) {
                 Ok(report) if !report.failures.is_empty() => {
@@ -2069,6 +2144,78 @@ mod tests {
     }
 
     #[test]
+    fn wire_preview_asset_location_requests_keep_source_paths_at_the_core_boundary() {
+        let register: WireRequestEnvelope = serde_json::from_value(serde_json::json!({
+            "protocolVersion": 1,
+            "requestId": 43,
+            "request": {
+                "kind": "register-preview-asset",
+                "protocolVersion": 1,
+                "assetId": "asset-1",
+                "sourcePath": "/tmp/asset-1.txt",
+                "contentKind": "text/plain"
+            }
+        }))
+        .expect("asset registration should deserialize");
+        assert!(matches!(
+            register
+                .request
+                .into_core(1)
+                .expect("asset registration should map"),
+            Request::Command(Command::RegisterPreviewAsset {
+                asset_id,
+                source_path,
+                content_kind,
+            }) if asset_id.0 == "asset-1"
+                && source_path == "/tmp/asset-1.txt"
+                && content_kind == "text/plain"
+        ));
+
+        let resolve: WireRequestEnvelope = serde_json::from_value(serde_json::json!({
+            "protocolVersion": 1,
+            "requestId": 44,
+            "request": {
+                "kind": "resolve-preview-asset",
+                "protocolVersion": 1,
+                "assetId": "asset-1",
+                "intent": "quick",
+                "surface": "workspace"
+            }
+        }))
+        .expect("asset preview query should deserialize");
+        assert!(matches!(
+            resolve
+                .request
+                .into_core(1)
+                .expect("asset preview query should map"),
+            Request::Query(velvet_workbench_protocol::Query::ResolvePreviewAsset {
+                asset_id,
+                intent: PreviewIntent::Quick,
+                surface: PreviewSurface::Workspace,
+            }) if asset_id.0 == "asset-1"
+        ));
+
+        let remove: WireRequestEnvelope = serde_json::from_value(serde_json::json!({
+            "protocolVersion": 1,
+            "requestId": 45,
+            "request": {
+                "kind": "remove-preview-asset",
+                "protocolVersion": 1,
+                "assetId": "asset-1"
+            }
+        }))
+        .expect("asset removal should deserialize");
+        assert!(matches!(
+            remove
+                .request
+                .into_core(1)
+                .expect("asset removal should map"),
+            Request::Command(Command::RemovePreviewAsset { asset_id })
+                if asset_id.0 == "asset-1"
+        ));
+    }
+
+    #[test]
     fn wire_plugin_command_invocation_preserves_payload_and_context() {
         let envelope: WireRequestEnvelope = serde_json::from_str(
             r#"{
@@ -2191,6 +2338,20 @@ mod tests {
         assert!(!error.retryable);
         assert!(error.message.contains("sample.localized"));
         assert!(!error.message.contains("/"));
+    }
+
+    #[test]
+    fn wire_asset_source_errors_are_typed_and_path_free() {
+        let error = WireError::from(CoreError::AssetSource {
+            asset_id: "asset-1".into(),
+            message: "preview source was not found".into(),
+            retryable: false,
+        });
+
+        assert_eq!(error.code, "asset-source-error");
+        assert!(!error.retryable);
+        assert!(error.message.contains("asset-1"));
+        assert!(!error.message.contains("/tmp"));
     }
 
     #[test]

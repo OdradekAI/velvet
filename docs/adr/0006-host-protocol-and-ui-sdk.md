@@ -53,6 +53,13 @@ native global shortcut plugin feeds `velvet_keybinding` events into the same
 renderer `KeybindingRegistry`; it does not own command resolution or layout
 state.
 
+The current protocol also carries Rust-owned Preview source registration and
+removal commands plus an AssetId-only Preview query. The source path is an
+input to the application boundary and is validated and persisted by Rust; it
+is never included in a Preview projection. TypeScript and Tauri keep explicit
+mirrors for these requests, while source failures use a typed, path-free error
+that remains local to the affected asset.
+
 Plugin lifecycle uses the same versioned request envelope. The protocol exposes
 manifest registration plus activate, disable, health-check and recovery
 commands, each returning the authoritative Rust `ExtensionSummary`. The

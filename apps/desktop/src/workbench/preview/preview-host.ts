@@ -1,4 +1,5 @@
 import type {
+  CoreRequest,
   CoreResolvedPreview,
   CoreTransport,
 } from '../protocol.js';
@@ -58,20 +59,50 @@ export class PreviewHost {
    * preview available when transport or provider resolution fails.
    */
   public async open(context: PreviewContext): Promise<ResolvedPreview> {
-    this.ensureUsable();
-    const token = ++this.requestToken;
-    this.setState('resolving');
-    this.error = undefined;
-
-    try {
-      const response = await this.core.request({
+    return this.openRequest(
+      {
         protocolVersion: 1,
         kind: 'resolve-preview',
         assetId: context.assetId,
         contentKind: context.contentKind,
         intent: context.intent,
         surface: context.surface,
-      });
+      },
+      context,
+    );
+  }
+
+  /** Resolves a persisted asset by opaque identity; Rust supplies its content kind. */
+  public async openAsset(
+    assetId: string,
+    intent: PreviewIntent,
+    surface: PreviewSurface,
+  ): Promise<ResolvedPreview> {
+    return this.openRequest(
+      {
+        protocolVersion: 1,
+        kind: 'resolve-preview-asset',
+        assetId,
+        intent,
+        surface,
+      },
+      {
+        assetId,
+        contentKind: 'application/octet-stream',
+        intent,
+        surface,
+      },
+    );
+  }
+
+  private async openRequest(request: CoreRequest, context: PreviewContext): Promise<ResolvedPreview> {
+    this.ensureUsable();
+    const token = ++this.requestToken;
+    this.setState('resolving');
+    this.error = undefined;
+
+    try {
+      const response = await this.core.request(request);
 
       if (token !== this.requestToken) {
         return this.preview ?? fallbackPreview(context);

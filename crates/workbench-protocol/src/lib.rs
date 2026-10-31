@@ -226,6 +226,14 @@ pub enum Command {
     UninstallPlugin {
         extension_id: ExtensionId,
     },
+    RegisterPreviewAsset {
+        asset_id: AssetId,
+        source_path: String,
+        content_kind: String,
+    },
+    RemovePreviewAsset {
+        asset_id: AssetId,
+    },
     InvokePluginCommand {
         extension_id: ExtensionId,
         command_id: String,
@@ -281,6 +289,11 @@ pub enum Query {
     ResolvePreview {
         asset_id: AssetId,
         content_kind: String,
+        intent: PreviewIntent,
+        surface: PreviewSurface,
+    },
+    ResolvePreviewAsset {
+        asset_id: AssetId,
         intent: PreviewIntent,
         surface: PreviewSurface,
     },
@@ -358,6 +371,11 @@ pub enum CoreError {
         extension_id: String,
         locale: String,
         message: String,
+    },
+    AssetSource {
+        asset_id: String,
+        message: String,
+        retryable: bool,
     },
 }
 

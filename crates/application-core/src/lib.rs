@@ -5,16 +5,18 @@ mod preview_source;
 
 pub use preview_source::{
     AssetSourceLocationResolver, FilePreviewAssetSource, InMemoryPreviewAssetSource,
+    PersistentAssetSourceLocationResolver, PreviewAssetRegistration,
 };
 
-use velvet_asset_core::ContentKindId;
+use velvet_asset_core::{AssetId, ContentFingerprint, ContentKindId};
 use velvet_job_system::{
     JobError, JobExecutionContext, JobExecutionError, JobExecutionResult, JobId, JobProvenance,
     JobRunner, JobSpec, JobStateStore, JobSystem, JOB_SCHEMA_VERSION,
 };
 use velvet_layout_model::{InMemoryLayoutService, LayoutService};
 use velvet_persistence::{
-    InMemoryLayoutStateStore, InMemoryProfileStateStore, LayoutStateStore, ProfileStateStore,
+    AssetSourceLocationStore, InMemoryAssetSourceLocationStore, InMemoryLayoutStateStore,
+    InMemoryProfileStateStore, LayoutStateStore, ProfileStateStore,
 };
 use velvet_plugin_api::{
     ContributionKind, ExtensionId, ExtensionInstallPreview, ExtensionInstallRecovery,
@@ -30,7 +32,7 @@ use velvet_plugin_host::{
 use velvet_preview_core::{
     BuiltinImagePreviewProvider, BuiltinTextPreviewProvider, GenericFallbackProvider,
     PreviewAssetSource, PreviewCandidate, PreviewContext, PreviewProvider, PreviewRenderer,
-    PreviewRequest, PreviewResolver, PreviewSession, PreviewSessionDescriptor,
+    PreviewRequest, PreviewResolver, PreviewSession, PreviewSessionDescriptor, PreviewSourceError,
     ResolvedPreviewAugmentation,
 };
 use velvet_workbench_protocol::{
@@ -47,6 +49,7 @@ pub struct ApplicationCore {
     jobs: JobSystem,
     profile: ProfileState,
     preview_actions: BTreeMap<String, PreviewActionAuthorization>,
+    preview_locations: Arc<PersistentAssetSourceLocationResolver>,
     layout_store: Arc<dyn LayoutStateStore>,
     profile_store: Arc<dyn ProfileStateStore>,
     plugin_directory: Option<std::path::PathBuf>,
@@ -147,6 +150,7 @@ impl ApplicationCore {
             None,
             JobSystem::default(),
             profile_store,
+            Arc::new(InMemoryAssetSourceLocationStore::default()),
         )
     }
 
@@ -213,6 +217,7 @@ impl ApplicationCore {
             plugin_directory,
             jobs,
             Arc::new(InMemoryProfileStateStore::default()),
+            Arc::new(InMemoryAssetSourceLocationStore::default()),
         )
     }
 
@@ -228,6 +233,24 @@ impl ApplicationCore {
             Some(plugin_directory.into()),
             JobSystem::with_store(job_store),
             profile_store,
+            Arc::new(InMemoryAssetSourceLocationStore::default()),
+        )
+    }
+
+    pub fn with_store_and_plugin_directory_and_job_store_and_profile_store_and_asset_source_store(
+        layout_store: Arc<dyn LayoutStateStore>,
+        plugin_directory: impl Into<std::path::PathBuf>,
+        job_store: Arc<dyn JobStateStore>,
+        profile_store: Arc<dyn ProfileStateStore>,
+        asset_source_store: Arc<dyn AssetSourceLocationStore>,
+    ) -> Self {
+        Self::with_store_and_runtime_and_plugin_directory_and_jobs_and_profile(
+            layout_store,
+            Box::new(velvet_plugin_host::ProcessPluginRuntime),
+            Some(plugin_directory.into()),
+            JobSystem::with_store(job_store),
+            profile_store,
+            asset_source_store,
         )
     }
 
@@ -237,6 +260,7 @@ impl ApplicationCore {
         plugin_directory: Option<std::path::PathBuf>,
         jobs: JobSystem,
         profile_store: Arc<dyn ProfileStateStore>,
+        asset_source_store: Arc<dyn AssetSourceLocationStore>,
     ) -> Self {
         let mut layout = InMemoryLayoutService::default();
         if let Ok(Some(state)) = layout_store.load() {
@@ -253,6 +277,9 @@ impl ApplicationCore {
             .unwrap_or_default();
 
         let plugin_resources = plugin_directory.as_deref().map(PluginResourceLoader::new);
+        let preview_locations = Arc::new(PersistentAssetSourceLocationResolver::new(
+            asset_source_store,
+        ));
         let mut core = Self {
             layout,
             plugins: InMemoryPluginHost::with_runtime(runtime),
@@ -260,6 +287,7 @@ impl ApplicationCore {
             jobs,
             profile,
             preview_actions: BTreeMap::new(),
+            preview_locations: preview_locations.clone(),
             layout_store,
             profile_store,
             plugin_directory,
@@ -270,6 +298,8 @@ impl ApplicationCore {
         core.previews
             .register(Arc::new(BuiltinImagePreviewProvider));
         core.previews.register(Arc::new(GenericFallbackProvider));
+        core.previews
+            .set_asset_source(Arc::new(FilePreviewAssetSource::new(preview_locations)));
         core
     }
 
@@ -282,6 +312,31 @@ impl ApplicationCore {
     /// use the bounded runtime invocation context instead.
     pub fn set_preview_asset_source(&mut self, source: Arc<dyn PreviewAssetSource>) {
         self.previews.set_asset_source(source);
+    }
+
+    pub fn register_preview_asset(
+        &self,
+        asset_id: AssetId,
+        source_path: impl AsRef<std::path::Path>,
+        content_kind: ContentKindId,
+        fingerprint: Option<ContentFingerprint>,
+    ) -> Result<(), velvet_preview_core::PreviewSourceError> {
+        self.preview_locations
+            .register(asset_id, source_path, content_kind, fingerprint)
+    }
+
+    pub fn remove_preview_asset(
+        &self,
+        asset_id: &AssetId,
+    ) -> Result<bool, velvet_preview_core::PreviewSourceError> {
+        self.preview_locations.remove(asset_id)
+    }
+
+    pub fn preview_asset_registration(
+        &self,
+        asset_id: &AssetId,
+    ) -> Result<PreviewAssetRegistration, velvet_preview_core::PreviewSourceError> {
+        self.preview_locations.registration(asset_id)
     }
 
     /// Registers a trusted built-in provider through the preview-core seam.
@@ -863,6 +918,23 @@ impl ApplicationCore {
                 self.uninstall_plugin(&extension_id).map_err(plugin_error)?;
                 Ok(Response::Accepted)
             }
+            Request::Command(Command::RegisterPreviewAsset {
+                asset_id,
+                source_path,
+                content_kind,
+            }) => self
+                .register_preview_asset(
+                    asset_id.clone(),
+                    source_path,
+                    ContentKindId(content_kind),
+                    None,
+                )
+                .map(|_| Response::Accepted)
+                .map_err(|error| preview_source_error(&asset_id, error)),
+            Request::Command(Command::RemovePreviewAsset { asset_id }) => self
+                .remove_preview_asset(&asset_id)
+                .map(|_| Response::Accepted)
+                .map_err(|error| preview_source_error(&asset_id, error)),
             Request::Command(Command::InvokePluginCommand {
                 extension_id,
                 command_id,
@@ -948,6 +1020,25 @@ impl ApplicationCore {
                 })
                 .map(Response::Preview)
                 .map_err(|error| CoreError::InvalidCommand(format!("{error:?}"))),
+            Request::Query(Query::ResolvePreviewAsset {
+                asset_id,
+                intent,
+                surface,
+            }) => {
+                let registration = self
+                    .preview_asset_registration(&asset_id)
+                    .map_err(|error| preview_source_error(&asset_id, error))?;
+                self.resolve_preview(PreviewRequest {
+                    context: PreviewContext {
+                        asset_id,
+                        content_kind: registration.content_kind,
+                        intent,
+                        surface,
+                    },
+                })
+                .map(Response::Preview)
+                .map_err(|error| CoreError::InvalidCommand(format!("{error:?}")))
+            }
         }
     }
 
@@ -1446,6 +1537,23 @@ fn plugin_error(error: PluginError) -> CoreError {
     }
 }
 
+fn preview_source_error(asset_id: &AssetId, error: PreviewSourceError) -> CoreError {
+    let retryable = matches!(&error, PreviewSourceError::Unavailable);
+    let message = match error {
+        PreviewSourceError::Unavailable => "preview source is unavailable".into(),
+        PreviewSourceError::NotFound => "preview source was not found".into(),
+        PreviewSourceError::PermissionDenied => "preview source access was denied".into(),
+        PreviewSourceError::InvalidRequest(message) | PreviewSourceError::Failed(message) => {
+            message
+        }
+    };
+    CoreError::AssetSource {
+        asset_id: asset_id.0.clone(),
+        message,
+        retryable,
+    }
+}
+
 fn plugin_resource_error(
     extension_id: &ExtensionId,
     locale: &str,
@@ -1540,7 +1648,10 @@ mod tests {
     use std::sync::Arc;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
     use velvet_layout_model::{LayoutCommand, WorkbenchPart, WorkbenchZone};
-    use velvet_persistence::{InMemoryProfileStateStore, JsonFileLayoutStateStore};
+    use velvet_persistence::{
+        InMemoryProfileStateStore, JsonFileAssetSourceLocationStore, JsonFileJobStateStore,
+        JsonFileLayoutStateStore,
+    };
     use velvet_plugin_api::{
         ContributionDescriptor, ContributionKind, ContributionScope, ExtensionId,
         ExtensionInstallRecoveryLogStatus, ExtensionManifest, HostContainer, LocalizationManifest,
@@ -2248,6 +2359,84 @@ mod tests {
             }
             other => panic!("expected fallback preview response, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn persistent_asset_locations_survive_restart_and_stay_path_free_at_the_protocol() {
+        let source_path = temporary_layout_path().with_extension("preview.txt");
+        let plugin_root = temporary_layout_path().with_extension("plugins");
+        let jobs_path = temporary_layout_path().with_extension("jobs.json");
+        let asset_sources_path = temporary_layout_path().with_extension("asset-sources.json");
+        fs::write(&source_path, "restartable preview")
+            .expect("the preview source should be writable");
+
+        let build_core = || {
+            ApplicationCore::with_store_and_plugin_directory_and_job_store_and_profile_store_and_asset_source_store(
+                Arc::new(InMemoryLayoutStateStore::default()),
+                &plugin_root,
+                Arc::new(JsonFileJobStateStore::new(&jobs_path)),
+                Arc::new(InMemoryProfileStateStore::default()),
+                Arc::new(JsonFileAssetSourceLocationStore::new(&asset_sources_path)),
+            )
+        };
+
+        let mut first = build_core();
+        assert_eq!(
+            first
+                .dispatch(Request::Command(Command::RegisterPreviewAsset {
+                    asset_id: AssetId("asset-restart".into()),
+                    source_path: source_path.to_string_lossy().into_owned(),
+                    content_kind: "text/plain".into(),
+                }))
+                .expect("the source location should register"),
+            Response::Accepted
+        );
+        assert!(matches!(
+            first
+                .dispatch(Request::Query(Query::ResolvePreviewAsset {
+                    asset_id: AssetId("asset-restart".into()),
+                    intent: velvet_preview_core::PreviewIntent::Quick,
+                    surface: velvet_preview_core::PreviewSurface::Workspace,
+                }))
+                .expect("the registered asset should resolve"),
+            Response::Preview(preview)
+                if matches!(
+                    preview.session.descriptor.renderer,
+                    velvet_preview_core::PreviewRenderer::Text { ref text, truncated: false }
+                        if text == "restartable preview"
+                )
+        ));
+        drop(first);
+
+        let mut restarted = build_core();
+        assert!(matches!(
+            restarted
+                .dispatch(Request::Query(Query::ResolvePreviewAsset {
+                    asset_id: AssetId("asset-restart".into()),
+                    intent: velvet_preview_core::PreviewIntent::Quick,
+                    surface: velvet_preview_core::PreviewSurface::Workspace,
+                }))
+                .expect("the persisted asset should resolve after restart"),
+            Response::Preview(_)
+        ));
+        restarted
+            .dispatch(Request::Command(Command::RemovePreviewAsset {
+                asset_id: AssetId("asset-restart".into()),
+            }))
+            .expect("the source location should be removed");
+        assert!(matches!(
+            restarted.dispatch(Request::Query(Query::ResolvePreviewAsset {
+                asset_id: AssetId("asset-restart".into()),
+                intent: velvet_preview_core::PreviewIntent::Quick,
+                surface: velvet_preview_core::PreviewSurface::Workspace,
+            })),
+            Err(CoreError::AssetSource { asset_id, .. }) if asset_id == "asset-restart"
+        ));
+
+        let _ = fs::remove_file(source_path);
+        let _ = fs::remove_file(jobs_path);
+        let _ = fs::remove_file(asset_sources_path);
+        let _ = fs::remove_dir_all(plugin_root);
     }
 
     #[test]

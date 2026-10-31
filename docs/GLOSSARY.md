@@ -64,6 +64,10 @@ WorkbenchApp 在 WorkspaceArea 中呈现的主界面。AppSurface 可以拥有�
 
 由核心和工作台提供给多个 WorkbenchApp 的共享工作上下文，例如当前数据范围、选中的 Asset、Collection、查询和筛选条件。它是跨应用的只读投影和事件来源，不是某个应用的私有数据库。
 
+## Asset source location
+
+由 `application-core` 持有的 AssetId 到应用源文件的持久化注册。注册保存 canonical regular-file location、ContentKind 和可选的 source-owned fingerprint；路径只在 Rust source adapter 内部使用，不通过 Preview、插件运行时或渲染层投影。
+
 ## State scope
 
 持久化状态的生命周期范围，包括 Profile、Workspace、Session/Window 和 Extension。Scope 决定状态由谁拥有、何时恢复以及何时失效。

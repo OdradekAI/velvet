@@ -58,6 +58,18 @@ Costs:
 - Identity reconciliation needs explicit rules for duplicates and external sources.
 - Facet schemas require versioning and stale-state handling.
 
+## Current implementation note
+
+The v0.0.3 foundation now persists application-owned source registrations in a
+versioned JSON adapter. Each registration keeps an opaque `AssetId`, a
+canonical regular-file location, a declared `ContentKind` and an optional
+source-owned content fingerprint. `application-core` owns registration,
+removal and recovery behavior; `persistence` only reads and writes the
+versioned records. Preview providers and the renderer receive bounded content
+or typed projections, never the stored path. Asset reconciliation, move
+tracking, duplicate identity and fingerprint policy remain open questions for
+the Asset domain decision.
+
 ## Open questions
 
 - Is the content fingerprint a full hash, a partial hash or a tiered fingerprint?

@@ -216,6 +216,18 @@ export type CoreRequest =
     }
   | {
       readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'register-preview-asset';
+      readonly assetId: string;
+      readonly sourcePath: string;
+      readonly contentKind: string;
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'remove-preview-asset';
+      readonly assetId: string;
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
       readonly kind: 'invoke-plugin-command';
       readonly extensionId: string;
       readonly commandId: string;
@@ -270,6 +282,13 @@ export type CoreRequest =
       readonly kind: 'resolve-preview';
       readonly assetId: string;
       readonly contentKind: string;
+      readonly intent: 'quick' | 'inspect' | 'analyze';
+      readonly surface: 'workspace' | 'thumbnail' | 'inspector';
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'resolve-preview-asset';
+      readonly assetId: string;
       readonly intent: 'quick' | 'inspect' | 'analyze';
       readonly surface: 'workspace' | 'thumbnail' | 'inspector';
     };

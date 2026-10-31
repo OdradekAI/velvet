@@ -1,10 +1,11 @@
 use std::collections::BTreeMap;
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{self, Read};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
-use velvet_asset_core::{AssetId, ContentFingerprint};
+use velvet_asset_core::{AssetId, ContentFingerprint, ContentKindId};
+use velvet_persistence::{AssetSourceLocationRecord, AssetSourceLocationStore, PersistenceError};
 use velvet_preview_core::{
     PreviewAssetContent, PreviewAssetSource, PreviewContext, PreviewReadRequest, PreviewSourceError,
 };
@@ -15,6 +16,16 @@ use velvet_preview_core::{
 pub trait AssetSourceLocationResolver: Send + Sync {
     fn resolve(&self, asset_id: &AssetId) -> Result<PathBuf, PreviewSourceError>;
 
+    /// Returns the source-owned content kind when the registry has one.
+    /// Existing composition-only resolvers may leave this unset and continue
+    /// using an explicit content kind supplied by the preview request.
+    fn content_kind(
+        &self,
+        _asset_id: &AssetId,
+    ) -> Result<Option<ContentKindId>, PreviewSourceError> {
+        Ok(None)
+    }
+
     /// Returns the source-owned identity of the complete content at this
     /// location. Resolvers that cannot provide one leave derived work
     /// uncacheable rather than guessing from an opaque path.
@@ -23,6 +34,234 @@ pub trait AssetSourceLocationResolver: Send + Sync {
         _asset_id: &AssetId,
     ) -> Result<Option<ContentFingerprint>, PreviewSourceError> {
         Ok(None)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PreviewAssetRegistration {
+    pub asset_id: AssetId,
+    pub source_path: PathBuf,
+    pub content_kind: ContentKindId,
+    pub fingerprint: Option<ContentFingerprint>,
+}
+
+struct StoredAssetSourceLocation {
+    source_path: PathBuf,
+    content_kind: ContentKindId,
+    fingerprint: Option<ContentFingerprint>,
+}
+
+/// Rust-owned persistent mapping from opaque Asset identities to local files.
+///
+/// The registry owns registration and persistence; `FilePreviewAssetSource`
+/// consumes its resolved path only inside the application core. The path is
+/// never returned by the protocol or passed to a provider or plugin runtime.
+pub struct PersistentAssetSourceLocationResolver {
+    locations: RwLock<BTreeMap<AssetId, StoredAssetSourceLocation>>,
+    store: Arc<dyn AssetSourceLocationStore>,
+    load_error: Option<PreviewSourceError>,
+}
+
+impl PersistentAssetSourceLocationResolver {
+    pub fn new(store: Arc<dyn AssetSourceLocationStore>) -> Self {
+        let (locations, load_error) = match store.load() {
+            Ok(records) => (
+                records.into_iter().filter_map(record_to_location).collect(),
+                None,
+            ),
+            Err(error) => (BTreeMap::new(), Some(map_persistence_error(error))),
+        };
+        Self {
+            locations: RwLock::new(locations),
+            store,
+            load_error,
+        }
+    }
+
+    pub fn load_error(&self) -> Option<&PreviewSourceError> {
+        self.load_error.as_ref()
+    }
+
+    pub fn register(
+        &self,
+        asset_id: AssetId,
+        source_path: impl AsRef<Path>,
+        content_kind: ContentKindId,
+        fingerprint: Option<ContentFingerprint>,
+    ) -> Result<(), PreviewSourceError> {
+        validate_asset_id(&asset_id)?;
+        validate_content_kind(&content_kind)?;
+        validate_fingerprint(&fingerprint)?;
+
+        let source_path = fs::canonicalize(source_path.as_ref()).map_err(map_io_error)?;
+        let metadata = fs::metadata(&source_path).map_err(map_io_error)?;
+        if !metadata.is_file() {
+            return Err(PreviewSourceError::NotFound);
+        }
+
+        let registration = StoredAssetSourceLocation {
+            source_path,
+            content_kind,
+            fingerprint,
+        };
+        let key = asset_id.clone();
+        let mut locations = self
+            .locations
+            .write()
+            .map_err(|_| PreviewSourceError::Failed("asset source lock poisoned".into()))?;
+        let previous = locations.insert(key.clone(), registration);
+        if let Err(error) = self.store.save(&location_records(&locations)) {
+            if let Some(previous) = previous {
+                locations.insert(key, previous);
+            } else {
+                locations.remove(&key);
+            }
+            return Err(map_persistence_error(error));
+        }
+        Ok(())
+    }
+
+    pub fn remove(&self, asset_id: &AssetId) -> Result<bool, PreviewSourceError> {
+        validate_asset_id(asset_id)?;
+        let mut locations = self
+            .locations
+            .write()
+            .map_err(|_| PreviewSourceError::Failed("asset source lock poisoned".into()))?;
+        let Some(previous) = locations.remove(asset_id) else {
+            return Ok(false);
+        };
+        if let Err(error) = self.store.save(&location_records(&locations)) {
+            locations.insert(asset_id.clone(), previous);
+            return Err(map_persistence_error(error));
+        }
+        Ok(true)
+    }
+
+    pub fn registration(
+        &self,
+        asset_id: &AssetId,
+    ) -> Result<PreviewAssetRegistration, PreviewSourceError> {
+        validate_asset_id(asset_id)?;
+        let locations = self
+            .locations
+            .read()
+            .map_err(|_| PreviewSourceError::Failed("asset source lock poisoned".into()))?;
+        let Some(location) = locations.get(asset_id) else {
+            return Err(PreviewSourceError::NotFound);
+        };
+        Ok(PreviewAssetRegistration {
+            asset_id: asset_id.clone(),
+            source_path: location.source_path.clone(),
+            content_kind: location.content_kind.clone(),
+            fingerprint: location.fingerprint.clone(),
+        })
+    }
+}
+
+impl AssetSourceLocationResolver for PersistentAssetSourceLocationResolver {
+    fn resolve(&self, asset_id: &AssetId) -> Result<PathBuf, PreviewSourceError> {
+        Ok(self.registration(asset_id)?.source_path)
+    }
+
+    fn content_kind(
+        &self,
+        asset_id: &AssetId,
+    ) -> Result<Option<ContentKindId>, PreviewSourceError> {
+        Ok(Some(self.registration(asset_id)?.content_kind))
+    }
+
+    fn fingerprint(
+        &self,
+        asset_id: &AssetId,
+    ) -> Result<Option<ContentFingerprint>, PreviewSourceError> {
+        Ok(self.registration(asset_id)?.fingerprint)
+    }
+}
+
+fn record_to_location(
+    record: AssetSourceLocationRecord,
+) -> Option<(AssetId, StoredAssetSourceLocation)> {
+    let asset_id = AssetId(record.asset_id);
+    let content_kind = ContentKindId(record.content_kind);
+    let source_path = PathBuf::from(record.source_path);
+    let fingerprint = record.fingerprint.map(ContentFingerprint);
+    if validate_asset_id(&asset_id).is_err()
+        || validate_content_kind(&content_kind).is_err()
+        || !source_path.is_absolute()
+        || validate_fingerprint(&fingerprint).is_err()
+    {
+        return None;
+    }
+    Some((
+        asset_id,
+        StoredAssetSourceLocation {
+            source_path,
+            content_kind,
+            fingerprint,
+        },
+    ))
+}
+
+fn location_records(
+    locations: &BTreeMap<AssetId, StoredAssetSourceLocation>,
+) -> Vec<AssetSourceLocationRecord> {
+    locations
+        .iter()
+        .map(|(asset_id, location)| AssetSourceLocationRecord {
+            asset_id: asset_id.0.clone(),
+            source_path: location.source_path.to_string_lossy().into_owned(),
+            content_kind: location.content_kind.0.clone(),
+            fingerprint: location
+                .fingerprint
+                .as_ref()
+                .map(|fingerprint| fingerprint.0.clone()),
+        })
+        .collect()
+}
+
+fn validate_asset_id(asset_id: &AssetId) -> Result<(), PreviewSourceError> {
+    if asset_id.0.trim().is_empty() {
+        Err(PreviewSourceError::InvalidRequest(
+            "asset id cannot be empty".into(),
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_content_kind(content_kind: &ContentKindId) -> Result<(), PreviewSourceError> {
+    if content_kind.0.trim().is_empty() {
+        Err(PreviewSourceError::InvalidRequest(
+            "content kind cannot be empty".into(),
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_fingerprint(
+    fingerprint: &Option<ContentFingerprint>,
+) -> Result<(), PreviewSourceError> {
+    if fingerprint
+        .as_ref()
+        .is_some_and(|fingerprint| fingerprint.0.trim().is_empty())
+    {
+        Err(PreviewSourceError::InvalidRequest(
+            "fingerprint cannot be empty".into(),
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+fn map_persistence_error(error: PersistenceError) -> PreviewSourceError {
+    match error {
+        PersistenceError::Unavailable => {
+            PreviewSourceError::Failed("asset source location store is unavailable".into())
+        }
+        PersistenceError::CorruptState => {
+            PreviewSourceError::Failed("asset source location state is corrupt".into())
+        }
     }
 }
 
@@ -248,6 +487,7 @@ mod tests {
     use super::*;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
+    use velvet_persistence::InMemoryAssetSourceLocationStore;
 
     fn context(asset_id: &str) -> PreviewContext {
         PreviewContext {
@@ -346,5 +586,88 @@ mod tests {
         );
 
         fs::remove_file(path).expect("test source should be cleaned up");
+    }
+
+    #[test]
+    fn persistent_locations_round_trip_and_remove_without_exposing_paths() {
+        let path = std::env::temp_dir().join(format!(
+            "velvet-persistent-preview-source-{}-{}.txt",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time should be valid")
+                .as_nanos()
+        ));
+        fs::write(&path, "persistent preview").expect("test source should be writable");
+
+        let store = Arc::new(InMemoryAssetSourceLocationStore::default());
+        let resolver = PersistentAssetSourceLocationResolver::new(store.clone());
+        resolver
+            .register(
+                AssetId("asset-1".into()),
+                &path,
+                ContentKindId("text/plain".into()),
+                Some(ContentFingerprint("sha256:asset-1".into())),
+            )
+            .expect("the source location should be registered");
+
+        let source = FilePreviewAssetSource::new(Arc::new(resolver));
+        assert_eq!(
+            source
+                .read(&context("asset-1"), PreviewReadRequest::default())
+                .expect("the persisted source should be readable"),
+            PreviewAssetContent::Text {
+                text: "persistent preview".into(),
+                truncated: false,
+            }
+        );
+
+        let restored = PersistentAssetSourceLocationResolver::new(store);
+        assert_eq!(
+            restored
+                .content_kind(&AssetId("asset-1".into()))
+                .expect("the content kind should be restored"),
+            Some(ContentKindId("text/plain".into()))
+        );
+        assert_eq!(
+            restored
+                .fingerprint(&AssetId("asset-1".into()))
+                .expect("the fingerprint should be restored"),
+            Some(ContentFingerprint("sha256:asset-1".into()))
+        );
+        assert!(restored
+            .remove(&AssetId("asset-1".into()))
+            .expect("the source location should be removable"));
+        assert_eq!(
+            restored.resolve(&AssetId("asset-1".into())),
+            Err(PreviewSourceError::NotFound)
+        );
+
+        fs::remove_file(path).expect("test source should be cleaned up");
+    }
+
+    #[test]
+    fn persistent_location_load_failure_is_isolated_until_the_store_recovers() {
+        struct FailingStore;
+
+        impl AssetSourceLocationStore for FailingStore {
+            fn load(&self) -> Result<Vec<AssetSourceLocationRecord>, PersistenceError> {
+                Err(PersistenceError::CorruptState)
+            }
+
+            fn save(
+                &self,
+                _locations: &[AssetSourceLocationRecord],
+            ) -> Result<(), PersistenceError> {
+                Err(PersistenceError::Unavailable)
+            }
+        }
+
+        let resolver = PersistentAssetSourceLocationResolver::new(Arc::new(FailingStore));
+        assert!(resolver.load_error().is_some());
+        assert_eq!(
+            resolver.resolve(&AssetId("missing".into())),
+            Err(PreviewSourceError::NotFound)
+        );
     }
 }

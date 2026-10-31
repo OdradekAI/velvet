@@ -3,8 +3,10 @@ import { PreviewHost } from '/tmp/velvet-plugin-tests/workbench/preview/preview-
 import { PreviewRegistry } from '/tmp/velvet-plugin-tests/workbench/preview/preview-registry.js';
 
 let shouldFail = false;
+const requests = [];
 const core = {
-  request: async () => {
+  request: async (request) => {
+    requests.push(request);
     if (shouldFail) {
       throw new Error('preview provider unavailable');
     }
@@ -52,6 +54,9 @@ const context = {
 const resolved = await host.open(context);
 assert.equal(resolved.session.providerId, 'image.provider');
 assert.equal(host.snapshot.state, 'ready');
+const resolvedAsset = await host.openAsset('asset-1', 'quick', 'workspace');
+assert.equal(resolvedAsset.session.providerId, 'image.provider');
+assert.equal(requests[1]?.kind, 'resolve-preview-asset');
 
 shouldFail = true;
 const fallback = await host.open(context);

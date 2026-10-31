@@ -94,9 +94,13 @@ UTF-8 boundaries, and returns `NotFound` or a typed failure without leaking
 storage details. `application-core` also exposes a bounded
 `FilePreviewAssetSource` behind an `AssetSourceLocationResolver`; the resolver
 owns source-location policy and the file adapter owns only typed bounded reads.
-The path never crosses the provider seam. A future persistence/source-location
-adapter can replace the resolver without changing `preview-core`, which keeps
-only the source seam and preview logic.
+The path never crosses the provider seam. A versioned persistence/source-
+location adapter now replaces the composition stub without changing
+`preview-core`: `application-core` owns opaque `AssetId` registration and
+removal, while `persistence` stores canonical regular-file records. An
+AssetId-only Preview query derives the registered content kind in Rust;
+missing files and corrupt source state become typed diagnostics while generic
+fallback and unrelated Workbench state remain usable.
 
 The first trusted providers are host-owned text and image adapters. They return
 framework-neutral `Text` and `Image` renderer projections containing only the

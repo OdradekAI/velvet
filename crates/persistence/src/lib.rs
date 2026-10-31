@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use serde::{Deserialize, Serialize};
 use velvet_job_system::{JobSnapshot, JobStateStore};
 use velvet_layout_model::LayoutState;
 use velvet_workbench_protocol::ProfileState;
@@ -9,6 +10,103 @@ use velvet_workbench_protocol::ProfileState;
 pub enum PersistenceError {
     Unavailable,
     CorruptState,
+}
+
+pub const ASSET_SOURCE_LOCATION_SCHEMA_VERSION: u16 = 1;
+
+/// Storage-facing representation of an application-owned Asset source.
+///
+/// The persistence adapter stores the path because the application core owns
+/// the source-location policy. It never projects this record to the renderer
+/// or an extension runtime.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AssetSourceLocationRecord {
+    pub asset_id: String,
+    pub source_path: String,
+    pub content_kind: String,
+    pub fingerprint: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AssetSourceLocationState {
+    schema_version: u16,
+    locations: Vec<AssetSourceLocationRecord>,
+}
+
+pub trait AssetSourceLocationStore: Send + Sync {
+    fn load(&self) -> Result<Vec<AssetSourceLocationRecord>, PersistenceError>;
+    fn save(&self, locations: &[AssetSourceLocationRecord]) -> Result<(), PersistenceError>;
+}
+
+#[derive(Default)]
+pub struct InMemoryAssetSourceLocationStore {
+    locations: std::sync::Mutex<Vec<AssetSourceLocationRecord>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct JsonFileAssetSourceLocationStore {
+    path: PathBuf,
+}
+
+impl JsonFileAssetSourceLocationStore {
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        Self { path: path.into() }
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl AssetSourceLocationStore for InMemoryAssetSourceLocationStore {
+    fn load(&self) -> Result<Vec<AssetSourceLocationRecord>, PersistenceError> {
+        self.locations
+            .lock()
+            .map(|locations| locations.clone())
+            .map_err(|_| PersistenceError::Unavailable)
+    }
+
+    fn save(&self, locations: &[AssetSourceLocationRecord]) -> Result<(), PersistenceError> {
+        self.locations
+            .lock()
+            .map(|mut current| *current = locations.to_vec())
+            .map_err(|_| PersistenceError::Unavailable)
+    }
+}
+
+impl AssetSourceLocationStore for JsonFileAssetSourceLocationStore {
+    fn load(&self) -> Result<Vec<AssetSourceLocationRecord>, PersistenceError> {
+        let bytes = match fs::read(&self.path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(_) => return Err(PersistenceError::Unavailable),
+        };
+
+        let state = serde_json::from_slice::<AssetSourceLocationState>(&bytes)
+            .map_err(|_| PersistenceError::CorruptState)?;
+        if state.schema_version != ASSET_SOURCE_LOCATION_SCHEMA_VERSION {
+            return Err(PersistenceError::CorruptState);
+        }
+        Ok(state.locations)
+    }
+
+    fn save(&self, locations: &[AssetSourceLocationRecord]) -> Result<(), PersistenceError> {
+        if let Some(parent) = self.path.parent() {
+            fs::create_dir_all(parent).map_err(|_| PersistenceError::Unavailable)?;
+        }
+
+        let state = AssetSourceLocationState {
+            schema_version: ASSET_SOURCE_LOCATION_SCHEMA_VERSION,
+            locations: locations.to_vec(),
+        };
+        let bytes =
+            serde_json::to_vec_pretty(&state).map_err(|_| PersistenceError::CorruptState)?;
+        let temporary_path = self.path.with_extension("json.tmp");
+        fs::write(&temporary_path, bytes).map_err(|_| PersistenceError::Unavailable)?;
+        fs::rename(temporary_path, &self.path).map_err(|_| PersistenceError::Unavailable)
+    }
 }
 
 pub trait LayoutStateStore: Send + Sync {
@@ -244,6 +342,41 @@ mod tests {
                 .expect("written profile should exist"),
             state
         );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn file_store_round_trips_asset_source_locations() {
+        let path = temporary_path("asset-source-round-trip");
+        let store = JsonFileAssetSourceLocationStore::new(&path);
+        let locations = vec![AssetSourceLocationRecord {
+            asset_id: "asset-1".into(),
+            source_path: "/tmp/asset-1.txt".into(),
+            content_kind: "text/plain".into(),
+            fingerprint: Some("sha256:asset-1".into()),
+        }];
+
+        store
+            .save(&locations)
+            .expect("asset source locations should be written");
+        assert_eq!(
+            store
+                .load()
+                .expect("asset source locations should be readable"),
+            locations
+        );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn asset_source_store_rejects_unknown_schema() {
+        let path = temporary_path("asset-source-schema");
+        fs::write(&path, br#"{"schemaVersion":99,"locations":[]}"#)
+            .expect("the invalid asset source state should be writable");
+        let store = JsonFileAssetSourceLocationStore::new(&path);
+
+        assert_eq!(store.load(), Err(PersistenceError::CorruptState));
         let _ = fs::remove_file(path);
     }
 
