@@ -171,10 +171,27 @@ export function NativeWorkbenchApp() {
     setStartupAttempt((attempt) => attempt + 1);
   }
 
+  function exportRecoveryDiagnostics(): void {
+    const app = state?.app;
+    if (!app) {
+      return;
+    }
+    void (async () => {
+      const destination = await fileExporter.pickExportPath('velvet-recovery-diagnostics.json');
+      if (!destination) {
+        return;
+      }
+      await app.workbench.recovery.exportDiagnostics(destination);
+    })().catch((error: unknown) => {
+      setStartupError(error);
+    });
+  }
+
   if (startupError) {
     return (
       <RecoverySurface
         error={startupError}
+        onExportDiagnostics={exportRecoveryDiagnostics}
         onRetry={retryStartup}
         projection={recoveryProjection}
       />
@@ -217,6 +234,7 @@ export function NativeWorkbenchApp() {
   return (
     <RecoveryBoundary
       key={startupAttempt}
+      onExportDiagnostics={exportRecoveryDiagnostics}
       onRetry={retryStartup}
       projection={recoveryProjection}
     >

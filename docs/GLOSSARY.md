@@ -112,6 +112,10 @@ Asset source 当前是否可访问的 Rust 投影。移动硬盘或网络盘断�
 
 由用户主动导出的诊断包，包含经过脱敏的版本、平台、启动阶段、退出信息、组件身份和有限日志尾部，用于本地排障或在用户单独同意后上传；默认不包含 Asset 内容、凭据、密钥和未脱敏路径。
 
+## RecoveryDiagnosticBundle
+
+早期恢复路径导出的有界诊断表示，只包含 recovery projection、schema 和导出时间。它通过宿主 typed command 写入用户选择的本地路径，失败文本被截断，不上传数据，也不取代包含生命周期、Job、插件和崩溃关联信息的完整 `DiagnosticBundle`。
+
 ## WorkspaceContext
 
 由核心和工作台提供给多个 WorkbenchApp 的共享工作上下文，例如当前数据范围、选中的 Asset、Collection、查询和筛选条件。它是跨应用的只读投影和事件来源，不是某个应用的私有数据库。

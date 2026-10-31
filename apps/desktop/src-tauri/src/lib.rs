@@ -354,6 +354,11 @@ pub enum WireRequest {
         protocol_version: u16,
         destination: String,
     },
+    ExportRecoveryDiagnostics {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        destination: String,
+    },
     InvokePluginCommand {
         #[serde(rename = "protocolVersion")]
         protocol_version: u16,
@@ -653,6 +658,13 @@ impl WireRequest {
             } => {
                 validate_inner_protocol(outer_protocol_version, protocol_version)?;
                 Ok(Request::Command(Command::ExportPluginInstallRecoveryLog { destination }))
+            }
+            Self::ExportRecoveryDiagnostics {
+                protocol_version,
+                destination,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Command(Command::ExportRecoveryDiagnostics { destination }))
             }
             Self::InvokePluginCommand {
                 protocol_version,
@@ -1885,6 +1897,28 @@ mod tests {
         assert_eq!(value["response"]["kind"], "recovery");
         assert_eq!(value["response"]["projection"]["mode"], "safe");
         assert_eq!(value["response"]["projection"]["actions"][0], "retry");
+    }
+
+    #[test]
+    fn wire_recovery_diagnostics_export_maps_to_a_typed_command() {
+        let envelope: WireRequestEnvelope = serde_json::from_value(serde_json::json!({
+            "protocolVersion": 1,
+            "requestId": 30,
+            "request": {
+                "kind": "export-recovery-diagnostics",
+                "protocolVersion": 1,
+                "destination": "/tmp/velvet-recovery.json"
+            }
+        }))
+        .expect("the recovery diagnostics request should deserialize");
+        assert!(matches!(
+            envelope
+                .request
+                .into_core(1)
+                .expect("the recovery diagnostics request should map"),
+            Request::Command(Command::ExportRecoveryDiagnostics { destination })
+                if destination == "/tmp/velvet-recovery.json"
+        ));
     }
 
     #[test]

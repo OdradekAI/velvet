@@ -16,15 +16,21 @@ export interface RecoverySurfaceProps {
   readonly projection?: CoreRecoveryProjection;
   readonly error?: unknown;
   readonly onRetry: () => void;
+  readonly onExportDiagnostics?: () => void | Promise<void>;
 }
 
 /**
  * Host-owned recovery surface. It only renders a recovery projection and
- * delegates the currently supported retry action to the composition root.
- * Unsupported destructive actions stay visible but disabled until their
+ * delegates supported retry and diagnostic export actions to the composition
+ * root. Unsupported destructive actions stay visible but disabled until their
  * owner-specific command exists.
  */
-export function RecoverySurface({ projection, error, onRetry }: RecoverySurfaceProps) {
+export function RecoverySurface({
+  projection,
+  error,
+  onRetry,
+  onExportDiagnostics,
+}: RecoverySurfaceProps) {
   const actions = projection?.actions.length ? projection.actions : ['retry'] as const;
   const failureMessage = projection?.lastFailure?.message;
   const errorMessage = error instanceof Error ? error.message : error ? String(error) : undefined;
@@ -61,7 +67,14 @@ export function RecoverySurface({ projection, error, onRetry }: RecoverySurfaceP
         </dl>
         <div aria-label="Recovery actions" className="velvet-recovery-actions" role="group">
           {actions.map((action) => {
-            const enabled = action === 'retry';
+            const enabled = action === 'retry' || (
+              action === 'export-diagnostics' && onExportDiagnostics !== undefined
+            );
+            const onClick = action === 'retry'
+              ? onRetry
+              : action === 'export-diagnostics'
+                ? onExportDiagnostics
+                : undefined;
             return (
               <button
                 aria-disabled={!enabled}
@@ -69,7 +82,7 @@ export function RecoverySurface({ projection, error, onRetry }: RecoverySurfaceP
                 data-recovery-action={action}
                 disabled={!enabled}
                 key={action}
-                onClick={enabled ? onRetry : undefined}
+                onClick={enabled && onClick ? () => { void onClick(); } : undefined}
                 type="button"
               >
                 {ACTION_LABELS[action]}
@@ -88,6 +101,7 @@ export function RecoverySurface({ projection, error, onRetry }: RecoverySurfaceP
 interface RecoveryBoundaryProps {
   readonly projection?: CoreRecoveryProjection;
   readonly onRetry: () => void;
+  readonly onExportDiagnostics?: () => void | Promise<void>;
   readonly children: ReactNode;
 }
 
@@ -112,6 +126,7 @@ export class RecoveryBoundary extends Component<RecoveryBoundaryProps, RecoveryB
       return (
         <RecoverySurface
           error={this.state.error}
+          onExportDiagnostics={this.props.onExportDiagnostics}
           onRetry={this.props.onRetry}
           projection={this.props.projection}
         />

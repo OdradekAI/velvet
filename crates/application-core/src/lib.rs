@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::fs;
 use std::sync::{Arc, Mutex};
 
 mod preview_source;
@@ -456,6 +457,18 @@ impl ApplicationCore {
         message: impl Into<String>,
     ) {
         let _ = self.recovery.record_failure(class, message);
+    }
+
+    pub fn export_recovery_diagnostics(
+        &self,
+        destination: impl AsRef<std::path::Path>,
+    ) -> Result<(), RecoveryError> {
+        let bytes =
+            serde_json::to_vec_pretty(&self.recovery.diagnostic_bundle()).map_err(|error| {
+                RecoveryError::Store(format!("diagnostic serialization failed: {error}"))
+            })?;
+        fs::write(destination.as_ref(), bytes)
+            .map_err(|error| RecoveryError::Store(format!("diagnostic export failed: {error}")))
     }
 
     pub fn register_plugin(&mut self, manifest: ExtensionManifest) -> Result<(), PluginError> {
@@ -1086,6 +1099,11 @@ impl ApplicationCore {
             Request::Command(Command::ExportPluginInstallRecoveryLog { destination }) => {
                 self.export_plugin_install_recovery_log(destination)
                     .map_err(plugin_error)?;
+                Ok(Response::Accepted)
+            }
+            Request::Command(Command::ExportRecoveryDiagnostics { destination }) => {
+                self.export_recovery_diagnostics(destination)
+                    .map_err(|error| CoreError::Recovery(format!("{error:?}")))?;
                 Ok(Response::Accepted)
             }
             Request::Command(Command::UninstallPlugin { extension_id }) => {
@@ -2803,6 +2821,33 @@ mod tests {
             }
             other => panic!("expected a recovery projection, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn recovery_diagnostics_export_is_bounded_and_uses_the_authoritative_projection() {
+        let destination = temporary_layout_path().with_extension("recovery.json");
+        let core = ApplicationCore::default();
+        core.record_recovery_failure(
+            velvet_workbench_protocol::RecoveryFailureClass::OptionalComponent,
+            "x".repeat(2_000),
+        );
+        core.export_recovery_diagnostics(&destination)
+            .expect("recovery diagnostics should export");
+
+        let value: serde_json::Value =
+            serde_json::from_slice(&fs::read(&destination).expect("export should be readable"))
+                .expect("export should be valid JSON");
+        assert_eq!(value["schemaVersion"], 1);
+        assert_eq!(value["projection"]["schemaVersion"], 1);
+        assert_eq!(
+            value["projection"]["lastFailure"]["message"]
+                .as_str()
+                .expect("failure message should be text")
+                .chars()
+                .count(),
+            512
+        );
+        let _ = fs::remove_file(destination);
     }
 
     #[test]

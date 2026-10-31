@@ -3,8 +3,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use velvet_persistence::{InMemoryRecoveryJournalStore, RecoveryJournalStore};
 use velvet_workbench_protocol::{
-    RecoveryAction, RecoveryCheckpoint, RecoveryFailure, RecoveryFailureClass,
-    RecoveryJournalState, RecoveryLaunchReceipt, RecoveryMode, RecoveryProjection, StartupPhase,
+    RecoveryAction, RecoveryCheckpoint, RecoveryDiagnosticBundle, RecoveryFailure,
+    RecoveryFailureClass, RecoveryJournalState, RecoveryLaunchReceipt, RecoveryMode,
+    RecoveryProjection, StartupPhase, RECOVERY_DIAGNOSTIC_SCHEMA_VERSION,
 };
 
 const SAFE_MODE_FAILURE_THRESHOLD: u32 = 2;
@@ -246,6 +247,18 @@ impl RecoverySupervisor {
 
     pub fn observe_deadline(&self) -> Result<RecoveryProjection, RecoveryError> {
         self.update_with_deadline(|_, _| {})
+    }
+
+    pub fn diagnostic_bundle(&self) -> RecoveryDiagnosticBundle {
+        let mut projection = self.projection();
+        if let Some(failure) = projection.last_failure.as_mut() {
+            failure.message = failure.message.chars().take(512).collect();
+        }
+        RecoveryDiagnosticBundle {
+            schema_version: RECOVERY_DIAGNOSTIC_SCHEMA_VERSION,
+            exported_at_ms: self.clock.now_ms(),
+            projection,
+        }
     }
 
     pub fn record_shutdown_intent(&self) -> Result<RecoveryProjection, RecoveryError> {

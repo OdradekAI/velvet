@@ -126,20 +126,23 @@ The desktop host now owns a renderer `RecoverySurface` and `RecoveryBoundary`.
 Startup/layout failures and descendant Workbench mount exceptions render the
 same projection without loading plugin UI or reading native storage. Retry
 recreates the desktop composition and re-runs startup. The surface exposes the
-host action list, but only retry is enabled in this slice; restore, optional
-state reset, component quarantine and diagnostic export remain disabled until
-their typed owner commands exist. A platform-native no-WebView surface and
-host locale integration remain separate gates.
+host action list. Retry and user-initiated export of a bounded
+`RecoveryDiagnosticBundle` are enabled through typed host commands; restore,
+optional state reset and component quarantine remain disabled until their
+owner snapshot commands exist. The export contains only the recovery
+projection, a schema and timestamp, truncates failure text to a bounded
+length, and never uploads data. A platform-native no-WebView surface and host
+locale integration remain separate gates.
 
 Runtime failure in an activated optional plugin also records a degraded
 component failure and clears that owner's projections and Jobs; it does not
 increment the core pre-ready Safe Mode counter.
 
 This slice is deliberately narrower than the full decision: native no-WebView
-recovery, generation snapshots/`RecoverySet`, user restore actions and a
-bounded `DiagnosticBundle` are still implementation gates. Optional
-plugin activation is recorded as a degraded component failure
-and does not block the core-ready checkpoint. The file journal is an evidence
+recovery, generation snapshots/`RecoverySet`, user restore actions and the
+full cross-component `DiagnosticBundle` are still implementation gates.
+Optional plugin activation is recorded as a degraded component failure and does
+not block the core-ready checkpoint. The file journal is an evidence
 store, not yet a replacement for owner snapshots or a proof that writes are
 crash-durable on every platform; the persistence durability report remains a
 follow-up acceptance test. Shutdown completion is only evidence from the Tauri

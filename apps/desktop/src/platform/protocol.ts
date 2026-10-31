@@ -10,6 +10,8 @@ export const PLUGIN_RESOURCE_SCHEMA_VERSION = 1 as const;
 export type PluginResourceSchemaVersion = typeof PLUGIN_RESOURCE_SCHEMA_VERSION;
 export const RECOVERY_SCHEMA_VERSION = 1 as const;
 export type RecoverySchemaVersion = typeof RECOVERY_SCHEMA_VERSION;
+export const RECOVERY_DIAGNOSTIC_SCHEMA_VERSION = 1 as const;
+export type RecoveryDiagnosticSchemaVersion = typeof RECOVERY_DIAGNOSTIC_SCHEMA_VERSION;
 export type WorkbenchAppId = string;
 /** Compatibility alias for older clients and migration code. */
 export type WorkspaceId = WorkbenchAppId;
@@ -120,6 +122,11 @@ export type CoreRequest =
   | { readonly protocolVersion: ProtocolVersion; readonly kind: 'query-layout' }
   | { readonly protocolVersion: ProtocolVersion; readonly kind: 'query-profile' }
   | { readonly protocolVersion: ProtocolVersion; readonly kind: 'query-recovery' }
+  | {
+      readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'export-recovery-diagnostics';
+      readonly destination: string;
+    }
   | {
       readonly protocolVersion: ProtocolVersion;
       readonly kind: 'read-plugin-localization';
@@ -449,6 +456,12 @@ export interface CoreRecoveryProjection {
   readonly lastFailure: CoreRecoveryFailure | null;
   readonly lastGood: CoreRecoveryCheckpoint | null;
   readonly actions: readonly CoreRecoveryAction[];
+}
+
+export interface CoreRecoveryDiagnosticBundle {
+  readonly schemaVersion: RecoveryDiagnosticSchemaVersion;
+  readonly exportedAtMs: number;
+  readonly projection: CoreRecoveryProjection;
 }
 
 export type PluginState = 'registered' | 'starting' | 'active' | 'disabled' | 'failed';

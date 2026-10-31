@@ -51,9 +51,11 @@ const rootElement = document.createElement('div');
 document.body.append(rootElement);
 const root = createRoot(rootElement);
 let retries = 0;
+let exports = 0;
 
 await act(() => {
   root.render(React.createElement(RecoverySurface, {
+    onExportDiagnostics: () => { exports += 1; },
     onRetry: () => { retries += 1; },
     projection,
   }));
@@ -63,12 +65,17 @@ assert.equal(rootElement.querySelector('[data-recovery-mode="safe"]') !== null, 
 assert.equal(rootElement.querySelector('#velvet-recovery-title').textContent, 'Velvet could not mount the workbench');
 assert.equal(rootElement.querySelector('[data-recovery-action="retry"]').disabled, false);
 assert.equal(rootElement.querySelector('[data-recovery-action="restore-snapshot"]').disabled, true);
+assert.equal(rootElement.querySelector('[data-recovery-action="export-diagnostics"]').disabled, false);
 assert.match(rootElement.textContent, /layout migration failed/);
 
 await act(() => {
   rootElement.querySelector('[data-recovery-action="retry"]').click();
 });
 assert.equal(retries, 1);
+await act(() => {
+  rootElement.querySelector('[data-recovery-action="export-diagnostics"]').click();
+});
+assert.equal(exports, 1);
 
 function BrokenWorkbench() {
   throw new Error('renderer mount failed');

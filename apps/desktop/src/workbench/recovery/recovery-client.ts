@@ -42,6 +42,17 @@ export class RecoveryClient {
     return response.projection;
   }
 
+  public async exportDiagnostics(destination: string): Promise<void> {
+    const response = await this.core.request({
+      protocolVersion: 1,
+      kind: 'export-recovery-diagnostics',
+      destination,
+    });
+    if (response.kind !== 'accepted') {
+      throw new Error(`Expected an accepted recovery export response, received ${response.kind}`);
+    }
+  }
+
   public dispose(): void {
     this.unsubscribeCore();
     this.listeners.clear();

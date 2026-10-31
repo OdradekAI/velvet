@@ -14,8 +14,16 @@ const projection = {
 const listeners = new Set();
 const core = {
   request: async (request) => {
-    assert.deepEqual(request, { protocolVersion: 1, kind: 'query-recovery' });
-    return { kind: 'recovery', projection };
+    if (request.kind === 'query-recovery') {
+      assert.deepEqual(request, { protocolVersion: 1, kind: 'query-recovery' });
+      return { kind: 'recovery', projection };
+    }
+    assert.deepEqual(request, {
+      protocolVersion: 1,
+      kind: 'export-recovery-diagnostics',
+      destination: '/tmp/velvet-recovery.json',
+    });
+    return { kind: 'accepted' };
   },
   subscribe: (listener) => {
     listeners.add(listener);
@@ -28,6 +36,7 @@ const received = [];
 client.subscribe((value) => received.push(value));
 assert.deepEqual(await client.load(), projection);
 assert.deepEqual(client.snapshot(), projection);
+await client.exportDiagnostics('/tmp/velvet-recovery.json');
 
 for (const listener of listeners) {
   listener({ kind: 'recovery-changed', projection: { ...projection, mode: 'degraded' } });

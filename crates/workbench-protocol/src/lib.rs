@@ -18,6 +18,7 @@ pub const PROTOCOL_VERSION: u16 = 1;
 pub const PROFILE_SCHEMA_VERSION: u16 = 1;
 pub const PLUGIN_RESOURCE_SCHEMA_VERSION: u16 = 1;
 pub const RECOVERY_SCHEMA_VERSION: u16 = 1;
+pub const RECOVERY_DIAGNOSTIC_SCHEMA_VERSION: u16 = 1;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -232,6 +233,14 @@ pub struct RecoveryProjection {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RecoveryDiagnosticBundle {
+    pub schema_version: u16,
+    pub exported_at_ms: u64,
+    pub projection: RecoveryProjection,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RecoveryLaunchReceipt {
     pub attempt_id: u64,
     pub app_version: String,
@@ -336,6 +345,9 @@ pub enum Command {
     },
     ClearPluginInstallRecoveryLog,
     ExportPluginInstallRecoveryLog {
+        destination: String,
+    },
+    ExportRecoveryDiagnostics {
         destination: String,
     },
     UninstallPlugin {
@@ -632,5 +644,28 @@ mod tests {
         let decoded: RecoveryProjection =
             serde_json::from_value(json).expect("recovery should deserialize");
         assert_eq!(decoded, projection);
+    }
+
+    #[test]
+    fn recovery_diagnostic_bundle_uses_stable_wire_names() {
+        let bundle = RecoveryDiagnosticBundle {
+            schema_version: RECOVERY_DIAGNOSTIC_SCHEMA_VERSION,
+            exported_at_ms: 42,
+            projection: RecoveryProjection {
+                schema_version: RECOVERY_SCHEMA_VERSION,
+                mode: RecoveryMode::Degraded,
+                phase: StartupPhase::OptionalActivation,
+                attempt_id: 2,
+                consecutive_failures: 0,
+                last_failure: None,
+                last_good: None,
+                actions: vec![RecoveryAction::Retry, RecoveryAction::ExportDiagnostics],
+            },
+        };
+        let json = serde_json::to_value(&bundle).expect("diagnostic bundle should serialize");
+        assert_eq!(json["schemaVersion"], RECOVERY_DIAGNOSTIC_SCHEMA_VERSION);
+        assert_eq!(json["exportedAtMs"], 42);
+        assert_eq!(json["projection"]["mode"], "degraded");
+        assert_eq!(json["projection"]["actions"][1], "export-diagnostics");
     }
 }
