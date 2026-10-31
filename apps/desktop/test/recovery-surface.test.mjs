@@ -42,9 +42,10 @@ const projection = {
     phase: 'preflight',
     message: 'layout migration failed',
     atMs: 42,
+    target: { ownerId: 'layout', scope: 'workspace', generation: 1 },
   },
   lastGood: null,
-  actions: ['retry', 'restore-snapshot', 'export-diagnostics'],
+  actions: ['retry', 'restore-snapshot', 'quarantine-state', 'export-diagnostics'],
 };
 
 const rootElement = document.createElement('div');
@@ -52,11 +53,15 @@ document.body.append(rootElement);
 const root = createRoot(rootElement);
 let retries = 0;
 let exports = 0;
+let restores = 0;
+let quarantines = 0;
 
 await act(() => {
   root.render(React.createElement(RecoverySurface, {
     onExportDiagnostics: () => { exports += 1; },
+    onQuarantineState: () => { quarantines += 1; },
     onRetry: () => { retries += 1; },
+    onRestoreSnapshot: () => { restores += 1; },
     projection,
   }));
 });
@@ -64,7 +69,8 @@ await act(() => {
 assert.equal(rootElement.querySelector('[data-recovery-mode="safe"]') !== null, true);
 assert.equal(rootElement.querySelector('#velvet-recovery-title').textContent, 'Velvet could not mount the workbench');
 assert.equal(rootElement.querySelector('[data-recovery-action="retry"]').disabled, false);
-assert.equal(rootElement.querySelector('[data-recovery-action="restore-snapshot"]').disabled, true);
+assert.equal(rootElement.querySelector('[data-recovery-action="restore-snapshot"]').disabled, false);
+assert.equal(rootElement.querySelector('[data-recovery-action="quarantine-state"]').disabled, false);
 assert.equal(rootElement.querySelector('[data-recovery-action="export-diagnostics"]').disabled, false);
 assert.match(rootElement.textContent, /layout migration failed/);
 
@@ -76,6 +82,12 @@ await act(() => {
   rootElement.querySelector('[data-recovery-action="export-diagnostics"]').click();
 });
 assert.equal(exports, 1);
+await act(() => {
+  rootElement.querySelector('[data-recovery-action="restore-snapshot"]').click();
+  rootElement.querySelector('[data-recovery-action="quarantine-state"]').click();
+});
+assert.equal(restores, 1);
+assert.equal(quarantines, 1);
 
 function BrokenWorkbench() {
   throw new Error('renderer mount failed');

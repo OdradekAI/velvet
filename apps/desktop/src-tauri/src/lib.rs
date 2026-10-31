@@ -5,7 +5,7 @@ use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 use tauri_plugin_global_shortcut::{Builder as ShortcutBuilder, ShortcutState};
-use velvet_application_core::ApplicationCore;
+use velvet_application_core::{ApplicationCore, ApplicationRecoveryStores};
 use velvet_job_system::{JobId, JobProvenance, JobResult, JobSnapshot, JobStatus};
 use velvet_layout_model::{
     LayoutCommand, LayoutState, ViewContainerState, ViewState, WorkbenchAppId, WorkbenchPart,
@@ -19,7 +19,9 @@ use velvet_plugin_api::{
 };
 use velvet_persistence::{
     JsonFileAssetSourceLocationStore, JsonFileJobStateStore, JsonFileLayoutStateStore,
-    JsonFileProfileStateStore, JsonFileRecoveryJournalStore,
+    JsonFileProfileStateStore, JsonFileRecoveryJournalStore, JsonFileRecoverySetStore,
+    JsonFileStateSnapshotStore, SnapshotJobStateStore, SnapshotLayoutStateStore,
+    SnapshotProfileStateStore, DurabilityMode,
 };
 use velvet_preview_core::{PreviewIntent, PreviewRenderer, PreviewSurface, ResolvedPreview};
 use velvet_tauri_adapter::{CoreEventSink, TauriTransport};
@@ -359,6 +361,14 @@ pub enum WireRequest {
         protocol_version: u16,
         destination: String,
     },
+    RestoreRecoverySet {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+    },
+    QuarantineRecoveryFailure {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+    },
     InvokePluginCommand {
         #[serde(rename = "protocolVersion")]
         protocol_version: u16,
@@ -665,6 +675,14 @@ impl WireRequest {
             } => {
                 validate_inner_protocol(outer_protocol_version, protocol_version)?;
                 Ok(Request::Command(Command::ExportRecoveryDiagnostics { destination }))
+            }
+            Self::RestoreRecoverySet { protocol_version } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Command(Command::RestoreRecoverySet))
+            }
+            Self::QuarantineRecoveryFailure { protocol_version } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Command(Command::QuarantineRecoveryFailure))
             }
             Self::InvokePluginCommand {
                 protocol_version,
@@ -1544,14 +1562,45 @@ pub fn run() {
             let profile_path = app_data_dir.join("profile.json");
             let asset_sources_path = app_data_dir.join("asset-sources.json");
             let recovery_path = app_data_dir.join("recovery-journal.json");
+            let snapshot_root = app_data_dir.join("snapshots");
+            let recovery_set_root = app_data_dir.join("recovery-sets");
             let plugin_directory = app_data_dir.join("plugins");
-            let mut core = ApplicationCore::with_store_and_plugin_directory_and_job_store_and_profile_store_and_asset_source_store_and_recovery_journal(
-                Arc::new(JsonFileLayoutStateStore::new(layout_path)),
+            let durability = if cfg!(unix) {
+                DurabilityMode::RequireFsync
+            } else {
+                DurabilityMode::AtomicRenameOnly
+            };
+            let snapshot_store = Arc::new(JsonFileStateSnapshotStore::with_durability(
+                snapshot_root,
+                durability,
+            ));
+            let recovery_set_store = Arc::new(JsonFileRecoverySetStore::with_durability(
+                recovery_set_root,
+                durability,
+            ));
+            let mut core = ApplicationCore::with_store_and_plugin_directory_and_job_store_and_profile_store_and_asset_source_store_and_recovery_stores(
+                Arc::new(SnapshotLayoutStateStore::new(
+                    snapshot_store.clone(),
+                    Some(recovery_set_store.clone()),
+                    Arc::new(JsonFileLayoutStateStore::new(layout_path)),
+                )),
                 &plugin_directory,
-                Arc::new(JsonFileJobStateStore::new(jobs_path)),
-                Arc::new(JsonFileProfileStateStore::new(profile_path)),
+                Arc::new(SnapshotJobStateStore::new(
+                    snapshot_store.clone(),
+                    Some(recovery_set_store.clone()),
+                    Arc::new(JsonFileJobStateStore::new(jobs_path)),
+                )),
+                Arc::new(SnapshotProfileStateStore::new(
+                    snapshot_store.clone(),
+                    Some(recovery_set_store.clone()),
+                    Arc::new(JsonFileProfileStateStore::new(profile_path)),
+                )),
                 Arc::new(JsonFileAssetSourceLocationStore::new(asset_sources_path)),
-                Arc::new(JsonFileRecoveryJournalStore::new(recovery_path)),
+                ApplicationRecoveryStores::new(
+                    Arc::new(JsonFileRecoveryJournalStore::new(recovery_path)),
+                    Some(snapshot_store),
+                    Some(recovery_set_store),
+                ),
             );
             core.mark_workbench_ready();
             if core.in_safe_mode() {
@@ -1919,6 +1968,37 @@ mod tests {
             Request::Command(Command::ExportRecoveryDiagnostics { destination })
                 if destination == "/tmp/velvet-recovery.json"
         ));
+    }
+
+    #[test]
+    fn wire_recovery_restore_and_quarantine_map_to_typed_commands() {
+        for (kind, expected) in [
+            (
+                "restore-recovery-set",
+                Command::RestoreRecoverySet,
+            ),
+            (
+                "quarantine-recovery-failure",
+                Command::QuarantineRecoveryFailure,
+            ),
+        ] {
+            let envelope: WireRequestEnvelope = serde_json::from_value(serde_json::json!({
+                "protocolVersion": 1,
+                "requestId": 31,
+                "request": {
+                    "kind": kind,
+                    "protocolVersion": 1
+                }
+            }))
+            .expect("the recovery action request should deserialize");
+            assert_eq!(
+                envelope
+                    .request
+                    .into_core(1)
+                    .expect("the recovery action request should map"),
+                Request::Command(expected)
+            );
+        }
     }
 
     #[test]

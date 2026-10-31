@@ -126,13 +126,13 @@ The desktop host now owns a renderer `RecoverySurface` and `RecoveryBoundary`.
 Startup/layout failures and descendant Workbench mount exceptions render the
 same projection without loading plugin UI or reading native storage. Retry
 recreates the desktop composition and re-runs startup. The surface exposes the
-host action list. Retry and user-initiated export of a bounded
-`RecoveryDiagnosticBundle` are enabled through typed host commands; restore,
-optional state reset and component quarantine remain disabled until their
-owner snapshot commands exist. The export contains only the recovery
-projection, a schema and timestamp, truncates failure text to a bounded
-length, and never uploads data. A platform-native no-WebView surface and host
-locale integration remain separate gates.
+host action list. Retry, previous-set restore, targeted quarantine and
+user-initiated export of a bounded `RecoveryDiagnosticBundle` are enabled
+through typed host commands; optional-state reset still waits for a separate
+owner contract. The export contains only the recovery projection, a schema and
+timestamp, truncates failure text to a bounded length, and never uploads data.
+A platform-native no-WebView surface and host locale integration remain
+separate gates.
 
 The persistence crate now provides a framework-independent `StateSnapshotStore`
 primitive. It validates owner and scope segments, bounds payloads, records a
@@ -140,17 +140,43 @@ schema, generation, checksum and committed marker, publishes staged snapshots
 through same-directory atomic replacement and can quarantine a staged or
 committed generation. Its in-memory implementation is used by fault-injection
 tests. This is a storage seam only; `ApplicationCore` has not yet migrated
-Layout, Profile or Job ownership to it, and no cross-owner `RecoverySet` is
-published by this slice.
+its generic embedded constructors to it, and no cross-owner `RecoverySet` is
+published by those constructors.
+
+The native Tauri composition now wraps Layout, Profile and Job stores with that
+primitive. A wrapper reads the committed generation named by the current core
+`RecoverySet` when one exists, falls back to the legacy owner store only while
+that owner has no snapshot, and writes the owner payload as a new staged
+generation. A successful owner write proposes a new set by replacing only the
+changed owner; all other members are copied from the current set. This prevents
+startup persistence of one owner from reintroducing a generation that the user
+just restored. The set pointer is published only after every referenced
+generation validates.
+
+`RecoverySetStore` supports a previous-set restore. The typed
+`restore-recovery-set` action publishes that previous set for the next startup;
+it does not mutate the live in-memory domain graph. A targeted
+`quarantine-recovery-failure` action first points the index at the previous
+set, then quarantines the failed owner generation. The recovery projection
+includes the owner, scope and generation target only when the failure can be
+quarantined, so the renderer never invents a path or generation.
+
+The native file stores expose a durability mode. Unix Tauri builds request file
+and parent-directory `fsync` before advertising a committed snapshot or set;
+platforms without directory sync support use atomic rename only and remain
+diagnosable as weaker durability. A failed required sync does not publish a
+committed file. This is a crash-durability seam, not a claim that power-loss
+survival has been proven on every filesystem.
 
 Runtime failure in an activated optional plugin also records a degraded
 component failure and clears that owner's projections and Jobs; it does not
 increment the core pre-ready Safe Mode counter.
 
 This slice is deliberately narrower than the full decision: native no-WebView
-recovery, owner integration with generation snapshots/`RecoverySet`, user
-restore actions and the full cross-component `DiagnosticBundle` are still
-implementation gates.
+recovery, cross-owner migration transactions beyond the per-owner set pointer,
+user-facing restore confirmation and the full cross-component `DiagnosticBundle`
+are still implementation gates. A successful renderer restore or quarantine
+action requests a fresh startup so the selected set becomes live.
 Optional plugin activation is recorded as a degraded component failure and does
 not block the core-ready checkpoint. The file journal is an evidence
 store, not yet a replacement for owner snapshots or a proof that writes are

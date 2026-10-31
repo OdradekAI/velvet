@@ -197,8 +197,17 @@ pub enum RecoveryAction {
     Retry,
     DisableRecentComponent,
     RestoreSnapshot,
+    QuarantineState,
     ResetOptionalState,
     ExportDiagnostics,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RecoveryTarget {
+    pub owner_id: String,
+    pub scope: String,
+    pub generation: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -208,6 +217,8 @@ pub struct RecoveryFailure {
     pub phase: StartupPhase,
     pub message: String,
     pub at_ms: u64,
+    #[serde(default)]
+    pub target: Option<RecoveryTarget>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -350,6 +361,8 @@ pub enum Command {
     ExportRecoveryDiagnostics {
         destination: String,
     },
+    RestoreRecoverySet,
+    QuarantineRecoveryFailure,
     UninstallPlugin {
         extension_id: ExtensionId,
     },
@@ -631,6 +644,7 @@ mod tests {
                 phase: StartupPhase::Preflight,
                 message: "previous launch did not complete".into(),
                 at_ms: 42,
+                target: None,
             }),
             last_good: None,
             actions: vec![RecoveryAction::Retry, RecoveryAction::RestoreSnapshot],
@@ -667,5 +681,28 @@ mod tests {
         assert_eq!(json["exportedAtMs"], 42);
         assert_eq!(json["projection"]["mode"], "degraded");
         assert_eq!(json["projection"]["actions"][1], "export-diagnostics");
+    }
+
+    #[test]
+    fn recovery_quarantine_target_uses_stable_wire_names() {
+        let failure = RecoveryFailure {
+            class: RecoveryFailureClass::CoreMigration,
+            phase: StartupPhase::RecoveringState,
+            message: "migration failed".into(),
+            at_ms: 9,
+            target: Some(RecoveryTarget {
+                owner_id: "layout".into(),
+                scope: "workspace".into(),
+                generation: 3,
+            }),
+        };
+        let json = serde_json::to_value(&failure).expect("recovery failure should serialize");
+        assert_eq!(json["target"]["ownerId"], "layout");
+        assert_eq!(json["target"]["generation"], 3);
+        assert_eq!(
+            serde_json::to_value(RecoveryAction::QuarantineState)
+                .expect("quarantine action should serialize"),
+            "quarantine-state"
+        );
     }
 }

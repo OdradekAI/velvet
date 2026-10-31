@@ -26,6 +26,7 @@ export type {
   CoreRecoveryFailureClass,
   CoreRecoveryMode,
   CoreRecoveryProjection,
+  CoreRecoveryTarget,
   RecoveryDiagnosticSchemaVersion,
   CoreStartupPhase,
   CoreEvent,

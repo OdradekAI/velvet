@@ -187,12 +187,40 @@ export function NativeWorkbenchApp() {
     });
   }
 
+  async function restoreRecoverySnapshot(): Promise<void> {
+    const app = state?.app;
+    if (!app) {
+      return;
+    }
+    try {
+      await app.workbench.recovery.restoreRecoverySet();
+      retryStartup();
+    } catch (error: unknown) {
+      setStartupError(error);
+    }
+  }
+
+  async function quarantineRecoveryFailure(): Promise<void> {
+    const app = state?.app;
+    if (!app) {
+      return;
+    }
+    try {
+      await app.workbench.recovery.quarantineFailure();
+      retryStartup();
+    } catch (error: unknown) {
+      setStartupError(error);
+    }
+  }
+
   if (startupError) {
     return (
       <RecoverySurface
         error={startupError}
-        onExportDiagnostics={exportRecoveryDiagnostics}
+        onExportDiagnostics={state ? exportRecoveryDiagnostics : undefined}
+        onQuarantineState={state ? quarantineRecoveryFailure : undefined}
         onRetry={retryStartup}
+        onRestoreSnapshot={state ? restoreRecoverySnapshot : undefined}
         projection={recoveryProjection}
       />
     );
@@ -234,8 +262,10 @@ export function NativeWorkbenchApp() {
   return (
     <RecoveryBoundary
       key={startupAttempt}
-      onExportDiagnostics={exportRecoveryDiagnostics}
+      onExportDiagnostics={state ? exportRecoveryDiagnostics : undefined}
+      onQuarantineState={state ? quarantineRecoveryFailure : undefined}
       onRetry={retryStartup}
+      onRestoreSnapshot={state ? restoreRecoverySnapshot : undefined}
       projection={recoveryProjection}
     >
       <WorkbenchShell

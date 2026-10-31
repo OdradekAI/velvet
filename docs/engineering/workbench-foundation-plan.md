@@ -172,8 +172,8 @@ must not be advertised as the target guarantee.
 
 | Target contract | Current skeleton evidence | Remaining gap | Priority |
 | --- | --- | --- | --- |
-| `RecoverySupervisor`, startup phases and two-failure Safe Mode | `application-core` now records a versioned launch journal, phase/checkpoint/deadline state, shutdown evidence and core-migration/optional-component failures; Tauri uses the file journal and records `ExitRequested`/`Exit`; the desktop has a host-owned renderer RecoverySurface boundary | Native no-WebView recovery, typed restore/quarantine/diagnostic actions and host locale integration are still missing | P0 (partial) |
-| Owner snapshots, `RecoverySet` and migration rollback | `persistence` now has a generic staged/committed `StateSnapshotStore` with owner/scope validation, bounded payloads, checksum verification, atomic publication and quarantine tests; Layout/Profile/Job/source stores still use their existing adapters | No owner migration onto the snapshot primitive, commit barrier, recovery index, fsync/durability report or cross-owner restore | P0 |
+| `RecoverySupervisor`, startup phases and two-failure Safe Mode | `application-core` now records a versioned launch journal, phase/checkpoint/deadline state, shutdown evidence and core-migration/optional-component failures; Tauri uses the file journal and records `ExitRequested`/`Exit`; the desktop has a host-owned renderer RecoverySurface with typed restore/quarantine/diagnostic actions | Native no-WebView recovery and host locale integration are still missing | P0 (partial) |
+| Owner snapshots, `RecoverySet` and migration rollback | Native Tauri composition wraps Layout/Profile/Job with `StateSnapshotStore`, publishes a core `RecoverySet` after owner changes, restores the previous set and quarantines a targeted generation; the stores have atomic-only and required-fsync modes with fault tests | Generic embedded constructors still use legacy stores, cross-owner migration transactions and a persisted durability report remain | P0 (partial) |
 | Extension-owned data with host-controlled backup/migration | Plugin install has staging/rollback directories and a bounded install recovery log | No namespaced `ExtensionStorage`, backup/migration participant handles, extension generations or selective extension-state restore | P0 |
 | Per-extension runtime failure domain | `PluginHost` tracks one process per extension, health state and contribution cleanup; `JobSystem` marks restart work interrupted; optional activation failures now degrade the recovery projection without blocking Core | Sidecar launch accepts a manifest program, stderr is discarded, process groups and parent-death cleanup are absent, and runtime events are not structured or persisted | P0 |
 | Resource-governed, restartable Jobs | `JobSystem` persists snapshots/results, supports cooperative cancellation, retry and provenance matching | No owner/device/Job budget ledger, deadlines, cancellation grace, exponential backoff policy, checkpoint contract or suspend/offline policy | P0/P1 |
@@ -549,6 +549,9 @@ crates/
       migrations.rs
       facet_store.rs
       snapshot.rs
+      recovery_set.rs
+      owner_snapshots.rs
+      durability.rs
   tauri-adapter/
     src/
       lib.rs
@@ -950,7 +953,10 @@ The first lifecycle implementation slice has these acceptance results:
 | Renderer `RecoverySurface` catches startup/layout/Workbench mount failure, renders the projection offline and offers a retry seam | Pass | `recovery-surface.test.mjs` plus `RecoveryBoundary` mount fixture |
 | RecoverySurface exports a bounded, user-initiated `RecoveryDiagnosticBundle` through Rust/Tauri/TypeScript | Pass | Application-core export, Tauri wire fixture, `RecoveryClient` and renderer action tests |
 | Generic staged/committed `StateSnapshotStore` validates and quarantines owner generations | Pass | `crates/persistence/src/snapshot.rs` file-store and in-memory fault-injection tests |
-| Native no-WebView recovery, typed restore/quarantine actions and generation snapshots | Pending | Next P0 slices |
+| Native Tauri Layout/Profile/Job stores load and publish through owner snapshots, while an existing `RecoverySet` keeps restored members stable across Job startup persistence | Pass | `owner_snapshots` fixtures plus `ApplicationCore` restore regression test |
+| `RecoverySet` commit barrier publishes only complete validated members; previous-set restore and targeted quarantine select the prior set, and the renderer restarts to apply it | Pass | File/in-memory recovery-set tests, typed ApplicationCore action test and native recovery action wiring |
+| Required fsync mode syncs the temporary file and parent directory before publication; unsupported platforms remain atomic-only and diagnosable | Pass | `DurabilityMode::RequireFsync` persistence fixture and native composition policy |
+| Native no-WebView recovery and cross-owner migration transactions | Pending | Next P0 slices |
 
 All P0 rows must pass before the native foundation is considered safe for alpha
 users. P1 rows must pass for each supported platform and package/channel before

@@ -53,6 +53,26 @@ export class RecoveryClient {
     }
   }
 
+  public async restoreRecoverySet(): Promise<void> {
+    const response = await this.core.request({
+      protocolVersion: 1,
+      kind: 'restore-recovery-set',
+    });
+    if (response.kind !== 'accepted') {
+      throw new Error(`Expected an accepted recovery restore response, received ${response.kind}`);
+    }
+  }
+
+  public async quarantineFailure(): Promise<void> {
+    const response = await this.core.request({
+      protocolVersion: 1,
+      kind: 'quarantine-recovery-failure',
+    });
+    if (response.kind !== 'accepted') {
+      throw new Error(`Expected an accepted recovery quarantine response, received ${response.kind}`);
+    }
+  }
+
   public dispose(): void {
     this.unsubscribeCore();
     this.listeners.clear();

@@ -5,7 +5,7 @@ use velvet_persistence::{InMemoryRecoveryJournalStore, RecoveryJournalStore};
 use velvet_workbench_protocol::{
     RecoveryAction, RecoveryCheckpoint, RecoveryDiagnosticBundle, RecoveryFailure,
     RecoveryFailureClass, RecoveryJournalState, RecoveryLaunchReceipt, RecoveryMode,
-    RecoveryProjection, StartupPhase, RECOVERY_DIAGNOSTIC_SCHEMA_VERSION,
+    RecoveryProjection, RecoveryTarget, StartupPhase, RECOVERY_DIAGNOSTIC_SCHEMA_VERSION,
 };
 
 const SAFE_MODE_FAILURE_THRESHOLD: u32 = 2;
@@ -147,6 +147,7 @@ impl RecoverySupervisor {
                     phase: StartupPhase::Preflight,
                     message: "Previous launch ended before a completion checkpoint".into(),
                     at_ms: now,
+                    target: None,
                 });
             }
 
@@ -213,6 +214,34 @@ impl RecoverySupervisor {
         class: RecoveryFailureClass,
         message: impl Into<String>,
     ) -> Result<RecoveryProjection, RecoveryError> {
+        self.record_failure_with_target(class, message, None)
+    }
+
+    pub fn record_failure_for_owner(
+        &self,
+        class: RecoveryFailureClass,
+        message: impl Into<String>,
+        owner_id: impl Into<String>,
+        scope: impl Into<String>,
+        generation: u64,
+    ) -> Result<RecoveryProjection, RecoveryError> {
+        self.record_failure_with_target(
+            class,
+            message,
+            Some(RecoveryTarget {
+                owner_id: owner_id.into(),
+                scope: scope.into(),
+                generation,
+            }),
+        )
+    }
+
+    fn record_failure_with_target(
+        &self,
+        class: RecoveryFailureClass,
+        message: impl Into<String>,
+        target: Option<RecoveryTarget>,
+    ) -> Result<RecoveryProjection, RecoveryError> {
         self.update_without_deadline(|inner, now| {
             let phase = inner
                 .state
@@ -240,6 +269,7 @@ impl RecoverySupervisor {
                 phase,
                 message: message.into(),
                 at_ms: now,
+                target,
             });
             inner.state.active_launch = None;
         })
@@ -289,6 +319,7 @@ impl RecoverySupervisor {
                     phase: StartupPhase::Preflight,
                     message: "Lifecycle state lock was unavailable".into(),
                     at_ms: 0,
+                    target: None,
                 }),
                 last_good: None,
                 actions: vec![RecoveryAction::Retry, RecoveryAction::ExportDiagnostics],
@@ -357,6 +388,7 @@ impl RecoverySupervisor {
                     .unwrap_or(StartupPhase::Preflight),
                 message: format!("Lifecycle journal could not be written: {error:?}"),
                 at_ms: now,
+                target: None,
             });
             return Err(RecoveryError::Store(format!("{error:?}")));
         }
@@ -372,6 +404,7 @@ fn unavailable_state(message: impl Into<String>) -> RecoveryJournalState {
             phase: StartupPhase::Preflight,
             message: message.into(),
             at_ms: 0,
+            target: None,
         }),
         ..RecoveryJournalState::default()
     }
@@ -391,6 +424,7 @@ fn record_startup_timeout(state: &mut RecoveryJournalState, phase: StartupPhase,
         phase,
         message: "Startup phase exceeded its monotonic deadline".into(),
         at_ms,
+        target: None,
     });
     state.active_launch = None;
 }
@@ -430,6 +464,14 @@ fn projection(inner: &RecoveryInner) -> RecoveryProjection {
             RecoveryAction::RestoreSnapshot,
             RecoveryAction::ResetOptionalState,
         ]);
+    }
+    if state
+        .last_failure
+        .as_ref()
+        .and_then(|failure| failure.target.as_ref())
+        .is_some()
+    {
+        actions.push(RecoveryAction::QuarantineState);
     }
     RecoveryProjection {
         schema_version: state.schema_version,

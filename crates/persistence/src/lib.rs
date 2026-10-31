@@ -6,8 +6,23 @@ use velvet_job_system::{JobSnapshot, JobStateStore};
 use velvet_layout_model::LayoutState;
 use velvet_workbench_protocol::{ProfileState, RecoveryJournalState, RECOVERY_SCHEMA_VERSION};
 
+mod durability;
+mod owner_snapshots;
+mod recovery_set;
 mod snapshot;
 
+pub use durability::DurabilityMode;
+
+pub use owner_snapshots::{
+    SnapshotJobStateStore, SnapshotLayoutStateStore, SnapshotProfileStateStore, JOB_SNAPSHOT_OWNER,
+    JOB_SNAPSHOT_SCOPE, LAYOUT_SNAPSHOT_OWNER, LAYOUT_SNAPSHOT_SCOPE, PROFILE_SNAPSHOT_OWNER,
+    PROFILE_SNAPSHOT_SCOPE,
+};
+pub use recovery_set::{
+    commit_current_recovery_set, commit_recovery_set_after_owner_change, InMemoryRecoverySetStore,
+    JsonFileRecoverySetStore, RecoverySet, RecoverySetError, RecoverySetMember, RecoverySetStore,
+    CORE_RECOVERY_SET_ID, RECOVERY_SET_FORMAT_VERSION,
+};
 pub use snapshot::{
     InMemoryStateSnapshotStore, JsonFileStateSnapshotStore, SnapshotError, StateSnapshot,
     StateSnapshotMetadata, StateSnapshotStore, MAX_STATE_SNAPSHOT_BYTES,
@@ -366,16 +381,23 @@ impl JobStateStore for JsonFileJobStateStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
     use velvet_layout_model::WorkbenchPart;
     use velvet_workbench_protocol::{RecoveryLaunchReceipt, StartupPhase};
+
+    static TEMPORARY_PATH_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
     fn temporary_path(name: &str) -> PathBuf {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system time should be after the Unix epoch")
             .as_nanos();
-        std::env::temp_dir().join(format!("velvet-{name}-{}-{nonce}.json", std::process::id()))
+        let sequence = TEMPORARY_PATH_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "velvet-{name}-{}-{nonce}-{sequence}.json",
+            std::process::id()
+        ))
     }
 
     #[test]

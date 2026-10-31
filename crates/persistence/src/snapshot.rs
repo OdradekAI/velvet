@@ -6,6 +6,8 @@ use std::sync::Mutex;
 use crc32fast::hash;
 use serde::{Deserialize, Serialize};
 
+use crate::durability::{write_atomic, DurabilityMode};
+
 pub const STATE_SNAPSHOT_FORMAT_VERSION: u16 = 1;
 pub const MAX_STATE_SNAPSHOT_BYTES: usize = 8 * 1024 * 1024;
 
@@ -44,6 +46,12 @@ pub trait StateSnapshotStore: Send + Sync {
         owner_id: &str,
         scope: &str,
     ) -> Result<Option<StateSnapshot>, SnapshotError>;
+    fn load_generation(
+        &self,
+        owner_id: &str,
+        scope: &str,
+        generation: u64,
+    ) -> Result<Option<StateSnapshot>, SnapshotError>;
     fn quarantine(&self, owner_id: &str, scope: &str, generation: u64)
         -> Result<(), SnapshotError>;
 }
@@ -51,15 +59,27 @@ pub trait StateSnapshotStore: Send + Sync {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct JsonFileStateSnapshotStore {
     root: PathBuf,
+    durability: DurabilityMode,
 }
 
 impl JsonFileStateSnapshotStore {
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into() }
+        Self::with_durability(root, DurabilityMode::AtomicRenameOnly)
+    }
+
+    pub fn with_durability(root: impl Into<PathBuf>, durability: DurabilityMode) -> Self {
+        Self {
+            root: root.into(),
+            durability,
+        }
     }
 
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    pub fn durability_mode(&self) -> DurabilityMode {
+        self.durability
     }
 
     fn scope_dir(&self, owner_id: &str, scope: &str) -> Result<PathBuf, SnapshotError> {
@@ -114,7 +134,7 @@ impl StateSnapshotStore for JsonFileStateSnapshotStore {
             &snapshot.metadata.scope,
             snapshot.metadata.generation,
         )?;
-        write_json_atomic(&path, snapshot)
+        write_json_atomic(&path, snapshot, self.durability)
     }
 
     fn commit(&self, owner_id: &str, scope: &str, generation: u64) -> Result<(), SnapshotError> {
@@ -135,7 +155,7 @@ impl StateSnapshotStore for JsonFileStateSnapshotStore {
         validate_snapshot(&snapshot, false)?;
         snapshot.metadata.committed = true;
         let committed = self.committed_path(owner_id, scope, generation)?;
-        write_json_atomic(&committed, &snapshot)?;
+        write_json_atomic(&committed, &snapshot, self.durability)?;
         fs::remove_file(staged).map_err(|error| {
             SnapshotError::Unavailable(format!("staged snapshot could not be retired: {error}"))
         })
@@ -194,6 +214,35 @@ impl StateSnapshotStore for JsonFileStateSnapshotStore {
             }
         }
         Ok(latest)
+    }
+
+    fn load_generation(
+        &self,
+        owner_id: &str,
+        scope: &str,
+        generation: u64,
+    ) -> Result<Option<StateSnapshot>, SnapshotError> {
+        let path = self.committed_path(owner_id, scope, generation)?;
+        let bytes = match fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => {
+                return Err(SnapshotError::Unavailable(format!(
+                    "snapshot could not be read: {error}"
+                )))
+            }
+        };
+        let snapshot = decode_snapshot(&bytes)?;
+        validate_snapshot(&snapshot, true)?;
+        if snapshot.metadata.owner_id != owner_id
+            || snapshot.metadata.scope != scope
+            || snapshot.metadata.generation != generation
+        {
+            return Err(SnapshotError::Corrupt(
+                "committed snapshot identity does not match its path".into(),
+            ));
+        }
+        Ok(Some(snapshot))
     }
 
     fn quarantine(
@@ -277,6 +326,25 @@ impl StateSnapshotStore for InMemoryStateSnapshotStore {
             })
     }
 
+    fn load_generation(
+        &self,
+        owner_id: &str,
+        scope: &str,
+        generation: u64,
+    ) -> Result<Option<StateSnapshot>, SnapshotError> {
+        let snapshot = self
+            .snapshots
+            .lock()
+            .map_err(|_| SnapshotError::Unavailable("snapshot lock poisoned".into()))?
+            .get(&(owner_id.into(), scope.into(), generation))
+            .filter(|snapshot| snapshot.metadata.committed)
+            .cloned();
+        snapshot.map_or(Ok(None), |snapshot| {
+            validate_snapshot(&snapshot, true)?;
+            Ok(Some(snapshot))
+        })
+    }
+
     fn quarantine(
         &self,
         owner_id: &str,
@@ -351,7 +419,11 @@ fn decode_snapshot(bytes: &[u8]) -> Result<StateSnapshot, SnapshotError> {
     Ok(envelope.snapshot)
 }
 
-fn write_json_atomic(path: &Path, snapshot: &StateSnapshot) -> Result<(), SnapshotError> {
+fn write_json_atomic(
+    path: &Path,
+    snapshot: &StateSnapshot,
+    durability: DurabilityMode,
+) -> Result<(), SnapshotError> {
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
     struct Envelope<'a> {
@@ -365,13 +437,7 @@ fn write_json_atomic(path: &Path, snapshot: &StateSnapshot) -> Result<(), Snapsh
     .map_err(|error| {
         SnapshotError::Corrupt(format!("snapshot JSON could not be encoded: {error}"))
     })?;
-    let temporary = path.with_extension("tmp");
-    fs::write(&temporary, bytes).map_err(|error| {
-        SnapshotError::Unavailable(format!(
-            "snapshot temporary file could not be written: {error}"
-        ))
-    })?;
-    fs::rename(temporary, path).map_err(|error| {
+    write_atomic(path, &bytes, durability).map_err(|error| {
         SnapshotError::Unavailable(format!("snapshot could not be published: {error}"))
     })
 }
@@ -379,14 +445,21 @@ fn write_json_atomic(path: &Path, snapshot: &StateSnapshot) -> Result<(), Snapsh
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    static TEMPORARY_ROOT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
     fn temporary_root() -> PathBuf {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system time should be after the Unix epoch")
             .as_nanos();
-        std::env::temp_dir().join(format!("velvet-snapshots-{}-{nonce}", std::process::id()))
+        let sequence = TEMPORARY_ROOT_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "velvet-snapshots-{}-{nonce}-{sequence}",
+            std::process::id()
+        ))
     }
 
     fn snapshot(generation: u64, committed: bool) -> StateSnapshot {
@@ -491,5 +564,27 @@ mod tests {
             .quarantine("layout", "workspace", 1)
             .expect("quarantine should work");
         assert_eq!(store.load_latest("layout", "workspace").unwrap(), None);
+    }
+
+    #[test]
+    fn require_fsync_uses_the_durability_seam_before_advertising_a_generation() {
+        let root = temporary_root();
+        let store =
+            JsonFileStateSnapshotStore::with_durability(&root, DurabilityMode::RequireFsync);
+        let staged = store.stage(&snapshot(1, false));
+        if cfg!(unix) {
+            staged.expect("Unix directory fsync should be available for the fixture");
+            store
+                .commit("layout", "workspace", 1)
+                .expect("the fsync-backed generation should commit");
+            assert!(store
+                .load_latest("layout", "workspace")
+                .expect("the committed generation should load")
+                .is_some());
+        } else {
+            assert!(staged.is_err());
+            assert_eq!(store.load_latest("layout", "workspace").unwrap(), None);
+        }
+        let _ = fs::remove_dir_all(root);
     }
 }

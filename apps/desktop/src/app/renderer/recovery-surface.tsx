@@ -8,6 +8,7 @@ const ACTION_LABELS: Record<CoreRecoveryAction, string> = {
   retry: 'Retry startup',
   'disable-recent-component': 'Disable recent component',
   'restore-snapshot': 'Restore validated snapshot',
+  'quarantine-state': 'Quarantine failed state',
   'reset-optional-state': 'Reset optional state',
   'export-diagnostics': 'Export diagnostics',
 };
@@ -17,12 +18,14 @@ export interface RecoverySurfaceProps {
   readonly error?: unknown;
   readonly onRetry: () => void;
   readonly onExportDiagnostics?: () => void | Promise<void>;
+  readonly onRestoreSnapshot?: () => void | Promise<void>;
+  readonly onQuarantineState?: () => void | Promise<void>;
 }
 
 /**
  * Host-owned recovery surface. It only renders a recovery projection and
- * delegates supported retry and diagnostic export actions to the composition
- * root. Unsupported destructive actions stay visible but disabled until their
+ * delegates typed retry, restore, quarantine and diagnostic actions to the
+ * composition root. Unsupported actions stay visible but disabled until their
  * owner-specific command exists.
  */
 export function RecoverySurface({
@@ -30,6 +33,8 @@ export function RecoverySurface({
   error,
   onRetry,
   onExportDiagnostics,
+  onRestoreSnapshot,
+  onQuarantineState,
 }: RecoverySurfaceProps) {
   const actions = projection?.actions.length ? projection.actions : ['retry'] as const;
   const failureMessage = projection?.lastFailure?.message;
@@ -69,12 +74,28 @@ export function RecoverySurface({
           {actions.map((action) => {
             const enabled = action === 'retry' || (
               action === 'export-diagnostics' && onExportDiagnostics !== undefined
+            ) || (
+              action === 'restore-snapshot' && onRestoreSnapshot !== undefined
+            ) || (
+              action === 'quarantine-state' && onQuarantineState !== undefined
             );
-            const onClick = action === 'retry'
-              ? onRetry
-              : action === 'export-diagnostics'
-                ? onExportDiagnostics
-                : undefined;
+            let onClick: (() => void | Promise<void>) | undefined;
+            switch (action) {
+              case 'retry':
+                onClick = onRetry;
+                break;
+              case 'export-diagnostics':
+                onClick = onExportDiagnostics;
+                break;
+              case 'restore-snapshot':
+                onClick = onRestoreSnapshot;
+                break;
+              case 'quarantine-state':
+                onClick = onQuarantineState;
+                break;
+              default:
+                onClick = undefined;
+            }
             return (
               <button
                 aria-disabled={!enabled}
@@ -102,6 +123,8 @@ interface RecoveryBoundaryProps {
   readonly projection?: CoreRecoveryProjection;
   readonly onRetry: () => void;
   readonly onExportDiagnostics?: () => void | Promise<void>;
+  readonly onRestoreSnapshot?: () => void | Promise<void>;
+  readonly onQuarantineState?: () => void | Promise<void>;
   readonly children: ReactNode;
 }
 
@@ -127,7 +150,9 @@ export class RecoveryBoundary extends Component<RecoveryBoundaryProps, RecoveryB
         <RecoverySurface
           error={this.state.error}
           onExportDiagnostics={this.props.onExportDiagnostics}
+          onQuarantineState={this.props.onQuarantineState}
           onRetry={this.props.onRetry}
+          onRestoreSnapshot={this.props.onRestoreSnapshot}
           projection={this.props.projection}
         />
       );

@@ -18,11 +18,18 @@ const core = {
       assert.deepEqual(request, { protocolVersion: 1, kind: 'query-recovery' });
       return { kind: 'recovery', projection };
     }
-    assert.deepEqual(request, {
-      protocolVersion: 1,
-      kind: 'export-recovery-diagnostics',
-      destination: '/tmp/velvet-recovery.json',
-    });
+    if (request.kind === 'export-recovery-diagnostics') {
+      assert.deepEqual(request, {
+        protocolVersion: 1,
+        kind: 'export-recovery-diagnostics',
+        destination: '/tmp/velvet-recovery.json',
+      });
+    } else {
+      assert.ok(
+        request.kind === 'restore-recovery-set' || request.kind === 'quarantine-recovery-failure',
+      );
+      assert.equal(request.protocolVersion, 1);
+    }
     return { kind: 'accepted' };
   },
   subscribe: (listener) => {
@@ -37,6 +44,8 @@ client.subscribe((value) => received.push(value));
 assert.deepEqual(await client.load(), projection);
 assert.deepEqual(client.snapshot(), projection);
 await client.exportDiagnostics('/tmp/velvet-recovery.json');
+await client.restoreRecoverySet();
+await client.quarantineFailure();
 
 for (const listener of listeners) {
   listener({ kind: 'recovery-changed', projection: { ...projection, mode: 'degraded' } });

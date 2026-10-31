@@ -14,6 +14,35 @@ pub use preview_source::{
     PersistentAssetSourceLocationResolver, PreviewAssetRegistration,
 };
 
+/// Persistence seams used by the application lifecycle and recovery path.
+///
+/// The composition root owns the concrete stores. `ApplicationCore` only
+/// consumes these protocol-shaped adapters and never reaches into their file
+/// layout or transaction details.
+pub struct ApplicationRecoveryStores {
+    pub journal: Arc<dyn RecoveryJournalStore>,
+    pub snapshots: Option<Arc<dyn StateSnapshotStore>>,
+    pub recovery_sets: Option<Arc<dyn RecoverySetStore>>,
+}
+
+impl ApplicationRecoveryStores {
+    pub fn new(
+        journal: Arc<dyn RecoveryJournalStore>,
+        snapshots: Option<Arc<dyn StateSnapshotStore>>,
+        recovery_sets: Option<Arc<dyn RecoverySetStore>>,
+    ) -> Self {
+        Self {
+            journal,
+            snapshots,
+            recovery_sets,
+        }
+    }
+
+    pub fn journal_only(journal: Arc<dyn RecoveryJournalStore>) -> Self {
+        Self::new(journal, None, None)
+    }
+}
+
 use velvet_asset_core::{AssetId, ContentFingerprint, ContentKindId};
 use velvet_job_system::{
     JobError, JobExecutionContext, JobExecutionError, JobExecutionResult, JobId, JobProvenance,
@@ -23,7 +52,7 @@ use velvet_layout_model::{InMemoryLayoutService, LayoutService};
 use velvet_persistence::{
     AssetSourceLocationStore, InMemoryAssetSourceLocationStore, InMemoryLayoutStateStore,
     InMemoryProfileStateStore, InMemoryRecoveryJournalStore, LayoutStateStore, ProfileStateStore,
-    RecoveryJournalStore,
+    RecoveryJournalStore, RecoverySetStore, StateSnapshotStore, CORE_RECOVERY_SET_ID,
 };
 use velvet_plugin_api::{
     ContributionKind, ExtensionId, ExtensionInstallPreview, ExtensionInstallRecovery,
@@ -62,6 +91,8 @@ pub struct ApplicationCore {
     plugin_directory: Option<std::path::PathBuf>,
     plugin_resources: Option<PluginResourceLoader>,
     recovery: RecoverySupervisor,
+    recovery_snapshots: Option<Arc<dyn StateSnapshotStore>>,
+    recovery_sets: Option<Arc<dyn RecoverySetStore>>,
 }
 
 const MAX_PREVIEW_ACTION_SESSIONS: usize = 128;
@@ -277,7 +308,26 @@ impl ApplicationCore {
             JobSystem::with_store(job_store),
             profile_store,
             asset_source_store,
-            recovery_journal,
+            ApplicationRecoveryStores::journal_only(recovery_journal),
+        )
+    }
+
+    pub fn with_store_and_plugin_directory_and_job_store_and_profile_store_and_asset_source_store_and_recovery_stores(
+        layout_store: Arc<dyn LayoutStateStore>,
+        plugin_directory: impl Into<std::path::PathBuf>,
+        job_store: Arc<dyn JobStateStore>,
+        profile_store: Arc<dyn ProfileStateStore>,
+        asset_source_store: Arc<dyn AssetSourceLocationStore>,
+        recovery_stores: ApplicationRecoveryStores,
+    ) -> Self {
+        Self::with_store_and_runtime_and_plugin_directory_and_jobs_and_profile_and_recovery_and_snapshot_stores(
+            layout_store,
+            Box::new(velvet_plugin_host::ProcessPluginRuntime),
+            Some(plugin_directory.into()),
+            JobSystem::with_store(job_store),
+            profile_store,
+            asset_source_store,
+            recovery_stores,
         )
     }
 
@@ -296,7 +346,9 @@ impl ApplicationCore {
             jobs,
             profile_store,
             asset_source_store,
-            Arc::new(InMemoryRecoveryJournalStore::default()),
+            ApplicationRecoveryStores::journal_only(Arc::new(
+                InMemoryRecoveryJournalStore::default(),
+            )),
         )
     }
 
@@ -307,21 +359,52 @@ impl ApplicationCore {
         jobs: JobSystem,
         profile_store: Arc<dyn ProfileStateStore>,
         asset_source_store: Arc<dyn AssetSourceLocationStore>,
-        recovery_journal: Arc<dyn RecoveryJournalStore>,
+        recovery_stores: ApplicationRecoveryStores,
     ) -> Self {
+        Self::with_store_and_runtime_and_plugin_directory_and_jobs_and_profile_and_recovery_and_snapshot_stores(
+            layout_store,
+            runtime,
+            plugin_directory,
+            jobs,
+            profile_store,
+            asset_source_store,
+            recovery_stores,
+        )
+    }
+
+    fn with_store_and_runtime_and_plugin_directory_and_jobs_and_profile_and_recovery_and_snapshot_stores(
+        layout_store: Arc<dyn LayoutStateStore>,
+        runtime: Box<dyn PluginRuntime>,
+        plugin_directory: Option<std::path::PathBuf>,
+        jobs: JobSystem,
+        profile_store: Arc<dyn ProfileStateStore>,
+        asset_source_store: Arc<dyn AssetSourceLocationStore>,
+        recovery_stores: ApplicationRecoveryStores,
+    ) -> Self {
+        let ApplicationRecoveryStores {
+            journal: recovery_journal,
+            snapshots: recovery_snapshots,
+            recovery_sets,
+        } = recovery_stores;
         let recovery = RecoverySupervisor::new(recovery_journal, Arc::new(SystemRecoveryClock));
         let launch_started = recovery.begin_launch(env!("CARGO_PKG_VERSION"));
         let mut layout = InMemoryLayoutService::default();
         match layout_store.load() {
-            Ok(Some(state)) => match layout.migrate(state) {
-                Ok(migrated) => layout = InMemoryLayoutService::from_state(migrated),
-                Err(error) => {
-                    let _ = recovery.record_failure(
-                        velvet_workbench_protocol::RecoveryFailureClass::CoreMigration,
-                        format!("layout migration failed: {error:?}"),
-                    );
+            Ok(Some(state)) => {
+                let generation = state.revision.max(1);
+                match layout.migrate(state) {
+                    Ok(migrated) => layout = InMemoryLayoutService::from_state(migrated),
+                    Err(error) => {
+                        let _ = recovery.record_failure_for_owner(
+                            velvet_workbench_protocol::RecoveryFailureClass::CoreMigration,
+                            format!("layout migration failed: {error:?}"),
+                            "layout",
+                            "workspace",
+                            generation,
+                        );
+                    }
                 }
-            },
+            }
             Ok(None) => {}
             Err(error) => {
                 let _ = recovery.record_failure(
@@ -333,10 +416,13 @@ impl ApplicationCore {
 
         let profile = match profile_store.load() {
             Ok(Some(state)) if valid_profile_state(&state) => state,
-            Ok(Some(_)) => {
-                let _ = recovery.record_failure(
+            Ok(Some(state)) => {
+                let _ = recovery.record_failure_for_owner(
                     velvet_workbench_protocol::RecoveryFailureClass::StateCorrupt,
                     "profile state failed validation",
+                    "profile",
+                    "user",
+                    state.revision.max(1),
                 );
                 ProfileState::default()
             }
@@ -367,6 +453,8 @@ impl ApplicationCore {
             plugin_directory,
             plugin_resources,
             recovery,
+            recovery_snapshots,
+            recovery_sets,
         };
 
         if launch_started.is_ok() && !core.recovery.is_safe_mode() {
@@ -386,6 +474,71 @@ impl ApplicationCore {
 
     pub fn recovery_projection(&self) -> velvet_workbench_protocol::RecoveryProjection {
         self.recovery.projection()
+    }
+
+    pub fn restore_recovery_set(&self) -> Result<(), CoreError> {
+        let Some(snapshot_store) = self.recovery_snapshots.as_deref() else {
+            return Err(CoreError::Recovery(
+                "recovery snapshots are unavailable in this composition".into(),
+            ));
+        };
+        let Some(recovery_sets) = self.recovery_sets.as_deref() else {
+            return Err(CoreError::Recovery(
+                "recovery set index is unavailable in this composition".into(),
+            ));
+        };
+        let Some(previous) = recovery_sets
+            .load_previous(CORE_RECOVERY_SET_ID)
+            .map_err(|error| CoreError::Recovery(format!("{error:?}")))?
+        else {
+            return Err(CoreError::Recovery(
+                "no previous committed recovery set is available".into(),
+            ));
+        };
+        for member in previous.members.values() {
+            let snapshot = snapshot_store
+                .load_generation(&member.owner_id, &member.scope, member.generation)
+                .map_err(|error| CoreError::Recovery(format!("{error:?}")))?;
+            if snapshot.is_none() {
+                return Err(CoreError::Recovery(format!(
+                    "recovery set member {}:{} is missing",
+                    member.owner_id, member.scope
+                )));
+            }
+        }
+        recovery_sets
+            .restore_previous(CORE_RECOVERY_SET_ID)
+            .map_err(|error| CoreError::Recovery(format!("{error:?}")))?
+            .ok_or_else(|| {
+                CoreError::Recovery("no previous committed recovery set is available".into())
+            })?;
+        Ok(())
+    }
+
+    pub fn quarantine_recovery_failure(&self) -> Result<(), CoreError> {
+        let Some(target) = self
+            .recovery
+            .projection()
+            .last_failure
+            .and_then(|failure| failure.target)
+        else {
+            return Err(CoreError::Recovery(
+                "the latest recovery failure has no quarantinable snapshot".into(),
+            ));
+        };
+        let Some(snapshot_store) = self.recovery_snapshots.as_deref() else {
+            return Err(CoreError::Recovery(
+                "recovery snapshots are unavailable in this composition".into(),
+            ));
+        };
+        if let Some(recovery_sets) = self.recovery_sets.as_deref() {
+            recovery_sets
+                .restore_previous(CORE_RECOVERY_SET_ID)
+                .map_err(|error| CoreError::Recovery(format!("{error:?}")))?;
+        }
+        snapshot_store
+            .quarantine(&target.owner_id, &target.scope, target.generation)
+            .map_err(|error| CoreError::Recovery(format!("{error:?}")))
     }
 
     pub fn in_safe_mode(&self) -> bool {
@@ -457,6 +610,19 @@ impl ApplicationCore {
         message: impl Into<String>,
     ) {
         let _ = self.recovery.record_failure(class, message);
+    }
+
+    pub fn record_recovery_failure_for_owner(
+        &self,
+        class: velvet_workbench_protocol::RecoveryFailureClass,
+        message: impl Into<String>,
+        owner_id: impl Into<String>,
+        scope: impl Into<String>,
+        generation: u64,
+    ) {
+        let _ = self
+            .recovery
+            .record_failure_for_owner(class, message, owner_id, scope, generation);
     }
 
     pub fn export_recovery_diagnostics(
@@ -1006,6 +1172,10 @@ impl ApplicationCore {
         self.profile.clone()
     }
 
+    pub fn layout_snapshot(&self) -> velvet_layout_model::LayoutState {
+        self.layout.snapshot()
+    }
+
     pub fn drain_job_events(&self) -> Vec<velvet_job_system::JobSnapshot> {
         self.jobs.drain_events()
     }
@@ -1104,6 +1274,14 @@ impl ApplicationCore {
             Request::Command(Command::ExportRecoveryDiagnostics { destination }) => {
                 self.export_recovery_diagnostics(destination)
                     .map_err(|error| CoreError::Recovery(format!("{error:?}")))?;
+                Ok(Response::Accepted)
+            }
+            Request::Command(Command::RestoreRecoverySet) => {
+                self.restore_recovery_set()?;
+                Ok(Response::Accepted)
+            }
+            Request::Command(Command::QuarantineRecoveryFailure) => {
+                self.quarantine_recovery_failure()?;
                 Ok(Response::Accepted)
             }
             Request::Command(Command::UninstallPlugin { extension_id }) => {
@@ -1881,10 +2059,14 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
-    use velvet_layout_model::{LayoutCommand, LayoutState, WorkbenchPart, WorkbenchZone};
+    use velvet_layout_model::{
+        LayoutCommand, LayoutState, WorkbenchAppId, WorkbenchPart, WorkbenchZone,
+    };
     use velvet_persistence::{
-        InMemoryLayoutStateStore, InMemoryProfileStateStore, JsonFileAssetSourceLocationStore,
-        JsonFileJobStateStore, JsonFileLayoutStateStore, LayoutStateStore,
+        InMemoryLayoutStateStore, InMemoryProfileStateStore, InMemoryRecoveryJournalStore,
+        InMemoryRecoverySetStore, InMemoryStateSnapshotStore, JsonFileAssetSourceLocationStore,
+        JsonFileJobStateStore, JsonFileLayoutStateStore, LayoutStateStore, SnapshotJobStateStore,
+        SnapshotLayoutStateStore, SnapshotProfileStateStore,
     };
     use velvet_plugin_api::{
         ContributionDescriptor, ContributionKind, ContributionScope, ExtensionId,
@@ -3528,5 +3710,126 @@ mod tests {
 
         let _ = fs::remove_file(layout_path);
         let _ = fs::remove_file(jobs_path);
+    }
+
+    #[test]
+    fn snapshot_backed_owners_restore_the_previous_recovery_set_and_quarantine_failed_state() {
+        let snapshots = Arc::new(InMemoryStateSnapshotStore::default());
+        let recovery_sets = Arc::new(InMemoryRecoverySetStore::default());
+        let plugin_root = temporary_layout_path().with_extension("plugins");
+        let asset_sources = Arc::new(InMemoryAssetSourceLocationStore::default());
+
+        let build_core = || {
+            ApplicationCore::with_store_and_plugin_directory_and_job_store_and_profile_store_and_asset_source_store_and_recovery_stores(
+                Arc::new(SnapshotLayoutStateStore::new(
+                    snapshots.clone(),
+                    Some(recovery_sets.clone()),
+                    Arc::new(InMemoryLayoutStateStore::default()),
+                )),
+                &plugin_root,
+                Arc::new(SnapshotJobStateStore::new(
+                    snapshots.clone(),
+                    Some(recovery_sets.clone()),
+                    Arc::new(velvet_job_system::InMemoryJobStateStore::default()),
+                )),
+                Arc::new(SnapshotProfileStateStore::new(
+                    snapshots.clone(),
+                    Some(recovery_sets.clone()),
+                    Arc::new(InMemoryProfileStateStore::default()),
+                )),
+                asset_sources.clone(),
+                ApplicationRecoveryStores::new(
+                    Arc::new(InMemoryRecoveryJournalStore::default()),
+                    Some(snapshots.clone()),
+                    Some(recovery_sets.clone()),
+                ),
+            )
+        };
+
+        let mut first = build_core();
+        first
+            .dispatch(Request::Command(Command::Layout(
+                LayoutCommand::SetPartVisibility {
+                    part: WorkbenchPart::PrimarySidebar,
+                    visible: false,
+                },
+            )))
+            .expect("first layout generation should persist");
+        first
+            .dispatch(Request::Command(Command::SetLocale {
+                locale: "zh-Hans".into(),
+                expected_revision: Some(0),
+            }))
+            .expect("first profile generation should persist");
+        let first_set = recovery_sets
+            .load_latest(CORE_RECOVERY_SET_ID)
+            .expect("first recovery set should load")
+            .expect("first recovery set should be published");
+
+        let mut second = build_core();
+        second
+            .dispatch(Request::Command(Command::Layout(
+                LayoutCommand::ActivateApp(WorkbenchAppId::FeedWorkbench),
+            )))
+            .expect("second layout generation should persist");
+        second
+            .dispatch(Request::Command(Command::SetLocale {
+                locale: "en-US".into(),
+                expected_revision: Some(1),
+            }))
+            .expect("second profile generation should persist");
+        assert!(
+            recovery_sets
+                .load_latest(CORE_RECOVERY_SET_ID)
+                .expect("second recovery set should load")
+                .expect("second recovery set should be published")
+                .generation
+                > first_set.generation
+        );
+
+        second
+            .dispatch(Request::Command(Command::RestoreRecoverySet))
+            .expect("restore command should publish the previous set");
+        let restored = build_core();
+        assert_eq!(restored.profile_state().locale, "zh-Hans");
+        assert_eq!(
+            restored.layout_snapshot().active_app,
+            WorkbenchAppId::FeedWorkbench
+        );
+        assert!(
+            !restored
+                .layout_snapshot()
+                .parts
+                .get(&WorkbenchPart::PrimarySidebar)
+                .expect("primary sidebar should exist")
+                .visible
+        );
+
+        let mut third = build_core();
+        third
+            .dispatch(Request::Command(Command::Layout(
+                LayoutCommand::ActivateApp(WorkbenchAppId::AssetManager),
+            )))
+            .expect("a new layout generation should persist");
+        third.record_recovery_failure_for_owner(
+            velvet_workbench_protocol::RecoveryFailureClass::CoreMigration,
+            "fixture migration failure",
+            "layout",
+            "workspace",
+            3,
+        );
+        third
+            .dispatch(Request::Command(Command::QuarantineRecoveryFailure))
+            .expect("quarantine command should isolate the failed generation");
+        assert!(snapshots
+            .load_generation("layout", "workspace", 3)
+            .expect("quarantined generation lookup should work")
+            .is_none());
+        let after_quarantine = build_core();
+        assert_eq!(
+            after_quarantine.layout_snapshot().active_app,
+            WorkbenchAppId::FeedWorkbench
+        );
+        let _ = fs::remove_dir_all(plugin_root);
     }
 }

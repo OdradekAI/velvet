@@ -129,6 +129,14 @@ export type CoreRequest =
     }
   | {
       readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'restore-recovery-set';
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'quarantine-recovery-failure';
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
       readonly kind: 'read-plugin-localization';
       readonly extensionId: string;
       readonly locale: string;
@@ -431,14 +439,22 @@ export type CoreRecoveryAction =
   | 'retry'
   | 'disable-recent-component'
   | 'restore-snapshot'
+  | 'quarantine-state'
   | 'reset-optional-state'
   | 'export-diagnostics';
+
+export interface CoreRecoveryTarget {
+  readonly ownerId: string;
+  readonly scope: string;
+  readonly generation: number;
+}
 
 export interface CoreRecoveryFailure {
   readonly class: CoreRecoveryFailureClass;
   readonly phase: CoreStartupPhase;
   readonly message: string;
   readonly atMs: number;
+  readonly target: CoreRecoveryTarget | null;
 }
 
 export interface CoreRecoveryCheckpoint {

@@ -136,6 +136,14 @@ Asset source 当前是否可访问的 Rust 投影。移动硬盘或网络盘断�
 
 由 `persistence` 提供的通用快照存储适配器。它只负责 owner/scope 路径校验、有界 payload、校验和、staged 到 committed 的原子发布和 quarantine；它不决定领域 schema、跨 owner 提交或恢复动作。
 
+## RecoverySetStore
+
+由 `persistence` 提供的恢复索引适配器。它只发布一组已经提交且可校验的 owner generation，支持读取当前/上一组、恢复上一组和隔离索引；它不复制领域 payload，也不改变 owner 的 schema 所有权。
+
+## DurabilityMode
+
+持久化适配器的发布强度。`AtomicRenameOnly` 只保证同目录临时文件替换，`RequireFsync` 还要求临时文件和父目录同步成功；后者失败时不能把 generation 或 `RecoverySet` 宣布为已提交。
+
 ## RecoverySet
 
 由恢复索引记录的一组相关 StateSnapshot generation。它表示一次跨 owner 变更或迁移的可恢复提交点；只有在引用校验通过并完成提交屏障后，相关 generation 才能一起成为当前状态。RecoverySet 不取代各 owner 对数据和 schema 的所有权。
