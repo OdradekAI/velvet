@@ -22,6 +22,7 @@ export type {
   CoreResolvedPreview,
   CoreRecoveryAction,
   CoreRecoveryCheckpoint,
+  CoreDiagnosticBundle,
   CoreRecoveryDiagnosticBundle,
   CorePluginDiagnosticEvent,
   CorePluginDiagnosticKind,

@@ -4,7 +4,12 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use velvet_job_system::{JobSnapshot, JobStateStore};
 use velvet_layout_model::LayoutState;
-use velvet_workbench_protocol::{ProfileState, RecoveryJournalState, RECOVERY_SCHEMA_VERSION};
+use velvet_workbench_protocol::{
+    PluginDiagnosticEvent, ProfileState, RecoveryJournalState, PLUGIN_DIAGNOSTIC_SCHEMA_VERSION,
+    RECOVERY_SCHEMA_VERSION,
+};
+
+use crate::durability::write_atomic;
 
 mod durability;
 mod owner_snapshots;
@@ -35,6 +40,10 @@ pub enum PersistenceError {
     Unavailable,
     CorruptState,
 }
+
+pub const DIAGNOSTIC_EVENT_STORE_SCHEMA_VERSION: u16 = 1;
+pub const MAX_DIAGNOSTIC_EVENTS: usize = 256;
+pub const MAX_DIAGNOSTIC_EVENT_STORE_BYTES: u64 = 512 * 1024;
 
 /// Storage adapter for the lifecycle journal. The application core owns the
 /// recovery state machine; this trait only persists its versioned bytes.
@@ -108,6 +117,122 @@ impl RecoveryJournalStore for JsonFileRecoveryJournalStore {
         fs::write(&temporary, bytes).map_err(|_| PersistenceError::Unavailable)?;
         fs::rename(temporary, &self.path).map_err(|_| PersistenceError::Unavailable)
     }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DiagnosticEventStoreState {
+    schema_version: u16,
+    events: Vec<PluginDiagnosticEvent>,
+}
+
+/// Storage adapter for the bounded diagnostic history owned by
+/// `ApplicationCore`. It stores already-redacted protocol events and does not
+/// interpret plugin payloads or decide retention policy.
+pub trait DiagnosticEventStore: Send + Sync {
+    fn load(&self) -> Result<Vec<PluginDiagnosticEvent>, PersistenceError>;
+    fn save(&self, events: &[PluginDiagnosticEvent]) -> Result<(), PersistenceError>;
+}
+
+#[derive(Default)]
+pub struct InMemoryDiagnosticEventStore {
+    events: std::sync::Mutex<Vec<PluginDiagnosticEvent>>,
+}
+
+impl DiagnosticEventStore for InMemoryDiagnosticEventStore {
+    fn load(&self) -> Result<Vec<PluginDiagnosticEvent>, PersistenceError> {
+        self.events
+            .lock()
+            .map_err(|_| PersistenceError::Unavailable)
+            .and_then(|events| bounded_diagnostic_events(&events))
+    }
+
+    fn save(&self, events: &[PluginDiagnosticEvent]) -> Result<(), PersistenceError> {
+        let events = bounded_diagnostic_events(events)?;
+        self.events
+            .lock()
+            .map(|mut current| *current = events)
+            .map_err(|_| PersistenceError::Unavailable)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct JsonFileDiagnosticEventStore {
+    path: PathBuf,
+    durability: DurabilityMode,
+}
+
+impl JsonFileDiagnosticEventStore {
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        Self::with_durability(path, DurabilityMode::AtomicRenameOnly)
+    }
+
+    pub fn with_durability(path: impl Into<PathBuf>, durability: DurabilityMode) -> Self {
+        Self {
+            path: path.into(),
+            durability,
+        }
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl DiagnosticEventStore for JsonFileDiagnosticEventStore {
+    fn load(&self) -> Result<Vec<PluginDiagnosticEvent>, PersistenceError> {
+        let metadata = match fs::metadata(&self.path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(_) => return Err(PersistenceError::Unavailable),
+        };
+        if metadata.len() > MAX_DIAGNOSTIC_EVENT_STORE_BYTES {
+            return Err(PersistenceError::CorruptState);
+        }
+        let bytes = fs::read(&self.path).map_err(|_| PersistenceError::Unavailable)?;
+        let state = serde_json::from_slice::<DiagnosticEventStoreState>(&bytes)
+            .map_err(|_| PersistenceError::CorruptState)?;
+        if state.schema_version != DIAGNOSTIC_EVENT_STORE_SCHEMA_VERSION {
+            return Err(PersistenceError::CorruptState);
+        }
+        bounded_diagnostic_events(&state.events)
+    }
+
+    fn save(&self, events: &[PluginDiagnosticEvent]) -> Result<(), PersistenceError> {
+        let events = bounded_diagnostic_events(events)?;
+        if let Some(parent) = self.path.parent() {
+            fs::create_dir_all(parent).map_err(|_| PersistenceError::Unavailable)?;
+        }
+        let state = DiagnosticEventStoreState {
+            schema_version: DIAGNOSTIC_EVENT_STORE_SCHEMA_VERSION,
+            events,
+        };
+        let bytes =
+            serde_json::to_vec_pretty(&state).map_err(|_| PersistenceError::CorruptState)?;
+        write_atomic(&self.path, &bytes, self.durability).map_err(|_| PersistenceError::Unavailable)
+    }
+}
+
+fn bounded_diagnostic_events(
+    events: &[PluginDiagnosticEvent],
+) -> Result<Vec<PluginDiagnosticEvent>, PersistenceError> {
+    if events.len() > MAX_DIAGNOSTIC_EVENTS {
+        return Err(PersistenceError::CorruptState);
+    }
+    if events
+        .iter()
+        .any(|event| event.schema_version != PLUGIN_DIAGNOSTIC_SCHEMA_VERSION)
+    {
+        return Err(PersistenceError::CorruptState);
+    }
+    if events.iter().any(|event| event.sequence == 0)
+        || events
+            .windows(2)
+            .any(|window| window[0].sequence >= window[1].sequence)
+    {
+        return Err(PersistenceError::CorruptState);
+    }
+    Ok(events.to_vec())
 }
 
 pub const ASSET_SOURCE_LOCATION_SCHEMA_VERSION: u16 = 1;
@@ -385,7 +510,10 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
     use velvet_layout_model::WorkbenchPart;
-    use velvet_workbench_protocol::{RecoveryLaunchReceipt, StartupPhase};
+    use velvet_workbench_protocol::{
+        PluginDiagnosticEvent, PluginDiagnosticKind, RecoveryLaunchReceipt, StartupPhase,
+        PLUGIN_DIAGNOSTIC_SCHEMA_VERSION,
+    };
 
     static TEMPORARY_PATH_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -560,5 +688,58 @@ mod tests {
             .expect("invalid recovery journal should be writable");
         assert_eq!(store.load(), Err(PersistenceError::CorruptState));
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn diagnostic_event_store_round_trips_and_rejects_invalid_generations() {
+        let path = temporary_path("diagnostic-events-round-trip");
+        let store = JsonFileDiagnosticEventStore::new(&path);
+        let events = vec![PluginDiagnosticEvent {
+            schema_version: PLUGIN_DIAGNOSTIC_SCHEMA_VERSION,
+            sequence: 3,
+            extension_id: "sample.reader".into(),
+            kind: PluginDiagnosticKind::Runtime,
+            code: "runtime-crashed".into(),
+            message: "bounded".into(),
+            job_id: None,
+            attempt: None,
+            retryable: true,
+            occurred_at_ms: 42,
+        }];
+
+        store
+            .save(&events)
+            .expect("diagnostic events should be written");
+        assert_eq!(store.load().expect("diagnostic events should load"), events);
+
+        fs::write(
+            &path,
+            br#"{"schemaVersion":1,"events":[{"schemaVersion":99,"sequence":1,"extensionId":"sample.reader","kind":"runtime","code":"bad","message":"bad","jobId":null,"attempt":null,"retryable":false,"occurredAtMs":1}]}"#,
+        )
+        .expect("invalid diagnostic events should be writable");
+        assert_eq!(store.load(), Err(PersistenceError::CorruptState));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn diagnostic_event_store_rejects_an_oversized_history() {
+        let events = (0..=MAX_DIAGNOSTIC_EVENTS)
+            .map(|sequence| PluginDiagnosticEvent {
+                schema_version: PLUGIN_DIAGNOSTIC_SCHEMA_VERSION,
+                sequence: sequence as u64,
+                extension_id: "sample.reader".into(),
+                kind: PluginDiagnosticKind::Job,
+                code: "job-failed".into(),
+                message: "bounded".into(),
+                job_id: None,
+                attempt: None,
+                retryable: true,
+                occurred_at_ms: 42,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            InMemoryDiagnosticEventStore::default().save(&events),
+            Err(PersistenceError::CorruptState)
+        );
     }
 }

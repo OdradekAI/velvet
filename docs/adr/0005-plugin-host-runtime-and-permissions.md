@@ -276,9 +276,10 @@ updates with generation conflict detection. Backup export and migration
 participants run before a destination generation is committed. The Rust
 protocol DTO and desktop TypeScript projection carry the declaration, but
 there is deliberately no raw Tauri storage command and no filesystem path in
-the extension API. Runtime RPC invocation, persisted extension diagnostics,
-user-facing extension restore/quarantine actions and automatic disable policy
-remain follow-up gates.
+the extension API. Runtime RPC invocation, user-facing extension
+restore/quarantine actions and automatic disable policy remain follow-up gates;
+bounded diagnostic history is now persisted by the application owner rather
+than by the extension storage API.
 
 `PluginHost` also owns a bounded `PluginDiagnosticSink`. Runtime start/crash,
 invocation, Job, shutdown, storage and migration failures become ordered,
@@ -286,8 +287,11 @@ sanitized records with extension id, code, retryability and optional Job
 attempt identity. The sink is local and drainable through the host seam; it
 does not upload, expose raw payloads or grant another extension visibility into
 the record. The application maps records to the typed `PluginDiagnosticEvent`
-transport projection. Persistent retention and inclusion in the user-exported
-cross-component `DiagnosticBundle` remain lifecycle work.
+transport projection and persists a bounded redacted history through its
+`DiagnosticEventStore`; the user-exported cross-component `DiagnosticBundle`
+includes that history. Store corruption only marks diagnostics degraded and
+does not block Core startup. Native crash capture and cross-process
+correlation remain outside this sink.
 
 Extension migration receives a read-only source generation and a host-owned
 destination writer. It may not write Asset, Workspace, Profile or Job state,

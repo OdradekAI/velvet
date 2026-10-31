@@ -174,10 +174,11 @@ increment the core pre-ready Safe Mode counter.
 
 This slice is deliberately narrower than the full decision: native no-WebView
 recovery, runtime-RPC invocation of extension migration participants,
-user-facing extension restore/quarantine confirmation and the full
-cross-component `DiagnosticBundle` are still implementation gates. A successful renderer
-restore or quarantine action requests a fresh startup so the selected set
-becomes live.
+user-facing extension restore/quarantine confirmation and crash-capture
+correlation in the `DiagnosticBundle` are still implementation gates. The
+bundle already carries the bounded persisted plugin/Job history. A successful
+renderer restore or quarantine action requests a fresh startup so the selected
+set becomes live.
 
 `PluginHost` now provides the first extension-state slice on top of the same
 snapshot adapter. Each manifest-declared store uses an owner namespace of
@@ -193,11 +194,14 @@ plugin code can run during startup migration.
 Runtime and Job failures now also cross a typed diagnostic seam. `PluginHost`
 keeps a bounded local queue with sequence, extension, failure kind/code,
 redacted message, retryability and optional Job attempt; `ApplicationCore`
-adds failure evidence from its Job boundary, and `tauri-adapter` forwards
-`PluginDiagnosticEvent` without owning retention. This makes one extension's
-failure observable and recoverable while leaving other extensions and Core
-available. Durable diagnostic retention, user export and runtime RPC
-participant invocation remain separate gates.
+adds failure evidence from its Job boundary, persists a bounded event history
+through an optional `DiagnosticEventStore`, and includes that history in the
+user-initiated diagnostic bundle; `tauri-adapter` forwards
+`PluginDiagnosticEvent` without owning retention. A corrupt or unavailable
+diagnostic store marks observability degraded but never blocks Core startup.
+This makes one extension's failure observable and recoverable while leaving
+other extensions and Core available. Native crash capture, cross-process
+correlation and runtime RPC participant invocation remain separate gates.
 Optional plugin activation is recorded as a degraded component failure and does
 not block the core-ready checkpoint. The file journal is an evidence
 store, not yet a replacement for owner snapshots or a proof that writes are

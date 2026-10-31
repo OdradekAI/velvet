@@ -288,6 +288,8 @@ impl RecoverySupervisor {
             schema_version: RECOVERY_DIAGNOSTIC_SCHEMA_VERSION,
             exported_at_ms: self.clock.now_ms(),
             projection,
+            plugin_diagnostics: Vec::new(),
+            diagnostics_degraded: false,
         }
     }
 

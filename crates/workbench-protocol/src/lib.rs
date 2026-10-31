@@ -252,7 +252,16 @@ pub struct RecoveryDiagnosticBundle {
     pub schema_version: u16,
     pub exported_at_ms: u64,
     pub projection: RecoveryProjection,
+    #[serde(default)]
+    pub plugin_diagnostics: Vec<PluginDiagnosticEvent>,
+    #[serde(default)]
+    pub diagnostics_degraded: bool,
 }
+
+/// Combined lifecycle and extension diagnostic export. The legacy name is
+/// retained in the wire contract while the bundle now carries bounded plugin
+/// and Job evidence as well as the recovery projection.
+pub type DiagnosticBundle = RecoveryDiagnosticBundle;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -717,12 +726,26 @@ mod tests {
                 last_good: None,
                 actions: vec![RecoveryAction::Retry, RecoveryAction::ExportDiagnostics],
             },
+            plugin_diagnostics: Vec::new(),
+            diagnostics_degraded: false,
         };
         let json = serde_json::to_value(&bundle).expect("diagnostic bundle should serialize");
         assert_eq!(json["schemaVersion"], RECOVERY_DIAGNOSTIC_SCHEMA_VERSION);
         assert_eq!(json["exportedAtMs"], 42);
         assert_eq!(json["projection"]["mode"], "degraded");
         assert_eq!(json["projection"]["actions"][1], "export-diagnostics");
+        assert_eq!(json["pluginDiagnostics"], serde_json::json!([]));
+        assert_eq!(json["diagnosticsDegraded"], false);
+
+        let legacy = serde_json::json!({
+            "schemaVersion": RECOVERY_DIAGNOSTIC_SCHEMA_VERSION,
+            "exportedAtMs": 7,
+            "projection": bundle.projection.clone(),
+        });
+        let decoded: RecoveryDiagnosticBundle =
+            serde_json::from_value(legacy).expect("legacy diagnostic bundle should decode");
+        assert!(decoded.plugin_diagnostics.is_empty());
+        assert!(!decoded.diagnostics_degraded);
     }
 
     #[test]

@@ -480,7 +480,12 @@ export interface CoreRecoveryDiagnosticBundle {
   readonly schemaVersion: RecoveryDiagnosticSchemaVersion;
   readonly exportedAtMs: number;
   readonly projection: CoreRecoveryProjection;
+  readonly pluginDiagnostics: readonly CorePluginDiagnosticEvent[];
+  readonly diagnosticsDegraded: boolean;
 }
+
+/** Compatibility alias for the combined lifecycle/plugin diagnostic export. */
+export type CoreDiagnosticBundle = CoreRecoveryDiagnosticBundle;
 
 export type CorePluginDiagnosticKind =
   | 'activation'

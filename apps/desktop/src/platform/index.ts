@@ -32,6 +32,7 @@ export type {
   CoreJobStatus,
   CoreRecoveryAction,
   CoreRecoveryCheckpoint,
+  CoreDiagnosticBundle,
   CoreRecoveryDiagnosticBundle,
   CorePluginDiagnosticEvent,
   CorePluginDiagnosticKind,

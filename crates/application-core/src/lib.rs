@@ -19,11 +19,13 @@ pub use preview_source::{
 ///
 /// The composition root owns the concrete stores. `ApplicationCore` only
 /// consumes these protocol-shaped adapters and never reaches into their file
-/// layout or transaction details.
+/// layout or transaction details. Diagnostic history is optional so embedders
+/// can run without durable diagnostics while the native composition enables it.
 pub struct ApplicationRecoveryStores {
     pub journal: Arc<dyn RecoveryJournalStore>,
     pub snapshots: Option<Arc<dyn StateSnapshotStore>>,
     pub recovery_sets: Option<Arc<dyn RecoverySetStore>>,
+    pub diagnostics: Option<Arc<dyn DiagnosticEventStore>>,
 }
 
 impl ApplicationRecoveryStores {
@@ -36,7 +38,13 @@ impl ApplicationRecoveryStores {
             journal,
             snapshots,
             recovery_sets,
+            diagnostics: None,
         }
+    }
+
+    pub fn with_diagnostics(mut self, diagnostics: Arc<dyn DiagnosticEventStore>) -> Self {
+        self.diagnostics = Some(diagnostics);
+        self
     }
 
     pub fn journal_only(journal: Arc<dyn RecoveryJournalStore>) -> Self {
@@ -51,9 +59,10 @@ use velvet_job_system::{
 };
 use velvet_layout_model::{InMemoryLayoutService, LayoutService};
 use velvet_persistence::{
-    AssetSourceLocationStore, InMemoryAssetSourceLocationStore, InMemoryLayoutStateStore,
-    InMemoryProfileStateStore, InMemoryRecoveryJournalStore, LayoutStateStore, ProfileStateStore,
-    RecoveryJournalStore, RecoverySetStore, StateSnapshotStore, CORE_RECOVERY_SET_ID,
+    AssetSourceLocationStore, DiagnosticEventStore, InMemoryAssetSourceLocationStore,
+    InMemoryLayoutStateStore, InMemoryProfileStateStore, InMemoryRecoveryJournalStore,
+    LayoutStateStore, ProfileStateStore, RecoveryJournalStore, RecoverySetStore,
+    StateSnapshotStore, CORE_RECOVERY_SET_ID, MAX_DIAGNOSTIC_EVENTS,
 };
 use velvet_plugin_api::{
     ContributionKind, ExtensionId, ExtensionInstallPreview, ExtensionInstallRecovery,
@@ -96,7 +105,10 @@ pub struct ApplicationCore {
     recovery: RecoverySupervisor,
     recovery_snapshots: Option<Arc<dyn StateSnapshotStore>>,
     recovery_sets: Option<Arc<dyn RecoverySetStore>>,
+    diagnostic_store: Option<Arc<dyn DiagnosticEventStore>>,
     plugin_diagnostics: VecDeque<PluginDiagnosticEvent>,
+    diagnostic_history: VecDeque<PluginDiagnosticEvent>,
+    diagnostics_degraded: bool,
     next_plugin_diagnostic_sequence: u64,
 }
 
@@ -390,6 +402,7 @@ impl ApplicationCore {
             journal: recovery_journal,
             snapshots: recovery_snapshots,
             recovery_sets,
+            diagnostics: diagnostic_store,
         } = recovery_stores;
         let recovery = RecoverySupervisor::new(recovery_journal, Arc::new(SystemRecoveryClock));
         let launch_started = recovery.begin_launch(env!("CARGO_PKG_VERSION"));
@@ -449,6 +462,22 @@ impl ApplicationCore {
         if let Some(snapshots) = recovery_snapshots.clone() {
             plugins.set_extension_storage_store(snapshots);
         }
+        let (diagnostic_history, diagnostics_degraded) =
+            match diagnostic_store.as_ref().map(|store| store.load()) {
+                None => (Vec::new(), false),
+                Some(Ok(events)) => (
+                    events
+                        .into_iter()
+                        .map(normalize_plugin_diagnostic_event)
+                        .collect(),
+                    false,
+                ),
+                Some(Err(_)) => (Vec::new(), true),
+            };
+        let next_plugin_diagnostic_sequence = diagnostic_history
+            .last()
+            .map(|event| event.sequence.saturating_add(1))
+            .unwrap_or(1);
         let mut core = Self {
             layout,
             plugins,
@@ -464,8 +493,11 @@ impl ApplicationCore {
             recovery,
             recovery_snapshots,
             recovery_sets,
+            diagnostic_store,
             plugin_diagnostics: VecDeque::new(),
-            next_plugin_diagnostic_sequence: 1,
+            diagnostic_history: diagnostic_history.into_iter().collect(),
+            diagnostics_degraded,
+            next_plugin_diagnostic_sequence,
         };
 
         if launch_started.is_ok() && !core.recovery.is_safe_mode() {
@@ -640,10 +672,9 @@ impl ApplicationCore {
         &self,
         destination: impl AsRef<std::path::Path>,
     ) -> Result<(), RecoveryError> {
-        let bytes =
-            serde_json::to_vec_pretty(&self.recovery.diagnostic_bundle()).map_err(|error| {
-                RecoveryError::Store(format!("diagnostic serialization failed: {error}"))
-            })?;
+        let bytes = serde_json::to_vec_pretty(&self.diagnostic_bundle()).map_err(|error| {
+            RecoveryError::Store(format!("diagnostic serialization failed: {error}"))
+        })?;
         fs::write(destination.as_ref(), bytes)
             .map_err(|error| RecoveryError::Store(format!("diagnostic export failed: {error}")))
     }
@@ -1224,19 +1255,36 @@ impl ApplicationCore {
         for record in host_records {
             self.enqueue_plugin_diagnostic(plugin_diagnostic_from_record(record));
         }
-        let mut events = self.plugin_diagnostics.drain(..).collect::<Vec<_>>();
-        for event in &mut events {
-            event.sequence = self.next_plugin_diagnostic_sequence();
-        }
-        events
+        self.plugin_diagnostics.drain(..).collect()
     }
 
-    fn enqueue_plugin_diagnostic(&mut self, event: PluginDiagnosticEvent) {
-        const MAX_DIAGNOSTICS: usize = velvet_plugin_host::MAX_PLUGIN_DIAGNOSTICS;
-        if self.plugin_diagnostics.len() == MAX_DIAGNOSTICS {
+    fn enqueue_plugin_diagnostic(&mut self, mut event: PluginDiagnosticEvent) {
+        event = normalize_plugin_diagnostic_event(event);
+        event.sequence = self.next_plugin_diagnostic_sequence();
+        if self.plugin_diagnostics.len() == MAX_DIAGNOSTIC_EVENTS {
             self.plugin_diagnostics.pop_front();
         }
-        self.plugin_diagnostics.push_back(event);
+        if self.diagnostic_history.len() == MAX_DIAGNOSTIC_EVENTS {
+            self.diagnostic_history.pop_front();
+        }
+        self.plugin_diagnostics.push_back(event.clone());
+        self.diagnostic_history.push_back(event);
+        self.persist_diagnostic_history();
+    }
+
+    fn persist_diagnostic_history(&mut self) {
+        let Some(store) = self.diagnostic_store.as_ref() else {
+            return;
+        };
+        let events = self.diagnostic_history.iter().cloned().collect::<Vec<_>>();
+        self.diagnostics_degraded = store.save(&events).is_err();
+    }
+
+    pub fn diagnostic_bundle(&self) -> velvet_workbench_protocol::DiagnosticBundle {
+        let mut bundle = self.recovery.diagnostic_bundle();
+        bundle.plugin_diagnostics = self.diagnostic_history.iter().cloned().collect();
+        bundle.diagnostics_degraded = self.diagnostics_degraded;
+        bundle
     }
 
     fn next_plugin_diagnostic_sequence(&mut self) -> u64 {
@@ -2014,6 +2062,11 @@ fn plugin_diagnostic_from_record(record: PluginDiagnosticRecord) -> PluginDiagno
     }
 }
 
+fn normalize_plugin_diagnostic_event(mut event: PluginDiagnosticEvent) -> PluginDiagnosticEvent {
+    event.message = sanitize_plugin_diagnostic_message(&event.message);
+    event
+}
+
 fn diagnostic_timestamp_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -2165,8 +2218,9 @@ mod tests {
         LayoutCommand, LayoutState, WorkbenchAppId, WorkbenchPart, WorkbenchZone,
     };
     use velvet_persistence::{
-        InMemoryLayoutStateStore, InMemoryProfileStateStore, InMemoryRecoveryJournalStore,
-        InMemoryRecoverySetStore, InMemoryStateSnapshotStore, JsonFileAssetSourceLocationStore,
+        InMemoryAssetSourceLocationStore, InMemoryDiagnosticEventStore, InMemoryLayoutStateStore,
+        InMemoryProfileStateStore, InMemoryRecoveryJournalStore, InMemoryRecoverySetStore,
+        InMemoryStateSnapshotStore, JsonFileAssetSourceLocationStore, JsonFileDiagnosticEventStore,
         JsonFileJobStateStore, JsonFileLayoutStateStore, LayoutStateStore, SnapshotJobStateStore,
         SnapshotLayoutStateStore, SnapshotProfileStateStore,
     };
@@ -3123,6 +3177,8 @@ mod tests {
                 .expect("export should be valid JSON");
         assert_eq!(value["schemaVersion"], 1);
         assert_eq!(value["projection"]["schemaVersion"], 1);
+        assert_eq!(value["pluginDiagnostics"], serde_json::json!([]));
+        assert_eq!(value["diagnosticsDegraded"], false);
         assert_eq!(
             value["projection"]["lastFailure"]["message"]
                 .as_str()
@@ -3132,6 +3188,79 @@ mod tests {
             512
         );
         let _ = fs::remove_file(destination);
+    }
+
+    #[test]
+    fn diagnostic_history_survives_core_restart_without_blocking_core_startup() {
+        let diagnostic_store = Arc::new(InMemoryDiagnosticEventStore::default());
+        let build_core = || {
+            ApplicationCore::with_store_and_runtime_and_plugin_directory_and_jobs_and_profile_and_recovery(
+                Arc::new(InMemoryLayoutStateStore::default()),
+                Box::new(velvet_plugin_host::ProcessPluginRuntime),
+                None,
+                JobSystem::default(),
+                Arc::new(InMemoryProfileStateStore::default()),
+                Arc::new(InMemoryAssetSourceLocationStore::default()),
+                ApplicationRecoveryStores::new(
+                    Arc::new(InMemoryRecoveryJournalStore::default()),
+                    None,
+                    None,
+                )
+                .with_diagnostics(diagnostic_store.clone()),
+            )
+        };
+
+        let mut first = build_core();
+        first.enqueue_plugin_diagnostic(PluginDiagnosticEvent {
+            schema_version: PLUGIN_DIAGNOSTIC_SCHEMA_VERSION,
+            sequence: 0,
+            extension_id: "sample.reader".into(),
+            kind: WirePluginDiagnosticKind::Runtime,
+            code: "runtime-crashed".into(),
+            message: "failed at /Users/example/private/file.txt".into(),
+            job_id: None,
+            attempt: None,
+            retryable: true,
+            occurred_at_ms: 42,
+        });
+        assert_eq!(first.diagnostic_bundle().plugin_diagnostics.len(), 1);
+        drop(first);
+
+        let restarted = build_core();
+        let bundle = restarted.diagnostic_bundle();
+        assert_eq!(bundle.plugin_diagnostics.len(), 1);
+        assert_eq!(bundle.plugin_diagnostics[0].sequence, 1);
+        assert_eq!(
+            bundle.plugin_diagnostics[0].message,
+            "failed at <redacted-path>"
+        );
+        assert!(!bundle.diagnostics_degraded);
+        assert!(!restarted.in_safe_mode());
+    }
+
+    #[test]
+    fn corrupt_diagnostic_history_degrades_observability_without_blocking_startup() {
+        let diagnostic_path = temporary_layout_path().with_extension("diagnostics.json");
+        fs::write(&diagnostic_path, br#"not-json"#)
+            .expect("the corrupt diagnostics fixture should be writable");
+        let core = ApplicationCore::with_store_and_runtime_and_plugin_directory_and_jobs_and_profile_and_recovery(
+            Arc::new(InMemoryLayoutStateStore::default()),
+            Box::new(velvet_plugin_host::ProcessPluginRuntime),
+            None,
+            JobSystem::default(),
+            Arc::new(InMemoryProfileStateStore::default()),
+            Arc::new(InMemoryAssetSourceLocationStore::default()),
+            ApplicationRecoveryStores::new(
+                Arc::new(InMemoryRecoveryJournalStore::default()),
+                None,
+                None,
+            )
+            .with_diagnostics(Arc::new(JsonFileDiagnosticEventStore::new(&diagnostic_path))),
+        );
+
+        assert!(!core.in_safe_mode());
+        assert!(core.diagnostic_bundle().diagnostics_degraded);
+        let _ = fs::remove_file(diagnostic_path);
     }
 
     #[test]

@@ -18,10 +18,10 @@ use velvet_plugin_api::{
     validate_reserved_metadata,
 };
 use velvet_persistence::{
-    JsonFileAssetSourceLocationStore, JsonFileJobStateStore, JsonFileLayoutStateStore,
-    JsonFileProfileStateStore, JsonFileRecoveryJournalStore, JsonFileRecoverySetStore,
-    JsonFileStateSnapshotStore, SnapshotJobStateStore, SnapshotLayoutStateStore,
-    SnapshotProfileStateStore, DurabilityMode,
+    DurabilityMode, JsonFileAssetSourceLocationStore, JsonFileDiagnosticEventStore,
+    JsonFileJobStateStore, JsonFileLayoutStateStore, JsonFileProfileStateStore,
+    JsonFileRecoveryJournalStore, JsonFileRecoverySetStore, JsonFileStateSnapshotStore,
+    SnapshotJobStateStore, SnapshotLayoutStateStore, SnapshotProfileStateStore,
 };
 use velvet_preview_core::{PreviewIntent, PreviewRenderer, PreviewSurface, ResolvedPreview};
 use velvet_tauri_adapter::{CoreEventSink, TauriTransport};
@@ -1569,6 +1569,7 @@ pub fn run() {
             let profile_path = app_data_dir.join("profile.json");
             let asset_sources_path = app_data_dir.join("asset-sources.json");
             let recovery_path = app_data_dir.join("recovery-journal.json");
+            let diagnostic_events_path = app_data_dir.join("diagnostic-events.json");
             let snapshot_root = app_data_dir.join("snapshots");
             let recovery_set_root = app_data_dir.join("recovery-sets");
             let plugin_directory = app_data_dir.join("plugins");
@@ -1607,7 +1608,11 @@ pub fn run() {
                     Arc::new(JsonFileRecoveryJournalStore::new(recovery_path)),
                     Some(snapshot_store),
                     Some(recovery_set_store),
-                ),
+                )
+                .with_diagnostics(Arc::new(JsonFileDiagnosticEventStore::with_durability(
+                    diagnostic_events_path,
+                    durability,
+                ))),
             );
             core.mark_workbench_ready();
             if core.in_safe_mode() {

@@ -110,11 +110,11 @@ Asset source 当前是否可访问的 Rust 投影。移动硬盘或网络盘断�
 
 ## DiagnosticBundle
 
-由用户主动导出的诊断包，包含经过脱敏的版本、平台、启动阶段、退出信息、组件身份和有限日志尾部，用于本地排障或在用户单独同意后上传；默认不包含 Asset 内容、凭据、密钥和未脱敏路径。
+由用户主动导出的诊断包，包含经过脱敏的版本、平台、启动阶段、退出信息、组件身份、插件/Job 诊断历史和有限日志尾部，用于本地排障或在用户单独同意后上传；默认不包含 Asset 内容、凭据、密钥和未脱敏路径。平台提供时可追加 CrashCaptureAdapter 证据。
 
 ## RecoveryDiagnosticBundle
 
-早期恢复路径导出的有界诊断表示，只包含 recovery projection、schema 和导出时间。它通过宿主 typed command 写入用户选择的本地路径，失败文本被截断，不上传数据，也不取代包含生命周期、Job、插件和崩溃关联信息的完整 `DiagnosticBundle`。
+兼容保留的有界诊断 wire 名称。它包含 recovery projection、导出时间以及应用持久化的插件/Job 事件；通过宿主 typed command 写入用户选择的本地路径，失败文本被截断，不上传数据。CrashCaptureAdapter 和跨进程关联仍是后续扩展。
 
 ## WorkspaceContext
 

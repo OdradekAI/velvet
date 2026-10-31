@@ -174,10 +174,10 @@ must not be advertised as the target guarantee.
 | --- | --- | --- | --- |
 | `RecoverySupervisor`, startup phases and two-failure Safe Mode | `application-core` now records a versioned launch journal, phase/checkpoint/deadline state, shutdown evidence and core-migration/optional-component failures; Tauri uses the file journal and records `ExitRequested`/`Exit`; the desktop has a host-owned renderer RecoverySurface with typed restore/quarantine/diagnostic actions | Native no-WebView recovery and host locale integration are still missing | P0 (partial) |
 | Owner snapshots, `RecoverySet` and migration rollback | Native Tauri composition wraps Layout/Profile/Job with `StateSnapshotStore`, publishes a core `RecoverySet` after owner changes, exposes `RecoverySetTransaction` for related owner writes, restores the previous set and quarantines a targeted generation; the stores have atomic-only and required-fsync modes with fault tests | Generic embedded constructors still use legacy stores, migration-participant integration and a persisted durability report remain | P0 (partial) |
-| Extension-owned data with host-controlled backup/migration | `PluginHost` exposes manifest-declared namespaced `ExtensionStorage` over `StateSnapshotStore`, bounded key/blob transactions with generation conflict detection, typed `BackupParticipant`/`MigrationParticipant` seams, and isolation tests; no raw Tauri storage command is exposed | Runtime-RPC participant invocation, persisted extension diagnostic events, explicit extension restore/quarantine UI, and automatic disable/orphan policy still need integration | P0 (partial) |
-| Per-extension runtime failure domain | `PluginHost` tracks one process per extension, health state and contribution cleanup; `JobSystem` marks restart work interrupted; optional activation failures now degrade the recovery projection without blocking Core | Sidecar launch accepts a manifest program, stderr is discarded, process groups and parent-death cleanup are absent, and runtime events are not structured or persisted | P0 |
+| Extension-owned data with host-controlled backup/migration | `PluginHost` exposes manifest-declared namespaced `ExtensionStorage` over `StateSnapshotStore`, bounded key/blob transactions with generation conflict detection, typed `BackupParticipant`/`MigrationParticipant` seams, and isolation tests; no raw Tauri storage command is exposed | Runtime-RPC participant invocation, explicit extension restore/quarantine UI, and automatic disable/orphan policy still need integration | P0 (partial) |
+| Per-extension runtime failure domain | `PluginHost` tracks one process per extension, health state and contribution cleanup; `JobSystem` marks restart work interrupted; optional activation failures now degrade the recovery projection without blocking Core; runtime failures produce structured persisted diagnostics | Sidecar launch accepts a manifest program, stderr is discarded, process groups and parent-death cleanup are absent | P0 |
 | Resource-governed, restartable Jobs | `JobSystem` persists snapshots/results, supports cooperative cancellation, retry and provenance matching | No owner/device/Job budget ledger, deadlines, cancellation grace, exponential backoff policy, checkpoint contract or suspend/offline policy | P0/P1 |
-| Host diagnostics and user recovery | Plugin install recovery log, renderer recovery operations panel, typed bounded `RecoveryDiagnosticBundle` export, and a bounded host-owned `PluginDiagnosticSink` projected as `PluginDiagnosticEvent` exist | No durable cross-component `DiagnosticBundle`, crash-capture adapter, redacted plugin-event export or lifecycle/Job/plugin correlation across restarts | P0 (partial) |
+| Host diagnostics and user recovery | Plugin install recovery log, renderer recovery operations panel, bounded `RecoveryDiagnosticBundle` export, host-owned `PluginDiagnosticSink`, and an optional persistent redacted diagnostic history projected as `PluginDiagnosticEvent` exist | No crash-capture adapter, cross-process correlation, or runtime/session correlation beyond extension and Job attempt identity | P0 (partial) |
 | Versioned protocol handshake and reconnect | Rust/TypeScript envelopes carry exact `protocolVersion` and `requestId`; stale layout revisions are checked | `u16` is treated as one exact version; no major/minor negotiation, feature/schema selection, `sessionId`, sequence resync or unknown-outcome query rule | P1 |
 | Deny-by-default native boundary | Tauri command handlers map typed requests and a capability file scopes the main window | `core:default`, WebView creation permissions and `csp: null` are still alpha policy; recovery has no separate minimal capability set or negative command matrix | P0 |
 | Extension package trust and release recovery | Manifest/schema/host API checks and application release signing are separate seams | No extension signature envelope, publisher trust record, revocation/freshness/anti-downgrade or visible unsigned developer mode; updater/package staging is inactive | P1 |
@@ -207,17 +207,18 @@ fault-injection tests:
    stores to those primitives before adding new product data.
 3. **P0 extension state and runtime evidence**: integrate the host-owned
    `ExtensionStorage` seam already backed by namespaced snapshots into runtime
-   RPC, restore/quarantine UX and durable diagnostic retention/export. Harden
-   the sidecar adapter with package-relative allow-lists, bounded stderr,
+   RPC and restore/quarantine UX. Harden the sidecar adapter with
+   package-relative allow-lists, bounded stderr,
    process-group cleanup, exit evidence and orphan reconciliation. Wire failure
    events to projection/Job cleanup and late-event rejection.
 4. **P0 Job governance**: extend `JobSpec` and `JobSystem` with owner budgets,
    deadline and cancellation-grace semantics, typed retry classes, checkpoint
    payloads and lifecycle/network pause signals. Keep CPU/network as soft
    scheduling budgets until measurements justify hard enforcement.
-5. **P0 recovery UX and native ACL**: implement `DiagnosticBundle`, redaction
-   and export; add a host-only recovery capability set and command-negative
-   tests; tighten the current Tauri capability/CSP policy before exposing more
+5. **P0 recovery UX and native ACL**: extend the bounded `DiagnosticBundle`
+   with crash-capture evidence and lifecycle correlation; add a host-only
+   recovery capability set and command-negative tests; tighten the current
+   Tauri capability/CSP policy before exposing more
    plugin UI or native integrations.
 6. **P1 canonical transport**: evolve Rust and TypeScript together to a
    major/minor handshake with fresh sessions, feature/schema negotiation,
@@ -960,6 +961,7 @@ The first lifecycle implementation slice has these acceptance results:
 | `RecoverySetTransaction` keeps the previous pointer authoritative until every changed owner commits, and bootstrap does not expose partial owner generations | Pass | Persistence transaction and bootstrap visibility fault tests |
 | Manifest-declared `ExtensionStorage` carries the same schema/quota through Rust `plugin-api`, `PluginManifestDto`, Tauri serialization and desktop TypeScript; unrelated extension namespaces remain readable after one participant fails | Pass | `plugin-host` host isolation/transaction tests, `workbench-protocol` manifest fixture, desktop typecheck and Tauri compile |
 | Plugin runtime and Job failures produce bounded, redacted, typed diagnostic events; one extension's event does not alter another extension's projection or Core lifecycle | Pass | `plugin-host` diagnostic sink tests, `tauri-adapter` failure-isolation event test, Tauri wire fixture and desktop typecheck |
+| Diagnostic history is bounded, atomically persisted by the application owner, restored across Core restart and included in the user-exported bundle; corrupt history only marks observability degraded | Pass | `persistence` diagnostic store round-trip/corruption fixtures, `application-core` restart/degraded-startup tests and bundle export assertions |
 | Native no-WebView recovery and runtime-RPC migration-participant integration | Pending | Next P0 slices; host-side participant seam is implemented, runtime invocation and recovery UX are not |
 
 All P0 rows must pass before the native foundation is considered safe for alpha
