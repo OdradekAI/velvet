@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use velvet_asset_core::{AssetId, ContentKindId};
+use velvet_asset_core::{AssetId, ContentFingerprint, ContentKindId};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PreviewIntent {
@@ -76,6 +76,15 @@ pub trait PreviewAssetSource: Send + Sync {
         context: &PreviewContext,
         request: PreviewReadRequest,
     ) -> Result<PreviewAssetContent, PreviewSourceError>;
+
+    /// Returns the source-owned identity of the complete Asset content. A
+    /// missing fingerprint is an explicit cache miss for derived work.
+    fn fingerprint(
+        &self,
+        _asset_id: &AssetId,
+    ) -> Result<Option<ContentFingerprint>, PreviewSourceError> {
+        Ok(None)
+    }
 }
 
 #[derive(Default)]
@@ -356,6 +365,13 @@ impl PreviewResolver {
 
     pub fn set_asset_source(&mut self, source: Arc<dyn PreviewAssetSource>) {
         self.source = source;
+    }
+
+    pub fn asset_fingerprint(
+        &self,
+        asset_id: &AssetId,
+    ) -> Result<Option<ContentFingerprint>, PreviewSourceError> {
+        self.source.fingerprint(asset_id)
     }
 
     pub fn resolve(&self, request: PreviewRequest) -> Result<ResolvedPreview, PreviewError> {

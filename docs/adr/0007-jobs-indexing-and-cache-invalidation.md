@@ -23,6 +23,13 @@ content fingerprint
 
 When an input, provider or setting changes, the cache becomes stale and the job is rescheduled. The workbench observes jobs through events and renders them in `OperationsPanel`.
 
+The Asset/source owner supplies the complete-content fingerprint through the
+bounded `PreviewAssetSource` seam when a preview or capability needs it. The
+preview resolver may query that value but never computes an identity from an
+opaque path or a bounded preview slice. A source without a fingerprint returns
+an explicit cache miss; updating content without a new trusted fingerprint
+clears the in-memory source's previous fingerprint rather than reusing it.
+
 The JobSystem is also the authoritative owner for Job result and log state.
 Persistence supplies only a versioned storage adapter. A Job snapshot carries
 its owner, input/provider fingerprint, schema/version, progress, cancellation,

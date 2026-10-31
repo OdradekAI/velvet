@@ -574,11 +574,17 @@ impl ApplicationCore {
         extension_id: &ExtensionId,
         context: &PreviewActionContext,
     ) -> JobProvenance {
+        let input_fingerprint = self
+            .previews
+            .asset_fingerprint(&velvet_asset_core::AssetId(context.asset_id.clone()))
+            .ok()
+            .flatten()
+            .map(|fingerprint| fingerprint.0);
         JobProvenance {
             owner_id: extension_id.0.clone(),
             asset_id: Some(context.asset_id.clone()),
             content_kind: Some(context.content_kind.clone()),
-            input_fingerprint: None,
+            input_fingerprint,
             provider_id: Some(context.provider_id.clone()),
             provider_version: self
                 .plugins
@@ -1687,6 +1693,16 @@ mod tests {
                 job_delay_ms: 0,
             }),
         );
+        let source = Arc::new(InMemoryPreviewAssetSource::default());
+        source.insert_with_fingerprint(
+            velvet_asset_core::AssetId("asset-1".into()),
+            velvet_preview_core::PreviewAssetContent::Text {
+                text: "source-v1".into(),
+                truncated: false,
+            },
+            velvet_asset_core::ContentFingerprint("sha256:source-v1".into()),
+        );
+        core.set_preview_asset_source(source);
         let manifest = preview_manifest();
         let id = manifest.id.clone();
         core.register_plugin(manifest)
@@ -1766,6 +1782,10 @@ mod tests {
                     Some("preview.example.preview.metadata")
                 );
                 assert_eq!(job.provenance.provider_version.as_deref(), Some("0.1.0"));
+                assert_eq!(
+                    job.provenance.input_fingerprint.as_deref(),
+                    Some("sha256:source-v1")
+                );
                 job.id
             }
             other => panic!("expected job response, got {other:?}"),

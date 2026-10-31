@@ -4,7 +4,7 @@ use std::io::{self, Read};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
-use velvet_asset_core::AssetId;
+use velvet_asset_core::{AssetId, ContentFingerprint};
 use velvet_preview_core::{
     PreviewAssetContent, PreviewAssetSource, PreviewContext, PreviewReadRequest, PreviewSourceError,
 };
@@ -14,6 +14,16 @@ use velvet_preview_core::{
 /// never crosses the preview provider seam.
 pub trait AssetSourceLocationResolver: Send + Sync {
     fn resolve(&self, asset_id: &AssetId) -> Result<PathBuf, PreviewSourceError>;
+
+    /// Returns the source-owned identity of the complete content at this
+    /// location. Resolvers that cannot provide one leave derived work
+    /// uncacheable rather than guessing from an opaque path.
+    fn fingerprint(
+        &self,
+        _asset_id: &AssetId,
+    ) -> Result<Option<ContentFingerprint>, PreviewSourceError> {
+        Ok(None)
+    }
 }
 
 /// Read-only source adapter used by the current skeleton and contract tests.
@@ -24,7 +34,12 @@ pub trait AssetSourceLocationResolver: Send + Sync {
 /// adapter can replace this implementation without changing `preview-core`.
 #[derive(Default)]
 pub struct InMemoryPreviewAssetSource {
-    assets: RwLock<BTreeMap<AssetId, PreviewAssetContent>>,
+    assets: RwLock<BTreeMap<AssetId, PreviewAssetRecord>>,
+}
+
+struct PreviewAssetRecord {
+    content: PreviewAssetContent,
+    fingerprint: Option<ContentFingerprint>,
 }
 
 impl InMemoryPreviewAssetSource {
@@ -50,7 +65,30 @@ impl InMemoryPreviewAssetSource {
 
     pub fn insert(&self, asset_id: AssetId, content: PreviewAssetContent) {
         if let Ok(mut assets) = self.assets.write() {
-            assets.insert(asset_id, content);
+            assets.insert(
+                asset_id,
+                PreviewAssetRecord {
+                    content,
+                    fingerprint: None,
+                },
+            );
+        }
+    }
+
+    pub fn insert_with_fingerprint(
+        &self,
+        asset_id: AssetId,
+        content: PreviewAssetContent,
+        fingerprint: ContentFingerprint,
+    ) {
+        if let Ok(mut assets) = self.assets.write() {
+            assets.insert(
+                asset_id,
+                PreviewAssetRecord {
+                    content,
+                    fingerprint: Some(fingerprint),
+                },
+            );
         }
     }
 
@@ -58,7 +96,7 @@ impl InMemoryPreviewAssetSource {
         self.assets
             .write()
             .ok()
-            .and_then(|mut assets| assets.remove(asset_id))
+            .and_then(|mut assets| assets.remove(asset_id).map(|record| record.content))
     }
 }
 
@@ -75,7 +113,21 @@ impl PreviewAssetSource for InMemoryPreviewAssetSource {
         let Some(content) = assets.get(&context.asset_id) else {
             return Err(PreviewSourceError::NotFound);
         };
-        Ok(bound_content(content, request.max_bytes()))
+        Ok(bound_content(&content.content, request.max_bytes()))
+    }
+
+    fn fingerprint(
+        &self,
+        asset_id: &AssetId,
+    ) -> Result<Option<ContentFingerprint>, PreviewSourceError> {
+        let assets = self
+            .assets
+            .read()
+            .map_err(|_| PreviewSourceError::Failed("asset source lock poisoned".into()))?;
+        let Some(record) = assets.get(asset_id) else {
+            return Err(PreviewSourceError::NotFound);
+        };
+        Ok(record.fingerprint.clone())
     }
 }
 
@@ -119,6 +171,13 @@ impl PreviewAssetSource for FilePreviewAssetSource {
         }
 
         Ok(PreviewAssetContent::Bytes { bytes, truncated })
+    }
+
+    fn fingerprint(
+        &self,
+        asset_id: &AssetId,
+    ) -> Result<Option<ContentFingerprint>, PreviewSourceError> {
+        self.locations.fingerprint(asset_id)
     }
 }
 
@@ -223,6 +282,30 @@ mod tests {
             source.read(&context("missing"), PreviewReadRequest::default()),
             Err(PreviewSourceError::NotFound)
         );
+        assert_eq!(
+            source.fingerprint(&AssetId("missing".into())),
+            Err(PreviewSourceError::NotFound)
+        );
+    }
+
+    #[test]
+    fn returns_source_owned_fingerprints_and_clears_them_on_unknown_updates() {
+        let source = InMemoryPreviewAssetSource::default();
+        source.insert_with_fingerprint(
+            AssetId("asset-1".into()),
+            PreviewAssetContent::Text {
+                text: "v1".into(),
+                truncated: false,
+            },
+            ContentFingerprint("sha256:v1".into()),
+        );
+        assert_eq!(
+            source.fingerprint(&AssetId("asset-1".into())),
+            Ok(Some(ContentFingerprint("sha256:v1".into())))
+        );
+
+        source.insert_text(AssetId("asset-1".into()), "v2");
+        assert_eq!(source.fingerprint(&AssetId("asset-1".into())), Ok(None));
     }
 
     struct MapAssetLocations(BTreeMap<AssetId, PathBuf>);

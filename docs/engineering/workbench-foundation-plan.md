@@ -558,6 +558,13 @@ source-location resolver remains a follow-up to the Asset model decision;
 that resolver seam without adding filesystem access to the frontend or plugin
 runtime.
 
+The source seam now also exposes an optional complete-content
+`ContentFingerprint`. Asset/source owners provide it without exposing paths;
+PreviewResolver only forwards the query, and preview-created Jobs copy it into
+`JobProvenance.inputFingerprint`. A missing value is a deliberate cache miss,
+and replacing source content through the in-memory adapter clears an old
+fingerprint unless the caller supplies a new one.
+
 Preview augmentation execution now uses a separate `preview.augment` runtime
 method. Rust resolves matching capability augmentations independently from the
 Primary provider, preserves one diagnostic per failed augmentation and projects
