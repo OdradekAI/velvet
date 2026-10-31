@@ -1,6 +1,7 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::fs;
 use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 mod preview_source;
 mod recovery;
@@ -46,7 +47,7 @@ impl ApplicationRecoveryStores {
 use velvet_asset_core::{AssetId, ContentFingerprint, ContentKindId};
 use velvet_job_system::{
     JobError, JobExecutionContext, JobExecutionError, JobExecutionResult, JobId, JobProvenance,
-    JobRunner, JobSpec, JobStateStore, JobSystem, JOB_SCHEMA_VERSION,
+    JobRunner, JobSpec, JobStateStore, JobStatus, JobSystem, JOB_SCHEMA_VERSION,
 };
 use velvet_layout_model::{InMemoryLayoutService, LayoutService};
 use velvet_persistence::{
@@ -61,9 +62,10 @@ use velvet_plugin_api::{
     PreviewRendererDescriptor, PreviewSurface,
 };
 use velvet_plugin_host::{
-    DisableReason, InMemoryPluginHost, JsonManifestDiscovery, ManifestDiscoveryError,
-    ManifestLoadReport, PluginError, PluginHost, PluginJobHandle, PluginJobInvocation,
-    PluginResourceLoader, PluginRuntime,
+    sanitize_plugin_diagnostic_message, DisableReason, InMemoryPluginHost, JsonManifestDiscovery,
+    ManifestDiscoveryError, ManifestLoadReport, PluginDiagnosticKind, PluginDiagnosticRecord,
+    PluginError, PluginHost, PluginJobHandle, PluginJobInvocation, PluginResourceLoader,
+    PluginRuntime,
 };
 use velvet_preview_core::{
     BuiltinImagePreviewProvider, BuiltinTextPreviewProvider, GenericFallbackProvider,
@@ -72,10 +74,11 @@ use velvet_preview_core::{
     ResolvedPreviewAugmentation,
 };
 use velvet_workbench_protocol::{
-    Command, CoreError, CoreTransport, PluginDisableReason, PluginInstallPreviewDto,
+    Command, CoreError, CoreTransport, PluginDiagnosticEvent,
+    PluginDiagnosticKind as WirePluginDiagnosticKind, PluginDisableReason, PluginInstallPreviewDto,
     PluginProjectionDto, PluginResourceDto, ProfileState, Query, Request, RequestEnvelope,
-    RequestId, Response, ResponseEnvelope, PLUGIN_RESOURCE_SCHEMA_VERSION, PROFILE_SCHEMA_VERSION,
-    PROTOCOL_VERSION,
+    RequestId, Response, ResponseEnvelope, PLUGIN_DIAGNOSTIC_SCHEMA_VERSION,
+    PLUGIN_RESOURCE_SCHEMA_VERSION, PROFILE_SCHEMA_VERSION, PROTOCOL_VERSION,
 };
 
 pub struct ApplicationCore {
@@ -93,6 +96,8 @@ pub struct ApplicationCore {
     recovery: RecoverySupervisor,
     recovery_snapshots: Option<Arc<dyn StateSnapshotStore>>,
     recovery_sets: Option<Arc<dyn RecoverySetStore>>,
+    plugin_diagnostics: VecDeque<PluginDiagnosticEvent>,
+    next_plugin_diagnostic_sequence: u64,
 }
 
 const MAX_PREVIEW_ACTION_SESSIONS: usize = 128;
@@ -459,6 +464,8 @@ impl ApplicationCore {
             recovery,
             recovery_snapshots,
             recovery_sets,
+            plugin_diagnostics: VecDeque::new(),
+            next_plugin_diagnostic_sequence: 1,
         };
 
         if launch_started.is_ok() && !core.recovery.is_safe_mode() {
@@ -1180,8 +1187,62 @@ impl ApplicationCore {
         self.layout.snapshot()
     }
 
-    pub fn drain_job_events(&self) -> Vec<velvet_job_system::JobSnapshot> {
-        self.jobs.drain_events()
+    pub fn drain_job_events(&mut self) -> Vec<velvet_job_system::JobSnapshot> {
+        let snapshots = self.jobs.drain_events();
+        for snapshot in &snapshots {
+            if snapshot.provenance.owner_id != "core"
+                && matches!(snapshot.status, JobStatus::Failed | JobStatus::Interrupted)
+            {
+                self.enqueue_plugin_diagnostic(PluginDiagnosticEvent {
+                    schema_version: PLUGIN_DIAGNOSTIC_SCHEMA_VERSION,
+                    sequence: 0,
+                    extension_id: snapshot.provenance.owner_id.clone(),
+                    kind: WirePluginDiagnosticKind::Job,
+                    code: if snapshot.status == JobStatus::Interrupted {
+                        "job-interrupted".into()
+                    } else {
+                        "job-failed".into()
+                    },
+                    message: sanitize_plugin_diagnostic_message(
+                        snapshot
+                            .message
+                            .as_deref()
+                            .unwrap_or("plugin Job failed without a message"),
+                    ),
+                    job_id: Some(snapshot.id.0.clone()),
+                    attempt: Some(snapshot.attempt),
+                    retryable: snapshot.retryable,
+                    occurred_at_ms: diagnostic_timestamp_ms(),
+                });
+            }
+        }
+        snapshots
+    }
+
+    pub fn drain_plugin_diagnostics(&mut self) -> Vec<PluginDiagnosticEvent> {
+        let host_records = self.plugins.drain_diagnostics();
+        for record in host_records {
+            self.enqueue_plugin_diagnostic(plugin_diagnostic_from_record(record));
+        }
+        let mut events = self.plugin_diagnostics.drain(..).collect::<Vec<_>>();
+        for event in &mut events {
+            event.sequence = self.next_plugin_diagnostic_sequence();
+        }
+        events
+    }
+
+    fn enqueue_plugin_diagnostic(&mut self, event: PluginDiagnosticEvent) {
+        const MAX_DIAGNOSTICS: usize = velvet_plugin_host::MAX_PLUGIN_DIAGNOSTICS;
+        if self.plugin_diagnostics.len() == MAX_DIAGNOSTICS {
+            self.plugin_diagnostics.pop_front();
+        }
+        self.plugin_diagnostics.push_back(event);
+    }
+
+    fn next_plugin_diagnostic_sequence(&mut self) -> u64 {
+        let next = self.next_plugin_diagnostic_sequence;
+        self.next_plugin_diagnostic_sequence = next.saturating_add(1);
+        next
     }
 
     pub fn uninstall_plugin(&mut self, id: &ExtensionId) -> Result<(), PluginError> {
@@ -1930,6 +1991,36 @@ fn plugin_error(error: PluginError) -> CoreError {
     }
 }
 
+fn plugin_diagnostic_from_record(record: PluginDiagnosticRecord) -> PluginDiagnosticEvent {
+    PluginDiagnosticEvent {
+        schema_version: PLUGIN_DIAGNOSTIC_SCHEMA_VERSION,
+        sequence: 0,
+        extension_id: record.extension_id.0,
+        kind: match record.kind {
+            PluginDiagnosticKind::Activation => WirePluginDiagnosticKind::Activation,
+            PluginDiagnosticKind::Runtime => WirePluginDiagnosticKind::Runtime,
+            PluginDiagnosticKind::Invocation => WirePluginDiagnosticKind::Invocation,
+            PluginDiagnosticKind::Job => WirePluginDiagnosticKind::Job,
+            PluginDiagnosticKind::Storage => WirePluginDiagnosticKind::Storage,
+            PluginDiagnosticKind::Migration => WirePluginDiagnosticKind::Migration,
+            PluginDiagnosticKind::Shutdown => WirePluginDiagnosticKind::Shutdown,
+        },
+        code: record.code,
+        message: record.message,
+        job_id: record.job_id,
+        attempt: record.attempt,
+        retryable: record.retryable,
+        occurred_at_ms: record.occurred_at_ms,
+    }
+}
+
+fn diagnostic_timestamp_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or_default()
+}
+
 fn preview_source_error(asset_id: &AssetId, error: PreviewSourceError) -> CoreError {
     let retryable = matches!(&error, PreviewSourceError::Unavailable);
     let message = match error {
@@ -2018,7 +2109,14 @@ impl InProcessCoreTransport {
     pub fn drain_job_events(&self) -> Vec<velvet_job_system::JobSnapshot> {
         self.core
             .lock()
-            .map(|core| core.drain_job_events())
+            .map(|mut core| core.drain_job_events())
+            .unwrap_or_default()
+    }
+
+    pub fn drain_plugin_diagnostics(&self) -> Vec<PluginDiagnosticEvent> {
+        self.core
+            .lock()
+            .map(|mut core| core.drain_plugin_diagnostics())
             .unwrap_or_default()
     }
 

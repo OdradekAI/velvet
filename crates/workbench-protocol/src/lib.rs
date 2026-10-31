@@ -19,6 +19,7 @@ pub const PROFILE_SCHEMA_VERSION: u16 = 1;
 pub const PLUGIN_RESOURCE_SCHEMA_VERSION: u16 = 1;
 pub const RECOVERY_SCHEMA_VERSION: u16 = 1;
 pub const RECOVERY_DIAGNOSTIC_SCHEMA_VERSION: u16 = 1;
+pub const PLUGIN_DIAGNOSTIC_SCHEMA_VERSION: u16 = 1;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -251,6 +252,35 @@ pub struct RecoveryDiagnosticBundle {
     pub schema_version: u16,
     pub exported_at_ms: u64,
     pub projection: RecoveryProjection,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PluginDiagnosticKind {
+    Activation,
+    Runtime,
+    Invocation,
+    Job,
+    Storage,
+    Migration,
+    Shutdown,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PluginDiagnosticEvent {
+    pub schema_version: u16,
+    pub sequence: u64,
+    pub extension_id: String,
+    pub kind: PluginDiagnosticKind,
+    pub code: String,
+    pub message: String,
+    #[serde(default)]
+    pub job_id: Option<String>,
+    #[serde(default)]
+    pub attempt: Option<u32>,
+    pub retryable: bool,
+    pub occurred_at_ms: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -487,6 +517,9 @@ pub enum Event {
         extension_id: String,
         reason: String,
     },
+    PluginDiagnostic {
+        diagnostic: PluginDiagnosticEvent,
+    },
     JobChanged {
         snapshot: Box<JobSnapshot>,
     },
@@ -690,6 +723,29 @@ mod tests {
         assert_eq!(json["exportedAtMs"], 42);
         assert_eq!(json["projection"]["mode"], "degraded");
         assert_eq!(json["projection"]["actions"][1], "export-diagnostics");
+    }
+
+    #[test]
+    fn plugin_diagnostic_event_uses_a_bounded_typed_wire_shape() {
+        let event = PluginDiagnosticEvent {
+            schema_version: PLUGIN_DIAGNOSTIC_SCHEMA_VERSION,
+            sequence: 4,
+            extension_id: "sample.reader".into(),
+            kind: PluginDiagnosticKind::Job,
+            code: "job-failed".into(),
+            message: "runtime exited".into(),
+            job_id: Some("job-000001".into()),
+            attempt: Some(2),
+            retryable: true,
+            occurred_at_ms: 12,
+        };
+        let json = serde_json::to_value(&event).expect("plugin diagnostic should serialize");
+        assert_eq!(json["schemaVersion"], PLUGIN_DIAGNOSTIC_SCHEMA_VERSION);
+        assert_eq!(json["kind"], "job");
+        assert_eq!(json["jobId"], "job-000001");
+        let decoded: PluginDiagnosticEvent =
+            serde_json::from_value(json).expect("plugin diagnostic should deserialize");
+        assert_eq!(decoded, event);
     }
 
     #[test]

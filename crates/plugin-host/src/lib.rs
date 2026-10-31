@@ -120,6 +120,8 @@ pub const MAX_PLUGIN_ARCHIVE_BYTES: u64 = 64 * 1024 * 1024;
 pub const MAX_PLUGIN_ARCHIVE_UNCOMPRESSED_BYTES: u64 = 64 * 1024 * 1024;
 pub const MAX_PLUGIN_ARCHIVE_ENTRY_BYTES: u64 = 16 * 1024 * 1024;
 pub const MAX_PLUGIN_ARCHIVE_ENTRIES: usize = 4096;
+pub const MAX_PLUGIN_DIAGNOSTICS: usize = 256;
+pub const MAX_PLUGIN_DIAGNOSTIC_MESSAGE_BYTES: usize = 512;
 const RECOVERY_LOG_FILE: &str = ".plugin-recovery-log.json";
 const RECOVERY_LOG_LIMIT: usize = 100;
 
@@ -129,6 +131,137 @@ pub struct PluginLocalizationResource {
     pub locale: String,
     pub content_type: String,
     pub bytes: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PluginDiagnosticKind {
+    Activation,
+    Runtime,
+    Invocation,
+    Job,
+    Storage,
+    Migration,
+    Shutdown,
+}
+
+/// A bounded, local-first diagnostic record owned by PluginHost.
+///
+/// Messages are normalized and path-like tokens are redacted before they
+/// enter this queue. The queue is evidence for projection/export; it is not a
+/// remote telemetry channel and never contains a plugin's raw payload.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PluginDiagnosticRecord {
+    pub sequence: u64,
+    pub extension_id: ExtensionId,
+    pub kind: PluginDiagnosticKind,
+    pub code: String,
+    pub message: String,
+    #[serde(default)]
+    pub job_id: Option<String>,
+    #[serde(default)]
+    pub attempt: Option<u32>,
+    pub retryable: bool,
+    pub occurred_at_ms: u64,
+}
+
+#[derive(Debug)]
+pub struct PluginDiagnosticSink {
+    next_sequence: u64,
+    records: std::collections::VecDeque<PluginDiagnosticRecord>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PluginDiagnosticInput {
+    pub extension_id: ExtensionId,
+    pub kind: PluginDiagnosticKind,
+    pub code: String,
+    pub message: String,
+    pub job_id: Option<String>,
+    pub attempt: Option<u32>,
+    pub retryable: bool,
+}
+
+impl Default for PluginDiagnosticSink {
+    fn default() -> Self {
+        Self {
+            next_sequence: 1,
+            records: std::collections::VecDeque::new(),
+        }
+    }
+}
+
+impl PluginDiagnosticSink {
+    pub fn record(&mut self, input: PluginDiagnosticInput) {
+        let record = PluginDiagnosticRecord {
+            sequence: self.next_sequence,
+            extension_id: input.extension_id,
+            kind: input.kind,
+            code: input.code,
+            message: sanitize_plugin_diagnostic_message(&input.message),
+            job_id: input.job_id,
+            attempt: input.attempt,
+            retryable: input.retryable,
+            occurred_at_ms: diagnostic_timestamp_ms(),
+        };
+        self.next_sequence = self.next_sequence.saturating_add(1);
+        if self.records.len() == MAX_PLUGIN_DIAGNOSTICS {
+            self.records.pop_front();
+        }
+        self.records.push_back(record);
+    }
+
+    fn drain(&mut self) -> Vec<PluginDiagnosticRecord> {
+        self.records.drain(..).collect()
+    }
+}
+
+fn diagnostic_timestamp_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or_default()
+}
+
+pub fn sanitize_plugin_diagnostic_message(message: &str) -> String {
+    let normalized = message
+        .chars()
+        .map(|character| match character {
+            '\r' | '\n' | '\t' => ' ',
+            character if character.is_control() => ' ',
+            character => character,
+        })
+        .collect::<String>();
+    let redacted = normalized
+        .split_whitespace()
+        .map(|token| {
+            let candidate = token.trim_start_matches(['(', '[', '{', '<']);
+            if candidate.starts_with('/')
+                || candidate.starts_with("~/")
+                || candidate.contains('\\')
+                || candidate.starts_with("file://")
+                || candidate.contains("=/")
+                || candidate
+                    .as_bytes()
+                    .get(1)
+                    .is_some_and(|character| *character == b':')
+            {
+                "<redacted-path>"
+            } else {
+                token
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    if redacted.len() <= MAX_PLUGIN_DIAGNOSTIC_MESSAGE_BYTES {
+        return redacted;
+    }
+    let mut end = MAX_PLUGIN_DIAGNOSTIC_MESSAGE_BYTES;
+    while !redacted.is_char_boundary(end) {
+        end -= 1;
+    }
+    redacted[..end].to_owned()
 }
 
 /// Package resource adapter for host-owned, bounded reads.
@@ -504,6 +637,7 @@ pub struct PluginJobHandle {
     extension_id: ExtensionId,
     job_kind: String,
     process: Arc<Mutex<Box<dyn RuntimeProcess>>>,
+    diagnostics: Arc<Mutex<PluginDiagnosticSink>>,
 }
 
 impl PluginJobHandle {
@@ -541,22 +675,41 @@ impl PluginJobHandle {
         let result = self
             .process
             .lock()
-            .map_err(|_| PluginError::RuntimeInvocation {
-                extension_id: self.extension_id.clone(),
-                message: "plugin runtime lock poisoned".into(),
+            .map_err(|_| {
+                self.record_diagnostic(
+                    "job-runtime-lock-poisoned",
+                    "plugin runtime lock poisoned",
+                    &invocation,
+                    true,
+                );
+                PluginError::RuntimeInvocation {
+                    extension_id: self.extension_id.clone(),
+                    message: "plugin runtime lock poisoned".into(),
+                }
             })?
             .invoke(&plugin_invocation)
-            .map_err(|error| PluginError::RuntimeInvocation {
-                extension_id: self.extension_id.clone(),
-                message: runtime_error_message(error),
+            .map_err(|error| {
+                let message = runtime_error_message(error);
+                self.record_diagnostic("job-runtime-failed", &message, &invocation, true);
+                PluginError::RuntimeInvocation {
+                    extension_id: self.extension_id.clone(),
+                    message,
+                }
             })?;
         if let Some(error) = result.error {
+            self.record_diagnostic("job-rejected", &error, &invocation, true);
             return Err(PluginError::RuntimeInvocation {
                 extension_id: self.extension_id.clone(),
                 message: error,
             });
         }
         if result.events.len() > MAX_JOB_EVENTS {
+            self.record_diagnostic(
+                "job-events-overflow",
+                &format!("job runtime returned too many progress events (max {MAX_JOB_EVENTS})"),
+                &invocation,
+                false,
+            );
             return Err(PluginError::RuntimeInvocation {
                 extension_id: self.extension_id.clone(),
                 message: format!(
@@ -564,13 +717,25 @@ impl PluginJobHandle {
                 ),
             });
         }
-        let payload = result
-            .result
-            .ok_or_else(|| PluginError::RuntimeInvocation {
+        let payload = result.result.ok_or_else(|| {
+            self.record_diagnostic(
+                "job-missing-result",
+                "job runtime returned no result",
+                &invocation,
+                true,
+            );
+            PluginError::RuntimeInvocation {
                 extension_id: self.extension_id.clone(),
                 message: "job runtime returned no result".into(),
-            })?;
+            }
+        })?;
         let job_result = serde_json::from_value::<PluginJobResult>(payload).map_err(|error| {
+            self.record_diagnostic(
+                "job-invalid-result",
+                &format!("invalid job result: {error}"),
+                &invocation,
+                false,
+            );
             PluginError::RuntimeInvocation {
                 extension_id: self.extension_id.clone(),
                 message: format!("invalid job result: {error}"),
@@ -580,6 +745,26 @@ impl PluginJobHandle {
             result: job_result,
             events: result.events,
         })
+    }
+
+    fn record_diagnostic(
+        &self,
+        code: &str,
+        message: &str,
+        invocation: &PluginJobInvocation,
+        retryable: bool,
+    ) {
+        if let Ok(mut sink) = self.diagnostics.lock() {
+            sink.record(PluginDiagnosticInput {
+                extension_id: self.extension_id.clone(),
+                kind: PluginDiagnosticKind::Job,
+                code: code.into(),
+                message: message.into(),
+                job_id: Some(invocation.job_id.clone()),
+                attempt: Some(invocation.attempt),
+                retryable,
+            });
+        }
     }
 }
 
@@ -1339,6 +1524,7 @@ pub trait PluginHost {
         id: &ExtensionId,
         participant: &dyn MigrationParticipant,
     ) -> Result<ExtensionStorageView, PluginError>;
+    fn drain_diagnostics(&mut self) -> Vec<PluginDiagnosticRecord>;
 }
 
 pub struct InMemoryPluginHost {
@@ -1351,6 +1537,7 @@ pub struct InMemoryPluginHost {
     apps: BTreeMap<String, VersionRange>,
     pending_installs: BTreeMap<ExtensionId, InstallBackup>,
     extension_snapshots: Option<Arc<dyn velvet_persistence::StateSnapshotStore>>,
+    diagnostics: Arc<Mutex<PluginDiagnosticSink>>,
 }
 
 struct InstallBackup {
@@ -1381,6 +1568,7 @@ impl Default for InMemoryPluginHost {
             apps,
             pending_installs: BTreeMap::new(),
             extension_snapshots: None,
+            diagnostics: Arc::new(Mutex::new(PluginDiagnosticSink::default())),
         }
     }
 }
@@ -1405,6 +1593,19 @@ impl InMemoryPluginHost {
         snapshots: Arc<dyn velvet_persistence::StateSnapshotStore>,
     ) {
         self.extension_snapshots = Some(snapshots);
+    }
+
+    pub fn drain_diagnostics(&mut self) -> Vec<PluginDiagnosticRecord> {
+        self.diagnostics
+            .lock()
+            .map(|mut sink| sink.drain())
+            .unwrap_or_default()
+    }
+
+    fn record_diagnostic(&self, input: PluginDiagnosticInput) {
+        if let Ok(mut sink) = self.diagnostics.lock() {
+            sink.record(input);
+        }
     }
 
     pub fn extension_storage(&self, id: &ExtensionId) -> Result<ExtensionStorage, PluginError> {
@@ -1434,9 +1635,20 @@ impl InMemoryPluginHost {
             declaration.quota_bytes,
             snapshots.clone(),
         )
-        .map_err(|error| PluginError::ExtensionStorage {
-            extension_id: id.clone(),
-            message: format!("{error:?}"),
+        .map_err(|error| {
+            self.record_diagnostic(PluginDiagnosticInput {
+                extension_id: id.clone(),
+                kind: PluginDiagnosticKind::Storage,
+                code: "storage-unavailable".into(),
+                message: format!("{error:?}"),
+                job_id: None,
+                attempt: None,
+                retryable: true,
+            });
+            PluginError::ExtensionStorage {
+                extension_id: id.clone(),
+                message: format!("{error:?}"),
+            }
         })
     }
 
@@ -1447,9 +1659,20 @@ impl InMemoryPluginHost {
     ) -> Result<ExtensionStorageExport, PluginError> {
         self.extension_storage(id)?
             .export_with(participant)
-            .map_err(|error| PluginError::ExtensionStorage {
-                extension_id: id.clone(),
-                message: format!("{error:?}"),
+            .map_err(|error| {
+                self.record_diagnostic(PluginDiagnosticInput {
+                    extension_id: id.clone(),
+                    kind: PluginDiagnosticKind::Storage,
+                    code: "backup-export-failed".into(),
+                    message: format!("{error:?}"),
+                    job_id: None,
+                    attempt: None,
+                    retryable: true,
+                });
+                PluginError::ExtensionStorage {
+                    extension_id: id.clone(),
+                    message: format!("{error:?}"),
+                }
             })
     }
 
@@ -1460,9 +1683,20 @@ impl InMemoryPluginHost {
     ) -> Result<ExtensionStorageView, PluginError> {
         self.extension_storage(id)?
             .migrate_with(participant)
-            .map_err(|error| PluginError::ExtensionStorage {
-                extension_id: id.clone(),
-                message: format!("{error:?}"),
+            .map_err(|error| {
+                self.record_diagnostic(PluginDiagnosticInput {
+                    extension_id: id.clone(),
+                    kind: PluginDiagnosticKind::Migration,
+                    code: "migration-failed".into(),
+                    message: format!("{error:?}"),
+                    job_id: None,
+                    attempt: None,
+                    retryable: true,
+                });
+                PluginError::ExtensionStorage {
+                    extension_id: id.clone(),
+                    message: format!("{error:?}"),
+                }
             })
     }
 
@@ -1846,15 +2080,35 @@ impl InMemoryPluginHost {
             })?;
         let result = process
             .lock()
-            .map_err(|_| PluginError::RuntimeInvocation {
-                extension_id: id.clone(),
-                message: "plugin runtime lock poisoned".into(),
+            .map_err(|_| {
+                self.record_diagnostic(PluginDiagnosticInput {
+                    extension_id: id.clone(),
+                    kind: PluginDiagnosticKind::Invocation,
+                    code: "invocation-lock-poisoned".into(),
+                    message: "plugin runtime lock poisoned".into(),
+                    job_id: None,
+                    attempt: None,
+                    retryable: true,
+                });
+                PluginError::RuntimeInvocation {
+                    extension_id: id.clone(),
+                    message: "plugin runtime lock poisoned".into(),
+                }
             })?
             .invoke(&invocation);
 
         match result {
             Ok(result) => {
                 if let Some(error) = &result.error {
+                    self.record_diagnostic(PluginDiagnosticInput {
+                        extension_id: id.clone(),
+                        kind: PluginDiagnosticKind::Invocation,
+                        code: "invocation-rejected".into(),
+                        message: error.clone(),
+                        job_id: None,
+                        attempt: None,
+                        retryable: true,
+                    });
                     return Err(PluginError::RuntimeInvocation {
                         extension_id: id.clone(),
                         message: error.clone(),
@@ -1862,10 +2116,21 @@ impl InMemoryPluginHost {
                 }
                 Ok(result)
             }
-            Err(RuntimeError::InvocationRejected(message)) => Err(PluginError::RuntimeInvocation {
-                extension_id: id.clone(),
-                message,
-            }),
+            Err(RuntimeError::InvocationRejected(message)) => {
+                self.record_diagnostic(PluginDiagnosticInput {
+                    extension_id: id.clone(),
+                    kind: PluginDiagnosticKind::Invocation,
+                    code: "invocation-rejected".into(),
+                    message: message.clone(),
+                    job_id: None,
+                    attempt: None,
+                    retryable: true,
+                });
+                Err(PluginError::RuntimeInvocation {
+                    extension_id: id.clone(),
+                    message,
+                })
+            }
             Err(error) => {
                 let message = runtime_error_message(error);
                 if let Some(process) = self.processes.remove(id) {
@@ -1875,6 +2140,15 @@ impl InMemoryPluginHost {
                 }
                 self.active.remove(id);
                 self.states.insert(id.clone(), ExtensionState::Failed);
+                self.record_diagnostic(PluginDiagnosticInput {
+                    extension_id: id.clone(),
+                    kind: PluginDiagnosticKind::Runtime,
+                    code: "invocation-runtime-failed".into(),
+                    message: message.clone(),
+                    job_id: None,
+                    attempt: None,
+                    retryable: true,
+                });
                 Err(PluginError::RuntimeInvocation {
                     extension_id: id.clone(),
                     message,
@@ -2048,9 +2322,19 @@ impl PluginHost for InMemoryPluginHost {
             }
             Err(error) => {
                 self.states.insert(id.clone(), ExtensionState::Failed);
+                let message = runtime_error_message(error);
+                self.record_diagnostic(PluginDiagnosticInput {
+                    extension_id: id.clone(),
+                    kind: PluginDiagnosticKind::Activation,
+                    code: "activation-failed".into(),
+                    message: message.clone(),
+                    job_id: None,
+                    attempt: None,
+                    retryable: true,
+                });
                 Err(PluginError::RuntimeStart {
                     extension_id: id.clone(),
-                    message: runtime_error_message(error),
+                    message,
                 })
             }
         }
@@ -2068,9 +2352,19 @@ impl PluginHost for InMemoryPluginHost {
             .and_then(|process| process.lock().ok()?.shutdown().err());
         self.states.insert(id.clone(), ExtensionState::Disabled);
         if let Some(error) = shutdown_error {
+            let message = runtime_error_message(error);
+            self.record_diagnostic(PluginDiagnosticInput {
+                extension_id: id.clone(),
+                kind: PluginDiagnosticKind::Shutdown,
+                code: "shutdown-failed".into(),
+                message: message.clone(),
+                job_id: None,
+                attempt: None,
+                retryable: true,
+            });
             return Err(PluginError::RuntimeShutdown {
                 extension_id: id.clone(),
-                message: runtime_error_message(error),
+                message,
             });
         }
         Ok(())
@@ -2142,6 +2436,7 @@ impl PluginHost for InMemoryPluginHost {
                 extension_id: id.clone(),
                 job_kind,
                 process: process.clone(),
+                diagnostics: self.diagnostics.clone(),
             })
             .collect())
     }
@@ -2161,9 +2456,20 @@ impl PluginHost for InMemoryPluginHost {
 
         let health = process
             .lock()
-            .map_err(|_| PluginError::RuntimeCrashed {
-                extension_id: id.clone(),
-                message: "plugin runtime lock poisoned".into(),
+            .map_err(|_| {
+                self.record_diagnostic(PluginDiagnosticInput {
+                    extension_id: id.clone(),
+                    kind: PluginDiagnosticKind::Runtime,
+                    code: "health-lock-poisoned".into(),
+                    message: "plugin runtime lock poisoned".into(),
+                    job_id: None,
+                    attempt: None,
+                    retryable: true,
+                });
+                PluginError::RuntimeCrashed {
+                    extension_id: id.clone(),
+                    message: "plugin runtime lock poisoned".into(),
+                }
             })?
             .poll();
         match health {
@@ -2176,6 +2482,15 @@ impl PluginHost for InMemoryPluginHost {
                 }
                 self.active.remove(id);
                 self.states.insert(id.clone(), ExtensionState::Failed);
+                self.record_diagnostic(PluginDiagnosticInput {
+                    extension_id: id.clone(),
+                    kind: PluginDiagnosticKind::Runtime,
+                    code: "runtime-crashed".into(),
+                    message: message.clone(),
+                    job_id: None,
+                    attempt: None,
+                    retryable: true,
+                });
                 Err(PluginError::RuntimeCrashed {
                     extension_id: id.clone(),
                     message,
@@ -3011,6 +3326,10 @@ impl PluginHost for InMemoryPluginHost {
     ) -> Result<ExtensionStorageView, PluginError> {
         InMemoryPluginHost::migrate_extension_state(self, id, participant)
     }
+
+    fn drain_diagnostics(&mut self) -> Vec<PluginDiagnosticRecord> {
+        InMemoryPluginHost::drain_diagnostics(self)
+    }
 }
 
 fn namespace_for(scope: &ContributionScope, extension_id: &ExtensionId) -> String {
@@ -3556,6 +3875,7 @@ mod tests {
         assert_eq!(execution.result.content_type, "application/json");
         assert_eq!(execution.result.payload["jobKind"], "job.example.analyze");
         assert_eq!(execution.events[0].progress, Some(100));
+        assert!(host.drain_diagnostics().is_empty());
     }
 
     #[test]
@@ -3730,6 +4050,64 @@ mod tests {
             Err(PluginError::InvalidContribution(message))
                 if message.contains("quotaBytes")
         ));
+    }
+
+    #[test]
+    fn diagnostic_sink_is_bounded_ordered_and_redacts_paths() {
+        let mut sink = PluginDiagnosticSink::default();
+        sink.record(PluginDiagnosticInput {
+            extension_id: ExtensionId("sample.reader".into()),
+            kind: PluginDiagnosticKind::Runtime,
+            code: "runtime-crashed".into(),
+            message: "failed at /Users/example/private/file.txt path=/Users/example/private/file.txt\nsecret".into(),
+            job_id: None,
+            attempt: None,
+            retryable: true,
+        });
+        let records = sink.drain();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].sequence, 1);
+        assert_eq!(
+            records[0].message,
+            "failed at <redacted-path> <redacted-path> secret"
+        );
+        assert!(records[0].message.len() <= MAX_PLUGIN_DIAGNOSTIC_MESSAGE_BYTES);
+
+        for index in 0..=MAX_PLUGIN_DIAGNOSTICS {
+            sink.record(PluginDiagnosticInput {
+                extension_id: ExtensionId("sample.reader".into()),
+                kind: PluginDiagnosticKind::Job,
+                code: format!("job-{index}"),
+                message: "bounded".into(),
+                job_id: None,
+                attempt: None,
+                retryable: true,
+            });
+        }
+        let records = sink.drain();
+        assert_eq!(records.len(), MAX_PLUGIN_DIAGNOSTICS);
+        assert_eq!(records.first().map(|record| record.sequence), Some(3));
+        assert_eq!(records.last().map(|record| record.sequence), Some(258));
+    }
+
+    #[test]
+    fn diagnostic_messages_are_bounded_at_a_utf8_boundary() {
+        let mut sink = PluginDiagnosticSink::default();
+        sink.record(PluginDiagnosticInput {
+            extension_id: ExtensionId("sample.reader".into()),
+            kind: PluginDiagnosticKind::Runtime,
+            code: "runtime-crashed".into(),
+            message: "界".repeat(MAX_PLUGIN_DIAGNOSTIC_MESSAGE_BYTES),
+            job_id: None,
+            attempt: None,
+            retryable: true,
+        });
+
+        let records = sink.drain();
+        assert!(records[0].message.len() <= MAX_PLUGIN_DIAGNOSTIC_MESSAGE_BYTES);
+        assert!(records[0]
+            .message
+            .is_char_boundary(records[0].message.len()));
     }
 
     #[test]
@@ -3922,6 +4300,13 @@ mod tests {
             Value::Null,
         )
         .expect("a recovered runtime should accept the command");
+        let diagnostics = host.drain_diagnostics();
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.extension_id == id
+                && diagnostic.kind == PluginDiagnosticKind::Runtime
+                && diagnostic.code == "invocation-runtime-failed"
+                && diagnostic.retryable
+        }));
         assert_eq!(*shutdowns.lock().unwrap(), 1);
     }
 

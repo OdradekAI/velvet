@@ -1374,6 +1374,9 @@ enum WireEvent {
         extension_id: String,
         reason: String,
     },
+    PluginDiagnostic {
+        diagnostic: velvet_workbench_protocol::PluginDiagnosticEvent,
+    },
     JobChanged {
         snapshot: Box<WireJobSnapshot>,
     },
@@ -1398,6 +1401,7 @@ impl From<Event> for WireEventEnvelope {
                 extension_id,
                 reason,
             },
+            Event::PluginDiagnostic { diagnostic } => WireEvent::PluginDiagnostic { diagnostic },
             Event::JobChanged { snapshot } => WireEvent::JobChanged {
                 snapshot: Box::new(WireJobSnapshot::from(*snapshot)),
             },
@@ -1823,6 +1827,29 @@ mod tests {
                 quota_bytes: 8192,
             })
         );
+    }
+
+    #[test]
+    fn wire_plugin_diagnostic_event_preserves_typed_failure_evidence() {
+        let value = serde_json::to_value(WireEventEnvelope::from(Event::PluginDiagnostic {
+            diagnostic: velvet_workbench_protocol::PluginDiagnosticEvent {
+                schema_version: velvet_workbench_protocol::PLUGIN_DIAGNOSTIC_SCHEMA_VERSION,
+                sequence: 7,
+                extension_id: "sample.reader".into(),
+                kind: velvet_workbench_protocol::PluginDiagnosticKind::Job,
+                code: "job-failed".into(),
+                message: "runtime exited".into(),
+                job_id: Some("job-000001".into()),
+                attempt: Some(2),
+                retryable: true,
+                occurred_at_ms: 42,
+            },
+        }))
+        .expect("plugin diagnostic event should serialize");
+
+        assert_eq!(value["event"]["kind"], "plugin-diagnostic");
+        assert_eq!(value["event"]["diagnostic"]["schemaVersion"], 1);
+        assert_eq!(value["event"]["diagnostic"]["jobId"], "job-000001");
     }
 
     #[test]

@@ -189,6 +189,15 @@ can publish a core `RecoverySet`, and a failed participant leaves the previous
 extension generation and all other owners untouched. This is a host seam for
 in-process tests and future runtime RPC, not yet a promise that arbitrary
 plugin code can run during startup migration.
+
+Runtime and Job failures now also cross a typed diagnostic seam. `PluginHost`
+keeps a bounded local queue with sequence, extension, failure kind/code,
+redacted message, retryability and optional Job attempt; `ApplicationCore`
+adds failure evidence from its Job boundary, and `tauri-adapter` forwards
+`PluginDiagnosticEvent` without owning retention. This makes one extension's
+failure observable and recoverable while leaving other extensions and Core
+available. Durable diagnostic retention, user export and runtime RPC
+participant invocation remain separate gates.
 Optional plugin activation is recorded as a degraded component failure and does
 not block the core-ready checkpoint. The file journal is an evidence
 store, not yet a replacement for owner snapshots or a proof that writes are

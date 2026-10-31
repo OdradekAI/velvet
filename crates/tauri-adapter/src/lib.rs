@@ -86,6 +86,7 @@ impl CoreTransport for TauriTransport {
         let response = match self.inner.dispatch(request_id, request) {
             Ok(response) => response,
             Err(error) => {
+                self.emit_pending_diagnostics();
                 if let CoreError::PluginRuntimeFailed { extension_id, .. } = &error {
                     self.event_sink.emit(Event::PluginDisabled {
                         extension_id: extension_id.clone(),
@@ -104,6 +105,7 @@ impl CoreTransport for TauriTransport {
                 snapshot: Box::new(snapshot),
             });
         }
+        self.emit_pending_diagnostics();
 
         if emits_layout_event {
             if let Response::Layout(state) = &response {
@@ -143,6 +145,14 @@ impl CoreTransport for TauriTransport {
         }
 
         Ok(response)
+    }
+}
+
+impl TauriTransport {
+    fn emit_pending_diagnostics(&self) {
+        for diagnostic in self.inner.drain_plugin_diagnostics() {
+            self.event_sink.emit(Event::PluginDiagnostic { diagnostic });
+        }
     }
 }
 
@@ -381,6 +391,13 @@ mod tests {
             event,
             Event::RecoveryChanged { projection }
                 if projection.mode == velvet_workbench_protocol::RecoveryMode::Degraded
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::PluginDiagnostic { diagnostic }
+                if diagnostic.extension_id == "sample.crashing-sidecar"
+                    && diagnostic.kind == velvet_workbench_protocol::PluginDiagnosticKind::Runtime
+                    && diagnostic.retryable
         )));
     }
 

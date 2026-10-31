@@ -33,12 +33,15 @@ export type {
   CoreRecoveryAction,
   CoreRecoveryCheckpoint,
   CoreRecoveryDiagnosticBundle,
+  CorePluginDiagnosticEvent,
+  CorePluginDiagnosticKind,
   CoreRecoveryFailure,
   CoreRecoveryFailureClass,
   CoreRecoveryMode,
   CoreRecoveryProjection,
   CoreRecoveryTarget,
   RecoveryDiagnosticSchemaVersion,
+  PluginDiagnosticSchemaVersion,
   CoreStartupPhase,
   CorePluginResource,
   CoreProfileState,
@@ -67,6 +70,7 @@ export {
   PLUGIN_RESOURCE_SCHEMA_VERSION,
   PROFILE_SCHEMA_VERSION,
   RECOVERY_DIAGNOSTIC_SCHEMA_VERSION,
+  PLUGIN_DIAGNOSTIC_SCHEMA_VERSION,
   RECOVERY_SCHEMA_VERSION,
 } from './protocol.js';
 export {

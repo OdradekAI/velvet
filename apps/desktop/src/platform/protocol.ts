@@ -12,6 +12,8 @@ export const RECOVERY_SCHEMA_VERSION = 1 as const;
 export type RecoverySchemaVersion = typeof RECOVERY_SCHEMA_VERSION;
 export const RECOVERY_DIAGNOSTIC_SCHEMA_VERSION = 1 as const;
 export type RecoveryDiagnosticSchemaVersion = typeof RECOVERY_DIAGNOSTIC_SCHEMA_VERSION;
+export const PLUGIN_DIAGNOSTIC_SCHEMA_VERSION = 1 as const;
+export type PluginDiagnosticSchemaVersion = typeof PLUGIN_DIAGNOSTIC_SCHEMA_VERSION;
 export type WorkbenchAppId = string;
 /** Compatibility alias for older clients and migration code. */
 export type WorkspaceId = WorkbenchAppId;
@@ -480,6 +482,28 @@ export interface CoreRecoveryDiagnosticBundle {
   readonly projection: CoreRecoveryProjection;
 }
 
+export type CorePluginDiagnosticKind =
+  | 'activation'
+  | 'runtime'
+  | 'invocation'
+  | 'job'
+  | 'storage'
+  | 'migration'
+  | 'shutdown';
+
+export interface CorePluginDiagnosticEvent {
+  readonly schemaVersion: PluginDiagnosticSchemaVersion;
+  readonly sequence: number;
+  readonly extensionId: string;
+  readonly kind: CorePluginDiagnosticKind;
+  readonly code: string;
+  readonly message: string;
+  readonly jobId: string | null;
+  readonly attempt: number | null;
+  readonly retryable: boolean;
+  readonly occurredAtMs: number;
+}
+
 export type PluginState = 'registered' | 'starting' | 'active' | 'disabled' | 'failed';
 
 export interface PluginSummary {
@@ -758,6 +782,7 @@ export type CoreEvent =
   | { readonly kind: 'layout-changed'; readonly revision: number; readonly state: LayoutSnapshot }
   | { readonly kind: 'profile-changed'; readonly revision: number; readonly state: CoreProfileState }
   | { readonly kind: 'recovery-changed'; readonly projection: CoreRecoveryProjection }
+  | { readonly kind: 'plugin-diagnostic'; readonly diagnostic: CorePluginDiagnosticEvent }
   | { readonly kind: 'job-changed'; readonly snapshot: CoreJobSnapshot }
   | { readonly kind: 'plugin-disabled'; readonly extensionId: string; readonly reason: string };
 
