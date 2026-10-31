@@ -392,7 +392,10 @@ cannot publish global recovery pointers. A main-process crash or power loss
 interrupts every child runtime; the next launch restores committed extension
 generations and Job snapshots, then marks in-flight attempts interrupted. A
 sidecar left behind after the Core exits is an orphan to reconcile, never an
-independent writer of extension or core state.
+independent writer of extension or core state. The current sidecar adapter
+already bounds stderr, records exit evidence and cleans Unix process groups on
+shutdown; package launch allow-lists, parent-death handling and cross-platform
+orphan reconciliation remain qualification gates.
 
 Before system suspend, background admission stops, runners checkpoint and Job
 snapshots persist. After wake, local work resumes when its owner and storage

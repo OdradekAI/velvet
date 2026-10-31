@@ -1,8 +1,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
+#[cfg(unix)]
+use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, ChildStderr, Command, Stdio};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -115,6 +119,7 @@ pub enum RuntimeHealth {
 const RUNTIME_PROTOCOL_VERSION: u16 = 1;
 const RUNTIME_INVOCATION_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_JOB_EVENTS: usize = 128;
+pub const MAX_RUNTIME_STDERR_BYTES: usize = 16 * 1024;
 pub const MAX_PLUGIN_LOCALIZATION_BYTES: usize = 1024 * 1024;
 pub const MAX_PLUGIN_ARCHIVE_BYTES: u64 = 64 * 1024 * 1024;
 pub const MAX_PLUGIN_ARCHIVE_UNCOMPRESSED_BYTES: u64 = 64 * 1024 * 1024;
@@ -849,7 +854,9 @@ impl PluginRuntime for ProcessPluginRuntime {
             .env("VELVET_PLUGIN_PERMISSIONS", permissions.as_env_value())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null());
+            .stderr(Stdio::piped());
+        #[cfg(unix)]
+        command.process_group(0);
         let mut child = command
             .spawn()
             .map_err(|error| RuntimeError::StartFailed(error.to_string()))?;
@@ -857,7 +864,7 @@ impl PluginRuntime for ProcessPluginRuntime {
         let stdin = match child.stdin.take() {
             Some(stdin) => stdin,
             None => {
-                let _ = child.kill();
+                let _ = terminate_child(&mut child);
                 let _ = child.wait();
                 return Err(RuntimeError::StartFailed(
                     "external runtime did not expose stdin".into(),
@@ -867,11 +874,34 @@ impl PluginRuntime for ProcessPluginRuntime {
         let stdout = match child.stdout.take() {
             Some(stdout) => stdout,
             None => {
-                let _ = child.kill();
+                let _ = terminate_child(&mut child);
                 let _ = child.wait();
                 return Err(RuntimeError::StartFailed(
                     "external runtime did not expose stdout".into(),
                 ));
+            }
+        };
+        let stderr = match child.stderr.take() {
+            Some(stderr) => stderr,
+            None => {
+                let _ = terminate_child(&mut child);
+                let _ = child.wait();
+                return Err(RuntimeError::StartFailed(
+                    "external runtime did not expose stderr".into(),
+                ));
+            }
+        };
+        let stderr_tail = Arc::new(Mutex::new(Vec::new()));
+        let stderr_worker_tail = Arc::clone(&stderr_tail);
+        let stderr_worker = match thread::Builder::new()
+            .name(format!("velvet-plugin-stderr-{}", manifest.id.0))
+            .spawn(move || read_bounded_stderr(stderr, stderr_worker_tail))
+        {
+            Ok(worker) => worker,
+            Err(error) => {
+                let _ = terminate_child(&mut child);
+                let _ = child.wait();
+                return Err(RuntimeError::StartFailed(error.to_string()));
             }
         };
         let (requests, receiver) = mpsc::channel();
@@ -881,8 +911,9 @@ impl PluginRuntime for ProcessPluginRuntime {
         {
             Ok(worker) => worker,
             Err(error) => {
-                let _ = child.kill();
+                let _ = terminate_child(&mut child);
                 let _ = child.wait();
+                let _ = stderr_worker.join();
                 return Err(RuntimeError::StartFailed(error.to_string()));
             }
         };
@@ -891,6 +922,8 @@ impl PluginRuntime for ProcessPluginRuntime {
             child,
             requests: Some(requests),
             worker: Some(worker),
+            stderr_worker: Some(stderr_worker),
+            stderr_tail,
         }))
     }
 }
@@ -907,12 +940,19 @@ struct ChildRuntimeProcess {
     child: Child,
     requests: Option<Sender<RuntimeIoRequest>>,
     worker: Option<JoinHandle<()>>,
+    stderr_worker: Option<JoinHandle<()>>,
+    stderr_tail: Arc<Mutex<Vec<u8>>>,
 }
 
 impl RuntimeProcess for ChildRuntimeProcess {
     fn poll(&mut self) -> RuntimeHealth {
         match self.child.try_wait() {
-            Ok(Some(status)) => RuntimeHealth::Crashed(format!("process exited with {status}")),
+            Ok(Some(status)) => {
+                cleanup_exited_child_group(&self.child);
+                let _ = self.child.wait();
+                self.join_stderr_worker();
+                RuntimeHealth::Crashed(exit_evidence(&status, &self.stderr_snapshot()))
+            }
             Ok(None) => RuntimeHealth::Running,
             Err(error) => RuntimeHealth::Crashed(error.to_string()),
         }
@@ -924,11 +964,13 @@ impl RuntimeProcess for ChildRuntimeProcess {
         }
 
         let shutdown_result = match self.child.try_wait() {
-            Ok(Some(_)) => Ok(()),
+            Ok(Some(_)) => {
+                cleanup_exited_child_group(&self.child);
+                self.join_stderr_worker();
+                Ok(())
+            }
             Ok(None) => {
-                self.child
-                    .kill()
-                    .map_err(|error| RuntimeError::ShutdownFailed(error.to_string()))?;
+                terminate_child(&mut self.child)?;
                 self.child
                     .wait()
                     .map(|_| ())
@@ -936,6 +978,8 @@ impl RuntimeProcess for ChildRuntimeProcess {
             }
             Err(error) => Err(RuntimeError::ShutdownFailed(error.to_string())),
         };
+
+        self.join_stderr_worker();
 
         if let Some(worker) = self.worker.take() {
             if worker.join().is_err() && shutdown_result.is_ok() {
@@ -954,9 +998,13 @@ impl RuntimeProcess for ChildRuntimeProcess {
     ) -> Result<PluginInvocationResult, RuntimeError> {
         match self.child.try_wait() {
             Ok(Some(status)) => {
+                cleanup_exited_child_group(&self.child);
+                let _ = self.child.wait();
+                self.join_stderr_worker();
                 return Err(RuntimeError::InvocationFailed(format!(
-                    "runtime exited before invocation with {status}"
-                )))
+                    "runtime exited before invocation: {}",
+                    exit_evidence(&status, &self.stderr_snapshot())
+                )));
             }
             Ok(None) => {}
             Err(error) => return Err(RuntimeError::InvocationFailed(error.to_string())),
@@ -1017,6 +1065,90 @@ impl RuntimeProcess for ChildRuntimeProcess {
             events: response.events,
         })
     }
+}
+
+impl ChildRuntimeProcess {
+    fn stderr_snapshot(&self) -> Vec<u8> {
+        self.stderr_tail
+            .lock()
+            .map(|tail| tail.clone())
+            .unwrap_or_default()
+    }
+
+    fn join_stderr_worker(&mut self) {
+        if let Some(worker) = self.stderr_worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
+
+fn read_bounded_stderr(mut stderr: ChildStderr, tail: Arc<Mutex<Vec<u8>>>) {
+    let mut chunk = [0_u8; 4096];
+    loop {
+        match stderr.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(count) => {
+                if let Ok(mut tail) = tail.lock() {
+                    tail.extend_from_slice(&chunk[..count]);
+                    if tail.len() > MAX_RUNTIME_STDERR_BYTES {
+                        let remove = tail.len() - MAX_RUNTIME_STDERR_BYTES;
+                        tail.drain(..remove);
+                    }
+                }
+            }
+            Err(_) => break,
+        }
+    }
+}
+
+fn exit_evidence(status: &std::process::ExitStatus, stderr: &[u8]) -> String {
+    let mut message = format!("process exited with {status}");
+    #[cfg(unix)]
+    if let Some(signal) = status.signal() {
+        message.push_str(&format!(" (signal {signal})"));
+    }
+    if !stderr.is_empty() {
+        message.push_str(": stderr: ");
+        message.push_str(&sanitize_plugin_diagnostic_message(
+            &String::from_utf8_lossy(stderr),
+        ));
+    }
+    message
+}
+
+fn terminate_child(child: &mut Child) -> Result<(), RuntimeError> {
+    #[cfg(unix)]
+    {
+        let process_group = -(child.id() as i32);
+        let result = unsafe { libc::kill(process_group, libc::SIGKILL) };
+        if result != 0 {
+            let error = std::io::Error::last_os_error();
+            if error.raw_os_error() == Some(libc::ESRCH) {
+                return Ok(());
+            }
+            return child.kill().map_err(|fallback| {
+                RuntimeError::ShutdownFailed(format!(
+                    "process-group kill failed: {error}; direct kill failed: {fallback}"
+                ))
+            });
+        }
+        Ok(())
+    }
+
+    #[cfg(not(unix))]
+    child
+        .kill()
+        .map_err(|error| RuntimeError::ShutdownFailed(error.to_string()))
+}
+
+fn cleanup_exited_child_group(child: &Child) {
+    #[cfg(unix)]
+    {
+        let process_group = -(child.id() as i32);
+        let _ = unsafe { libc::kill(process_group, libc::SIGKILL) };
+    }
+    #[cfg(not(unix))]
+    let _ = child;
 }
 
 struct NoopRuntimeProcess;
@@ -3432,7 +3564,7 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{Arc, Mutex};
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     use super::*;
     use velvet_layout_model::WorkbenchZone;
@@ -4613,6 +4745,94 @@ mod tests {
         process
             .shutdown()
             .expect("the sidecar should be stoppable after invocation");
+    }
+
+    #[test]
+    fn process_runtime_reports_bounded_stderr_and_exit_status() {
+        let mut runtime = ProcessPluginRuntime;
+        let manifest = ExtensionManifest {
+            id: ExtensionId("process.failure-evidence".into()),
+            version: "1.0.0".into(),
+            host_api: VersionRange("^1".into()),
+            runtime: RuntimeKind::Sidecar,
+            launch: Some(RuntimeLaunchSpec {
+                program: "sh".into(),
+                args: vec!["-c".into(), "yes x | head -c 20000 >&2; exit 7".into()],
+            }),
+            target_app: None,
+            contributions: vec![],
+            permission_sets: vec![],
+            ..ExtensionManifest::default()
+        };
+
+        let mut process = runtime
+            .start(&manifest, &PermissionGrant::default())
+            .expect("the sidecar should start");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let health = loop {
+            match process.poll() {
+                RuntimeHealth::Running if Instant::now() < deadline => std::thread::yield_now(),
+                health => break health,
+            }
+        };
+
+        match health {
+            RuntimeHealth::Crashed(message) => {
+                assert!(message.contains("exit status: 7"));
+                assert!(message.contains("stderr"));
+                assert!(message.len() <= MAX_RUNTIME_STDERR_BYTES + 128);
+            }
+            RuntimeHealth::Running => panic!("the sidecar should have exited"),
+        }
+        process
+            .shutdown()
+            .expect("the exited sidecar should be cleanly reaped");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn process_runtime_shutdown_terminates_sidecar_process_group() {
+        let root = temporary_manifest_dir();
+        fs::create_dir_all(&root).expect("the process-group fixture should be writable");
+        let started = root.join("started");
+        let descendant_marker = root.join("descendant-alive");
+        let shell_quote = |path: &PathBuf| format!("'{}'", path.display());
+        let command = format!(
+            "(sleep 1; printf alive > {}) & child=$!; printf started > {}; wait $child",
+            shell_quote(&descendant_marker),
+            shell_quote(&started),
+        );
+        let manifest = ExtensionManifest {
+            id: ExtensionId("process.group-cleanup".into()),
+            version: "1.0.0".into(),
+            host_api: VersionRange("^1".into()),
+            runtime: RuntimeKind::Sidecar,
+            launch: Some(RuntimeLaunchSpec {
+                program: "sh".into(),
+                args: vec!["-c".into(), command],
+            }),
+            target_app: None,
+            contributions: vec![],
+            permission_sets: vec![],
+            ..ExtensionManifest::default()
+        };
+
+        let mut runtime = ProcessPluginRuntime;
+        let mut process = runtime
+            .start(&manifest, &PermissionGrant::default())
+            .expect("the sidecar should start");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !started.exists() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(started.exists(), "the descendant should have started");
+        assert!(!descendant_marker.exists());
+        process
+            .shutdown()
+            .expect("shutdown should terminate the process group");
+        std::thread::sleep(Duration::from_millis(1200));
+        assert!(!descendant_marker.exists());
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

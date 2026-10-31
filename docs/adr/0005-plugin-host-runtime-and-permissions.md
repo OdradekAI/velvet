@@ -167,10 +167,15 @@ Built-in extensions use the same lifecycle through a no-op process; WASM
 extensions provide their declared component/module through a host-selected
 runner. Invocation payloads and responses are typed by the negotiated runtime
 protocol; they are not an untyped second manifest or transport contract.
-The current alpha `ProcessPluginRuntime` is only a seam proof; production
-qualification still requires the launch allow-list, bounded stderr,
-process-group/parent-death cleanup, exit evidence and orphan reconciliation
-described above.
+The alpha `ProcessPluginRuntime` now captures a bounded stderr tail, reports
+exit status and Unix signal evidence, and starts sidecars in a dedicated Unix
+process group so shutdown can terminate descendants. These are availability
+and diagnosis safeguards, not a security sandbox. Production qualification
+still requires package-relative executable allow-lists, parent-death policy,
+orphan reconciliation and equivalent process-group semantics on every
+supported platform. The current manifest seam still accepts a launch program
+directly so those trust checks remain an explicit follow-up rather than an
+implicit guarantee.
 
 Declared Job contributions use the same runtime process through a distinct
 `invoke-job` message with `method: "job.run"`. The host sends the Job input as

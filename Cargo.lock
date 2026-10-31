@@ -287,6 +287,7 @@ name = "velvet-plugin-host"
 version = "0.0.4"
 dependencies = [
  "crc32fast",
+ "libc",
  "serde",
  "serde_json",
  "velvet-layout-model",
