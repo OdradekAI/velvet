@@ -367,6 +367,18 @@ widen the policy. Until a cross-profile coordinator exists, a process-local
 budget must be reported as such rather than presented as a strict device-wide
 limit.
 
+The alpha `JobSystem` now owns a bounded ledger for the hard admission seam.
+`JobBudgetPolicy` contains device, default-owner, per-owner and per-Job limits;
+`submit_with_budget` and `retry_with_budget` reserve a typed request before a
+Job becomes visible, and terminal/cancelled attempts release the reservation.
+Restarted `Queued`/`Running` snapshots become `Interrupted` without inheriting
+old in-memory reservations. The default request counts one Job of concurrency;
+callers that know memory, disk or child-process needs must provide those
+claims explicitly. CPU/network values are retained as soft pressure only and
+are not used to reject admission. This is a process-local ledger, not a claim
+of cross-process device enforcement, and it is intentionally not a new Tauri
+or TypeScript scheduler contract.
+
 The alpha policy must provide a bounded per-extension runtime, Job, staging,
 event/log queue and free-space profile, but the numeric values are release
 configuration rather than this architecture's compatibility promise. The

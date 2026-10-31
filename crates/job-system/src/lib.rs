@@ -6,6 +6,14 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
 use std::time::Duration;
 
+mod budget;
+
+use budget::{BudgetRejection, JobBudgetLedger};
+pub use budget::{
+    BudgetResource, JobBudgetLimits, JobBudgetPolicy, JobBudgetRequest, JobBudgetUsage,
+    JOB_BUDGET_POLICY_SCHEMA_VERSION,
+};
+
 pub const JOB_SCHEMA_VERSION: u16 = 1;
 pub const MAX_JOB_INPUT_BYTES: usize = 256 * 1024;
 pub const MAX_JOB_RESULT_BYTES: usize = 1024 * 1024;
@@ -132,6 +140,12 @@ pub enum JobError {
     NotFound(JobId),
     NotRetryable(JobId),
     RunnerAlreadyRegistered(String),
+    BudgetExceeded {
+        owner_id: String,
+        resource: BudgetResource,
+        requested: u64,
+        available: u64,
+    },
 }
 
 pub trait JobStateStore: Send + Sync {
@@ -176,6 +190,7 @@ struct Inner {
     events: Mutex<Vec<JobSnapshot>>,
     runners: RwLock<BTreeMap<String, RegisteredRunner>>,
     fallback_runner: Arc<dyn JobRunner>,
+    budget: Mutex<JobBudgetLedger>,
 }
 
 struct RegisteredRunner {
@@ -199,6 +214,13 @@ impl Default for JobSystem {
 
 impl JobSystem {
     pub fn with_store(store: Arc<dyn JobStateStore>) -> Self {
+        Self::with_store_and_budget_policy(store, JobBudgetPolicy::default())
+    }
+
+    pub fn with_store_and_budget_policy(
+        store: Arc<dyn JobStateStore>,
+        policy: JobBudgetPolicy,
+    ) -> Self {
         let loaded = store.load().unwrap_or_default();
         let mut jobs = BTreeMap::new();
         let mut next_id = 1;
@@ -228,6 +250,7 @@ impl JobSystem {
                 events: Mutex::new(Vec::new()),
                 runners: RwLock::new(BTreeMap::new()),
                 fallback_runner: Arc::new(DeterministicJobRunner),
+                budget: Mutex::new(JobBudgetLedger::new(policy)),
             }),
         };
         let _ = system.persist();
@@ -235,12 +258,20 @@ impl JobSystem {
     }
 
     pub fn submit(&self, spec: JobSpec) -> Result<JobSnapshot, JobError> {
+        self.submit_with_budget(spec, JobBudgetRequest::default())
+    }
+
+    pub fn submit_with_budget(
+        &self,
+        spec: JobSpec,
+        budget: JobBudgetRequest,
+    ) -> Result<JobSnapshot, JobError> {
         let _submission = self
             .inner
             .submission
             .lock()
             .map_err(|_| JobError::Store("job submission lock poisoned".into()))?;
-        self.submit_locked(spec)
+        self.submit_locked(spec, budget)
     }
 
     /// Reuses a completed result only when the producer supplied an input
@@ -248,6 +279,14 @@ impl JobSystem {
     /// fingerprint is deliberately a cache miss so callers cannot present a
     /// result for an unknown input as current.
     pub fn submit_or_reuse(&self, spec: JobSpec) -> Result<JobSnapshot, JobError> {
+        self.submit_or_reuse_with_budget(spec, JobBudgetRequest::default())
+    }
+
+    pub fn submit_or_reuse_with_budget(
+        &self,
+        spec: JobSpec,
+        budget: JobBudgetRequest,
+    ) -> Result<JobSnapshot, JobError> {
         let _submission = self
             .inner
             .submission
@@ -258,7 +297,7 @@ impl JobSystem {
         if let Some(snapshot) = self.find_reusable_result(&spec.kind, &spec.provenance) {
             return Ok(snapshot);
         }
-        self.submit_locked(spec)
+        self.submit_locked(spec, budget)
     }
 
     pub fn find_reusable_result(
@@ -286,7 +325,11 @@ impl JobSystem {
             .cloned()
     }
 
-    fn submit_locked(&self, spec: JobSpec) -> Result<JobSnapshot, JobError> {
+    fn submit_locked(
+        &self,
+        spec: JobSpec,
+        budget: JobBudgetRequest,
+    ) -> Result<JobSnapshot, JobError> {
         validate_json_size("Job input", &spec.input, MAX_JOB_INPUT_BYTES)?;
         let id = {
             let mut next_id = self
@@ -298,6 +341,8 @@ impl JobSystem {
             *next_id = next_id.saturating_add(1);
             id
         };
+        let owner_id = normalize_provenance(spec.provenance.clone()).owner_id;
+        self.reserve_budget(&id, &owner_id, &budget)?;
         let snapshot = JobSnapshot {
             id: id.clone(),
             kind: spec.kind,
@@ -312,7 +357,10 @@ impl JobSystem {
             provenance: normalize_provenance(spec.provenance),
             result: None,
         };
-        self.insert(snapshot.clone())?;
+        if let Err(error) = self.insert(snapshot.clone()) {
+            self.release_budget(&id);
+            return Err(error);
+        }
         self.spawn_worker(id);
         Ok(snapshot)
     }
@@ -380,6 +428,7 @@ impl JobSystem {
         self.persist()?;
         for snapshot in &cancelled {
             self.emit(snapshot.clone());
+            self.release_budget(&snapshot.id);
         }
         Ok(cancelled.len())
     }
@@ -395,20 +444,43 @@ impl JobSystem {
     }
 
     pub fn retry(&self, id: &JobId) -> Result<JobSnapshot, JobError> {
-        let snapshot = self.update(id, |snapshot| {
-            if !matches!(
-                snapshot.status,
-                JobStatus::Failed | JobStatus::Cancelled | JobStatus::Interrupted
-            ) {
-                return;
-            }
+        self.retry_with_budget(id, JobBudgetRequest::default())
+    }
+
+    pub fn retry_with_budget(
+        &self,
+        id: &JobId,
+        budget: JobBudgetRequest,
+    ) -> Result<JobSnapshot, JobError> {
+        let _submission = self
+            .inner
+            .submission
+            .lock()
+            .map_err(|_| JobError::Store("job submission lock poisoned".into()))?;
+        let current = self
+            .snapshot(id)
+            .ok_or_else(|| JobError::NotFound(id.clone()))?;
+        if !matches!(
+            current.status,
+            JobStatus::Failed | JobStatus::Cancelled | JobStatus::Interrupted
+        ) {
+            return Err(JobError::NotRetryable(id.clone()));
+        }
+        self.reserve_budget(id, &current.provenance.owner_id, &budget)?;
+        let snapshot = match self.update(id, |snapshot| {
             snapshot.attempt = snapshot.attempt.saturating_add(1);
             snapshot.status = JobStatus::Queued;
             snapshot.progress = 0;
             snapshot.message = None;
             snapshot.retryable = true;
             snapshot.result = None;
-        })?;
+        }) {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                self.release_budget(id);
+                return Err(error);
+            }
+        };
         if snapshot.status == JobStatus::Queued {
             self.spawn_worker(id.clone());
             Ok(snapshot)
@@ -426,6 +498,14 @@ impl JobSystem {
             .jobs
             .lock()
             .map(|jobs| jobs.values().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    pub fn budget_usage(&self) -> JobBudgetUsage {
+        self.inner
+            .budget
+            .lock()
+            .map(|budget| budget.usage())
             .unwrap_or_default()
     }
 
@@ -448,6 +528,26 @@ impl JobSystem {
         Ok(())
     }
 
+    fn reserve_budget(
+        &self,
+        id: &JobId,
+        owner_id: &str,
+        request: &JobBudgetRequest,
+    ) -> Result<(), JobError> {
+        self.inner
+            .budget
+            .lock()
+            .map_err(|_| JobError::Store("Job budget lock poisoned".into()))?
+            .reserve(&id.0, owner_id, request)
+            .map_err(|error| budget_error(owner_id, error))
+    }
+
+    fn release_budget(&self, id: &JobId) {
+        if let Ok(mut budget) = self.inner.budget.lock() {
+            budget.release(&id.0);
+        }
+    }
+
     fn update<F>(&self, id: &JobId, update: F) -> Result<JobSnapshot, JobError>
     where
         F: FnOnce(&mut JobSnapshot),
@@ -466,6 +566,12 @@ impl JobSystem {
         };
         self.persist()?;
         self.emit(snapshot.clone());
+        if matches!(
+            snapshot.status,
+            JobStatus::Cancelled | JobStatus::Failed | JobStatus::Completed
+        ) {
+            self.release_budget(id);
+        }
         Ok(snapshot)
     }
 
@@ -597,6 +703,12 @@ impl JobSystem {
         };
         self.persist()?;
         self.emit(snapshot.clone());
+        if matches!(
+            snapshot.status,
+            JobStatus::Cancelled | JobStatus::Failed | JobStatus::Completed
+        ) {
+            self.release_budget(id);
+        }
         Ok(Some(snapshot))
     }
 
@@ -731,6 +843,15 @@ fn normalize_provenance(mut provenance: JobProvenance) -> JobProvenance {
     provenance
 }
 
+fn budget_error(owner_id: &str, rejection: BudgetRejection) -> JobError {
+    JobError::BudgetExceeded {
+        owner_id: owner_id.to_owned(),
+        resource: rejection.resource,
+        requested: rejection.requested,
+        available: rejection.available,
+    }
+}
+
 fn validate_json_size(field: &str, value: &Value, max_bytes: usize) -> Result<(), JobError> {
     let bytes = serde_json::to_vec(value)
         .map_err(|error| JobError::Store(format!("{field} could not be encoded: {error}")))?;
@@ -793,6 +914,26 @@ mod tests {
             Ok(JobExecutionResult {
                 content_type: "application/json".into(),
                 payload: json!({ "attempt": context.attempt }),
+            })
+        }
+    }
+
+    struct HoldingRunner;
+
+    impl JobRunner for HoldingRunner {
+        fn run(
+            &self,
+            context: JobExecutionContext,
+        ) -> Result<JobExecutionResult, JobExecutionError> {
+            for _ in 0..20 {
+                thread::sleep(Duration::from_millis(20));
+                if context.is_cancelled() {
+                    return Err(JobExecutionError::Cancelled);
+                }
+            }
+            Ok(JobExecutionResult {
+                content_type: "application/json".into(),
+                payload: Value::Null,
             })
         }
     }
@@ -1310,5 +1451,101 @@ mod tests {
             "owner retry did not report its missing runner: {:?}",
             jobs.snapshot(&created.id)
         );
+    }
+
+    #[test]
+    fn hard_concurrency_budget_rejects_admission_and_releases_on_cancel() {
+        let mut policy = JobBudgetPolicy::unlimited();
+        policy.device.concurrency = 1;
+        policy.default_owner.concurrency = 1;
+        policy.per_job.concurrency = 1;
+        let jobs = JobSystem::with_store_and_budget_policy(
+            Arc::new(InMemoryJobStateStore::default()),
+            policy,
+        );
+        let request = JobBudgetRequest {
+            concurrency: 1,
+            ..JobBudgetRequest::default()
+        };
+        let first = jobs
+            .submit_with_budget(
+                JobSpec {
+                    kind: "budgeted".into(),
+                    duration_ms: 200,
+                    will_fail: false,
+                    input: Value::Null,
+                    provenance: JobProvenance::for_owner("core"),
+                },
+                request.clone(),
+            )
+            .expect("the first job should reserve the device budget");
+        let second = jobs.submit_with_budget(
+            JobSpec {
+                kind: "budgeted".into(),
+                duration_ms: 200,
+                will_fail: false,
+                input: Value::Null,
+                provenance: JobProvenance::for_owner("core"),
+            },
+            request,
+        );
+        assert!(matches!(
+            second,
+            Err(JobError::BudgetExceeded {
+                resource: BudgetResource::Concurrency,
+                ..
+            })
+        ));
+        assert_eq!(jobs.budget_usage().concurrency, 1);
+        jobs.cancel(&first.id)
+            .expect("the reserved job should cancel");
+        assert_eq!(jobs.budget_usage().concurrency, 0);
+    }
+
+    #[test]
+    fn owner_budget_isolated_from_another_owner_and_soft_pressure_does_not_reject() {
+        let mut policy = JobBudgetPolicy::unlimited();
+        policy.device.concurrency = 2;
+        policy.default_owner.concurrency = 1;
+        policy.per_job.concurrency = 1;
+        let jobs = JobSystem::with_store_and_budget_policy(
+            Arc::new(InMemoryJobStateStore::default()),
+            policy,
+        );
+        jobs.register_runner("owner.a", "budgeted.owner.a", Arc::new(HoldingRunner))
+            .expect("owner A runner should register");
+        jobs.register_runner("owner.b", "budgeted.owner.b", Arc::new(HoldingRunner))
+            .expect("owner B runner should register");
+        let request = JobBudgetRequest {
+            concurrency: 1,
+            cpu_millis_per_minute: u64::MAX,
+            network_bytes_per_minute: u64::MAX,
+            ..JobBudgetRequest::default()
+        };
+        let make_spec = |owner_id: &str| JobSpec {
+            kind: format!("budgeted.{owner_id}"),
+            duration_ms: 200,
+            will_fail: false,
+            input: Value::Null,
+            provenance: JobProvenance::for_owner(owner_id),
+        };
+        let first = jobs
+            .submit_with_budget(make_spec("owner.a"), request.clone())
+            .expect("the first owner job should be admitted");
+        assert!(matches!(
+            jobs.submit_with_budget(make_spec("owner.a"), request.clone()),
+            Err(JobError::BudgetExceeded {
+                resource: BudgetResource::Concurrency,
+                ..
+            })
+        ));
+        let second_owner = jobs
+            .submit_with_budget(make_spec("owner.b"), request)
+            .expect("a separate owner should have an independent budget");
+        assert_eq!(jobs.budget_usage().concurrency, 2);
+        jobs.cancel(&first.id).expect("the first job should cancel");
+        jobs.cancel(&second_owner.id)
+            .expect("the second owner job should cancel");
+        assert_eq!(jobs.budget_usage().concurrency, 0);
     }
 }
