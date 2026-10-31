@@ -237,6 +237,10 @@ pub struct RecoveryLaunchReceipt {
     pub app_version: String,
     pub phase: StartupPhase,
     pub started_at_ms: u64,
+    #[serde(default)]
+    pub phase_started_at_ms: Option<u64>,
+    #[serde(default)]
+    pub deadline_at_ms: Option<u64>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

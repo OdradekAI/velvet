@@ -40,10 +40,12 @@ preflight
 
 Each phase has a monotonic deadline from the startup policy. A deadline breach
 is recorded as `startup-timeout`: core phases stop at a safe boundary and route
-to Safe Mode/`RecoverySurface`, while optional activation is cancelled and
-left degraded. A timeout never force-kills the core or publishes staged state;
-it either completes the owner transaction or quarantines it for the next
-attempt.
+to Safe Mode/`RecoverySurface`, while optional activation stops scheduling
+further components at the next safe boundary and remains degraded. A timeout
+never force-kills the core or publishes staged state; it either completes the
+owner transaction or quarantines it for the next attempt. Runtime-specific
+cancellation remains the responsibility of `PluginHost`/`JobSystem`; the
+lifecycle deadline is a host coordination bound.
 
 The externally visible states are `starting`, `safe`, `degraded`, `ready` and
 `terminal-failure`. A launch attempt records its id, version, phase and failure
@@ -111,14 +113,23 @@ The Tauri composition root now records `ExitRequested` as shutdown intent and
 keeps normal close evidence out of command handlers and leaves an unfinished
 launch receipt available to classify forced termination on the next start.
 
+`StartupDeadlinePolicy` is injected into `RecoverySupervisor` and uses the
+monotonic `RecoveryClock`. The alpha defaults are deliberately conservative
+(10 seconds for preflight/core/workbench phases, 30 seconds for state recovery
+and optional activation); tests use shorter policies. Core phase breaches
+enter Safe Mode immediately and retain their `startup-timeout` evidence, while
+an optional activation breach records `startup-timeout` without making the
+core unsafe. The activation loop checks the deadline between components and
+`mark_ready` performs the final boundary check.
+
 Runtime failure in an activated optional plugin also records a degraded
 component failure and clears that owner's projections and Jobs; it does not
 increment the core pre-ready Safe Mode counter.
 
-This slice is deliberately narrower than the full decision: phase deadlines,
-the host-native `RecoverySurface`, generation snapshots/`RecoverySet`, user
-restore actions and a bounded `DiagnosticBundle` are still implementation
-gates. Optional plugin activation is recorded as a degraded component failure
+This slice is deliberately narrower than the full decision: the host-native
+`RecoverySurface`, generation snapshots/`RecoverySet`, user restore actions
+and a bounded `DiagnosticBundle` are still implementation gates. Optional
+plugin activation is recorded as a degraded component failure
 and does not block the core-ready checkpoint. The file journal is an evidence
 store, not yet a replacement for owner snapshots or a proof that writes are
 crash-durable on every platform; the persistence durability report remains a

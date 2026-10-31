@@ -9,6 +9,41 @@ use velvet_workbench_protocol::{
 
 const SAFE_MODE_FAILURE_THRESHOLD: u32 = 2;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StartupDeadlinePolicy {
+    pub preflight_ms: u64,
+    pub recovering_state_ms: u64,
+    pub core_ready_ms: u64,
+    pub workbench_ready_ms: u64,
+    pub optional_activation_ms: u64,
+}
+
+impl Default for StartupDeadlinePolicy {
+    fn default() -> Self {
+        Self {
+            preflight_ms: 10_000,
+            recovering_state_ms: 30_000,
+            core_ready_ms: 10_000,
+            workbench_ready_ms: 10_000,
+            optional_activation_ms: 30_000,
+        }
+    }
+}
+
+impl StartupDeadlinePolicy {
+    fn deadline_at_ms(self, phase: &StartupPhase, started_at_ms: u64) -> Option<u64> {
+        let timeout_ms = match phase {
+            StartupPhase::Preflight => self.preflight_ms,
+            StartupPhase::RecoveringState => self.recovering_state_ms,
+            StartupPhase::CoreReady => self.core_ready_ms,
+            StartupPhase::WorkbenchReady => self.workbench_ready_ms,
+            StartupPhase::OptionalActivation => self.optional_activation_ms,
+            StartupPhase::Ready => return None,
+        };
+        Some(started_at_ms.saturating_add(timeout_ms))
+    }
+}
+
 pub trait RecoveryClock: Send + Sync {
     fn now_ms(&self) -> u64;
 }
@@ -45,6 +80,7 @@ struct RecoveryInner {
 pub struct RecoverySupervisor {
     journal: Arc<dyn RecoveryJournalStore>,
     clock: Arc<dyn RecoveryClock>,
+    policy: StartupDeadlinePolicy,
     inner: Mutex<RecoveryInner>,
 }
 
@@ -59,6 +95,14 @@ impl Default for RecoverySupervisor {
 
 impl RecoverySupervisor {
     pub fn new(journal: Arc<dyn RecoveryJournalStore>, clock: Arc<dyn RecoveryClock>) -> Self {
+        Self::with_policy(journal, clock, StartupDeadlinePolicy::default())
+    }
+
+    pub fn with_policy(
+        journal: Arc<dyn RecoveryJournalStore>,
+        clock: Arc<dyn RecoveryClock>,
+        policy: StartupDeadlinePolicy,
+    ) -> Self {
         let (state, journal_degraded) = match journal.load() {
             Ok(state)
                 if state.schema_version == velvet_workbench_protocol::RECOVERY_SCHEMA_VERSION =>
@@ -80,6 +124,7 @@ impl RecoverySupervisor {
         Self {
             journal,
             clock,
+            policy,
             inner: Mutex::new(RecoveryInner {
                 state,
                 journal_degraded,
@@ -91,7 +136,8 @@ impl RecoverySupervisor {
         &self,
         app_version: impl Into<String>,
     ) -> Result<RecoveryProjection, RecoveryError> {
-        self.update(|inner, now| {
+        let policy = self.policy;
+        self.update_without_deadline(|inner, now| {
             if inner.state.active_launch.is_some() {
                 inner.state.consecutive_failures =
                     inner.state.consecutive_failures.saturating_add(1);
@@ -110,6 +156,8 @@ impl RecoverySupervisor {
                 app_version: app_version.into(),
                 phase: StartupPhase::Preflight,
                 started_at_ms: now,
+                phase_started_at_ms: Some(now),
+                deadline_at_ms: policy.deadline_at_ms(&StartupPhase::Preflight, now),
             });
             inner.state.shutdown_intent_at_ms = None;
             inner.state.shutdown_complete_at_ms = None;
@@ -117,13 +165,16 @@ impl RecoverySupervisor {
     }
 
     pub fn advance_to(&self, phase: StartupPhase) -> Result<RecoveryProjection, RecoveryError> {
-        self.update(|inner, now| {
+        let policy = self.policy;
+        self.update_with_deadline(|inner, now| {
             let safe_mode = inner.state.safe_mode_forced
                 || inner.state.consecutive_failures >= SAFE_MODE_FAILURE_THRESHOLD;
             let Some(launch) = inner.state.active_launch.as_mut() else {
                 return;
             };
             launch.phase = phase.clone();
+            launch.phase_started_at_ms = Some(now);
+            launch.deadline_at_ms = policy.deadline_at_ms(&phase, now);
             if !safe_mode && (phase == StartupPhase::WorkbenchReady || phase == StartupPhase::Ready)
             {
                 inner.state.last_good = Some(RecoveryCheckpoint {
@@ -137,11 +188,13 @@ impl RecoverySupervisor {
     }
 
     pub fn mark_ready(&self) -> Result<RecoveryProjection, RecoveryError> {
-        self.update(|inner, now| {
+        self.update_with_deadline(|inner, now| {
             let Some(launch) = inner.state.active_launch.as_mut() else {
                 return;
             };
             launch.phase = StartupPhase::Ready;
+            launch.phase_started_at_ms = Some(now);
+            launch.deadline_at_ms = None;
             inner.state.last_good = Some(RecoveryCheckpoint {
                 attempt_id: launch.attempt_id,
                 phase: StartupPhase::Ready,
@@ -159,7 +212,7 @@ impl RecoverySupervisor {
         class: RecoveryFailureClass,
         message: impl Into<String>,
     ) -> Result<RecoveryProjection, RecoveryError> {
-        self.update(|inner, now| {
+        self.update_without_deadline(|inner, now| {
             let phase = inner
                 .state
                 .active_launch
@@ -191,14 +244,18 @@ impl RecoverySupervisor {
         })
     }
 
+    pub fn observe_deadline(&self) -> Result<RecoveryProjection, RecoveryError> {
+        self.update_with_deadline(|_, _| {})
+    }
+
     pub fn record_shutdown_intent(&self) -> Result<RecoveryProjection, RecoveryError> {
-        self.update(|inner, now| {
+        self.update_without_deadline(|inner, now| {
             inner.state.shutdown_intent_at_ms = Some(now);
         })
     }
 
     pub fn record_shutdown_complete(&self) -> Result<RecoveryProjection, RecoveryError> {
-        self.update(|inner, now| {
+        self.update_without_deadline(|inner, now| {
             inner.state.shutdown_complete_at_ms = Some(now);
             inner.state.active_launch = None;
         })
@@ -229,7 +286,25 @@ impl RecoverySupervisor {
         matches!(self.projection().mode, RecoveryMode::Safe)
     }
 
-    fn update<F>(&self, update: F) -> Result<RecoveryProjection, RecoveryError>
+    fn update_without_deadline<F>(&self, update: F) -> Result<RecoveryProjection, RecoveryError>
+    where
+        F: FnOnce(&mut RecoveryInner, u64),
+    {
+        self.update_with_deadline_inner(false, update)
+    }
+
+    fn update_with_deadline<F>(&self, update: F) -> Result<RecoveryProjection, RecoveryError>
+    where
+        F: FnOnce(&mut RecoveryInner, u64),
+    {
+        self.update_with_deadline_inner(true, update)
+    }
+
+    fn update_with_deadline_inner<F>(
+        &self,
+        enforce_deadline: bool,
+        update: F,
+    ) -> Result<RecoveryProjection, RecoveryError>
     where
         F: FnOnce(&mut RecoveryInner, u64),
     {
@@ -238,7 +313,21 @@ impl RecoverySupervisor {
             .inner
             .lock()
             .map_err(|_| RecoveryError::InvalidState("recovery state lock poisoned".into()))?;
-        update(&mut inner, now);
+        if enforce_deadline {
+            if let Some(phase) = inner
+                .state
+                .active_launch
+                .as_ref()
+                .filter(|launch| launch.deadline_at_ms.is_some_and(|deadline| now > deadline))
+                .map(|launch| launch.phase.clone())
+            {
+                record_startup_timeout(&mut inner.state, phase, now);
+            } else {
+                update(&mut inner, now);
+            }
+        } else {
+            update(&mut inner, now);
+        }
         if inner.journal_degraded {
             return Ok(projection(&inner));
         }
@@ -273,6 +362,24 @@ fn unavailable_state(message: impl Into<String>) -> RecoveryJournalState {
         }),
         ..RecoveryJournalState::default()
     }
+}
+
+fn record_startup_timeout(state: &mut RecoveryJournalState, phase: StartupPhase, at_ms: u64) {
+    let core_phase = !matches!(
+        phase,
+        StartupPhase::WorkbenchReady | StartupPhase::Ready | StartupPhase::OptionalActivation
+    );
+    if core_phase {
+        state.consecutive_failures = state.consecutive_failures.saturating_add(1);
+        state.safe_mode_forced = true;
+    }
+    state.last_failure = Some(RecoveryFailure {
+        class: RecoveryFailureClass::StartupTimeout,
+        phase,
+        message: "Startup phase exceeded its monotonic deadline".into(),
+        at_ms,
+    });
+    state.active_launch = None;
 }
 
 fn projection(inner: &RecoveryInner) -> RecoveryProjection {
@@ -429,5 +536,74 @@ mod tests {
             .expect("safe mode should still expose a projection");
         assert_eq!(after_checkpoint.mode, RecoveryMode::Safe);
         assert_eq!(after_checkpoint.consecutive_failures, 2);
+    }
+
+    #[test]
+    fn startup_deadlines_are_typed_and_optional_activation_timeout_stays_degraded() {
+        let journal = Arc::new(InMemoryRecoveryJournalStore::default());
+        let clock = Arc::new(TestClock(AtomicU64::new(1)));
+        let policy = StartupDeadlinePolicy {
+            preflight_ms: 100,
+            recovering_state_ms: 100,
+            core_ready_ms: 100,
+            workbench_ready_ms: 100,
+            optional_activation_ms: 0,
+        };
+        let supervisor = RecoverySupervisor::with_policy(journal, clock, policy);
+        supervisor
+            .begin_launch("test")
+            .expect("launch should start");
+        supervisor
+            .advance_to(StartupPhase::CoreReady)
+            .expect("core should become ready");
+        supervisor
+            .advance_to(StartupPhase::WorkbenchReady)
+            .expect("workbench should become ready");
+        supervisor
+            .advance_to(StartupPhase::OptionalActivation)
+            .expect("optional activation should begin");
+
+        let projection = supervisor
+            .mark_ready()
+            .expect("deadline breach should remain diagnosable");
+        assert_eq!(projection.mode, RecoveryMode::Degraded);
+        assert_eq!(projection.consecutive_failures, 0);
+        assert_eq!(
+            projection
+                .last_failure
+                .as_ref()
+                .map(|failure| failure.class.clone()),
+            Some(RecoveryFailureClass::StartupTimeout)
+        );
+        assert_eq!(
+            projection
+                .last_failure
+                .as_ref()
+                .map(|failure| failure.phase.clone()),
+            Some(StartupPhase::OptionalActivation)
+        );
+    }
+
+    #[test]
+    fn core_startup_deadline_breach_increments_safe_mode_failures() {
+        let journal = Arc::new(InMemoryRecoveryJournalStore::default());
+        let clock = Arc::new(TestClock(AtomicU64::new(1)));
+        let policy = StartupDeadlinePolicy {
+            preflight_ms: 0,
+            ..StartupDeadlinePolicy::default()
+        };
+        let supervisor = RecoverySupervisor::with_policy(journal, clock, policy);
+        supervisor
+            .begin_launch("test")
+            .expect("launch should start");
+        let projection = supervisor
+            .advance_to(StartupPhase::CoreReady)
+            .expect("deadline breach should be recorded");
+        assert_eq!(projection.mode, RecoveryMode::Safe);
+        assert_eq!(projection.consecutive_failures, 1);
+        assert_eq!(
+            projection.last_failure.map(|failure| failure.class),
+            Some(RecoveryFailureClass::StartupTimeout)
+        );
     }
 }

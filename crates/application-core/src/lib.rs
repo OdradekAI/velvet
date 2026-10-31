@@ -4,7 +4,9 @@ use std::sync::{Arc, Mutex};
 mod preview_source;
 mod recovery;
 
-pub use recovery::{RecoveryClock, RecoveryError, RecoverySupervisor, SystemRecoveryClock};
+pub use recovery::{
+    RecoveryClock, RecoveryError, RecoverySupervisor, StartupDeadlinePolicy, SystemRecoveryClock,
+};
 
 pub use preview_source::{
     AssetSourceLocationResolver, FilePreviewAssetSource, InMemoryPreviewAssetSource,
@@ -398,6 +400,37 @@ impl ApplicationCore {
             .advance_to(velvet_workbench_protocol::StartupPhase::WorkbenchReady);
     }
 
+    pub fn begin_optional_activation(&self) -> bool {
+        if self.recovery.is_safe_mode() {
+            return false;
+        }
+        self.recovery
+            .advance_to(velvet_workbench_protocol::StartupPhase::OptionalActivation)
+            .map(|projection| projection.mode == velvet_workbench_protocol::RecoveryMode::Starting)
+            .unwrap_or(false)
+    }
+
+    fn optional_activation_allows_next(&self) -> bool {
+        let projection = self
+            .recovery
+            .observe_deadline()
+            .unwrap_or_else(|_| self.recovery.projection());
+        if projection.mode == velvet_workbench_protocol::RecoveryMode::Safe {
+            return false;
+        }
+        if matches!(
+            projection.last_failure.as_ref(),
+            Some(failure)
+                if failure.class
+                    == velvet_workbench_protocol::RecoveryFailureClass::StartupTimeout
+                    && failure.phase
+                        == velvet_workbench_protocol::StartupPhase::OptionalActivation
+        ) {
+            return false;
+        }
+        true
+    }
+
     pub fn mark_ready(&self) {
         if self.recovery.is_safe_mode() {
             return;
@@ -525,14 +558,18 @@ impl ApplicationCore {
             .into_iter()
             .map(|recovery| recovery.extension_id)
             .collect::<Vec<_>>();
-        let failures = self
-            .plugins
-            .discover()
-            .into_iter()
-            .filter(|summary| summary.state == ExtensionState::Registered)
-            .filter(|summary| !recovery_ids.contains(&summary.id))
-            .filter_map(|summary| self.activate_plugin(&summary.id).err())
-            .collect::<Vec<_>>();
+        let mut failures = Vec::new();
+        for summary in self.plugins.discover() {
+            if !self.optional_activation_allows_next() {
+                break;
+            }
+            if summary.state != ExtensionState::Registered || recovery_ids.contains(&summary.id) {
+                continue;
+            }
+            if let Err(error) = self.activate_plugin(&summary.id) {
+                failures.push(error);
+            }
+        }
         for failure in &failures {
             self.record_recovery_failure(
                 velvet_workbench_protocol::RecoveryFailureClass::OptionalComponent,

@@ -72,6 +72,10 @@ WorkbenchApp 在 WorkspaceArea 中呈现的主界面。AppSurface 可以拥有�
 
 由 `persistence` 提供的生命周期证据存储适配器。它只保存带 schema 的 launch receipt、startup phase、last-good checkpoint、失败计数和 shutdown evidence；它不解释 Asset、Workspace、Profile、Job 或 Extension 数据，也不因 journal 损坏而用默认值覆盖业务状态。
 
+## StartupDeadlinePolicy
+
+由 `ApplicationCore` 使用的启动阶段 deadline 配置。它为每个 startup phase 提供单调时钟上限；超时只记录有界的 `startup-timeout` evidence，核心阶段立即进入 Safe Mode，optional activation 阶段保持 degraded。它不能强制杀死核心或把可选组件变成核心数据 owner。
+
 ## CrashCaptureAdapter
 
 负责把平台提供的本地崩溃证据转换为有界、脱敏的诊断记录的宿主适配器。它不决定 Safe Mode、不拥有业务状态、不自动上传数据，也不等同于 RecoverySupervisor；某个平台没有可靠的 native crash capture 时可以只记录退出码、信号和启动 journal。

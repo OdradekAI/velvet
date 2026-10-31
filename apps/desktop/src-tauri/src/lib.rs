@@ -1544,6 +1544,8 @@ pub fn run() {
             core.mark_workbench_ready();
             if core.in_safe_mode() {
                 eprintln!("Velvet entered Safe Mode; optional plugins remain inactive");
+            } else if !core.begin_optional_activation() {
+                eprintln!("Velvet could not enter the optional activation phase");
             } else {
                 match core.load_plugins_from_directory(&plugin_directory) {
                     Ok(report) if !report.failures.is_empty() => {

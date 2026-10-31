@@ -360,6 +360,7 @@ mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
     use velvet_layout_model::WorkbenchPart;
+    use velvet_workbench_protocol::{RecoveryLaunchReceipt, StartupPhase};
 
     fn temporary_path(name: &str) -> PathBuf {
         let nonce = SystemTime::now()
@@ -491,6 +492,14 @@ mod tests {
         let state = RecoveryJournalState {
             next_attempt_id: 4,
             consecutive_failures: 1,
+            active_launch: Some(RecoveryLaunchReceipt {
+                attempt_id: 3,
+                app_version: "0.0.4".into(),
+                phase: StartupPhase::OptionalActivation,
+                started_at_ms: 10,
+                phase_started_at_ms: Some(20),
+                deadline_at_ms: Some(30),
+            }),
             ..RecoveryJournalState::default()
         };
         store
@@ -499,6 +508,21 @@ mod tests {
         assert_eq!(
             store.load().expect("recovery journal should be readable"),
             state
+        );
+
+        fs::write(
+            &path,
+            br#"{"schemaVersion":1,"nextAttemptId":2,"consecutiveFailures":0,"safeModeForced":false,"activeLaunch":{"attemptId":1,"appVersion":"0.0.3","phase":"preflight","startedAtMs":1},"lastFailure":null,"lastGood":null,"shutdownIntentAtMs":null,"shutdownCompleteAtMs":null}"#,
+        )
+        .expect("legacy recovery journal should be writable");
+        let legacy = store
+            .load()
+            .expect("legacy recovery journal should remain readable");
+        assert_eq!(
+            legacy
+                .active_launch
+                .and_then(|launch| launch.deadline_at_ms),
+            None
         );
 
         fs::write(&path, br#"{"schemaVersion":99,"nextAttemptId":1,"consecutiveFailures":0,"safeModeForced":false,"activeLaunch":null,"lastFailure":null,"lastGood":null,"shutdownIntentAtMs":null,"shutdownCompleteAtMs":null}"#)
