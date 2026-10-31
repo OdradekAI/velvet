@@ -60,6 +60,50 @@ Contribution 的作用范围。`workbench` 表示全局工作台，`workbench-ap
 
 WorkbenchApp 在 WorkspaceArea 中呈现的主界面。AppSurface 可以拥有自己的导航、标签或面板组织方式，但通过工作台提供的上下文和协议访问共享数据。
 
+## RecoverySurface
+
+由宿主拥有的最小恢复界面。它只在 Workbench 无法安全挂载时出现，用于重试启动、禁用最近失败的可选组件、恢复备份、重置可选状态和导出诊断；它不拥有 Asset、Workspace、Profile 或 Job 的权威数据。WebView 可用时由渲染器呈现；WebView 不可用时由平台宿主提供等价的最小恢复动作。
+
+## RecoverySupervisor
+
+宿主拥有的生命周期恢复边界。它负责记录有限的启动、就绪和退出证据，识别异常退出，并把恢复决定交给 `ApplicationCore` 的 Safe Mode 策略；它不拥有 Asset、Workspace、Profile 或 Job 的权威数据，也不执行网络上传或声称从进程内部监督活进程。P0 使用进程内实现；只有在自动重启成为已验证需求时，才增加外部实现。崩溃证据由独立的 CrashCaptureAdapter 负责。
+
+## CrashCaptureAdapter
+
+负责把平台提供的本地崩溃证据转换为有界、脱敏的诊断记录的宿主适配器。它不决定 Safe Mode、不拥有业务状态、不自动上传数据，也不等同于 RecoverySupervisor；某个平台没有可靠的 native crash capture 时可以只记录退出码、信号和启动 journal。
+
+## ReleaseManifest
+
+描述一个 Velvet 应用发布产物的签名元数据。它绑定发布 channel、版本、目标 OS/architecture、产物哈希、updater schema、支持的数据 schema 范围、最低客户端版本、单调递增的 release sequence、新鲜度信息和 signing key id；客户端在安装前校验签名、目标、版本、新鲜度和兼容性。
+
+## UpdateTransaction
+
+由宿主记录的一次应用更新事务，包含 manifest 校验、下载 staging、待迁移状态、旧 package/data generation 保留和健康 checkpoint。事务在新版本进入 `ready` 前可以成对回退到旧 package 与旧 `StateSnapshot` generation；提交后不允许旧 binary 直接打开新 schema。
+
+## ReleaseChannel
+
+应用安装实例选择的发布通道，例如 `stable` 或 `preview`。通道选择参与更新 manifest 校验，更新不能静默跨通道或降级；alpha 构建使用 `preview`。
+
+## TransportSession
+
+由协议 handshake 建立的前端到 Rust 核心的逻辑会话。`sessionId` 约束事件、revision、sequence 和 opaque handle 的有效范围；重连会创建新会话并重新同步权威快照，旧会话的消息和 handle 必须丢弃。
+
+## PlatformTier
+
+宿主对 OS、WebView 和硬件能力的支持等级。Tier A 是启动、恢复、持久化、输入、无障碍、窗口和 CoreTransport 所需的基础能力；Tier B 是可诊断降级的通知、剪贴板、托盘、快捷键、GPU、深链接和外部卷能力。
+
+## ActivationRequest
+
+由文件关联、拖放、命令行或深链接产生的统一激活请求。平台适配器只负责解码，Rust 负责校验 scheme、路径根、文件类型、能力和幂等性，并在核心 ready 后投递。
+
+## SourceAvailability
+
+Asset source 当前是否可访问的 Rust 投影。移动硬盘或网络盘断开时，AssetId、元数据和 source registration 保留，SourceAvailability 进入 degraded；路径和卷身份重新校验后才恢复 Preview 或 Job。
+
+## DiagnosticBundle
+
+由用户主动导出的诊断包，包含经过脱敏的版本、平台、启动阶段、退出信息、组件身份和有限日志尾部，用于本地排障或在用户单独同意后上传；默认不包含 Asset 内容、凭据、密钥和未脱敏路径。
+
 ## WorkspaceContext
 
 由核心和工作台提供给多个 WorkbenchApp 的共享工作上下文，例如当前数据范围、选中的 Asset、Collection、查询和筛选条件。它是跨应用的只读投影和事件来源，不是某个应用的私有数据库。
@@ -70,7 +114,19 @@ WorkbenchApp 在 WorkspaceArea 中呈现的主界面。AppSurface 可以拥有�
 
 ## State scope
 
-持久化状态的生命周期范围，包括 Profile、Workspace、Session/Window 和 Extension。Scope 决定状态由谁拥有、何时恢复以及何时失效。
+持久化状态的生命周期范围，包括 Asset/source、Profile、Workspace、Session/Window、Job、Extension 以及宿主生命周期记录。Scope 决定状态由谁拥有、何时恢复以及何时失效。
+
+## StateSnapshot
+
+由某个状态 owner 产生的、带有 scope、schema version、generation、校验和和提交标记的持久化状态代。快照可以独立校验、迁移、恢复或淘汰；它不改变 owner 归属。
+
+## RecoverySet
+
+由恢复索引记录的一组相关 StateSnapshot generation。它表示一次跨 owner 变更或迁移的可恢复提交点；只有在引用校验通过并完成提交屏障后，相关 generation 才能一起成为当前状态。RecoverySet 不取代各 owner 对数据和 schema 的所有权。
+
+## QuarantinedState
+
+因损坏、schema 不兼容或迁移失败而暂时移出正常启动路径的原始状态。QuarantinedState 保留有限诊断元数据和原始字节，等待重试、恢复、导出或用户删除；它不应阻塞核心 Workbench 启动。
 
 ## Profile locale
 
@@ -87,6 +143,10 @@ WorkbenchApp 在 WorkspaceArea 中呈现的主界面。AppSurface 可以拥有�
 ## State owner
 
 对某类持久化字段或派生缓存负责的唯一模块。State owner 负责 schema、迁移、失效、恢复和对外投影；存储适配器不成为第二 owner。
+
+## ResourceBudget
+
+由宿主执行的设备全局、owner 和 Job 三级资源上限与软预算。内存、磁盘、文件描述符、子进程和并发属于硬 admission 边界；CPU 和网络通过优先级、节流、字节计量和 backpressure 治理。具体值由版本化的平台/工作负载策略确定，扩展不能通过 manifest 放宽预算。
 
 ## Projection
 
@@ -167,6 +227,10 @@ WorkbenchApp 在 WorkspaceArea 中呈现的主界面。AppSurface 可以拥有�
 由 Rust JobSystem 统一拥有生命周期、Runner、结果和 provenance；Runner 接收
 受限 input 并可上报进度，结果带有 schema、content type 和 payload，
 provenance 记录 owner、输入、provider 和设置指纹。
+
+## JobCheckpoint
+
+Job 在睡眠、资源压力或进程重启前由 owner 写入的可恢复生命周期快照。它保存 attempt、取消/重试状态和 provenance；派生结果是否可复用仍由完整 provenance 决定。
 
 ## Product extension
 

@@ -44,6 +44,10 @@ Each durable field has a schema version, migration, invalidation rule and
 recovery path. Extension removal cannot invalidate core Asset, Source,
 Collection, layout or Workspace identity.
 
+When one user action changes related owners, the recovery index records a
+validated `RecoverySet` of their generations; this coordinates publication and
+restore without turning persistence into a second domain owner.
+
 `CoreTransport` is the seam. `TauriTransport` is the first adapter; a future local-socket or remote adapter may implement the same commands, queries, events and opaque handles without changing the domain modules or plugin SDK.
 
 The transport envelope is versioned and carries protocol/features,
@@ -60,6 +64,13 @@ Failure boundaries are part of the topology: a plugin, View provider,
 AppSurface, Preview provider, Job, transport session or persistence document
 may fail without taking down the shell or unrelated state. Each boundary has
 a host-owned recovery action and a contract test through a fake adapter.
+
+A Profile has one active writer. Multiple desktop windows share the same
+`ApplicationCore` and use separate Session/Window restoration hints. A second
+process forwards validated activation requests to the existing instance and
+does not open the Profile concurrently. A stale lock is recoverable only after
+the host verifies that the recorded process is no longer alive; the host never
+merges concurrent Profile writes.
 
 Do not split the Rust core into a separate local daemon in v1. A process split would add packaging, startup, crash recovery and IPC versioning before the product has a second client. The plugin runtime remains independently isolatable because untrusted extensions do not run inside the Tauri process.
 
@@ -89,7 +100,6 @@ Costs:
 
 - What exact remote C/S deployment is required after the local-first milestone?
 - Which data is allowed to leave the device when a remote adapter is introduced?
-- Are multiple desktop windows separate sessions or views of one core session?
 
 ## References
 

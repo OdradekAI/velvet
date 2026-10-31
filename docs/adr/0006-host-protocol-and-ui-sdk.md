@@ -40,6 +40,39 @@ corrupt or incompatible state document is handled by its Rust owner with a
 versioned migration, safe default or typed recovery error; the renderer never
 repairs persistence directly.
 
+Protocol compatibility has three independent dimensions. A major protocol
+version defines message semantics and must match; a minor version may add
+optional fields or features without changing existing required meaning. Each
+durable or projected payload carries its own schema version, and feature ids
+are negotiated separately. The alpha `protocolVersion: 1` is major 1/minor 0
+until an explicit major/minor wire shape is introduced.
+
+Each new transport begins with a typed handshake that advertises supported
+protocol versions, payload schemas, client build identity and features. The
+core returns the selected version, accepted features, a fresh `sessionId`,
+authoritative scope revisions and the current event sequence. Mutating
+messages are rejected until the handshake succeeds. Unknown optional fields
+may be ignored; unknown required fields, unsupported kinds and incompatible
+schemas return typed errors such as `protocol-incompatible`,
+`schema-incompatible`, `feature-unavailable`, `session-expired`,
+`sequence-gap`, `stale-revision`, `request-unknown-outcome` and
+`transport-unavailable`.
+
+`requestId` is the logical idempotency key retained across a retry only for a
+command whose contract declares idempotency. The core keeps a bounded
+recent-result window scoped to the command owner and retention policy. If a
+mutation's outcome is unknown after a disconnect, the client first queries
+authoritative state and retries with the same key only when the command
+contract permits it; a request id does not make an external side effect
+idempotent, and such effects are never replayed blindly.
+
+Reconnect creates a fresh session, retains the last valid read-only projection
+while degraded, performs bounded backoff and then requests a complete
+authoritative snapshot resynchronization. Events and handles from the old
+session are ignored. Plugin and UI Bridge sessions are recreated from
+Rust-owned projections, and the transport never requires an unbounded event
+replay log.
+
 The desktop mapping is exposed by `TauriCoreTransport`. It sends a
 `velvet_core_request` envelope with a monotonically allocated request id and
 subscribes to `velvet_core_event` only while there are active listeners. The

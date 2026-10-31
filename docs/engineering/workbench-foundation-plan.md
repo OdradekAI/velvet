@@ -49,6 +49,93 @@ degraded-but-diagnosable; corrupt stores use owner safe defaults. Foundation
 completion requires the failure matrix in the state/transport decision ticket,
 not only a rendered-shell smoke test.
 
+Protocol major versions must match while minor versions may add optional
+fields/features. Payload schemas and feature ids are negotiated separately
+through a typed handshake that assigns a fresh session and returns the
+authoritative revisions/sequences. `requestId` is the idempotency key; unknown
+mutation outcomes require an authoritative query before retry. Reconnect keeps
+the last valid projection read-only, creates a new session and performs a full
+snapshot resync without replaying side-effecting commands.
+
+Plugin and Job execution uses device-global → owner → Job budgets. A versioned
+resource policy selects platform- and workload-aware hard limits for memory,
+disk, file descriptors, child processes and concurrency; CPU and network
+throughput are soft budgets enforced by scheduling, byte accounting and
+backpressure. Cancellation is cooperative: a healthy shared runtime is not
+killed for one cancelled Job, while timeout or runtime failure receives a
+bounded grace period before process-group termination. Typed transient failures
+use finite exponential backoff. Suspend/wake and offline/metered-network
+transitions persist Job checkpoints and pause/resume eligible work without busy
+retries. Until a cross-profile coordinator exists, a process-local device tier
+must be reported as such rather than claimed as a strict cross-process limit.
+
+Native integration uses a versioned Tier A/B platform matrix. Tier A covers
+startup/recovery, WebView, keyboard/IME, accessibility, high-DPI windows,
+file open/save and CoreTransport; Tier B capabilities degrade with diagnostics.
+One Profile has one writer, multiple windows share one `ApplicationCore`, and a
+second process forwards validated activation requests. Rust owns path,
+symlink, volume, file-association, drag/drop and deep-link validation; missing
+removable/network volumes preserve Asset identity and only make source work
+temporarily unavailable.
+
+Release integrity is part of the native foundation. The `preview` and `stable`
+channels use signed `ReleaseManifest` metadata and platform-signed packages;
+the pinned release root key authorizes key rotation, and the manifest carries a
+supported data-schema range, minimum client version, monotonic release
+sequence and freshness metadata. An offline installer uses
+the same signature, hash, target, release-floor and downgrade checks as the
+online updater. Tauri's updater is only the transport/verifier. An
+`UpdateTransaction` pairs the staged package with owner snapshots and a
+copy-on-write migration: the previous package and committed generations stay
+available until the new version reaches `ready`. Before that checkpoint a
+failed or interrupted update returns to the old package/data generation; after
+commit, recovery never starts an old binary against a newer schema. Uninstall
+retains Profile, Workspace, Asset metadata, snapshots and diagnostics until the
+user explicitly confirms data deletion.
+
+## Native lifecycle/recovery gate
+
+The accepted [Native Lifecycle and Recovery ADR](../adr/0013-native-lifecycle-and-recovery.md)
+adds a host-level recovery gate to the foundation. It is ordered before
+product-specific persistence, preview and indexing work so a corrupt optional
+component cannot become a startup dependency.
+The post-research [decision review](../research/native-lifecycle-recovery-review.md)
+is part of this gate: it records the counterexamples that prevent the plan from
+turning a helper process, fixed resource constants or a renderer-only recovery
+screen into an accidental platform contract.
+
+The implementation priority is:
+
+1. **P0 startup safety**: preflight, checkpointed startup phases, lifecycle
+   journal, two-failure Safe Mode, migration-failure Safe Mode and the minimal
+   `RecoverySurface`.
+2. **P0 persistence safety**: owner-scoped rolling `StateSnapshot` generations,
+   atomic replacement, migration staging, quarantine and restore of the last
+   validated generation.
+3. **P0 failure isolation**: PluginHost and JobSystem recovery, interrupted Job
+   state, provenance checks and derived-cache invalidation.
+4. **P0 diagnostics**: structured, bounded redacted local records, host
+   diagnostics and user-exported `DiagnosticBundle` with separate upload
+   consent.
+5. **P0 native capability boundary**: deny-by-default Tauri capabilities,
+   typed allow-listed commands and a minimal recovery capability set.
+6. **P1 protocol and reconnect**: feature/schema negotiation, typed
+   incompatibility errors, bounded reconnect and stale projection handling.
+7. **P1 platform/resource/performance policy**: sleep and network behavior,
+   versioned hard/soft budgets, OS/WebView fallbacks, cold-start/idle baselines
+   and lifecycle tests on each supported OS.
+8. **P1 crash evidence and release recovery**: local crash-capture adapter,
+   package verification, signing/key rotation, manifest freshness, staged
+   update and rollback rules that preserve user data.
+9. **Optional platform adapter**: an out-of-process `RecoverySupervisor` or
+   native relaunch adapter only after measurements and a proven requirement
+   justify the extra artifact.
+
+The default P0 topology does not ship a separate supervisor process. The
+out-of-process implementation remains an adapter option behind the same
+`RecoverySupervisor` contract, while crash evidence is a separate
+`CrashCaptureAdapter` seam.
+
 The current React shell is a renderer slice, not the completed foundation. The
 Part/mode, three-scope layout state, WorkbenchApp/AppSurface/shared context,
 contribution scope/container, ViewContainer/View, namespace/lifecycle,
@@ -698,11 +785,51 @@ bundle or message; caches are cleaned on disable, upgrade and uninstall.
 4. **Workbench parts**: render ActivityBar, Resource Manager, Feed Workbench, PrimarySidebar, WorkspaceArea, AuxiliarySidebar, OperationsPanel and StatusBar with placeholder views. **Initial renderer slice done.**
 5. **View registry**: add built-in views and one example external view per zone. Verify that cross-zone registration is rejected. **Host registry and rejection tests done; the React shell mounts registered ViewContainers/Views with a renderer adapter seam, PluginClient projects extension views plus isolated UI Bridge sessions into that seam, and the Activity Bar now selects contributed navigation containers.**
 6. **Preview core**: implement generic image/file fallback, `PreviewResolver`, Quick/Inspect/Analyze intents and a fake provider used by contract tests. **Host slice done:** surface-aware deterministic resolution, provider-failure fallback, typed Tauri/TypeScript projection, `PreviewHost` state machine, Quick overlay and unregisterable provider/augmentation slots. The bounded source adapter, versioned persistent AssetId source-location registry and trusted text/image providers are implemented; format-specific plugin execution, augmentation renderer adapters and product-specific cache consumers remain follow-up work.
-7. **Plugin host**: load manifests, validate permissions and localization bundles, activate lazily, isolate failures and expose the UI SDK boundary. **Local discovery, install preflight, permission enforcement, host API compatibility checks, numeric version upgrades, transactional commit/rollback, crash-recovery scanning, deferred activation, retryable recovery, orphan cleanup and bounded recovery logs are implemented; marketplace policy and signing remain later work. The host localization service, fallback formatter, diagnostics, loader/plugin lifecycle seam, isolated UI Bridge locale projection, Rust-owned revisioned Profile locale persistence, bounded directory-package localization resource loader, bounded ZIP archive package adapter and native directory/ZIP package picker are implemented; other archive formats and non-localization binary resources remain follow-up adapters.**
+7. **Plugin host**: load manifests, validate permissions and localization bundles, activate lazily, isolate failures and expose the UI SDK boundary. **Local discovery, install preflight, permission enforcement, host API compatibility checks, numeric version upgrades, transactional commit/rollback, crash-recovery scanning, deferred activation, retryable recovery, orphan cleanup and bounded recovery logs are implemented; application release signing is a native release gate, while extension publisher signing/revocation remains a separate PluginHost policy and is not inherited from the application signer. The host localization service, fallback formatter, diagnostics, loader/plugin lifecycle seam, isolated UI Bridge locale projection, Rust-owned revisioned Profile locale persistence, bounded directory-package localization resource loader, bounded ZIP archive package adapter and native directory/ZIP package picker are implemented; other archive formats and non-localization binary resources remain follow-up adapters.**
 8. **Jobs and facets**: the shared Rust JobSystem lifecycle seam is wired to OperationsPanel with persisted progress, cancellation, retry, failure and restart recovery. It now exposes a Rust JobRunner registry, attempt-safe cooperative cancellation, panic isolation, persisted JobResult payloads, JobProvenance projection, exact provenance reuse that refuses cache hits without an input fingerprint, and an isolated plugin `invoke-job`/`job.run` adapter with typed input, result and bounded progress events. Owner cleanup revokes runners and cancels queued/running Jobs before runtime shutdown; late results are ignored, and extension-owned retries fail with a diagnostic when the owner runner is unavailable instead of using the core fallback. Provider/version/settings changes are covered as cache misses through exact provenance; no generic artifact cache is added before a concrete provider or Facet owner needs one. Product-specific thumbnail, metadata and analysis runners remain follow-up consumers.
 9. **Tauri adapter**: connect typed commands, queries and events to the desktop client. No feature should bypass the protocol. **Done for the current layout slice, including native command/event serialization and global shortcut entry.**
 
 ## Acceptance scenarios
+
+### Native lifecycle/recovery acceptance matrix
+
+The detailed decision record is [Define native recovery acceptance scenarios and
+priority route](../../.scratch/native-lifecycle-recovery/issues/09-define-native-recovery-acceptance-and-priority.md).
+The foundation gate below keeps its priority, semantic owner, test seam and
+user recovery action visible beside the existing Workbench scenarios.
+
+| Priority | Scenario that must pass | Owner crate(s) | Test seam | User recovery action |
+| --- | --- | --- | --- | --- |
+| P0 | Two pre-ready failures or a core startup deadline breach enter Safe Mode without clearing core data; optional activation timeout remains degraded. | `application-core` | Injected in-memory `RecoverySupervisor` journal, monotonic-clock and startup harness | Retry, disable the recent optional component, restore a snapshot, reset optional state or export diagnostics |
+| P0 | A Workbench mount failure still mounts an offline, localized, keyboard-accessible `RecoverySurface` with failed owner/reason/actions. | `application-core`, `apps/desktop` | Host mount-failure fixture plus renderer/accessibility smoke test | Retry, quarantine the failing owner, restore or export diagnostics |
+| P0 | Forced core termination is classified on next launch and recovers without a helper process; leftover shutdown intent is reported as expected-or-uncertain rather than proof of a clean exit. | `application-core` | Shutdown-intent/completion and crash-receipt process harness | Relaunch, enter Safe Mode or export diagnostics |
+| P0 | Interrupted/truncated writes preserve the previous `StateSnapshot`; unknown schemas and a corrupt recovery index become `QuarantinedState`, journal/index failure falls back to an in-memory receipt, and a read-only/unavailable state volume never causes silent default overwrite. | `persistence`, `application-core` | Temp-directory store with write/rename/fsync/index and read-only-volume fault injection | Restore, retry migration, repair/move/export or discard quarantined state |
+| P0 | A related multi-owner change publishes a validated `RecoverySet`; a fault cannot expose mixed Profile/Workspace/Asset generations. | `application-core`, `persistence` | Commit-barrier and reference-validation fault injection | Restore the recovery set, retry or export diagnostics |
+| P0 | Failed core migration is copy-on-write and returns to the previous generation. | `application-core`, `persistence` | Migration fixture failing at each stage and reference validation | Retry migration, restore the last validated generation or export diagnostics |
+| P0 | Failed extension migration quarantines only that extension store. | `plugin-host`, `persistence` | Fake extension store plus manifest/activation fixture | Retry, disable, restore or discard extension state |
+| P0 | Plugin hang/panic/restart loop removes only its projections and Jobs. | `plugin-host` | `FakeRuntime`/`FakeProcess` timeout and rolling-failure plans | Retry, restore package, disable or uninstall extension |
+| P0 | Restarted Jobs become interrupted/retryable; cancellation and late-result rejection work. | `job-system` | Fake `JobRunner`, `JobStateStore`, attempt/provenance fixtures | Resume/retry, cancel or discard Job |
+| P0 | Diagnostic export is bounded/redacted and user initiated. | `application-core`, `tauri-adapter` | Deterministic bundle and export-adapter fixtures | Export locally; upload only after separate consent |
+| P0 | Tauri capabilities and native commands are deny-by-default, typed and scoped; recovery cannot invoke arbitrary filesystem, shell, URL or process actions. | `tauri-adapter`, `application-core` | Capability/ACL fixture plus command-negative tests | Use the typed fallback, retry with a permitted action or export diagnostics |
+| P1 | Major/required/schema protocol mismatch fails before mutation; additive minor fields work. | `workbench-protocol`, `application-core` | Versioned wire fixtures and fake `CoreTransport` | Update, disable incompatible feature or open recovery UI |
+| P1 | Transport loss keeps the last projection read-only and performs fresh-session full resync. | `workbench-protocol`, `tauri-adapter`, `apps/desktop` | Fake transport/event sink with gaps, stale revisions and unknown outcomes | Retry reconnect or refresh projection |
+| P1 | Device → owner → Job budgets enforce hard admission and soft backpressure. | `plugin-host`, `job-system` | Budget ledger, isolated runtime and disk-pressure fakes | Cancel, retry later, evict derived cache or discard Job |
+| P1 | Suspend checkpoints/pause work; wake resumes local Jobs and waits for network policy. | `job-system`, `tauri-adapter` | Lifecycle, monotonic-clock and network-policy signal fakes | Resume, retry, cancel or wait for connectivity |
+| P1 | Tier A mismatch prevents `ready` and reaches host-native/`RecoverySurface` update action; Tier B mismatch degrades only its feature. | `tauri-adapter`, `apps/desktop` | OS/architecture/WebView/GPU/file-IO/IME capability fixtures | Retry/update runtime or use fallback |
+| P1 | Profile lock admits one writer and forwards validated second-instance activation. | `application-core`, `tauri-adapter` | Lock/instance adapter and activation harness | Focus existing instance, retry verified stale lock or export diagnostics |
+| P1 | Path/symlink/deep-link/drag-drop validation rejects escapes; disconnected volumes preserve Asset identity. | `application-core`, `tauri-adapter` | Canonicalization, volume identity and `ActivationRequest` fixtures | Correct input, reconnect volume or retry source operation |
+| P1 | Invalid release package or interrupted update preserves committed package/data generation. | `application-core`, `tauri-adapter` | Package verifier/updater fake, temp journal and migration fault injection | Retry/offline install, recover previous generation or export diagnostics |
+| P1 | Uninstall removes binaries but retains user data until explicit deletion. | `application-core`, `tauri-adapter` | Retention fixture with external-source sentinel | Reinstall/recover or explicitly delete selected data |
+| P1 | Crash evidence, when the platform provides it, is local, bounded and redacted; lack of native capture still leaves journal/exit diagnostics. | `application-core`, `tauri-adapter` | CrashCaptureAdapter fake with OOM/signal/exception fixtures | Export diagnostics, retry or continue without upload |
+| P1 | Cold start, idle memory/disk/CPU and hidden WebView lifecycle stay within the versioned platform baseline; suspended surfaces do not run undeclared work. | `application-core`, `tauri-adapter`, `apps/desktop` | Monotonic-clock startup harness, resource probes and WebView lifecycle fake | Close/suspend a surface, retry, update runtime or continue degraded |
+
+All P0 rows must pass before the native foundation is considered safe for alpha
+users. P1 rows must pass for each supported platform and package/channel before
+that combination is production-ready; Tier B failures remain diagnosable
+degradation. The optional out-of-process `RecoverySupervisor` is measured
+separately and is not a release prerequisite. Crash evidence is tested through
+the separate `CrashCaptureAdapter` seam and is not used to justify a mandatory
+helper process.
 
 - The built-in `WorkbenchApp` entries are always discoverable and do not move.
 - A trusted or isolated extension can contribute an ActivityBar `WorkbenchApp`, a central `AppSurface`, a ViewContainer-only tool, or the compatible combination without owning global layout.
@@ -722,6 +849,89 @@ bundle or message; caches are cleaned on disable, upgrade and uninstall.
 - No P0 acceptance scenario requires an Editor, text document model or LSP; a future text-oriented app may add that capability without changing the shell contract.
 - A stale revision, sequence gap, transport disconnect, corrupt store, provider timeout, plugin crash, failed AppSurface switch, failed View/Overlay, cancelled Job and extension uninstall each leave a diagnosable usable shell and have an explicit recovery action.
 - Every durable state field and cache names one owner, scope, schema version, migration, invalidation and recovery path; persistence adapters never become a second owner.
+- A startup attempt records its phase and failure class; reaching `workbench-ready` writes a last-known-good checkpoint, while two pre-checkpoint failures or a core migration failure enter Safe Mode on the next launch.
+- Safe Mode offers retry, disable the recently failing optional component, restore a validated owner snapshot, reset optional state and export diagnostics; it never silently clears core Asset, Workspace, Profile or Job data.
+- When the Workbench cannot mount, `RecoverySurface` can display the failed owner, migration/quarantine reason, available generations and recovery actions without owning authoritative domain state.
+- If the WebView/GPU path cannot mount, the same `RecoverySurface` contract is available through a minimal host-native retry/update/export action with no generic shell or filesystem capability.
+- A normal owner write uses a same-directory temporary file and atomic replacement; an interrupted write leaves the previous committed generation readable.
+- A related multi-owner write records a validated `RecoverySet`; readers use only the last committed recovery-index pointer, commit-barrier failure cannot publish mixed owner generations, and a single-owner restore is allowed only after reference validation.
+- A core migration runs copy-on-write, validates schema/invariants/references before publication, preserves the previous generation until the startup checkpoint succeeds and quarantines failed staging data.
+- A corrupt or unknown future schema is preserved as `QuarantinedState` with bounded metadata; an older binary never overwrites it with defaults.
+- Restoring a Workspace/Profile owner creates a new validated generation and does not modify unrelated Job, Asset or extension state; extension restore remains inside its namespace.
+- Restoring Asset/source state validates the external volume and path identity; it never copies, deletes or silently rebinds the external source file.
+- An extension store migration failure disables or quarantines only that extension; built-in Workbench, core Asset/Workspace state and unrelated extensions remain usable.
+- Restart recovery marks queued/running Jobs as interrupted and retryable, preserves owner/provenance metadata, rejects stale completions and treats missing provenance as a cache miss that can be recomputed.
+- Session/Window recovery restores identity, bounds, focus and selection hints only; uncommitted renderer edits are not silently treated as durable work, and draft recovery requires its own owner scope.
+- Derived preview/facet caches and recomputable `JobResult` payloads can be invalidated and rebuilt without restoring a global backup database.
+- A diagnostic export contains bounded redacted metadata and log tails; Asset contents, credentials, secrets, full environments and unrestricted paths are excluded, and upload requires separate consent.
+- Diagnostic records are structured, bounded by count/age/bytes and include monotonic timing; a separate `CrashCaptureAdapter` may add local exception/OOM evidence without owning Safe Mode or uploading data.
+- The P0 lifecycle path works with the in-process `RecoverySupervisor`; an out-of-process supervisor is optional and is enabled only after cross-platform cold-start, idle-resource and crash-relaunch measurements.
+- A new transport performs a typed handshake, selects a compatible protocol major/minor, negotiates payload schemas/features and assigns a fresh `sessionId` before accepting mutations.
+- A protocol minor addition with optional fields remains usable; a major mismatch, unknown required field or incompatible schema returns a typed compatibility error and leaves the Workbench in a diagnosable degraded/recovery state.
+- A duplicate request with the same `requestId` returns the bounded original result for an idempotent command; an unknown mutation outcome queries authoritative state before retry and never blindly replays an external side effect.
+- Duplicate or stale events are ignored, a sequence gap triggers bounded scope snapshot resync, and a stale revisioned write returns the authoritative snapshot with a typed error.
+- After transport loss the Workbench retains the last valid projection read-only, enters bounded degraded reconnect, creates a fresh session, resynchronizes complete authoritative snapshots and discards old-session events/handles.
+- Plugin runtime and UI Bridge reconnects recreate projections from Rust-owned state without replaying side-effecting commands; a failed optional feature remains isolated from the core shell.
+- Resource admission applies device-global, owner and Job budgets in order through a versioned policy; an extension cannot exceed the host's memory, disk, file-descriptor, child-process or concurrency limits, and CPU/network pressure produces throttling or backpressure instead of unbounded work. A process-local device tier is not reported as cross-profile hard enforcement.
+- A plugin runtime invocation respects the interactive deadline; a Job with a longer deadline must emit bounded progress heartbeats, and a timeout returns a typed result without restarting the Workbench.
+- Cancelling a Job sets its cancellation path, the runner can observe the token, a healthy shared runtime is not killed for one cancellation, timeout/unhealthy runtime gets a grace period before process-group termination, and late progress/results from the old attempt are rejected.
+- A retryable transient failure receives finite exponential backoff and a bounded attempt count; permission, schema, invalid-input, deterministic and explicit-cancel errors do not auto-retry.
+- Repeated plugin crashes or failed recovery remove only that extension's projections, cancel its Jobs, quarantine it after the rolling failure limit and keep built-in Workbench apps and unrelated extensions usable.
+- Before suspend, background admission stops and Job checkpoints persist; after wake, eligible local work resumes with rate limiting, while offline or metered-network Jobs wait for policy-approved connectivity instead of spinning retries.
+- If a pre-suspend checkpoint cannot be persisted, the Job becomes interrupted/retryable and does not continue as if partial state were durable.
+- Battery and thermal pressure may tighten soft CPU/network admission and defer background work, but never bypass durable writes or cancellation checkpoints.
+- Deadlines, retry backoff and runtime grace periods use a monotonic clock; wall-clock changes affect only display/diagnostic timestamps.
+- Disk pressure can stop new derived work and evict owner caches without deleting core Asset, Workspace, Profile or Job state; the OperationsPanel shows a typed resume/retry/cancel/discard action.
+- The startup capability probe records OS, architecture, WebView, GPU and display-scale information; missing Tier A capability reaches `RecoverySurface` or a typed update action, while missing Tier B capability degrades only that integration.
+- Tauri capability manifests deny by default; typed commands reject arbitrary filesystem, shell, URL and process inputs, external links use an explicit scheme/domain policy, and the recovery surface has a narrower capability set than the Workbench.
+- A Profile lock admits one writer; multiple windows share the same Core, and a second process forwards a validated file/deep-link/command-line activation request before exiting. A stale lock requires process start-time/instance-nonce verification and never triggers concurrent writes.
+- Window restoration clamps missing-monitor or changed-work-area bounds to a visible display and records a repair diagnostic; high-DPI, IME, RTL, reduced-motion and accessibility checks pass through host adapters.
+- A source on a removable or network volume remains registered when disconnected; Preview/Job operations return typed `source-unavailable`, and reconnection revalidates volume identity and path before resuming work.
+- File-watcher events are hints; the Asset/source owner revalidates `ContentFingerprint`, invalidates derived results through `JobSystem`, and scan-on-use or explicit rescan works when watcher events are unavailable.
+- Symlink loops/escapes, archive symlink entries, malformed file associations, drag/drop traversal and unsupported deep-link schemes are rejected by Rust with bounded diagnostics; the renderer never executes raw paths or commands.
+- Clipboard, notification, tray and global-shortcut denial or absence falls back to an in-app action or no-op diagnostic and does not make core startup fail.
+- A release package with an invalid signature, unknown key, mismatched hash,
+  target, channel or architecture is rejected before installation and the
+  current version remains launchable.
+- Online update discovery with stale/expired freshness metadata or a release
+  sequence below the installed floor is rejected before installation; an
+  explicitly selected offline package still has to pass package signature,
+  target and compatibility checks; a client below the manifest minimum version
+  receives a typed update/recovery action, and a lower compatible version is
+  available only through an explicit recovery action.
+- A clearly skewed local clock blocks online discovery with a typed diagnostic
+  without deleting data; Job deadlines and migration ordering remain monotonic.
+- A signed key-rotation manifest is accepted only when authorized by the
+  pinned release root key; revoked or unknown keys fail closed and leave a
+  bounded diagnostic.
+- A preview client does not silently move to stable, and a lower version is
+  rejected unless an explicit compatible recovery action authorizes it.
+- An eligible staged rollout downloads and verifies the package; an ineligible
+  client keeps its current version without a retry loop.
+- An offline installer with a valid signature, supported architecture, channel,
+  version and release floor passes through the same verification path as the
+  online updater;
+  an invalid offline package is rejected before touching the installed version.
+- A proxy timeout, offline check, interrupted download or interrupted install
+  leaves the last committed package and data generation usable; partial bytes
+  are never executable and staging is resumable or discarded.
+- A migration that fails before the new startup checkpoint returns to the
+  previous package and `StateSnapshot` generation, while failed package and
+  staging evidence remain available to `RecoverySurface` and diagnostics.
+- After a committed forward migration, the old binary is never started
+  against the new schema; recovery requires an explicit compatible rollback or
+  owner-scoped snapshot restore.
+- The current `RecoverySet` retains its binary/data compatibility floor with
+  user data, so uninstall/reinstall cannot bypass anti-rollback by clearing
+  package-local metadata.
+- A bundled extension is covered by the application signature, while an
+  unsigned or revoked external extension is blocked by `PluginHost` without
+  affecting core startup or unrelated extensions.
+- Uninstall retains user data and snapshots by default; explicit data deletion
+  is separate, confirmed and never removes external Asset sources implicitly.
+- Cold-start and idle memory/disk/CPU baselines are recorded per supported
+  platform; hidden/suspended WebViews do not run undeclared work, and recovery
+  diagnostics distinguish slow startup from crash or blocked migration.
 
 ## Structure review checkpoints
 
@@ -732,3 +942,11 @@ Before adding a new directory, ask:
 3. Can a fake adapter test the behaviour through the interface?
 4. What happens when the owning plugin is disabled or upgraded?
 5. Does the module introduce a second persistence owner for state already owned elsewhere?
+
+For native lifecycle work, also require that `RecoverySupervisor` remains an
+`application-core` boundary with an in-process P0 implementation; persistence
+only stores journal/snapshot bytes; `tauri-adapter` only translates OS,
+transport and package events; `CrashCaptureAdapter` is a separate diagnostic
+seam; `RecoverySet` coordination does not become a global backup owner; and
+every new recovery action has a deterministic owner seam and a failure-injection
+fixture before a renderer flow is added.

@@ -171,8 +171,12 @@ does not disable the Workbench or unrelated extensions.
 The native composition root scans the application data directory's `plugins`
 folder for JSON manifests at startup. Discovery is deterministic by filename,
 and each parse or registration failure is returned in a report while valid
-manifests remain registered for activation. Package updates, signing and
-marketplace policy remain outside this local discovery seam. Relative launch
+manifests remain registered for activation. Application package signing and
+update integrity follow ADR-0013; extension publisher signing, revocation and
+marketplace policy remain separate from this local discovery seam. The
+application signer is not implicitly an extension publisher, and an unsigned
+local extension requires an explicit developer-mode policy before activation.
+Relative launch
 arguments beginning with `./` or `../` resolve from the
 manifest directory, which lets a sidecar package move as one directory without
 embedding an absolute executable path.
@@ -199,6 +203,40 @@ the native client. The desktop projects that log into OperationsPanel; filtering
 is transient, while clear and JSON export remain typed host commands. Export
 uses a user-selected native destination and does not make the frontend a second
 persistence owner.
+
+### Resource governance and runtime recovery
+
+`PluginHost` applies a hierarchical device → extension → Job budget through a
+versioned `ResourceBudgetPolicy`. The policy selects platform- and workload-
+appropriate limits for isolated runtime memory, staging/temp disk, file
+descriptors, child processes, network requests and concurrency. Platform
+profiles may tighten these values; a manifest cannot widen them. CPU is
+throttled through Job scheduling because percentage preemption is not portable;
+memory, disk, file descriptors, process and concurrency are admission
+boundaries. The alpha profile must be bounded and observable, but its numeric
+values are release configuration rather than a plugin ABI promise.
+
+Interactive runtime invocation keeps the existing five-second timeout. Job
+invocations carry an owner deadline, progress heartbeat and cancellation
+token. User cancellation is cooperative first; protocol v1 does not tear down
+a healthy shared runtime for one cancelled Job. A deadline, malformed response,
+crash or unhealthy runtime receives a bounded grace period and may then be
+terminated as a process group. Built-in in-process adapters cannot be
+force-killed and must remain cooperative. A timeout or crash removes only that
+extension's projections, cancels or interrupts its Jobs and leaves the
+Workbench running.
+
+Recovery starts a fresh runtime and re-projects Rust-owned contributions.
+Transient failures use at most three attempts with bounded exponential
+backoff/jitter; permission, schema, invalid-input and deterministic provider
+errors do not auto-retry. Three failures in five minutes or two failed
+recovery attempts quarantine the extension until an explicit user action.
+
+Before suspend, the host stops admitting background work, requests checkpoints
+and persists Job state. After wake, local work resumes when its owner and
+storage are valid; offline or metered-network work waits for an explicit
+network-available policy event. Wake recovery is rate-limited and cannot
+replay side-effecting commands.
 
 ## Alternatives considered
 

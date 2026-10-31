@@ -68,12 +68,51 @@ misses. The lookup and submission are serialized so concurrent callers do not
 create duplicate work through this seam. Stale or incompatible results remain
 diagnosable snapshots and are never presented as a current cache hit.
 
+Only derived results with complete provenance are eligible for cache-style
+invalidation and recomputation. A runner that produces user-authored or
+authoritative domain data must hand that data to its domain owner for its own
+snapshot and migration policy; it cannot rely on the derived-result exclusion
+from core recovery.
+
 Until a concrete Preview or Facet consumer needs a materialized artifact store,
 the completed Job result index is the only reusable cache index. Provider and
 Facet owners do not create a second generic cache: changing content, provider
 identity/version or settings produces a new provenance and therefore a new
 Job. A future owner-specific artifact store must use the same key and declare
 its own retention, invalidation and recovery policy.
+
+### Resource governance, cancellation and sleep recovery
+
+`JobSystem` schedules work under device-global, owner and Job-class budgets
+through a versioned `ResourceBudgetPolicy`. The selected platform/workload
+profile provides hard limits for memory, disk, file descriptors, process count,
+queue depth and concurrency. CPU and network are soft budgets enforced through
+priority, byte accounting and backpressure. Network work is allowed only when
+its owner has the capability and the current offline/metered policy permits it.
+The alpha profile must be bounded and observable; numeric limits remain release
+configuration rather than a Job protocol promise. A process-local device tier
+is not reported as a strict cross-profile limit until a coordinator exists.
+
+Cancellation is cooperative. A cancellation token is persisted with the Job
+attempt; the runner must observe it and return a typed cancelled outcome. A
+healthy shared plugin runtime is not terminated merely because one Job was
+cancelled. A deadline, malformed response, crash or unhealthy runtime may
+receive a bounded grace period and be terminated by `PluginHost`; a core
+in-process runner cannot be force-killed and instead fails through its
+deadline/diagnostic path. `JobSystem` rejects all late progress and completion
+using the Job id, attempt and provenance.
+
+Only typed transient failures are automatically retried. The default policy
+allows three attempts with bounded exponential backoff and jitter. Permission,
+schema, invalid-input, explicit cancellation and deterministic provider
+failures require explicit user retry. A missing runner or invalid provenance
+remains a diagnosed retryable state and never executes under another owner.
+
+Before system suspend, the scheduler stops admitting background work, asks
+runners to checkpoint and persists snapshots. After wake, local Jobs resume
+when their owner and storage are valid; network Jobs wait while offline or
+metered and resume only after a policy-approved network event. Wake recovery is
+rate-limited so queue recovery cannot overwhelm the device.
 
 ## Consequences
 
