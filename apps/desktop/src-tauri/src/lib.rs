@@ -21,8 +21,8 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_global_shortcut::{Builder as ShortcutBuilder, ShortcutState};
 use velvet_application_core::{ApplicationCore, ApplicationRecoveryStores, CrashCaptureAdapter};
 use velvet_job_system::{
-    JobExecutionEnvironment, JobExecutionPolicy, JobId, JobProvenance, JobResult, JobSnapshot,
-    JobStatus,
+    JobBudgetRequest, JobExecutionEnvironment, JobExecutionPolicy, JobId, JobProvenance,
+    JobResult, JobSnapshot, JobStatus,
 };
 use velvet_layout_model::{
     LayoutCommand, LayoutState, ViewContainerState, ViewState, WorkbenchAppId, WorkbenchPart,
@@ -44,7 +44,9 @@ use velvet_persistence::{
     SnapshotProfileStateStore, migrate_legacy_owner_snapshots,
 };
 use velvet_preview_core::{PreviewIntent, PreviewRenderer, PreviewSurface, ResolvedPreview};
-use velvet_tauri_adapter::{CoreEventSink, TauriTransport};
+use velvet_tauri_adapter::{
+    platform_signals::PlatformSignalController, CoreEventSink, TauriTransport,
+};
 use velvet_workbench_protocol::{
     Command, CoreError, CoreTransport, CrashCaptureEvidence, CrashCaptureKind, Event,
     PlatformCapabilityStatus,
@@ -71,6 +73,7 @@ const MAX_TAURI_STARTUP_FAILURE_BYTES: usize = 8 * 1024;
 
 pub struct AppState {
     pub transport: Mutex<TauriTransport>,
+    pub platform_signals: PlatformSignalController,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -801,6 +804,8 @@ pub enum WireRequest {
         input: Option<serde_json::Value>,
         #[serde(default)]
         policy: Option<JobExecutionPolicy>,
+        #[serde(default)]
+        budget: Option<JobBudgetRequest>,
     },
     CancelJob {
         #[serde(rename = "protocolVersion")]
@@ -1176,6 +1181,7 @@ impl WireRequest {
                 will_fail,
                 input,
                 policy,
+                budget,
             } => {
                 validate_inner_protocol(outer_protocol_version, protocol_version)?;
                 Ok(Request::Command(Command::CreateJob {
@@ -1184,6 +1190,7 @@ impl WireRequest {
                     will_fail,
                     input: input.unwrap_or(serde_json::Value::Null),
                     policy: policy.unwrap_or_default(),
+                    budget: budget.unwrap_or_default(),
                 }))
             }
             Self::CancelJob {
@@ -1892,6 +1899,7 @@ struct WireJobSnapshot {
     duration_ms: u64,
     will_fail: bool,
     policy: JobExecutionPolicy,
+    budget: velvet_job_system::JobBudgetRequest,
     checkpoint: Option<velvet_job_system::JobCheckpoint>,
     input: serde_json::Value,
     provenance: WireJobProvenance,
@@ -1968,6 +1976,7 @@ impl From<JobSnapshot> for WireJobSnapshot {
             duration_ms: value.duration_ms,
             will_fail: value.will_fail,
             policy: value.policy,
+            budget: value.budget,
             checkpoint: value.checkpoint,
             input: value.input,
             provenance: value.provenance.into(),
@@ -2308,11 +2317,11 @@ pub fn run() {
                 crash_evidence_count: core.diagnostic_bundle().crash_evidence.len(),
             };
             core.mark_ready();
+            let transport = TauriTransport::with_event_sink(core, sink);
+            let platform_signals = PlatformSignalController::start(transport.clone());
             app.manage(AppState {
-                transport: Mutex::new(TauriTransport::with_event_sink(
-                    core,
-                    sink,
-                )),
+                transport: Mutex::new(transport),
+                platform_signals,
             });
             show_native_recovery_surface(app.handle(), native_recovery);
             Ok(())
@@ -2342,6 +2351,11 @@ pub fn run() {
                         }
                         if let Some(root) = preflight_app_data_dir() {
                             let _ = complete_process_receipt(&root);
+                        }
+                    }
+                    tauri::RunEvent::Resumed => {
+                        if let Some(state) = app.try_state::<AppState>() {
+                            state.platform_signals.on_resumed();
                         }
                     }
                     _ => {}
@@ -4174,19 +4188,29 @@ mod tests {
                     "jobKind": "sample",
                     "durationMs": 2400,
                     "willFail": true,
-                    "input": {"assetId": "asset-1"}
+                    "input": {"assetId": "asset-1"},
+                    "budget": {
+                        "memoryBytes": 4096,
+                        "diskBytes": 8192,
+                        "childProcesses": 1,
+                        "concurrency": 1,
+                        "cpuMillisPerMinute": 1000,
+                        "networkBytesPerMinute": 2048
+                    }
                 }
             }"#,
         )
         .expect("job request should deserialize");
         assert!(matches!(
             envelope.request.into_core(1).expect("job request should map"),
-            Request::Command(Command::CreateJob { kind, duration_ms, will_fail, input, policy })
+            Request::Command(Command::CreateJob { kind, duration_ms, will_fail, input, policy, budget })
                 if kind == "sample"
                     && duration_ms == 2400
                     && will_fail
                     && input["assetId"] == "asset-1"
                     && policy == JobExecutionPolicy::default()
+                    && budget.memory_bytes == 4096
+                    && budget.network_bytes_per_minute == 2048
         ));
 
         let cancel: WireRequestEnvelope = serde_json::from_value(serde_json::json!({
@@ -4253,6 +4277,10 @@ mod tests {
                     deadline_ms: Some(5_000),
                     ..JobExecutionPolicy::default()
                 },
+                budget: velvet_job_system::JobBudgetRequest {
+                    memory_bytes: 4_096,
+                    ..velvet_job_system::JobBudgetRequest::default()
+                },
                 checkpoint: Some(velvet_job_system::JobCheckpoint {
                     schema_version: velvet_job_system::JOB_CHECKPOINT_SCHEMA_VERSION,
                     payload: serde_json::json!({ "cursor": 3 }),
@@ -4267,6 +4295,7 @@ mod tests {
         assert_eq!(value["response"]["job"]["status"], "failed");
         assert_eq!(value["response"]["job"]["attempt"], 2);
         assert_eq!(value["response"]["job"]["policy"]["deadlineMs"], 5_000);
+        assert_eq!(value["response"]["job"]["budget"]["memoryBytes"], 4_096);
         assert_eq!(value["response"]["job"]["checkpoint"]["payload"]["cursor"], 3);
         assert_eq!(value["response"]["job"]["provenance"]["ownerId"], "test");
         assert!(value["response"]["job"]["result"].is_null());
@@ -4286,6 +4315,7 @@ mod tests {
                     duration_ms: 200,
                     will_fail: false,
                     policy: velvet_job_system::JobExecutionPolicy::default(),
+                    budget: velvet_job_system::JobBudgetRequest::default(),
                     checkpoint: None,
                     input: serde_json::Value::Null,
                     provenance: velvet_job_system::JobProvenance {

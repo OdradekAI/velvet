@@ -29,6 +29,7 @@ export type {
   CoreResolvedPreview,
   CoreResolvedPreviewAugmentation,
   CoreJobSnapshot,
+  CoreJobBudgetRequest,
   CoreJobCheckpoint,
   CoreJobExecutionEnvironment,
   CoreJobExecutionPolicy,

@@ -75,9 +75,9 @@ impl ApplicationRecoveryStores {
 
 use velvet_asset_core::{AssetId, ContentFingerprint, ContentKindId};
 use velvet_job_system::{
-    JobError, JobExecutionContext, JobExecutionEnvironment, JobExecutionError, JobExecutionPolicy,
-    JobExecutionResult, JobId, JobProvenance, JobRunner, JobSpec, JobStateStore, JobStatus,
-    JobSystem, JOB_SCHEMA_VERSION,
+    JobBudgetRequest, JobError, JobExecutionContext, JobExecutionEnvironment, JobExecutionError,
+    JobExecutionPolicy, JobExecutionResult, JobId, JobProvenance, JobRunner, JobSpec,
+    JobStateStore, JobStatus, JobSystem, JOB_SCHEMA_VERSION,
 };
 use velvet_layout_model::{InMemoryLayoutService, LayoutService};
 use velvet_persistence::{
@@ -170,6 +170,7 @@ impl JobRunner for PluginJobRunner {
             deadline_ms: context.deadline_ms(),
             cancellation_grace_ms: context.cancellation_grace_ms(),
             checkpoint: context.checkpoint().cloned(),
+            budget: context.budget().clone(),
         };
         let execution = self
             .handle
@@ -1159,7 +1160,26 @@ impl ApplicationCore {
         input: serde_json::Value,
         policy: JobExecutionPolicy,
     ) -> Result<velvet_job_system::JobSnapshot, JobError> {
-        self.jobs.submit_or_reuse_with_policy(
+        self.create_job_with_policy_and_budget(
+            kind,
+            duration_ms,
+            will_fail,
+            input,
+            policy,
+            JobBudgetRequest::default(),
+        )
+    }
+
+    pub fn create_job_with_policy_and_budget(
+        &self,
+        kind: String,
+        duration_ms: u64,
+        will_fail: bool,
+        input: serde_json::Value,
+        policy: JobExecutionPolicy,
+        budget: JobBudgetRequest,
+    ) -> Result<velvet_job_system::JobSnapshot, JobError> {
+        self.jobs.submit_or_reuse_with_policy_and_budget(
             JobSpec {
                 kind,
                 duration_ms,
@@ -1168,6 +1188,7 @@ impl ApplicationCore {
                 provenance: JobProvenance::for_owner("core"),
             },
             policy,
+            budget,
         )
     }
 
@@ -1713,8 +1734,16 @@ impl ApplicationCore {
                 will_fail,
                 input,
                 policy,
+                budget,
             }) => self
-                .create_job_with_policy(kind, duration_ms, will_fail, input, policy)
+                .create_job_with_policy_and_budget(
+                    kind,
+                    duration_ms,
+                    will_fail,
+                    input,
+                    policy,
+                    budget,
+                )
                 .map(Response::Job)
                 .map_err(job_error),
             Request::Command(Command::CancelJob { job_id }) => self
@@ -4310,6 +4339,7 @@ mod tests {
                 duration_ms: 30_000,
                 will_fail: false,
                 policy: velvet_job_system::JobExecutionPolicy::default(),
+                budget: velvet_job_system::JobBudgetRequest::default(),
                 checkpoint: None,
                 input: serde_json::Value::Null,
                 provenance: velvet_job_system::JobProvenance::for_owner("test"),

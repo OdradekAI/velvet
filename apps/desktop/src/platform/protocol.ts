@@ -298,6 +298,7 @@ export type CoreRequest =
       readonly willFail: boolean;
       readonly input?: unknown;
       readonly policy?: CoreJobExecutionPolicy;
+      readonly budget?: CoreJobBudgetRequest;
     }
   | {
       readonly protocolVersion: ProtocolVersion;
@@ -431,7 +432,16 @@ export type CoreJobStatus =
   | 'completed';
 
 export type CoreJobNetworkPolicy = 'local-only' | 'unmetered' | 'any-network';
-export type CoreJobNetworkState = 'online' | 'metered' | 'offline';
+export type CoreJobNetworkState = 'online' | 'metered' | 'offline' | 'unknown';
+
+export interface CoreJobBudgetRequest {
+  readonly memoryBytes: number;
+  readonly diskBytes: number;
+  readonly childProcesses: number;
+  readonly concurrency: number;
+  readonly cpuMillisPerMinute: number;
+  readonly networkBytesPerMinute: number;
+}
 
 export interface CoreJobRetryPolicy {
   readonly maxAttempts: number;
@@ -468,6 +478,7 @@ export interface CoreJobSnapshot {
   readonly durationMs: number;
   readonly willFail: boolean;
   readonly policy: CoreJobExecutionPolicy;
+  readonly budget: CoreJobBudgetRequest;
   readonly checkpoint: CoreJobCheckpoint | null;
   readonly input: unknown;
   readonly provenance: CoreJobProvenance;

@@ -641,6 +641,11 @@ mod tests {
             duration_ms: 1_000,
             will_fail: false,
             policy: velvet_job_system::JobExecutionPolicy::default(),
+            budget: velvet_job_system::JobBudgetRequest {
+                memory_bytes: 4_096,
+                network_bytes_per_minute: 8_192,
+                ..velvet_job_system::JobBudgetRequest::default()
+            },
             checkpoint: None,
             input: serde_json::Value::Null,
             provenance: velvet_job_system::JobProvenance::for_owner("test"),

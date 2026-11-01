@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 velvet-application-core = { path = "../application-core" }
+velvet-job-system = { path = "../job-system" }
 velvet-workbench-protocol = { path = "../workbench-protocol" }
 
 [dev-dependencies]

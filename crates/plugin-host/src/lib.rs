@@ -16,6 +16,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use platform_process::ProcessSupervisor;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use velvet_job_system::JobBudgetRequest;
 use velvet_layout_model::WorkbenchZone;
 use velvet_plugin_api::{
     validate_reserved_metadata, AppTarget, ContributionKind, ContributionScope, ExtensionId,
@@ -746,6 +747,8 @@ pub struct PluginJobInvocation {
     pub attempt: u32,
     pub input: Value,
     pub provenance: Value,
+    #[serde(default)]
+    pub budget: JobBudgetRequest,
     #[serde(default)]
     pub deadline_ms: Option<u64>,
     #[serde(default = "default_job_cancellation_grace_ms")]
@@ -5534,6 +5537,7 @@ mod tests {
                 attempt: 1,
                 input: serde_json::json!({ "assetId": "asset-1" }),
                 provenance: serde_json::json!({ "inputFingerprint": "sha256:asset-1" }),
+                budget: JobBudgetRequest::default(),
                 deadline_ms: None,
                 cancellation_grace_ms: default_job_cancellation_grace_ms(),
                 checkpoint: None,
@@ -5553,12 +5557,21 @@ mod tests {
             "attempt": 2,
             "input": { "assetId": "asset-1" },
             "provenance": { "inputFingerprint": "sha256:asset-1" },
+            "budget": {
+                "memoryBytes": 1024,
+                "diskBytes": 2048,
+                "childProcesses": 1,
+                "concurrency": 1,
+                "cpuMillisPerMinute": 100,
+                "networkBytesPerMinute": 200
+            },
             "deadlineMs": 5000,
             "cancellationGraceMs": 250,
             "checkpoint": { "cursor": 4 }
         }))
         .expect("job invocation should decode");
         assert_eq!(invocation.attempt, 2);
+        assert_eq!(invocation.budget.memory_bytes, 1024);
         assert_eq!(invocation.checkpoint.unwrap()["cursor"], 4);
 
         let event: PluginInvocationEvent = serde_json::from_value(serde_json::json!({
@@ -7057,6 +7070,7 @@ mod tests {
                 attempt: 1,
                 input: serde_json::json!({ "scope": "metadata" }),
                 provenance: serde_json::json!({ "inputFingerprint": "sha256:echo" }),
+                budget: JobBudgetRequest::default(),
                 deadline_ms: None,
                 cancellation_grace_ms: default_job_cancellation_grace_ms(),
                 checkpoint: None,

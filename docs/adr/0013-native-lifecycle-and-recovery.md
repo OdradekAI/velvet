@@ -354,10 +354,11 @@ Initial ownership is:
 | Derived cache | Capability owner | Invalidate or delete and recompute through `JobSystem` |
 
 The Job snapshot is the durable boundary for execution policy as well as
-progress: it carries the bounded deadline/grace/retry/network policy and an
-optional schema-versioned checkpoint. Loading an older snapshot supplies the
-default policy; loading an unsupported or oversized checkpoint clears only the
-checkpoint and records a diagnostic message. A result payload remains derived
+progress: it carries the bounded deadline/grace/retry/network policy, an
+optional schema-versioned checkpoint and the host-owned `JobBudgetRequest`
+claim. Loading an older snapshot supplies default policy and budget values;
+loading an unsupported or oversized checkpoint clears only the checkpoint and
+records a diagnostic message. A result payload remains derived
 unless another owner explicitly promotes it to authoritative data.
 
 Writes use a same-directory temporary file, bounded payloads and atomic
@@ -480,11 +481,13 @@ concurrency, cancellation, retry, progress, results and provenance. Both use
 device-global → owner → Job budgets; persistence remains only their storage
 adapter. A versioned `ResourceBudgetPolicy` supplies platform- and workload-
 appropriate values. Memory, disk, file descriptors, child processes and
-concurrency are hard admission limits; CPU and network are governed by
-scheduling, capability, byte accounting and backpressure. Extensions cannot
-widen the policy. Until a cross-profile coordinator exists, a process-local
-budget must be reported as such rather than presented as a strict device-wide
-limit.
+concurrency are the target hard admission limits; the current alpha claim
+fields enforce memory, disk, child processes and concurrency, while
+file-descriptor enforcement waits for a runtime adapter. CPU and network are
+governed by scheduling, capability, byte accounting and backpressure.
+Extensions cannot widen the policy. Until a cross-profile coordinator exists,
+a process-local budget must be reported as such rather than presented as a
+strict device-wide limit.
 
 The alpha `JobSystem` now owns a bounded ledger for the hard admission seam.
 `JobBudgetPolicy` contains device, default-owner, per-owner and per-Job limits;
@@ -493,10 +496,12 @@ Job becomes visible, and terminal/cancelled attempts release the reservation.
 Restarted `Queued`/`Running` snapshots become `Interrupted` without inheriting
 old in-memory reservations. The default request counts one Job of concurrency;
 callers that know memory, disk or child-process needs must provide those
-claims explicitly. CPU/network values are retained as soft pressure only and
-are not used to reject admission. This is a process-local ledger, not a claim
-of cross-process device enforcement, and it is intentionally not a new Tauri
-or TypeScript scheduler contract.
+claims explicitly. The claim is persisted in the snapshot and passed to an
+extension as a read-only invocation field. CPU/network values are retained as
+soft pressure only: the ledger exposes device/owner ratios and delays new
+starts by at most five seconds; it never rejects an otherwise hard-valid Job.
+This is a process-local ledger, not a claim of cross-process device enforcement,
+and it is intentionally not a second Tauri or TypeScript scheduler.
 
 The P0 execution policy is explicit at the Job boundary. A
 `JobExecutionPolicy` is bounded before admission: deadlines and cancellation
@@ -596,16 +601,24 @@ projection continues to expose only bounded lease evidence and explicit close
 actions.
 
 Before system suspend, background admission stops, runners checkpoint and Job
-snapshots persist. After wake, local work resumes when its owner and storage
-are valid; offline or metered-network Jobs wait for a policy-approved network
-event. Wake recovery is rate-limited and late results remain rejected by Job
-id, attempt and provenance. Deadlines, retry backoff and grace periods use a
-monotonic clock; wall-clock changes affect display/diagnostic timestamps only.
+snapshots persist. The host-owned `PlatformSignalController` feeds the typed
+environment command. On macOS and Linux it samples fixed, allow-listed
+`scutil`/`nmcli` sources with a default-route fallback, handles Tauri
+`RunEvent::Resumed`, and uses a bounded monotonic-clock gap fallback when the
+desktop event loop resumes without a portable pre-suspend event. Missing or
+ambiguous evidence is `unknown`; `Unmetered` work pauses unless the state is
+explicitly `online`, while `AnyNetwork` pauses only when it is explicitly
+`offline`. After wake, local work resumes when its owner and storage are valid;
+network Jobs wait according to that policy. Wake recovery is rate-limited and
+late results remain rejected by Job id, attempt and provenance. Deadlines,
+retry backoff and grace periods use a monotonic clock; wall-clock changes
+affect display/diagnostic timestamps only.
 If a checkpoint cannot be persisted before suspend, the Job is marked
 interrupted/retryable and is not allowed to continue as if its partial state
 were durable. The current alpha implementation proves this policy with an
-in-process environment seam; OS sleep/network event delivery and resource
-claims beyond the ledger remain platform qualification work.
+in-process environment seam and macOS/Linux host adapter; pre-suspend
+notification and platform-specific metering confidence remain release
+qualification work.
 
 ### Platform compatibility and OS integration
 

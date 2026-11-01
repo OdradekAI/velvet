@@ -5,6 +5,8 @@ use velvet_workbench_protocol::{
     Command, CoreError, CoreTransport, Event, Request, RequestId, Response,
 };
 
+pub mod platform_signals;
+
 pub trait CoreEventSink: Send + Sync {
     fn emit(&self, event: Event);
 }
@@ -169,6 +171,7 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
+    use crate::platform_signals::{PlatformSignalController, PlatformSignalSource};
     use velvet_layout_model::{LayoutCommand, WorkbenchPart};
     use velvet_persistence::InMemoryLayoutStateStore;
     use velvet_plugin_api::{
@@ -180,6 +183,14 @@ mod tests {
         RuntimeProcess,
     };
     use velvet_workbench_protocol::{PluginDisableReason, Query};
+
+    struct OfflineSource;
+
+    impl PlatformSignalSource for OfflineSource {
+        fn network_state(&mut self) -> velvet_job_system::JobNetworkState {
+            velvet_job_system::JobNetworkState::Offline
+        }
+    }
 
     struct CrashingRuntime;
 
@@ -451,6 +462,7 @@ mod tests {
                     will_fail: false,
                     input: serde_json::Value::Null,
                     policy: velvet_job_system::JobExecutionPolicy::default(),
+                    budget: velvet_job_system::JobBudgetRequest::default(),
                 }),
             )
             .expect("job should be accepted");
@@ -488,6 +500,7 @@ mod tests {
                         network: velvet_job_system::JobNetworkPolicy::Unmetered,
                         ..velvet_job_system::JobExecutionPolicy::default()
                     },
+                    budget: velvet_job_system::JobBudgetRequest::default(),
                 }),
             )
             .expect("networked Job should be accepted");
@@ -518,5 +531,34 @@ mod tests {
                 if snapshot.id == job_id
                     && snapshot.status == velvet_job_system::JobStatus::Paused
         )));
+    }
+
+    #[test]
+    fn platform_signal_controller_routes_fake_network_state_to_job_environment() {
+        let sink = InMemoryEventSink::default();
+        let transport = TauriTransport::with_event_sink(ApplicationCore::default(), sink);
+        let controller =
+            PlatformSignalController::start_with_source(transport.clone(), Box::new(OfflineSource));
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let response = transport
+            .dispatch(
+                RequestId(30),
+                Request::Command(Command::CreateJob {
+                    kind: "networked.fake".into(),
+                    duration_ms: 200,
+                    will_fail: false,
+                    input: serde_json::Value::Null,
+                    policy: velvet_job_system::JobExecutionPolicy {
+                        network: velvet_job_system::JobNetworkPolicy::Unmetered,
+                        ..velvet_job_system::JobExecutionPolicy::default()
+                    },
+                    budget: velvet_job_system::JobBudgetRequest::default(),
+                }),
+            )
+            .expect("the fake platform signal should not break dispatch");
+        assert!(
+            matches!(response, Response::Job(snapshot) if snapshot.status == velvet_job_system::JobStatus::Paused)
+        );
+        drop(controller);
     }
 }

@@ -186,7 +186,9 @@ on every supported platform and orphan reconciliation.
 
 Declared Job contributions use the same runtime process through a distinct
 `invoke-job` message with `method: "job.run"`. The host sends the Job input as
-`args` and a bounded context containing Job id, kind, attempt and provenance.
+`args` and a bounded context containing Job id, kind, attempt, provenance and
+the host-owned read-only `JobBudgetRequest` claim. The plugin can adapt its
+work to the claim, but cannot widen it or mutate the ledger.
 The response contains a typed result (`contentType` plus JSON `payload`) with
 bounds-checked input/result projections and a bounded list of `progress`
 events. `PluginHost` exposes this process through a
@@ -358,7 +360,9 @@ capability; its self-asserted license is not Velvet-verified.
 `PluginHost` applies a hierarchical device → extension → Job budget through a
 versioned `ResourceBudgetPolicy`. The policy selects platform- and workload-
 appropriate limits for isolated runtime memory, staging/temp disk, file
-descriptors, child processes, network requests and concurrency. Platform
+descriptors, child processes, network requests and concurrency. The alpha Job
+claim currently enforces memory, disk, child processes and concurrency;
+file-descriptor usage remains a runtime-adapter qualification seam. Platform
 profiles may tighten these values; a manifest cannot widen them. CPU is
 throttled through Job scheduling because percentage preemption is not portable;
 memory, disk, file descriptors, process and concurrency are admission

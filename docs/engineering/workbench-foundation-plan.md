@@ -61,13 +61,17 @@ Plugin and Job execution uses device-global → owner → Job budgets. A version
 resource policy selects platform- and workload-aware hard limits for memory,
 disk, file descriptors, child processes and concurrency; CPU and network
 throughput are soft budgets enforced by scheduling, byte accounting and
-backpressure. Cancellation is cooperative: a healthy shared runtime is not
-killed for one cancelled Job, while timeout or runtime failure receives a
-bounded grace period before process-group termination. Typed transient failures
-use finite exponential backoff. Suspend/wake and offline/metered-network
-transitions persist Job checkpoints and pause/resume eligible work without busy
-retries. Until a cross-profile coordinator exists, a process-local device tier
-must be reported as such rather than claimed as a strict cross-process limit.
+backpressure. Accepted Job claims are persisted in snapshots and exposed to
+plugins as read-only context. Cancellation is cooperative: a healthy shared
+runtime is not killed for one cancelled Job, while timeout or runtime failure
+receives a bounded grace period before process-group termination. Typed
+transient failures use finite exponential backoff. Suspend/wake and
+offline/metered-network transitions persist Job checkpoints and pause/resume
+eligible work without busy retries. macOS/Linux host signal delivery uses fixed
+`scutil`/`nmcli` adapters, Tauri resume events and a bounded wake-gap fallback;
+unknown evidence remains typed. Until a cross-profile coordinator exists, a
+process-local device tier must be reported as such rather than claimed as a
+strict cross-process limit.
 
 Native integration uses a versioned Tier A/B platform matrix. Tier A covers
 startup/recovery, WebView, keyboard/IME, accessibility, high-DPI windows,
@@ -184,7 +188,7 @@ must not be advertised as the target guarantee.
 | Owner snapshots, `RecoverySet` and migration rollback | Native Tauri composition wraps Layout/Profile/Job with `StateSnapshotStore`, publishes a core `RecoverySet` after owner changes, imports legacy files through composition-owned migration participants before Core construction, exposes `RecoverySetTransaction` for related owner writes, restores the previous set and quarantines an exact corrupt generation; atomic-only/required-fsync modes produce a persisted durability report projected through recovery and diagnostics; the release-qualification suite covers staged-write/pointer crash boundaries, unreadable-directory path collisions and the platform capability matrix; the native macOS/Linux harness adds abrupt-process and ACL/read-only probes | Physical power interruption, operator-supplied removable/network mounts and Windows runtime qualification remain release gates; the Linux Docker gate requires a running daemon; generic embedded constructors remain intentionally in-memory/legacy adapters for tests and embedders | P0 (pass, device qualification open) |
 | Extension-owned data with host-controlled backup/migration | `PluginHost` exposes manifest-declared namespaced `ExtensionStorage` over `StateSnapshotStore`, bounded key/blob transactions with generation conflict detection, typed `BackupParticipant`/`MigrationParticipant` seams, internal `invoke-storage` runtime RPC, host validation and isolation tests, plus a metadata-only recovery projection and typed restore/quarantine actions; corrupt/future-schema generations can be quarantined from filename metadata without decoding payloads; no raw Tauri storage command is exposed | The generic release-qualification seam is covered; extension-specific ACL/volume and abrupt-process qualification remains a device gate | P0 (partial) |
 | Per-extension runtime failure domain | `PluginHost` tracks one process per extension, binds discovered/installed packages to a host-only package root, rejects absolute/package-escape launch targets and unlisted host commands, cleans contributions and Jobs, and persists structured diagnostics; sidecars capture bounded stderr and exit evidence, clean a Unix process group on shutdown, and Linux arms a parent-death signal before exec. Native composition persists bounded starting/running/quarantined runtime leases, verifies Linux `/proc` identities, macOS `proc_pidinfo` identities and Windows process creation times, automatically closes confirmed stale leases, durably quarantines uncertain identities before optional activation, and exposes a typed query plus explicit close action that never terminates a process. Windows Job Objects kill descendants when Core disappears; macOS uses process-group cleanup and next-start reconciliation. | Direct in-memory registration remains a trusted composition seam; platform release qualification must exercise macOS abrupt-loss reconciliation, Windows Job Object descendants, permission-denied identity reads and PID reuse | P0 (partial) |
-| Resource-governed, restartable Jobs | `JobSystem` persists snapshots/results, owns the versioned device→owner→Job hard-budget ledger, and now exposes bounded `JobExecutionPolicy` values for monotonic deadlines, cancellation grace, typed transient/timeout retry with finite exponential backoff, schema-versioned checkpoint payloads, and suspend/offline pause/resume. `Retrying`/`Cancelling`/`Paused` snapshots, attempt-safe late-result rejection and `set-job-execution-environment` are projected through Rust, Tauri and TypeScript. | Runtime memory/process claims, soft CPU/network scheduling, OS sleep/network event adapters and wake rate limiting remain qualification work; the current environment command is the host seam and does not fabricate OS signals. | P0 (policy seam pass; platform integration partial) |
+| Resource-governed, restartable Jobs | `JobSystem` persists snapshots/results and the accepted device→owner→Job `JobBudgetRequest` claim, enforces hard memory/disk/child-process/concurrency admission, exposes bounded soft CPU/network pressure, and projects policy/checkpoint/environment through Rust, Tauri and TypeScript. `PlatformSignalController` feeds macOS/Linux network state and resume/wake-gap transitions through the one typed environment command. | Runtime usage telemetry, platform-specific metering confidence, pre-suspend notification and native release qualification remain; pressure is intentionally bounded backpressure rather than OS-level throttling. | P1 (implementation pass; qualification partial) |
 | Host diagnostics and user recovery | Plugin install recovery log, renderer recovery operations panel, bounded `RecoveryDiagnosticBundle` export, host-owned `PluginDiagnosticSink`, persistent redacted diagnostic history, `CrashCaptureAdapter`, launch instance/attempt correlation, runtime nonce evidence, bounded system artifact metadata and launcher failure evidence exist | Platform-specific dump parsing, OS-before-launcher capture and richer renderer crash UI remain | P0 (partial) |
 | Versioned protocol handshake and reconnect | Rust/TypeScript envelopes carry exact `protocolVersion` and `requestId`; stale layout revisions are checked | `u16` is treated as one exact version; no major/minor negotiation, feature/schema selection, `sessionId`, sequence resync or unknown-outcome query rule | P1 |
 | Deny-by-default native boundary | Tauri command handlers map typed requests; the main window capability explicitly lists event subscription, required child-WebView operations, dialogs and shortcuts and excludes `core:default`, filesystem, shell and opener permissions; a reserved `recovery-capability` is scoped to a future `recovery` window and grants only event subscription; pure policy fixtures reject broad defaults and unrelated plugins | `csp: null` remains an alpha policy decision; installer/release review must still verify that no additional capability file or window is introduced without a negative command test | P0 (partial) |
@@ -237,10 +241,11 @@ fault-injection tests:
    ledger now reserves device/owner/Job hard resources before admission and
    releases them on terminal or cancelling state; the Rust/Tauri/TypeScript
    policy and environment seams are wired and covered by contract tests. Keep
-   CPU/network as soft scheduling budgets until measurements justify hard
-   enforcement, then add real OS sleep/network adapters without introducing a
-   second scheduler. Wire explicit plugin/runtime claims only after their
-   manifest/protocol shape is accepted.
+   CPU/network as bounded soft scheduling budgets. The accepted claim is now
+   persisted and passed to plugin `job.run`; macOS/Linux `PlatformSignalController`
+   feeds fixed network probes plus Tauri resume/wake-gap signals without adding
+   a second scheduler. Keep OS metering confidence and pre-suspend behavior in
+   release qualification rather than fabricating stronger guarantees.
 5. **P0 recovery UX and native ACL**: keep the bounded `DiagnosticBundle`
    correlated with crash-capture evidence; the main window now uses an explicit
    allow-list and a reserved host-only recovery capability set with
@@ -967,8 +972,8 @@ user recovery action visible beside the existing Workbench scenarios.
 | P0 | Plugin logs and runtime failures produce bounded structured events correlated to extension and Job attempt; sidecar stderr and exit status/signal evidence are bounded before projection; no synthetic session id is emitted before the runtime session contract exists; secrets, asset payloads and unrestricted paths are redacted. | `plugin-host`, `application-core` | Diagnostic sink fake with bounded stderr/exit/trap/secret fixtures | Export a redacted bundle; retry or disable the extension |
 | P1 | Major/required/schema protocol mismatch fails before mutation; additive minor fields work. | `workbench-protocol`, `application-core` | Versioned wire fixtures and fake `CoreTransport` | Update, disable incompatible feature or open recovery UI |
 | P1 | Transport loss keeps the last projection read-only and performs fresh-session full resync. | `workbench-protocol`, `tauri-adapter`, `apps/desktop` | Fake transport/event sink with gaps, stale revisions and unknown outcomes | Retry reconnect or refresh projection |
-| P1 | Device → owner → Job budgets enforce hard admission and soft backpressure. | `job-system`, `plugin-host` | Budget ledger owner/device admission, typed overflow, cancellation release and isolated-owner tests pass; disk-pressure, runtime claims and soft CPU/network scheduler remain closure gates | Cancel, retry later, evict derived cache or discard Job |
-| P1 | Platform sleep/network adapters deliver real suspend, wake, offline and metered signals to the typed Job environment seam; wake recovery is rate-limited and does not spin retries. | `tauri-adapter`, `application-core`, `job-system` | Lifecycle, monotonic-clock, OS signal and network-policy fakes | Resume, retry, cancel or wait for connectivity |
+| P1 | Device → owner → Job budgets enforce hard admission and soft backpressure. | `job-system`, `plugin-host` | Persisted `JobBudgetRequest`, hard ledger, bounded pressure delay, plugin read-only claim projection, cancellation release and isolated-owner tests; OS-level runtime telemetry remains a qualification gate | Cancel, retry later, evict derived cache or discard Job |
+| P1 | Platform sleep/network adapters deliver suspend, wake, offline, metered and unknown signals to the typed Job environment seam; wake recovery is rate-limited and does not spin retries. | `tauri-adapter`, `application-core`, `job-system`, `apps/desktop/src-tauri` | Fake source/controller test, fixed-command parsers, Tauri `RunEvent::Resumed` wiring, monotonic wake-gap fixture and Rust/Tauri/TypeScript `unknown` contract; real device qualification remains open | Resume, retry, cancel or wait for connectivity |
 | P1 | Tier A mismatch prevents `ready` and reaches host-native/`RecoverySurface` update action; Tier B mismatch degrades only its feature. | `tauri-adapter`, `apps/desktop` | OS/architecture/WebView/GPU/file-IO/IME capability fixtures | Retry/update runtime or use fallback |
 | P1 | Profile lock admits one writer and forwards validated second-instance activation. | `application-core`, `tauri-adapter` | Lock/instance adapter and activation harness | Focus existing instance, retry verified stale lock or export diagnostics |
 | P1 | Path/symlink/deep-link/drag-drop validation rejects escapes; disconnected volumes preserve Asset identity. | `application-core`, `tauri-adapter` | Canonicalization, volume identity and `ActivationRequest` fixtures; operator-supplied mount probes in the native release qualification matrix | Correct input, reconnect volume or retry source operation |
@@ -1013,10 +1018,11 @@ The first lifecycle implementation slice has these acceptance results:
 | Quarantined runtime lease evidence is queryable through Rust/Tauri/TypeScript and an explicit close action removes only the record without terminating a process | Pass | `plugin-host` close/query test, Tauri wire fixture and desktop PluginClient lifecycle test |
 | Tauri builder/setup/run-loop initialization failures are bounded, persisted and consumed as `platform-initialization` evidence on the next successful launch | Pass | Native startup marker fixture, panic-safe run wrapper and recovery failure classification |
 | Main and reserved recovery capability manifests exclude broad core/filesystem/shell/opener access and remain consistent with the native command boundary | Pass | `capability_policy` fixture plus generated Tauri capability inspection |
-| Job admission applies device and owner concurrency limits, rejects typed hard-budget overflow, isolates owners, preserves soft CPU/network pressure and releases reservations on cancellation | Pass | `job-system` budget ledger tests with owner/device limits, typed rejection and cancellation release |
+| Job admission applies device and owner hard limits, persists the accepted claim, exposes bounded soft CPU/network pressure, isolates owners and releases reservations on cancellation | Pass | `job-system` budget ledger tests with owner/device limits, typed rejection, pressure delay and cancellation release; plugin invocation and Tauri/TypeScript claim fixtures |
 | Job governance applies bounded deadline/grace, typed transient/timeout retry, attempt-safe late-result rejection and cancellation reservation release | Pass | `job-system` deadline, transient retry, cancellation watchdog and stale-attempt tests; Rust protocol/Tauri wire policy fixtures |
 | Job checkpoints are bounded/schema-versioned, survive restart, resume from a valid cursor and discard unsupported or oversized payloads without overwriting core state | Pass | `job-system` checkpoint/environment durability test and load normalization seam |
-| Suspend/offline policy pauses and resumes Jobs through one typed environment command; the host does not create a second renderer scheduler | Pass (signal seam) | `workbench-protocol`, `application-core`, Tauri wire and desktop `JobClient` environment fixtures; OS sleep/network delivery remains P1 qualification |
+| Suspend/offline policy pauses and resumes Jobs through one typed environment command; the host does not create a second renderer scheduler | Pass (macOS/Linux adapter seam) | `workbench-protocol`, `application-core`, `tauri-adapter::PlatformSignalController`, Tauri `RunEvent::Resumed`, fixed `scutil`/`nmcli` parser tests, desktop `JobClient` environment fixtures; physical pre-suspend delivery and real metering confidence remain release qualification |
+| Resource claims and soft CPU/network pressure stay consistent across Rust, plugin runtime, Tauri and TypeScript | Pass | `JobSnapshot.budget`, bounded `JobBudgetPressure`, `PluginJobInvocation.budget`, Tauri wire fixture and desktop `CoreJobBudgetRequest` typecheck |
 | Native recovery, orphan policy, host locale and extension restore/quarantine confirmation | Partial | Localized Tauri/native multi-page repair flow, pre-builder WebView/GPU probe, explicit quarantined-lease close action, startup marker, launcher failure marker, crash receipt correlation, bounded system artifact metadata, minimal capability policy and filename-metadata generation repair are implemented and tested; OS-before-launcher capture, platform dump parsing and release-wrapper packaging remain |
 
 All P0 rows must pass before the native foundation is considered safe for alpha
@@ -1052,6 +1058,14 @@ helper process.
 - Suspend/offline state reaches `JobSystem` through one typed environment
   command; blocked Jobs show `Paused` with a reason and resume only after the
   environment becomes eligible.
+- A Job's memory/disk/child-process/concurrency claim is visible in the
+  persisted snapshot and plugin `job.run` context; soft CPU/network pressure
+  delays new starts within a bounded window without turning into hard
+  admission failure.
+- On macOS/Linux, a fake platform source and the Tauri resume event drive the
+  same environment command; missing network evidence is `unknown`, fixed
+  command paths are used without a shell, and a monotonic wake gap briefly
+  pauses background work before resuming eligible Jobs.
 - Disabling a plugin while one of its Jobs is running cancels the Job before runtime shutdown; a late result cannot revive it, and retry reports a missing-owner-runner diagnostic until the plugin recovers.
 - Replacing the frontend adapter does not change the Rust protocol or plugin manifest.
 - No P0 acceptance scenario requires an Editor, text document model or LSP; a future text-oriented app may add that capability without changing the shell contract.

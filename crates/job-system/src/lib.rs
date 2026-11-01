@@ -10,8 +10,8 @@ mod budget;
 
 use budget::{BudgetRejection, JobBudgetLedger};
 pub use budget::{
-    BudgetResource, JobBudgetLimits, JobBudgetPolicy, JobBudgetRequest, JobBudgetUsage,
-    JOB_BUDGET_POLICY_SCHEMA_VERSION,
+    BudgetResource, JobBudgetLimits, JobBudgetPolicy, JobBudgetPressure, JobBudgetRequest,
+    JobBudgetUsage, JOB_BUDGET_POLICY_SCHEMA_VERSION,
 };
 
 pub const JOB_SCHEMA_VERSION: u16 = 1;
@@ -143,6 +143,7 @@ pub enum JobNetworkState {
     Online,
     Metered,
     Offline,
+    Unknown,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -210,6 +211,10 @@ pub struct JobSnapshot {
     pub will_fail: bool,
     #[serde(default)]
     pub policy: JobExecutionPolicy,
+    /// Host-owned resource claim captured with the Job so a restart can
+    /// explain admission decisions and restore the same request on retry.
+    #[serde(default)]
+    pub budget: JobBudgetRequest,
     #[serde(default)]
     pub checkpoint: Option<JobCheckpoint>,
     #[serde(default)]
@@ -256,6 +261,7 @@ pub struct JobExecutionContext {
     pub will_fail: bool,
     pub input: Value,
     pub provenance: JobProvenance,
+    budget: JobBudgetRequest,
     deadline_ms: Option<u64>,
     cancellation_grace_ms: u64,
     checkpoint: Option<JobCheckpoint>,
@@ -284,6 +290,10 @@ impl JobExecutionContext {
 
     pub fn cancellation_grace_ms(&self) -> u64 {
         self.cancellation_grace_ms
+    }
+
+    pub fn budget(&self) -> &JobBudgetRequest {
+        &self.budget
     }
 
     pub fn checkpoint(&self) -> Option<&Value> {
@@ -589,6 +599,7 @@ impl JobSystem {
             duration_ms: spec.duration_ms.clamp(200, 30_000),
             will_fail: spec.will_fail,
             policy,
+            budget: budget.clone(),
             checkpoint: None,
             input: spec.input,
             provenance: normalize_provenance(spec.provenance),
@@ -714,7 +725,11 @@ impl JobSystem {
     }
 
     pub fn retry(&self, id: &JobId) -> Result<JobSnapshot, JobError> {
-        self.retry_with_budget(id, JobBudgetRequest::default())
+        let budget = self
+            .snapshot(id)
+            .map(|snapshot| snapshot.budget)
+            .unwrap_or_default();
+        self.retry_with_budget(id, budget)
     }
 
     pub fn retry_with_budget(
@@ -730,7 +745,11 @@ impl JobSystem {
         id: &JobId,
         policy: JobExecutionPolicy,
     ) -> Result<JobSnapshot, JobError> {
-        self.retry_with_policy_and_budget(id, policy, JobBudgetRequest::default())
+        let budget = self
+            .snapshot(id)
+            .map(|snapshot| snapshot.budget)
+            .unwrap_or_default();
+        self.retry_with_policy_and_budget(id, policy, budget)
     }
 
     pub fn retry_with_policy_and_budget(
@@ -757,7 +776,23 @@ impl JobSystem {
         ) {
             return Err(JobError::NotRetryable(id.clone()));
         }
-        self.reserve_budget(id, &current.provenance.owner_id, &budget)?;
+        let existing_budget = self
+            .inner
+            .budget
+            .lock()
+            .ok()
+            .and_then(|ledger| ledger.reservation(&id.0));
+        if existing_budget.as_ref() != Some(&budget) {
+            if existing_budget.is_some() {
+                self.release_budget(id);
+            }
+            if let Err(error) = self.reserve_budget(id, &current.provenance.owner_id, &budget) {
+                if let Some(previous) = existing_budget.as_ref() {
+                    let _ = self.reserve_budget(id, &current.provenance.owner_id, previous);
+                }
+                return Err(error);
+            }
+        }
         let snapshot = match self.update(id, |snapshot| {
             snapshot.attempt = snapshot.attempt.saturating_add(1);
             snapshot.status = JobStatus::Queued;
@@ -766,10 +801,16 @@ impl JobSystem {
             snapshot.retryable = true;
             snapshot.result = None;
             snapshot.policy = policy.bounded();
+            snapshot.budget = budget.clone();
         }) {
             Ok(snapshot) => snapshot,
             Err(error) => {
-                self.release_budget(id);
+                if existing_budget.as_ref() != Some(&budget) {
+                    self.release_budget(id);
+                    if let Some(previous) = existing_budget.as_ref() {
+                        let _ = self.reserve_budget(id, &current.provenance.owner_id, previous);
+                    }
+                }
                 return Err(error);
             }
         };
@@ -798,6 +839,14 @@ impl JobSystem {
             .budget
             .lock()
             .map(|budget| budget.usage())
+            .unwrap_or_default()
+    }
+
+    pub fn budget_pressure(&self, owner_id: &str) -> JobBudgetPressure {
+        self.inner
+            .budget
+            .lock()
+            .map(|budget| budget.pressure(owner_id))
             .unwrap_or_default()
     }
 
@@ -952,6 +1001,7 @@ impl JobSystem {
             JobNetworkState::Offline => "Paused while the network is offline".into(),
             JobNetworkState::Metered => "Paused on a metered network".into(),
             JobNetworkState::Online => "Paused by execution policy".into(),
+            JobNetworkState::Unknown => "Paused while network state is unknown".into(),
         }
     }
 
@@ -1153,6 +1203,17 @@ impl JobSystem {
     fn spawn_worker(&self, id: JobId) {
         let system = self.clone();
         thread::spawn(move || {
+            let delay_ms = system
+                .snapshot(&id)
+                .map(|snapshot| {
+                    system
+                        .budget_pressure(&snapshot.provenance.owner_id)
+                        .delay_ms
+                })
+                .unwrap_or_default();
+            if delay_ms > 0 {
+                thread::sleep(Duration::from_millis(delay_ms));
+            }
             let Ok(Some(initial)) = system.start_attempt(&id) else {
                 return;
             };
@@ -1188,6 +1249,7 @@ impl JobSystem {
                 deadline_ms: initial.policy.deadline_ms,
                 cancellation_grace_ms: initial.policy.cancellation_grace_ms,
                 checkpoint: initial.checkpoint.clone(),
+                budget: initial.budget.clone(),
                 deadline_at: initial
                     .policy
                     .deadline_ms
@@ -1900,6 +1962,7 @@ mod tests {
                 duration_ms: 200,
                 will_fail: false,
                 policy: JobExecutionPolicy::default(),
+                budget: JobBudgetRequest::default(),
                 checkpoint: Some(JobCheckpoint {
                     schema_version: JOB_CHECKPOINT_SCHEMA_VERSION + 1,
                     payload: Value::Null,
@@ -1917,6 +1980,34 @@ mod tests {
             .message
             .unwrap_or_default()
             .contains("Checkpoint discarded"));
+
+        let unknown_jobs = JobSystem::default();
+        unknown_jobs
+            .set_execution_environment(JobExecutionEnvironment {
+                suspended: false,
+                network: JobNetworkState::Unknown,
+            })
+            .expect("unknown network environment should apply");
+        let unknown = unknown_jobs
+            .submit_with_policy(
+                JobSpec {
+                    kind: "unknown-network".into(),
+                    duration_ms: 1_000,
+                    will_fail: false,
+                    input: Value::Null,
+                    provenance: JobProvenance::for_owner("core"),
+                },
+                JobExecutionPolicy {
+                    network: JobNetworkPolicy::Unmetered,
+                    ..JobExecutionPolicy::default()
+                },
+            )
+            .expect("unknown-network Job should submit");
+        assert_eq!(unknown.status, JobStatus::Paused);
+        assert!(unknown
+            .message
+            .as_deref()
+            .is_some_and(|message| message.contains("unknown")));
 
         jobs.set_execution_environment(JobExecutionEnvironment::default())
             .expect("online environment should resume");
@@ -1950,6 +2041,7 @@ mod tests {
                 duration_ms: 30_000,
                 will_fail: false,
                 policy: JobExecutionPolicy::default(),
+                budget: JobBudgetRequest::default(),
                 checkpoint: None,
                 input: serde_json::Value::Null,
                 provenance: JobProvenance::for_owner("test"),
@@ -2420,7 +2512,7 @@ mod tests {
                 input: Value::Null,
                 provenance: JobProvenance::for_owner("core"),
             },
-            request,
+            request.clone(),
         );
         assert!(matches!(
             second,
@@ -2432,6 +2524,12 @@ mod tests {
         assert_eq!(jobs.budget_usage().concurrency, 1);
         jobs.cancel(&first.id)
             .expect("the reserved job should cancel");
+        let retried = jobs
+            .retry(&first.id)
+            .expect("retry should reuse the persisted resource claim");
+        assert_eq!(retried.budget, request);
+        jobs.cancel(&first.id)
+            .expect("the retried job should cancel");
         assert_eq!(jobs.budget_usage().concurrency, 0);
     }
 
@@ -2441,6 +2539,10 @@ mod tests {
         policy.device.concurrency = 2;
         policy.default_owner.concurrency = 1;
         policy.per_job.concurrency = 1;
+        policy.device.cpu_millis_per_minute = 100;
+        policy.default_owner.cpu_millis_per_minute = 100;
+        policy.device.network_bytes_per_minute = 100;
+        policy.default_owner.network_bytes_per_minute = 100;
         let jobs = JobSystem::with_store_and_budget_policy(
             Arc::new(InMemoryJobStateStore::default()),
             policy,
@@ -2451,8 +2553,8 @@ mod tests {
             .expect("owner B runner should register");
         let request = JobBudgetRequest {
             concurrency: 1,
-            cpu_millis_per_minute: u64::MAX,
-            network_bytes_per_minute: u64::MAX,
+            cpu_millis_per_minute: 101,
+            network_bytes_per_minute: 101,
             ..JobBudgetRequest::default()
         };
         let make_spec = |owner_id: &str| JobSpec {
@@ -2465,6 +2567,7 @@ mod tests {
         let first = jobs
             .submit_with_budget(make_spec("owner.a"), request.clone())
             .expect("the first owner job should be admitted");
+        assert!(jobs.budget_pressure("owner.a").delay_ms > 0);
         assert!(matches!(
             jobs.submit_with_budget(make_spec("owner.a"), request.clone()),
             Err(JobError::BudgetExceeded {
@@ -2479,6 +2582,48 @@ mod tests {
         jobs.cancel(&first.id).expect("the first job should cancel");
         jobs.cancel(&second_owner.id)
             .expect("the second owner job should cancel");
+        assert_eq!(jobs.budget_usage().concurrency, 0);
+    }
+
+    #[test]
+    fn retrying_a_paused_job_does_not_duplicate_its_reservation() {
+        let mut policy = JobBudgetPolicy::unlimited();
+        policy.device.concurrency = 1;
+        policy.default_owner.concurrency = 1;
+        policy.per_job.concurrency = 1;
+        let jobs = JobSystem::with_store_and_budget_policy(
+            Arc::new(InMemoryJobStateStore::default()),
+            policy,
+        );
+        jobs.set_execution_environment(JobExecutionEnvironment {
+            suspended: false,
+            network: JobNetworkState::Offline,
+        })
+        .expect("offline environment should apply");
+        let job = jobs
+            .submit_with_policy_and_budget(
+                JobSpec {
+                    kind: "paused-budget".into(),
+                    duration_ms: 200,
+                    will_fail: false,
+                    input: Value::Null,
+                    provenance: JobProvenance::for_owner("core"),
+                },
+                JobExecutionPolicy {
+                    network: JobNetworkPolicy::Unmetered,
+                    ..JobExecutionPolicy::default()
+                },
+                JobBudgetRequest {
+                    concurrency: 1,
+                    ..JobBudgetRequest::default()
+                },
+            )
+            .expect("paused job should reserve its claim");
+        assert_eq!(job.status, JobStatus::Paused);
+        assert_eq!(jobs.budget_usage().concurrency, 1);
+        jobs.retry(&job.id).expect("paused job should be retryable");
+        assert_eq!(jobs.budget_usage().concurrency, 1);
+        jobs.cancel(&job.id).expect("retried job should cancel");
         assert_eq!(jobs.budget_usage().concurrency, 0);
     }
 }

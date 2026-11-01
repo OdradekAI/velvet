@@ -96,7 +96,10 @@ its own retention, invalidation and recovery policy.
 through a versioned `ResourceBudgetPolicy`. The selected platform/workload
 profile provides hard limits for memory, disk, file descriptors, process count,
 queue depth and concurrency. CPU and network are soft budgets enforced through
-priority, byte accounting and backpressure. Network work is allowed only when
+priority, byte accounting and backpressure. Each accepted Job claim is
+persisted in its snapshot and projected to plugin runners as read-only data;
+the alpha ledger exposes bounded device/owner pressure and delays new starts
+instead of rejecting a hard-valid Job. Network work is allowed only when
 its owner has the capability and the current offline/metered policy permits it.
 The alpha profile must be bounded and observable; numeric limits remain release
 configuration rather than a Job protocol promise. A process-local device tier
@@ -120,10 +123,13 @@ failures require explicit user retry. A missing runner or invalid provenance
 remains a diagnosed retryable state and never executes under another owner.
 
 Before system suspend, the scheduler stops admitting background work, asks
-runners to checkpoint and persists snapshots. After wake, local Jobs resume
-when their owner and storage are valid; network Jobs wait while offline or
-metered and resume only after a policy-approved network event. Wake recovery is
-rate-limited so queue recovery cannot overwhelm the device.
+runners to checkpoint and persists snapshots. The macOS/Linux host adapter
+uses fixed `scutil`/`nmcli` sources, Tauri `RunEvent::Resumed` and a bounded
+monotonic wake-gap fallback to feed the typed environment seam. Unknown
+network evidence is preserved as `unknown` and handled by the Job policy.
+After wake, local Jobs resume when their owner and storage are valid; network
+Jobs wait while offline, metered or unknown according to policy. Wake recovery
+is rate-limited so queue recovery cannot overwhelm the device.
 
 ## Consequences
 
@@ -155,9 +161,10 @@ Positive:
 Costs:
 
 - Job schemas and cache policies must be versioned.
-- Runtime memory/process claims and soft CPU/network scheduling still need
-  measured platform adapters; the P0 contract only exposes bounded hard
-  admission and a typed environment signal.
+- Runtime memory/process usage telemetry and measured platform metering
+  confidence remain release qualification seams; the current claim fields and
+  bounded soft pressure are host-enforced, and macOS/Linux signal delivery
+  uses fixed adapters plus the typed environment command.
 
 ## Open questions
 

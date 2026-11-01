@@ -290,6 +290,7 @@ dependencies = [
  "libc",
  "serde",
  "serde_json",
+ "velvet-job-system",
  "velvet-layout-model",
  "velvet-persistence",
  "velvet-plugin-api",

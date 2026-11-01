@@ -3,7 +3,9 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use velvet_asset_core::AssetId;
-use velvet_job_system::{JobExecutionEnvironment, JobExecutionPolicy, JobId, JobSnapshot};
+use velvet_job_system::{
+    JobBudgetRequest, JobExecutionEnvironment, JobExecutionPolicy, JobId, JobSnapshot,
+};
 use velvet_layout_model::{LayoutCommand, LayoutState};
 use velvet_plugin_api::{
     AppTarget, ContributionDescriptor, ExtensionId, ExtensionInstallPreview,
@@ -590,6 +592,7 @@ pub enum Command {
         will_fail: bool,
         input: Value,
         policy: JobExecutionPolicy,
+        budget: JobBudgetRequest,
     },
     CancelJob {
         job_id: JobId,
@@ -1022,6 +1025,7 @@ mod tests {
             will_fail: false,
             input: Value::Null,
             policy: policy.clone(),
+            budget: JobBudgetRequest::default(),
         });
         assert_eq!(
             match request {
@@ -1032,7 +1036,7 @@ mod tests {
         );
         let environment = JobExecutionEnvironment {
             suspended: true,
-            network: velvet_job_system::JobNetworkState::Metered,
+            network: velvet_job_system::JobNetworkState::Unknown,
         };
         let command = Command::SetJobExecutionEnvironment { environment };
         assert_eq!(command, Command::SetJobExecutionEnvironment { environment });

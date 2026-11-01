@@ -14,8 +14,9 @@ pub struct JobBudgetLimits {
     /// Soft budget. The scheduler may throttle or backpressure when it is
     /// exceeded, but admission does not fail solely because of this value.
     pub cpu_millis_per_minute: u64,
-    /// Soft budget. Network capability and byte accounting enforce this
-    /// value; the ledger does not pretend to own the OS network stack.
+    /// Soft budget. The scheduler uses this claim for pressure/backpressure;
+    /// the ledger does not pretend to own the OS network stack or observe
+    /// actual interface bytes.
     pub network_bytes_per_minute: u64,
 }
 
@@ -151,6 +152,16 @@ pub struct JobBudgetUsage {
     pub network_bytes_per_minute: u64,
 }
 
+/// Soft resource pressure is advisory. It delays new work without rejecting
+/// the Job, so a bounded workload can make progress even when its estimate is
+/// optimistic.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct JobBudgetPressure {
+    pub cpu_per_mille: u16,
+    pub network_per_mille: u16,
+    pub delay_ms: u64,
+}
+
 impl JobBudgetUsage {
     fn add(&mut self, request: &JobBudgetRequest) {
         self.memory_bytes = self.memory_bytes.saturating_add(request.memory_bytes);
@@ -245,6 +256,46 @@ impl JobBudgetLedger {
     pub(crate) fn usage(&self) -> JobBudgetUsage {
         self.device_usage.clone()
     }
+
+    pub(crate) fn reservation(&self, job_id: &str) -> Option<JobBudgetRequest> {
+        self.reservations
+            .get(job_id)
+            .map(|(_, request)| request.clone())
+    }
+
+    pub(crate) fn pressure(&self, owner_id: &str) -> JobBudgetPressure {
+        let owner_usage = self.owner_usage.get(owner_id).cloned().unwrap_or_default();
+        let cpu_per_mille = soft_ratio_per_mille(
+            self.device_usage.cpu_millis_per_minute,
+            self.policy.device.cpu_millis_per_minute,
+        )
+        .max(soft_ratio_per_mille(
+            owner_usage.cpu_millis_per_minute,
+            self.policy.owner_limits(owner_id).cpu_millis_per_minute,
+        ));
+        let network_per_mille = soft_ratio_per_mille(
+            self.device_usage.network_bytes_per_minute,
+            self.policy.device.network_bytes_per_minute,
+        )
+        .max(soft_ratio_per_mille(
+            owner_usage.network_bytes_per_minute,
+            self.policy.owner_limits(owner_id).network_bytes_per_minute,
+        ));
+        let excess = cpu_per_mille.max(network_per_mille).saturating_sub(1_000);
+        JobBudgetPressure {
+            cpu_per_mille,
+            network_per_mille,
+            delay_ms: (u64::from(excess) * 2).min(5_000),
+        }
+    }
+}
+
+fn soft_ratio_per_mille(usage: u64, limit: u64) -> u16 {
+    if limit == 0 {
+        return if usage == 0 { 0 } else { u16::MAX };
+    }
+    (((u128::from(usage) * 1_000) + u128::from(limit) - 1) / u128::from(limit))
+        .min(u128::from(u16::MAX)) as u16
 }
 
 fn exceeds_usage(

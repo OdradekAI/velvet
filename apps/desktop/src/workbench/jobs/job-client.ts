@@ -1,6 +1,7 @@
 import type {
   CoreJobExecutionEnvironment,
   CoreJobExecutionPolicy,
+  CoreJobBudgetRequest,
   CoreJobSnapshot,
   CoreResponse,
   CoreTransport,
@@ -12,6 +13,7 @@ export interface CreateJobOptions {
   readonly willFail?: boolean;
   readonly input?: unknown;
   readonly policy?: CoreJobExecutionPolicy;
+  readonly budget?: CoreJobBudgetRequest;
 }
 
 /** Renderer adapter for the Rust-owned JobSystem projection. */
@@ -74,6 +76,7 @@ export class JobClient {
       willFail: options.willFail ?? false,
       input: options.input,
       policy: options.policy,
+      budget: options.budget,
     });
     return this.acceptJobResponse(response);
   }

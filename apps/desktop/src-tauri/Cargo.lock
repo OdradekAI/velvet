@@ -3885,6 +3885,7 @@ dependencies = [
  "libc",
  "serde",
  "serde_json",
+ "velvet-job-system",
  "velvet-layout-model",
  "velvet-persistence",
  "velvet-plugin-api",
@@ -3905,6 +3906,7 @@ name = "velvet-tauri-adapter"
 version = "0.0.4"
 dependencies = [
  "velvet-application-core",
+ "velvet-job-system",
  "velvet-workbench-protocol",
 ]
 

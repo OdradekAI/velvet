@@ -236,7 +236,18 @@ Asset source 当前是否可访问的 Rust 投影。移动硬盘或网络盘断�
 
 ## ResourceBudget
 
-由宿主执行的设备全局、owner 和 Job 三级资源上限与软预算。内存、磁盘、文件描述符、子进程和并发属于硬 admission 边界；CPU 和网络通过优先级、节流、字节计量和 backpressure 治理。具体值由版本化的平台/工作负载策略确定，扩展不能通过 manifest 放宽预算。
+由宿主执行的设备全局、owner 和 Job 三级资源上限与软预算。Job 的
+`ResourceClaim` 是随快照持久化的请求；内存、磁盘、子进程和并发属于
+硬 admission 边界（当前 alpha claim 覆盖 memory、disk、child-process 和
+concurrency；file-descriptor enforcement 仍需 runtime adapter），CPU 和
+网络通过设备/owner pressure、有限延迟、字节计量和 backpressure 治理。具体
+值由版本化的平台/工作负载策略确定，扩展不能通过 manifest 放宽预算。
+
+## ResourceClaim
+
+Job 提交时由宿主接受的 `JobBudgetRequest`。它说明该 Job 预计使用的内存、
+磁盘、子进程、并发、CPU 时间和网络字节；宿主保留原始 claim 用于重启诊断、
+重试和传给插件的只读执行上下文。Claim 不是插件获得系统资源的授权。
 
 ## Projection
 
@@ -329,6 +340,12 @@ Job 的宿主执行边界，包括单调 deadline、取消宽限、有限指数�
 ## JobExecutionEnvironment
 
 宿主观察到的 suspend 与网络状态。它通过一个 typed command 进入 JobSystem，使 `Queued`/`Running` Job 进入 `Paused`，条件恢复后重新排队；它不是第二个调度器，也不由渲染器自行推断。
+
+## PlatformSignalController
+
+由宿主适配层持有的可停止 signal worker。它只读取固定的 macOS/Linux 网络
+命令和事件循环恢复信号，把观察结果转换为 `JobExecutionEnvironment`；它不
+拥有 Job 状态、不执行 shell、不接受插件命令，也不代替 `RecoverySupervisor`。
 
 ## Product extension
 
