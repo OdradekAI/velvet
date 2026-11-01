@@ -13,10 +13,16 @@ initial.views['asset-manager.asset-library'] = {
 let snapshot = initial;
 const commands = [];
 const listeners = new Set();
+const statusListeners = new Set();
 const core = {
   subscribe(listener) {
     listeners.add(listener);
     return () => listeners.delete(listener);
+  },
+  subscribeStatus(listener) {
+    statusListeners.add(listener);
+    listener({ state: 'connected' });
+    return () => statusListeners.delete(listener);
   },
   async request(request) {
     if (request.kind === 'query-layout') {
@@ -153,5 +159,18 @@ workbench.applyAuthoritativeSnapshot({
   extensions: [],
 });
 assert.equal(workbench.layout.snapshot().revision, snapshot.revision + 1);
+
+for (const listener of statusListeners) {
+  listener({ state: 'resyncing', reason: 'event-sequence-gap' });
+}
+await new Promise((resolve) => setImmediate(resolve));
+assert.equal(workbench.isReadOnly, true);
+assert.equal(workbench.pluginUi.isTransportSuspended, true);
+for (const listener of statusListeners) {
+  listener({ state: 'connected' });
+}
+await new Promise((resolve) => setImmediate(resolve));
+assert.equal(workbench.isReadOnly, false);
+assert.equal(workbench.pluginUi.isTransportSuspended, false);
 
 console.log('Workbench layout contribution sync tests passed.');

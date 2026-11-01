@@ -28,6 +28,7 @@ export function createDesktopApp(core: CoreTransport): DesktopApp {
       return layout;
     },
     async dispose() {
+      workbench.dispose();
       workbench.layout.dispose();
       workbench.localization.dispose();
       workbench.jobs.dispose();
@@ -47,14 +48,14 @@ export function createTauriDesktopApp(
   let app: DesktopApp | undefined;
   const transport = new TauriCoreTransport(bridge, {
     ...options,
-    onResync: (snapshot) => {
+    onResync: async (snapshot) => {
       try {
         app?.workbench.applyAuthoritativeSnapshot(snapshot);
       } catch {
         // A renderer projection failure must not break the transport session.
       }
       try {
-        options?.onResync?.(snapshot);
+        await options?.onResync?.(snapshot);
       } catch {
         // Optional integration callbacks are isolated from core recovery.
       }

@@ -27,6 +27,7 @@ import { WorkbenchViewHost } from './workbench-view-host.js';
 
 export interface WorkbenchShellProps {
   readonly layout: LayoutSnapshot;
+  readonly readOnly?: boolean;
   readonly apps: readonly WorkbenchAppDescriptor[];
   readonly onActivateApp: (appId: WorkbenchAppId) => void;
   readonly onOpenPreview?: () => void;
@@ -222,6 +223,7 @@ function PartResizeHandle({
 
 export function WorkbenchShell({
   layout,
+  readOnly = false,
   apps,
   onActivateApp,
   onOpenPreview,
@@ -307,6 +309,9 @@ export function WorkbenchShell({
   ]);
 
   function selectApp(appId: WorkbenchAppId): void {
+    if (readOnly) {
+      return;
+    }
     const appContainer = apps
       .find((app) => app.id === appId)
       ?.viewContainers
@@ -320,6 +325,9 @@ export function WorkbenchShell({
   }
 
   function selectViewContainer(containerId: string): void {
+    if (readOnly) {
+      return;
+    }
     setActiveContainerId(containerId);
     const container = navigationContainers.find((candidate) => candidate.id === containerId);
     if (container && !isContainerVisible(layout, container)) {
@@ -356,6 +364,9 @@ export function WorkbenchShell({
       id: menu.id,
       label: menu.label,
       onSelect: () => {
+        if (readOnly) {
+          return;
+        }
         if (!commandRegistry) {
           return;
         }
@@ -434,7 +445,11 @@ export function WorkbenchShell({
   ];
 
   return (
-    <div className="velvet-app">
+    <div
+      aria-readonly={readOnly}
+      className="velvet-app"
+      data-velvet-read-only={readOnly ? 'true' : 'false'}
+    >
       <main className="velvet-workbench" style={partStyles(layout)}>
         <header
           className="velvet-part velvet-part--title"
@@ -463,6 +478,7 @@ export function WorkbenchShell({
               className="velvet-workspace-button"
               data-active={app.id === layout.activeApp}
               data-velvet-activity-entry
+              disabled={readOnly}
               key={app.id}
               onClick={() => selectApp(app.id)}
               onKeyDown={(event) =>
@@ -488,6 +504,7 @@ export function WorkbenchShell({
               data-active={entry.containerId === selectedContainerId}
               data-hidden={layout.containers[entry.containerId]?.visible === false}
               data-velvet-activity-entry
+              disabled={readOnly}
               key={entry.containerId}
               onClick={() => selectViewContainer(entry.containerId)}
               onKeyDown={(event) =>

@@ -279,13 +279,41 @@ await restartedSession.mount({
 restartedSession.activate();
 assert.equal(mountedCount, 2);
 
+await ui.suspendForTransportRecovery();
+assert.equal(ui.isTransportSuspended, true);
+assert.equal(ui.getDescriptor(manifest.id, 'dialog')?.id, 'dialog');
+assert.equal(ui.getSession(manifest.id, 'dialog'), undefined);
+assert.throws(
+  () => ui.createSession(manifest.id, 'dialog'),
+  /suspended while the core transport recovers/,
+);
+ui.resumeAfterTransportRecovery();
+assert.equal(ui.isTransportSuspended, false);
+const recoveredSession = ui.createSession(manifest.id, 'dialog');
+await recoveredSession.mount({
+  context: {
+    revision: 0,
+    activeAppId: 'asset-manager',
+    dataScope: null,
+    selection: [],
+    query: '',
+    filters: {},
+    sort: [],
+    handoff: null,
+  },
+  theme: { scheme: 'dark', revision: 0, tokens: {} },
+  size: { width: 400, height: 240 },
+});
+recoveredSession.activate();
+assert.equal(mountedCount, 3);
+
 await client.deactivate(manifest.id);
 releaseCommandHandler();
 assert.equal(menus.list('context-menu', { anchor: 'asset' }).length, 0);
 assert.equal(overlays.active().length, 0);
 assert.equal(ui.getDescriptor(manifest.id, 'dialog'), undefined);
 assert.equal(unmounted, true);
-assert.equal(unmountedCount, 2);
+assert.equal(unmountedCount, 3);
 
 const previewManifest = {
   id: 'sample.preview-extension',

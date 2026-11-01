@@ -17,6 +17,7 @@ import {
   type CoreResponse,
   type CoreRequest,
   type CoreTransport,
+  type CoreTransportStatus,
   type ProtocolHandshakeRequest,
   type ProtocolHandshakeResponse,
   type SessionAwareCoreTransport,
@@ -66,7 +67,7 @@ export interface TauriTransportOptions {
   readonly clientFeatures?: readonly string[];
   readonly schemaVersions?: Readonly<Record<string, number>>;
   readonly onSequenceGap?: (expected: number, received: number) => void;
-  readonly onResync?: (snapshot: CoreAuthoritativeSnapshot) => void;
+  readonly onResync?: (snapshot: CoreAuthoritativeSnapshot) => void | Promise<void>;
 }
 
 export const DEFAULT_TRANSPORT_SCHEMA_VERSIONS: Readonly<Record<string, number>> = {
@@ -100,7 +101,7 @@ export class TauriCoreTransport implements SessionAwareCoreTransport {
   private readonly schemaVersions: Readonly<Record<string, number>>;
   private readonly clientId: string;
   private readonly onSequenceGap?: (expected: number, received: number) => void;
-  private readonly onResync?: (snapshot: CoreAuthoritativeSnapshot) => void;
+  private readonly onResync?: (snapshot: CoreAuthoritativeSnapshot) => void | Promise<void>;
   private nextRequestId = 1;
   private sessionId: string | undefined;
   private handshakeResponse: ProtocolHandshakeResponse | undefined;
@@ -108,6 +109,8 @@ export class TauriCoreTransport implements SessionAwareCoreTransport {
   private resyncPromise: Promise<CoreAuthoritativeSnapshot> | undefined;
   private lastEventSequence: number | undefined;
   private readonly listeners = new Set<(event: CoreEvent) => void>();
+  private readonly statusListeners = new Set<(status: CoreTransportStatus) => void>();
+  private transportStatus: CoreTransportStatus = { state: 'disconnected' };
   private eventSubscription: Promise<(() => void)> | undefined;
   private disposed = false;
 
@@ -130,6 +133,13 @@ export class TauriCoreTransport implements SessionAwareCoreTransport {
 
   public async request(request: CoreRequest): Promise<CoreResponse> {
     this.ensureUsable();
+    if (this.transportStatus.state !== 'connected' && !isRecoverySafeRequest(request)) {
+      throw new CoreTransportError({
+        code: 'transport-recovering',
+        message: 'The native core is recovering; mutation requests are temporarily read-only.',
+        retryable: true,
+      });
+    }
     const session = await this.connect();
     const envelope: TauriRequestEnvelope = {
       protocolVersion: PROTOCOL_VERSION,
@@ -151,11 +161,29 @@ export class TauriCoreTransport implements SessionAwareCoreTransport {
           this.sessionId = undefined;
           this.handshakeResponse = undefined;
         }
+        if (isTransportFailure(error.details)) {
+          this.setStatus({ state: 'degraded', reason: error.details.message });
+        }
         throw error;
       }
 
-      throw new CoreTransportError(normalizeCoreError(error));
+      const details = normalizeCoreError(error);
+      if (isTransportFailure(details)) {
+        this.setStatus({ state: 'degraded', reason: details.message });
+      }
+      throw new CoreTransportError(details);
     }
+  }
+
+  public subscribeStatus(listener: (status: CoreTransportStatus) => void): () => void {
+    this.statusListeners.add(listener);
+    try {
+      listener(this.transportStatus);
+    } catch {
+      // A renderer status projection must not prevent the caller from
+      // subscribing to future transport transitions.
+    }
+    return () => this.statusListeners.delete(listener);
   }
 
   public async connect(): Promise<ProtocolHandshakeResponse> {
@@ -174,19 +202,28 @@ export class TauriCoreTransport implements SessionAwareCoreTransport {
       features: this.clientFeatures,
       schemaVersions: this.schemaVersions,
     };
+    this.setStatus({ state: 'connecting' });
     this.handshakePromise = this.bridge
       .invoke<ProtocolHandshakeResponse>(this.handshakeCommand, { request })
       .then((response) => {
         this.validateHandshake(response, request);
         this.sessionId = response.sessionId;
         this.handshakeResponse = response;
+        this.setStatus({ state: 'connected' });
         return response;
       })
       .catch((error) => {
         if (error instanceof CoreTransportError) {
+          if (isTransportFailure(error.details)) {
+            this.setStatus({ state: 'degraded', reason: error.details.message });
+          }
           throw error;
         }
-        throw new CoreTransportError(normalizeCoreError(error));
+        const details = normalizeCoreError(error);
+        if (isTransportFailure(details)) {
+          this.setStatus({ state: 'degraded', reason: details.message });
+        }
+        throw new CoreTransportError(details);
       })
       .finally(() => {
         this.handshakePromise = undefined;
@@ -251,7 +288,9 @@ export class TauriCoreTransport implements SessionAwareCoreTransport {
     }
 
     this.disposed = true;
+    this.setStatus({ state: 'disconnected' });
     this.listeners.clear();
+    this.statusListeners.clear();
 
     const unsubscribe = this.eventSubscription;
     this.eventSubscription = undefined;
@@ -279,7 +318,9 @@ export class TauriCoreTransport implements SessionAwareCoreTransport {
     } catch (error) {
       this.eventSubscription = undefined;
       if (!this.disposed) {
-        throw new CoreTransportError(normalizeCoreError(error));
+        const details = normalizeCoreError(error);
+        this.setStatus({ state: 'degraded', reason: details.message });
+        throw new CoreTransportError(details);
       }
     }
   }
@@ -298,6 +339,7 @@ export class TauriCoreTransport implements SessionAwareCoreTransport {
     const expected = this.lastEventSequence === undefined ? payload.sequence : this.lastEventSequence + 1;
     this.lastEventSequence = payload.sequence;
     if (payload.sequence !== expected) {
+      this.setStatus({ state: 'resyncing', reason: `event-sequence-gap:${expected}:${payload.sequence}` });
       try {
         this.onSequenceGap?.(expected, payload.sequence);
       } catch {
@@ -307,8 +349,12 @@ export class TauriCoreTransport implements SessionAwareCoreTransport {
         this.resyncPromise = this.reconnect()
           .then(() => this.resync())
           .then((snapshot) => {
-            this.onResync?.(snapshot);
-            return snapshot;
+            return Promise.resolve(this.onResync?.(snapshot)).then(() => snapshot);
+          })
+          .catch((error) => {
+            const details = normalizeCoreError(error);
+            this.setStatus({ state: 'degraded', reason: details.message });
+            throw error;
           })
           .finally(() => {
             this.resyncPromise = undefined;
@@ -384,6 +430,23 @@ export class TauriCoreTransport implements SessionAwareCoreTransport {
       });
     }
   }
+
+  private setStatus(status: CoreTransportStatus): void {
+    if (
+      this.transportStatus.state === status.state &&
+      this.transportStatus.reason === status.reason
+    ) {
+      return;
+    }
+    this.transportStatus = status;
+    for (const listener of this.statusListeners) {
+      try {
+        listener(status);
+      } catch {
+        // A renderer status projection must not break transport recovery.
+      }
+    }
+  }
 }
 
 function createClientId(): string {
@@ -422,4 +485,28 @@ function isCoreError(value: unknown): value is CoreError {
     typeof candidate.message === 'string' &&
     typeof candidate.retryable === 'boolean'
   );
+}
+
+function isRecoverySafeRequest(request: CoreRequest): boolean {
+  return request.kind.startsWith('query-') || [
+    'read-plugin-localization',
+    'inspect-plugin',
+    'inspect-plugin-archive',
+    'release-preview-session',
+  ].includes(request.kind);
+}
+
+function isTransportFailure(error: CoreError): boolean {
+  return [
+    'transport-error',
+    'request-id-mismatch',
+    'session-expired',
+    'session-required',
+    'core-lock-poisoned',
+    'protocol-version-mismatch',
+    'protocol-major-mismatch',
+    'invalid-handshake',
+    'invalid-resync-response',
+    'invalid-request-outcome-response',
+  ].includes(error.code);
 }

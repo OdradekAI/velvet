@@ -146,6 +146,8 @@ helper 不创建 Tauri 窗口，因此不请求该集合；若未来恢复界面
 
 由协议 handshake 建立的前端到 Rust 核心的逻辑会话。当前 Tauri handshake 携带稳定的 `clientId`，协商 major/minor、feature 和 schema，并由核心签发 `sessionId`；同一 client 重连会撤销旧 session，Tauri 请求会携带并校验该 id。事件 sequence gap 会触发新 session 和 Layout/Profile/Recovery/Job/Extension 权威快照重同步；旧 handle 的插件重建仍由上层消费者完成，重连不得盲目重放 mutation。
 
+Transport status 在 `resyncing`、`degraded` 或 `disconnected` 时保留最后有效投影但禁止 renderer mutation；Workbench 会释放插件 UI Bridge 和 transient Preview session，权威快照应用后才重新创建 handle。非 Tauri transport 也必须提供同样的状态、session 和 resync 语义。
+
 ## PlatformTier
 
 宿主对 OS、WebView 和硬件能力的支持等级。Tier A 是启动、恢复、持久化、输入、无障碍、窗口和 CoreTransport 所需的基础能力；Tier B 是可诊断降级的通知、剪贴板、托盘、快捷键、GPU、深链接和外部卷能力。

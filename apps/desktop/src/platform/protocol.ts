@@ -973,6 +973,18 @@ export interface CoreTransport {
   subscribe(listener: (event: CoreEvent) => void): () => void;
 }
 
+export type CoreTransportState =
+  | 'disconnected'
+  | 'connecting'
+  | 'connected'
+  | 'resyncing'
+  | 'degraded';
+
+export interface CoreTransportStatus {
+  readonly state: CoreTransportState;
+  readonly reason?: string;
+}
+
 export interface ProtocolHandshakeRequest {
   readonly clientId: string;
   readonly protocolMajor: number;
@@ -994,6 +1006,7 @@ export interface SessionAwareCoreTransport extends CoreTransport {
   reconnect(): Promise<ProtocolHandshakeResponse>;
   resync(): Promise<CoreAuthoritativeSnapshot>;
   queryRequestOutcome(requestId: number): Promise<CoreRequestOutcome>;
+  subscribeStatus(listener: (status: CoreTransportStatus) => void): () => void;
 }
 
 export type CoreEvent =

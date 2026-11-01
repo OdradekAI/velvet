@@ -291,6 +291,13 @@ assert.ok(commands.get('workbench.app.asset-manager', 'open-reader'));
 assert.equal((await client.queryCoreExtensions())[0].id, 'sample.reader');
 assert.equal(client.getCoreSummary('sample.reader')?.state, 'active');
 
+runtimeState = 'failed';
+await client.reconcileCoreExtensions([projection('failed').summary]);
+assert.equal(views.get('sample.reader.reader-view'), undefined);
+runtimeState = 'active';
+await client.reconcileCoreExtensions([projection('active').summary]);
+assert.ok(views.get('sample.reader.reader-view'));
+
 const installedSummary = await client.installInCore('/tmp/sample-plugin');
 assert.equal(installedSummary.id, 'sample.installed');
 assert.equal(installedSummary.state, 'active');
@@ -337,6 +344,7 @@ assert.deepEqual(
     'recover-plugin',
     'query-plugin-projection',
     'query-extensions',
+    'query-plugin-projection',
     'install-plugin',
     'query-plugin-projection',
     'activate-plugin',

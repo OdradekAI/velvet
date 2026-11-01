@@ -22,6 +22,7 @@ export type PreviewHostState =
   | 'failed'
   | 'unsupported'
   | 'disabled'
+  | 'degraded'
   | 'disposed';
 
 export type ResolvedPreview = CoreResolvedPreview;
@@ -37,6 +38,7 @@ export class PreviewHost {
   private preview: ResolvedPreview | undefined;
   private error: string | undefined;
   private requestToken = 0;
+  private suspendedContext: PreviewContext | undefined;
   private readonly listeners = new Set<() => void>();
 
   public constructor(private readonly core: CoreTransport) {}
@@ -59,6 +61,7 @@ export class PreviewHost {
    * preview available when transport or provider resolution fails.
    */
   public async open(context: PreviewContext): Promise<ResolvedPreview> {
+    this.suspendedContext = context;
     return this.openRequest(
       {
         protocolVersion: 1,
@@ -134,6 +137,7 @@ export class PreviewHost {
     }
     this.releaseSessions(this.preview);
     this.requestToken += 1;
+    this.suspendedContext = undefined;
     this.preview = undefined;
     this.error = undefined;
     this.setState('idle');
@@ -145,9 +149,38 @@ export class PreviewHost {
     }
     this.releaseSessions(this.preview);
     this.requestToken += 1;
+    this.suspendedContext = undefined;
     this.preview = undefined;
     this.setState('disposed');
     this.listeners.clear();
+  }
+
+  /**
+   * Drops renderer sessions before a native transport session is replaced.
+   * The last intent is retained so an open preview can be resolved again once
+   * the authoritative snapshot has been applied.
+   */
+  public suspendForTransportRecovery(): void {
+    if (this.state === 'disposed' || this.state === 'degraded') {
+      return;
+    }
+    this.suspendedContext = this.suspendedContext ?? this.preview?.session.context;
+    this.releaseSessions(this.preview);
+    this.requestToken += 1;
+    this.preview = undefined;
+    this.error = 'The native core is recovering. Preview will resume when it reconnects.';
+    this.setState('degraded');
+  }
+
+  /** Re-resolves the last preview intent after transport recovery. */
+  public resumeAfterTransportRecovery(): void {
+    if (this.state !== 'degraded' || !this.suspendedContext) {
+      return;
+    }
+    const context = this.suspendedContext;
+    this.suspendedContext = undefined;
+    this.error = undefined;
+    void this.open(context).catch(() => undefined);
   }
 
   private ensureUsable(): void {

@@ -171,6 +171,12 @@ export class PluginUiRegistry {
   private readonly sessions = new Map<string, PluginSurfaceSessionImpl>();
   private readonly localeProjections = new Map<string, UiLocaleProjection>();
   private readonly listeners = new Set<() => void>();
+  private transportSuspended = false;
+
+  /** True while native transport recovery owns the surface lifecycle. */
+  public get isTransportSuspended(): boolean {
+    return this.transportSuspended;
+  }
 
   public register(descriptor: PluginSurfaceDescriptor): void {
     this.validateDescriptor(descriptor);
@@ -238,6 +244,12 @@ export class PluginUiRegistry {
     surfaceId: string,
     handlers: PluginSurfaceHandlers = {},
   ): PluginSurfaceSession {
+    if (this.transportSuspended) {
+      throw new PluginUiBridgeError(
+        'Plugin surface sessions are suspended while the core transport recovers',
+        surfaceKey(extensionId, surfaceId),
+      );
+    }
     const key = surfaceKey(extensionId, surfaceId);
     const descriptor = this.descriptors.get(key);
     if (!descriptor) {
@@ -270,6 +282,31 @@ export class PluginUiRegistry {
   public subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  /**
+   * Tears down renderer-owned sessions while retaining descriptors and
+   * adapters. A subsequent resume lets mounted hosts create fresh sessions
+   * against the new native transport session.
+   */
+  public async suspendForTransportRecovery(): Promise<void> {
+    if (this.transportSuspended) {
+      return;
+    }
+    this.transportSuspended = true;
+    this.notify();
+    const sessions = [...this.sessions.values()];
+    await Promise.allSettled(sessions.map((session) => session.dispose('crash')));
+    this.notify();
+  }
+
+  /** Re-enables session creation after the authoritative snapshot is applied. */
+  public resumeAfterTransportRecovery(): void {
+    if (!this.transportSuspended) {
+      return;
+    }
+    this.transportSuspended = false;
+    this.notify();
   }
 
   public async disposeExtension(

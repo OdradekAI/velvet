@@ -5,7 +5,13 @@ import { JobClient } from './jobs/job-client.js';
 import { PreviewHost } from './preview/preview-host.js';
 import { PreviewRegistry } from './preview/preview-registry.js';
 import { PreviewRendererRegistry } from './preview/preview-renderer-registry.js';
-import type { CoreAuthoritativeSnapshot, CoreTransport } from './protocol.js';
+import type {
+  CoreAuthoritativeSnapshot,
+  CorePluginSummary,
+  CoreTransport,
+  CoreTransportStatus,
+  SessionAwareCoreTransport,
+} from './protocol.js';
 import {
   ActivityBarContributionRegistry,
   WorkbenchAppRegistry,
@@ -49,6 +55,11 @@ export class Workbench {
   public readonly workspaces = BUILTIN_WORKBENCH_APPS;
   private layoutSyncScheduled = false;
   private layoutSyncPromise: Promise<void> = Promise.resolve();
+  private transportStatusValue: CoreTransportStatus = { state: 'connected' };
+  private readonly transportStatusListeners = new Set<(status: CoreTransportStatus) => void>();
+  private readonly unsubscribeTransportStatus: (() => void) | undefined;
+  private transportRecoveryLifecycle: Promise<void> = Promise.resolve();
+  private pendingCoreExtensionSummaries: readonly CorePluginSummary[] | undefined;
 
   public constructor(core: CoreTransport) {
     this.recovery = new RecoveryClient(core);
@@ -75,11 +86,32 @@ export class Workbench {
     );
     this.jobs = new JobClient(core);
     this.pluginUi = this.plugins.ui;
+    if (isSessionAwareCoreTransport(core)) {
+      this.unsubscribeTransportStatus = core.subscribeStatus((status) => {
+        this.handleTransportStatus(status);
+      });
+    }
     this.bindTrustedAppSurfaceFactories();
     this.registerWorkbenchViews();
     this.registerBuiltInLayoutCommands();
     this.layout.subscribe(() => this.scheduleLayoutContributionSync());
     this.views.subscribe(() => this.scheduleLayoutContributionSync());
+  }
+
+  public get transportStatus(): CoreTransportStatus {
+    return this.transportStatusValue;
+  }
+
+  public get isReadOnly(): boolean {
+    return this.transportStatusValue.state !== 'connected';
+  }
+
+  public subscribeTransportStatus(
+    listener: (status: CoreTransportStatus) => void,
+  ): () => void {
+    this.transportStatusListeners.add(listener);
+    listener(this.transportStatusValue);
+    return () => this.transportStatusListeners.delete(listener);
   }
 
   /** Applies one Rust-owned snapshot without replaying renderer mutations. */
@@ -89,6 +121,48 @@ export class Workbench {
     this.recovery.acceptSnapshot(snapshot.recovery);
     this.jobs.acceptSnapshots(snapshot.jobs);
     this.plugins.acceptCoreExtensions(snapshot.extensions);
+    this.pendingCoreExtensionSummaries = snapshot.extensions;
+  }
+
+  public dispose(): void {
+    this.unsubscribeTransportStatus?.();
+    this.transportStatusListeners.clear();
+    this.preview.dispose();
+  }
+
+  private handleTransportStatus(status: CoreTransportStatus): void {
+    this.transportStatusValue = status;
+    for (const listener of this.transportStatusListeners) {
+      try {
+        listener(status);
+      } catch {
+        // A status projection must not interfere with recovery sequencing.
+      }
+    }
+
+    if (status.state === 'resyncing' || status.state === 'degraded' || status.state === 'disconnected') {
+      this.transportRecoveryLifecycle = this.transportRecoveryLifecycle
+        .then(async () => {
+          await this.pluginUi.suspendForTransportRecovery();
+          this.preview.suspendForTransportRecovery();
+        })
+        .catch(() => undefined);
+      return;
+    }
+
+    if (status.state === 'connected') {
+      this.transportRecoveryLifecycle = this.transportRecoveryLifecycle
+        .then(async () => {
+          const summaries = this.pendingCoreExtensionSummaries;
+          this.pendingCoreExtensionSummaries = undefined;
+          if (summaries) {
+            await this.plugins.reconcileCoreExtensions(summaries);
+          }
+          this.pluginUi.resumeAfterTransportRecovery();
+          this.preview.resumeAfterTransportRecovery();
+        })
+        .catch(() => undefined);
+    }
   }
 
   private registerWorkbenchViews(): void {
@@ -206,4 +280,8 @@ export class Workbench {
       );
     }
   }
+}
+
+function isSessionAwareCoreTransport(core: CoreTransport): core is SessionAwareCoreTransport {
+  return 'subscribeStatus' in core && typeof core.subscribeStatus === 'function';
 }

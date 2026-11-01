@@ -478,9 +478,19 @@ creates a fresh session through the typed handshake and queries the bounded
 authoritative snapshot of Layout/Profile/Recovery/Job/Extension projections.
 The desktop transport automatically performs this resync after an event
 sequence gap and hands the snapshot to the Workbench integration seam; it does
-not replay side-effecting commands. Plugin/UI Bridge session recreation and
-read-only projection plumbing remain consumers of this seam. No unbounded event
-replay log is required, and old-session events or handles must be ignored.
+not replay side-effecting commands. While the transport is `resyncing`,
+`degraded` or `disconnected`, the Workbench keeps the last projection visible
+but exposes a read-only status to the renderer, suspends mutation entry points,
+and tears down plugin/UI Bridge and transient Preview sessions. Once the
+authoritative snapshot has been applied and the transport is `connected`, host
+registries retain their descriptors but recreate fresh UI Bridge sessions and
+re-resolve an open Preview intent. No unbounded event replay log is required,
+and old-session events or handles must be ignored. A failed re-mount remains a
+local plugin/preview failure and never blocks the core projection. During this
+window the Tauri transport rejects mutation requests with a typed
+`transport-recovering` error; read-only queries and cleanup releases remain
+available. A domain error such as a stale revision or plugin failure does not
+by itself mark the transport degraded.
 
 ### Plugin and Job resource governance
 

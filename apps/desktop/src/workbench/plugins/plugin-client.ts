@@ -627,6 +627,58 @@ export class PluginClient {
     this.notify();
   }
 
+  /**
+   * Rehydrates host projections after a native session replacement. The
+   * authoritative summary is applied first; active extensions then refresh
+   * their declarative projection, while failed/disabled extensions lose stale
+   * renderer contributions without issuing a core mutation.
+   */
+  public async reconcileCoreExtensions(
+    summaries: readonly CorePluginSummary[],
+  ): Promise<void> {
+    this.acceptCoreExtensions(summaries);
+    for (const summary of summaries) {
+      try {
+        if (summary.state === 'active') {
+          const projection = await this.queryCoreProjection(summary.id);
+          await this.applyCoreProjection(projection);
+          continue;
+        }
+
+        await this.applyInactiveCoreSummary(summary);
+      } catch (cause) {
+        const record = this.records.get(summary.id);
+        if (!record) {
+          continue;
+        }
+        if (record.status === 'active') {
+          await this.deactivate(summary.id, 'crash').catch(() => undefined);
+        }
+        record.status = 'failed';
+        record.error = cause instanceof Error ? cause.message : String(cause);
+      }
+    }
+    this.notify();
+  }
+
+  private async applyInactiveCoreSummary(summary: CorePluginSummary): Promise<void> {
+    const record = this.records.get(summary.id);
+    if (!record) {
+      return;
+    }
+    if (record.status === 'active') {
+      await this.deactivate(summary.id, summary.state === 'failed' ? 'crash' : 'user');
+    }
+    record.status = summary.state === 'failed'
+      ? 'failed'
+      : summary.state === 'disabled'
+        ? 'disabled'
+        : 'registered';
+    record.error = summary.state === 'failed'
+      ? `Rust extension state: ${summary.state}`
+      : undefined;
+  }
+
   public async queryCoreInstallRecoveries(): Promise<readonly CorePluginInstallRecovery[]> {
     const response = await this.core.request({
       protocolVersion: PROTOCOL_VERSION,

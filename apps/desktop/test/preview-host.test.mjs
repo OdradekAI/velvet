@@ -64,6 +64,14 @@ assert.equal(fallback.session.providerId, 'builtin.generic-fallback');
 assert.equal(host.snapshot.state, 'failed');
 assert.match(host.snapshot.error, /provider unavailable/);
 
+shouldFail = false;
+host.suspendForTransportRecovery();
+assert.equal(host.snapshot.state, 'degraded');
+assert.equal(host.snapshot.preview, undefined);
+host.resumeAfterTransportRecovery();
+await new Promise((resolve) => setImmediate(resolve));
+assert.equal(host.snapshot.state, 'ready');
+
 host.close();
 assert.equal(host.snapshot.state, 'idle');
 host.dispose();

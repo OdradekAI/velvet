@@ -108,12 +108,13 @@ const rootElement = document.createElement('div');
 document.body.append(rootElement);
 const root = createRoot(rootElement);
 
-async function render(nextLayout) {
+async function render(nextLayout, readOnly = false) {
   await act(() => {
     root.render(React.createElement(WorkbenchShell, {
       apps: [app],
       focusService: focus,
       layout: nextLayout,
+      readOnly,
       onActivateApp: () => undefined,
       onLayoutCommand: (command) => commands.push(command),
       viewRegistry: views,
@@ -144,6 +145,11 @@ assert.deepEqual(
   [...rootElement.querySelectorAll('.velvet-view')].map((element) => element.getAttribute('aria-label')),
   ['First Tool', 'Second Tool'],
 );
+
+await render(layout, true);
+assert.equal(rootElement.querySelector('[data-velvet-read-only="true"]') !== null, true);
+assert.equal(rootElement.querySelector('[data-velvet-activity-entry]')?.disabled, true);
+await render(layout);
 
 await act(() => {
   focus.focus({ kind: 'part', part: 'auxiliary-sidebar' });

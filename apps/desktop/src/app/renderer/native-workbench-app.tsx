@@ -1,7 +1,12 @@
 import { useEffect, useState } from 'react';
 import { ask } from '@tauri-apps/plugin-dialog';
 import { createNativeTauriDesktopApp, type DesktopApp } from '../desktop-app.js';
-import type { LayoutCommand, LayoutSnapshot, WorkbenchAppId } from '../../platform/protocol.js';
+import type {
+  CoreTransportStatus,
+  LayoutCommand,
+  LayoutSnapshot,
+  WorkbenchAppId,
+} from '../../platform/protocol.js';
 import { WorkbenchShell } from './workbench-shell.js';
 import { ViewRendererRegistry } from './view-renderer-registry.js';
 import { createPluginViewRenderer } from './plugin-view-renderer.js';
@@ -19,6 +24,7 @@ import type { CoreRecoveryProjection } from '../../platform/protocol.js';
 interface NativeWorkbenchState {
   readonly app: DesktopApp;
   readonly layout?: LayoutSnapshot;
+  readonly transportStatus: CoreTransportStatus;
 }
 
 /** Mounts the renderer against the real Rust-owned Tauri workbench. */
@@ -43,7 +49,10 @@ export function NativeWorkbenchApp() {
       setStartupError(error);
       return undefined;
     }
-    setState({ app });
+    setState({ app, transportStatus: app.workbench.transportStatus });
+    const unsubscribeTransport = app.workbench.subscribeTransportStatus((transportStatus) => {
+      setState((current) => (current?.app === app ? { ...current, transportStatus } : current));
+    });
     setRecoveryProjection(app.workbench.recovery.snapshot());
     const unsubscribeRecovery = app.workbench.recovery.subscribe(setRecoveryProjection);
     const unsubscribe = app.workbench.layout.subscribe((layout) => {
@@ -56,7 +65,13 @@ export function NativeWorkbenchApp() {
         if (!disposed) {
           app.workbench.context.apply({ kind: 'activate-app', appId: layout.activeApp });
           app.workbench.focus.focus({ kind: 'part', part: 'workspace-area' });
-          setState({ app, layout });
+          setState((current) => ({
+            app,
+            layout,
+            transportStatus: current?.app === app
+              ? current.transportStatus
+              : app.workbench.transportStatus,
+          }));
           void app.workbench.plugins
             .queryCoreExtensions()
             .then(async (extensions) => {
@@ -93,6 +108,7 @@ export function NativeWorkbenchApp() {
       disposed = true;
       unsubscribe();
       unsubscribeRecovery();
+      unsubscribeTransport();
       void app.dispose();
     };
   }, [startupAttempt]);
@@ -236,6 +252,7 @@ export function NativeWorkbenchApp() {
 
   const currentState = state;
   const currentLayout = state.layout;
+  const readOnly = currentState.transportStatus.state !== 'connected';
 
   function reportCommandError(reason: unknown): void {
     setCommandError(reason);
@@ -274,10 +291,11 @@ export function NativeWorkbenchApp() {
         contextKeys={currentState.app.workbench.contextKeys}
         focusService={currentState.app.workbench.focus}
         layout={currentLayout}
+        readOnly={readOnly}
         menuRegistry={currentState.app.workbench.menus}
-        onActivateApp={activateApp}
-        onOpenPreview={() => setPreviewOpen(true)}
-        onLayoutCommand={dispatchLayout}
+        onActivateApp={readOnly ? () => undefined : activateApp}
+        onOpenPreview={readOnly ? undefined : () => setPreviewOpen(true)}
+        onLayoutCommand={readOnly ? undefined : dispatchLayout}
         operationsContent={(
           <div className="velvet-operations-stack">
             <JobOperationsPanel jobs={currentState.app.workbench.jobs} />
@@ -308,6 +326,16 @@ export function NativeWorkbenchApp() {
         viewRenderers={viewRenderers}
       >
       <div className="velvet-native-workspace">
+        {readOnly ? (
+          <div
+            aria-live="polite"
+            className="velvet-command-error"
+            data-transport-recovery-state={currentState.transportStatus.state}
+            role="status"
+          >
+            Native core {currentState.transportStatus.state}; the workbench is read-only until it reconnects.
+          </div>
+        ) : null}
         <PluginManagerDialog
           confirmUninstall={async (extensionId) => {
             return ask(`Remove ${extensionId} and its installed package?`, {

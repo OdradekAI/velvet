@@ -71,6 +71,8 @@ export type {
   CoreRequest,
   CoreResponse,
   CoreTransport,
+  CoreTransportStatus,
+  CoreTransportState,
   SessionAwareCoreTransport,
   ProtocolHandshakeRequest,
   ProtocolHandshakeResponse,

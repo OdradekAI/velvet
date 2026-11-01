@@ -7,6 +7,7 @@ import {
 const calls = [];
 let eventListener;
 let resynced;
+const statuses = [];
 const bridge = {
   async invoke(command, args) {
     calls.push({ command, args });
@@ -21,6 +22,9 @@ const bridge = {
     }
     assert.equal(command, 'velvet_core_request');
     assert.match(args.envelope.sessionId, /^session-/);
+    if (args.envelope.request.kind === 'layout-command') {
+      throw { code: 'stale-revision', message: 'stale layout', retryable: true };
+    }
     if (args.envelope.request.kind === 'query-snapshot') {
       return {
         protocolVersion: 1,
@@ -65,6 +69,7 @@ const transport = new TauriCoreTransport(bridge, {
     resynced = snapshot;
   },
 });
+const unsubscribeStatus = transport.subscribeStatus((status) => statuses.push(status.state));
 const response = await transport.request({ protocolVersion: 1, kind: 'query-profile' });
 assert.equal(response.kind, 'profile');
 assert.equal(calls.filter(({ command }) => command === 'velvet_core_handshake').length, 1);
@@ -74,12 +79,24 @@ const unsubscribe = transport.subscribe(() => undefined);
 await new Promise((resolve) => setImmediate(resolve));
 eventListener({ payload: { protocolVersion: 1, sequence: 1, event: { kind: 'profile-changed', revision: 0, state: {} } } });
 eventListener({ payload: { protocolVersion: 1, sequence: 3, event: { kind: 'profile-changed', revision: 1, state: {} } } });
+await assert.rejects(
+  () => transport.request({
+    protocolVersion: 1,
+    kind: 'layout-command',
+    command: { id: 'workbench.reset-layout' },
+  }),
+  (error) => error instanceof CoreTransportError && error.details.code === 'transport-recovering',
+);
 await new Promise((resolve) => setImmediate(resolve));
 await new Promise((resolve) => setImmediate(resolve));
 assert.equal(resynced.schemaVersion, 1);
 assert.equal(calls.filter(({ command }) => command === 'velvet_core_handshake').length, 2);
 assert.equal(calls.filter(({ command }) => command === 'velvet_core_request').length, 2);
+assert.ok(statuses.includes('connecting'));
+assert.ok(statuses.includes('connected'));
+assert.ok(statuses.includes('resyncing'));
 unsubscribe();
+unsubscribeStatus();
 
 const outcome = await transport.queryRequestOutcome(11);
 assert.deepEqual(outcome, { requestId: 11, status: 'unknown' });
@@ -88,6 +105,15 @@ const firstSession = await transport.connect();
 await transport.reconnect();
 const secondSession = await transport.connect();
 assert.notEqual(firstSession.sessionId, secondSession.sessionId);
+await assert.rejects(
+  () => transport.request({
+    protocolVersion: 1,
+    kind: 'layout-command',
+    command: { id: 'workbench.reset-layout' },
+  }),
+  (error) => error instanceof CoreTransportError && error.details.code === 'stale-revision',
+);
+assert.notEqual(statuses.at(-1), 'degraded');
 assert.equal(calls.filter(({ command }) => command === 'velvet_core_handshake').length, 3);
 const handshakeCalls = calls.filter(({ command }) => command === 'velvet_core_handshake');
 assert.match(handshakeCalls[0].args.request.clientId, /^desktop-/);

@@ -109,12 +109,17 @@ export function PluginSurfaceHost({
       if (
         sessionRef.current &&
         registeredSession !== sessionRef.current &&
-        !descriptor
+        (!descriptor || ui.isTransportSuspended)
       ) {
         sessionRef.current = undefined;
+        mountPromiseRef.current = undefined;
         waitingForAdapterRef.current = true;
       }
       if (disposed) {
+        return;
+      }
+      if (ui.isTransportSuspended) {
+        setState('waiting');
         return;
       }
       if (sessionRef.current) {
