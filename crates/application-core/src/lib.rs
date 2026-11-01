@@ -81,7 +81,8 @@ use velvet_plugin_api::{
     PreviewRendererDescriptor, PreviewSurface,
 };
 use velvet_plugin_host::{
-    sanitize_plugin_diagnostic_message, DisableReason, InMemoryPluginHost, JsonManifestDiscovery,
+    sanitize_plugin_diagnostic_message, DisableReason, ExtensionStorageRecovery,
+    ExtensionStorageRecoveryStatus, InMemoryPluginHost, JsonManifestDiscovery,
     ManifestDiscoveryError, ManifestLoadReport, PluginDiagnosticKind, PluginDiagnosticRecord,
     PluginError, PluginHost, PluginJobHandle, PluginJobInvocation, PluginResourceLoader,
     PluginRuntime,
@@ -95,9 +96,10 @@ use velvet_preview_core::{
 use velvet_workbench_protocol::{
     Command, CoreError, CoreTransport, PluginDiagnosticEvent,
     PluginDiagnosticKind as WirePluginDiagnosticKind, PluginDisableReason, PluginInstallPreviewDto,
-    PluginProjectionDto, PluginResourceDto, ProfileState, Query, Request, RequestEnvelope,
-    RequestId, Response, ResponseEnvelope, PLUGIN_DIAGNOSTIC_SCHEMA_VERSION,
-    PLUGIN_RESOURCE_SCHEMA_VERSION, PROFILE_SCHEMA_VERSION, PROTOCOL_VERSION,
+    PluginProjectionDto, PluginResourceDto, PluginStorageRecoveryDto, PluginStorageRecoveryStatus,
+    ProfileState, Query, Request, RequestEnvelope, RequestId, Response, ResponseEnvelope,
+    PLUGIN_DIAGNOSTIC_SCHEMA_VERSION, PLUGIN_RESOURCE_SCHEMA_VERSION, PROFILE_SCHEMA_VERSION,
+    PROTOCOL_VERSION,
 };
 
 pub struct ApplicationCore {
@@ -784,6 +786,36 @@ impl ApplicationCore {
         self.plugins.discover()
     }
 
+    pub fn query_plugin_storage_recovery(
+        &self,
+        id: &ExtensionId,
+    ) -> Result<PluginStorageRecoveryDto, PluginError> {
+        self.plugins
+            .extension_storage_recovery(id)
+            .map(plugin_storage_recovery_dto)
+    }
+
+    pub fn restore_plugin_state(
+        &mut self,
+        id: &ExtensionId,
+    ) -> Result<PluginStorageRecoveryDto, PluginError> {
+        self.plugins.restore_extension_state(id)?;
+        self.plugins
+            .extension_storage_recovery(id)
+            .map(plugin_storage_recovery_dto)
+    }
+
+    pub fn quarantine_plugin_state(
+        &mut self,
+        id: &ExtensionId,
+        generation: u64,
+    ) -> Result<PluginStorageRecoveryDto, PluginError> {
+        self.plugins.quarantine_extension_state(id, generation)?;
+        self.plugins
+            .extension_storage_recovery(id)
+            .map(plugin_storage_recovery_dto)
+    }
+
     pub fn reconcile_plugin_runtime_orphans(
         &mut self,
     ) -> Result<Vec<velvet_plugin_host::RuntimeOrphanReport>, PluginError> {
@@ -1426,6 +1458,17 @@ impl ApplicationCore {
                 self.quarantine_recovery_failure()?;
                 Ok(Response::Accepted)
             }
+            Request::Command(Command::RestorePluginState { extension_id }) => self
+                .restore_plugin_state(&extension_id)
+                .map(Response::PluginStorageRecovery)
+                .map_err(plugin_error),
+            Request::Command(Command::QuarantinePluginState {
+                extension_id,
+                generation,
+            }) => self
+                .quarantine_plugin_state(&extension_id, generation)
+                .map(Response::PluginStorageRecovery)
+                .map_err(plugin_error),
             Request::Command(Command::UninstallPlugin { extension_id }) => {
                 self.uninstall_plugin(&extension_id).map_err(plugin_error)?;
                 Ok(Response::Accepted)
@@ -1527,6 +1570,10 @@ impl ApplicationCore {
             Request::Query(Query::PluginInstallRecoveryLog) => self
                 .inspect_plugin_install_recovery_log()
                 .map(Response::PluginInstallRecoveryLog)
+                .map_err(plugin_error),
+            Request::Query(Query::PluginStorageRecovery { extension_id }) => self
+                .query_plugin_storage_recovery(&extension_id)
+                .map(Response::PluginStorageRecovery)
                 .map_err(plugin_error),
             Request::Query(Query::Jobs) => Ok(Response::Jobs(self.job_snapshots())),
             Request::Query(Query::PluginProjection { extension_id }) => self
@@ -2052,6 +2099,24 @@ fn disable_reason(reason: PluginDisableReason) -> DisableReason {
         PluginDisableReason::User => DisableReason::User,
         PluginDisableReason::Crash => DisableReason::Crash,
         PluginDisableReason::Incompatible => DisableReason::Incompatible,
+    }
+}
+
+fn plugin_storage_recovery_dto(recovery: ExtensionStorageRecovery) -> PluginStorageRecoveryDto {
+    PluginStorageRecoveryDto {
+        extension_id: recovery.extension_id,
+        status: match recovery.status {
+            ExtensionStorageRecoveryStatus::Available => PluginStorageRecoveryStatus::Available,
+            ExtensionStorageRecoveryStatus::Empty => PluginStorageRecoveryStatus::Empty,
+            ExtensionStorageRecoveryStatus::Corrupt => PluginStorageRecoveryStatus::Corrupt,
+            ExtensionStorageRecoveryStatus::Unavailable => PluginStorageRecoveryStatus::Unavailable,
+        },
+        current_generation: recovery.current_generation,
+        previous_generation: recovery.previous_generation,
+        schema_version: recovery.schema_version,
+        previous_schema_version: recovery.previous_schema_version,
+        quarantine_generation: recovery.quarantine_generation,
+        reason: recovery.reason,
     }
 }
 

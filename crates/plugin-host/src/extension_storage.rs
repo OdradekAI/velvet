@@ -50,6 +50,26 @@ pub struct ExtensionStorageExport {
     pub entries: BTreeMap<String, Vec<u8>>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ExtensionStorageRecoveryStatus {
+    Available,
+    Empty,
+    Corrupt,
+    Unavailable,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExtensionStorageRecovery {
+    pub extension_id: ExtensionId,
+    pub status: ExtensionStorageRecoveryStatus,
+    pub current_generation: Option<u64>,
+    pub previous_generation: Option<u64>,
+    pub schema_version: Option<u16>,
+    pub previous_schema_version: Option<u16>,
+    pub quarantine_generation: Option<u64>,
+    pub reason: Option<String>,
+}
+
 pub trait BackupParticipant: Send + Sync {
     fn export(
         &self,
@@ -145,9 +165,28 @@ impl ExtensionStorage {
                 "no previous extension storage generation exists".into(),
             ));
         };
+        if previous.schema_version != self.schema_version {
+            return Err(ExtensionStorageError::SchemaMismatch {
+                expected: self.schema_version,
+                actual: previous.schema_version,
+            });
+        }
         let mut transaction = self.begin_transaction()?;
         transaction.entries = previous.entries;
         transaction.commit()
+    }
+
+    pub fn quarantine_generation(&self, generation: u64) -> Result<(), ExtensionStorageError> {
+        let current = self.load()?;
+        if current.generation != generation {
+            return Err(ExtensionStorageError::Conflict {
+                expected: generation,
+                actual: current.generation,
+            });
+        }
+        self.snapshots
+            .quarantine(&self.owner_id(), EXTENSION_STORAGE_SCOPE, generation)?;
+        Ok(())
     }
 
     pub fn begin_transaction(&self) -> Result<ExtensionStorageTransaction, ExtensionStorageError> {

@@ -160,6 +160,11 @@ export type CoreRequest =
     }
   | {
       readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'query-plugin-storage-recovery';
+      readonly extensionId: string;
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
       readonly kind: 'register-plugin';
       readonly manifest: CorePluginManifest;
     }
@@ -183,6 +188,17 @@ export type CoreRequest =
       readonly protocolVersion: ProtocolVersion;
       readonly kind: 'recover-plugin';
       readonly extensionId: string;
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'restore-plugin-state';
+      readonly extensionId: string;
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'quarantine-plugin-state';
+      readonly extensionId: string;
+      readonly generation: number;
     }
   | {
       readonly protocolVersion: ProtocolVersion;
@@ -331,6 +347,10 @@ export type CoreResponse =
       readonly log: readonly CorePluginInstallRecoveryLogEntry[];
     }
   | { readonly kind: 'plugin-projection'; readonly projection: CorePluginProjection }
+  | {
+      readonly kind: 'plugin-storage-recovery';
+      readonly recovery: CorePluginStorageRecovery;
+    }
   | { readonly kind: 'job'; readonly job: CoreJobSnapshot }
   | { readonly kind: 'jobs'; readonly jobs: readonly CoreJobSnapshot[] }
   | { readonly kind: 'accepted' };
@@ -754,6 +774,19 @@ export interface CorePluginInstallRecoveryLogEntry {
 export interface CorePluginProjection {
   readonly summary: CorePluginSummary;
   readonly manifest: CorePluginManifest;
+}
+
+export type CorePluginStorageRecoveryStatus = 'available' | 'empty' | 'corrupt' | 'unavailable';
+
+export interface CorePluginStorageRecovery {
+  readonly extensionId: string;
+  readonly status: CorePluginStorageRecoveryStatus;
+  readonly currentGeneration: number | null;
+  readonly previousGeneration: number | null;
+  readonly schemaVersion: number | null;
+  readonly previousSchemaVersion: number | null;
+  readonly quarantineGeneration: number | null;
+  readonly reason: string | null;
 }
 
 export interface CoreError {

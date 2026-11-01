@@ -173,11 +173,12 @@ component failure and clears that owner's projections and Jobs; it does not
 increment the core pre-ready Safe Mode counter.
 
 This slice is deliberately narrower than the full decision: native no-WebView
-recovery, user-facing extension restore/quarantine confirmation and crash-capture
-correlation in the `DiagnosticBundle` are still implementation gates. The
+recovery and crash-capture correlation in the `DiagnosticBundle` are still
+implementation gates. The
 bundle already carries the bounded persisted plugin/Job history. A successful
-renderer restore or quarantine action requests a fresh startup so the selected
-set becomes live.
+renderer `RecoverySet` restore or quarantine action requests a fresh startup so
+the selected set becomes live; extension-store actions leave only that
+extension disabled and do not restart the core.
 
 `PluginHost` now provides the first extension-state slice on top of the same
 snapshot adapter. Each manifest-declared store uses an owner namespace of
@@ -194,8 +195,14 @@ validates the response schema and quota, commits migration against the source
 generation with compare-and-swap, and never publishes a core `RecoverySet`
 pointer. A runtime rejection leaves the extension active but records a typed
 storage diagnostic; a timeout, crash or malformed response fails and isolates
-only that extension. This is still separate from user-facing extension
-restore/quarantine actions, which remain a follow-up recovery surface. When an
+only that extension. The host now exposes a metadata-only extension storage
+recovery projection and typed restore/quarantine actions. Restore requires a
+same-schema previous generation and commits it as a new generation; quarantine
+uses an exact-generation compare-and-swap. Both actions stop an active runtime
+first and leave the extension disabled until explicit user activation. Raw
+payloads, paths and core `RecoverySet` members stay inside Rust. Unknown or
+corrupt current generations remain diagnostic evidence rather than being
+silently deleted. Automatic orphan policy remains a separate gate. When an
 external extension is activated after an installed upgrade and its committed
 store has an older schema, activation runs `storage.migrate` before exposing
 the extension as ready; a failed migration leaves the extension failed and

@@ -296,10 +296,16 @@ checks the result schema/quota and commits a migration against the exact
 source generation. A rejected or malformed result does not publish a
 generation; a runtime failure removes only that extension's process and
 projections. JSONL responses are bounded before decoding, and the storage
-quota remains the authoritative payload limit. User-facing extension
-restore/quarantine actions and automatic orphan policy remain follow-up gates.
-Bounded diagnostic history is persisted by the application owner rather than
-by the extension storage API.
+quota remains the authoritative payload limit. Automatic orphan policy remains
+a follow-up gate. The host now exposes a metadata-only recovery projection plus typed restore
+and quarantine actions. Restore requires a same-schema previous generation and
+commits it as a new generation; quarantine uses an exact-generation
+compare-and-swap. Both actions stop an active runtime first and leave the
+extension disabled until explicit user activation. Raw payloads, paths,
+snapshot indexes and core `RecoverySet` members never cross the protocol.
+Unknown or corrupt current generations remain diagnostic evidence and are not
+silently deleted. Bounded diagnostic history is persisted by the application
+owner rather than by the extension storage API.
 
 `PluginHost` also owns a bounded `PluginDiagnosticSink`. Runtime start/crash,
 invocation, Job, shutdown, storage and migration failures become ordered,

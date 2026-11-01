@@ -5,6 +5,7 @@ import type {
   CorePluginInstallRecoveryLogEntry,
   CorePluginInstallPreview,
   CorePluginSummary,
+  CorePluginStorageRecovery,
 } from '../../platform/protocol.js';
 import type { PluginClient } from '../../workbench/plugins/plugin-client.js';
 import { VelvetDialog } from '../ui/velvet-ui.js';
@@ -28,6 +29,7 @@ export function PluginManagerDialog({
   const [extensions, setExtensions] = useState<readonly CorePluginSummary[]>([]);
   const [recoveries, setRecoveries] = useState<readonly CorePluginInstallRecovery[]>([]);
   const [recoveryLogs, setRecoveryLogs] = useState<readonly CorePluginInstallRecoveryLogEntry[]>([]);
+  const [storageRecoveries, setStorageRecoveries] = useState<readonly CorePluginStorageRecovery[]>([]);
   const [sourceDir, setSourceDir] = useState('');
   const [preview, setPreview] = useState<CorePluginInstallPreview>();
   const [previewSource, setPreviewSource] = useState<string>();
@@ -44,9 +46,13 @@ export function PluginManagerDialog({
       const nextExtensions = await plugins.queryCoreExtensions();
       const nextRecoveries = await plugins.queryCoreInstallRecoveries();
       const nextRecoveryLogs = await plugins.queryCoreInstallRecoveryLog();
+      const nextStorageRecoveries = await Promise.all(
+        nextExtensions.map((extension) => plugins.queryCorePluginStorageRecovery(extension.id)),
+      );
       setExtensions(nextExtensions);
       setRecoveries(nextRecoveries);
       setRecoveryLogs(nextRecoveryLogs);
+      setStorageRecoveries(nextStorageRecoveries);
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : String(reason);
       setError(message);
@@ -241,6 +247,42 @@ export function PluginManagerDialog({
     }
   };
 
+  const restoreStorage = async (recovery: CorePluginStorageRecovery) => {
+    setBusyExtensionId(recovery.extensionId);
+    setError(undefined);
+    setMessage(undefined);
+    try {
+      await plugins.restoreCorePluginState(recovery.extensionId);
+      setMessage(`${recovery.extensionId} storage restored; extension remains disabled.`);
+      await refresh();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setBusyExtensionId(undefined);
+    }
+  };
+
+  const quarantineStorage = async (recovery: CorePluginStorageRecovery) => {
+    if (recovery.quarantineGeneration === null) {
+      return;
+    }
+    setBusyExtensionId(recovery.extensionId);
+    setError(undefined);
+    setMessage(undefined);
+    try {
+      await plugins.quarantineCorePluginState(
+        recovery.extensionId,
+        recovery.quarantineGeneration,
+      );
+      setMessage(`${recovery.extensionId} storage generation quarantined; extension remains disabled.`);
+      await refresh();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setBusyExtensionId(undefined);
+    }
+  };
+
   return (
     <VelvetDialog
       description="Install a local extension package and inspect its host-owned runtime state."
@@ -312,6 +354,54 @@ export function PluginManagerDialog({
             </div>
           ))}
         </div>
+        {storageRecoveries.some((recovery) => recovery.status === 'available' || recovery.status === 'corrupt') ? (
+          <div className="velvet-plugin-manager__recoveries" data-plugin-storage-recoveries>
+            <div className="velvet-plugin-manager__toolbar">
+              <span className="velvet-plugin-manager__eyebrow">Extension storage recovery</span>
+              <span className="velvet-plugin-manager__recovery-hint">Payloads stay host-owned</span>
+            </div>
+            {storageRecoveries
+              .filter((recovery) => recovery.status === 'available' || recovery.status === 'corrupt')
+              .map((recovery) => (
+                <div className="velvet-plugin-manager__recovery" key={recovery.extensionId}>
+                  <div className="velvet-plugin-manager__identity">
+                    <strong>{recovery.extensionId}</strong>
+                    <span>
+                      {recovery.status} · current {recovery.currentGeneration ?? 'unknown'}
+                      {recovery.previousGeneration !== null
+                        ? ` · previous ${recovery.previousGeneration}`
+                        : ''}
+                    </span>
+                  </div>
+                  {recovery.reason ? (
+                    <p className="velvet-command-error" role="alert">{recovery.reason}</p>
+                  ) : null}
+                  <div className="velvet-plugin-manager__controls">
+                    {recovery.previousGeneration !== null ? (
+                      <button
+                        className="velvet-button velvet-button--quiet"
+                        disabled={busyExtensionId !== undefined || installing}
+                        onClick={() => void restoreStorage(recovery)}
+                        type="button"
+                      >
+                        Restore storage generation
+                      </button>
+                    ) : null}
+                    {recovery.quarantineGeneration !== null ? (
+                      <button
+                        className="velvet-button velvet-button--quiet velvet-button--danger"
+                        disabled={busyExtensionId !== undefined || installing}
+                        onClick={() => void quarantineStorage(recovery)}
+                        type="button"
+                      >
+                        Quarantine current
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              ))}
+          </div>
+        ) : null}
         {recoveries.length > 0 ? (
           <div className="velvet-plugin-manager__recoveries" data-plugin-install-recoveries>
             <div className="velvet-plugin-manager__toolbar">

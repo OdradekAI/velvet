@@ -30,8 +30,9 @@ mod runtime_lease;
 
 pub use extension_storage::{
     BackupParticipant, ExtensionStorage, ExtensionStorageError, ExtensionStorageExport,
-    ExtensionStorageTransaction, ExtensionStorageView, MigrationParticipant,
-    EXTENSION_STORAGE_SCOPE, MAX_EXTENSION_STORAGE_BYTES, MAX_EXTENSION_STORAGE_KEY_BYTES,
+    ExtensionStorageRecovery, ExtensionStorageRecoveryStatus, ExtensionStorageTransaction,
+    ExtensionStorageView, MigrationParticipant, EXTENSION_STORAGE_SCOPE,
+    MAX_EXTENSION_STORAGE_BYTES, MAX_EXTENSION_STORAGE_KEY_BYTES,
 };
 pub use runtime_lease::{
     ConservativeRuntimeOrphanReconciler, InMemoryRuntimeLeaseStore, JsonFileRuntimeLeaseStore,
@@ -1946,6 +1947,19 @@ pub trait PluginHost {
         &mut self,
         id: &ExtensionId,
     ) -> Result<ExtensionStorageView, PluginError>;
+    fn extension_storage_recovery(
+        &self,
+        id: &ExtensionId,
+    ) -> Result<ExtensionStorageRecovery, PluginError>;
+    fn restore_extension_state(
+        &mut self,
+        id: &ExtensionId,
+    ) -> Result<ExtensionStorageView, PluginError>;
+    fn quarantine_extension_state(
+        &mut self,
+        id: &ExtensionId,
+        generation: u64,
+    ) -> Result<(), PluginError>;
     fn reconcile_runtime_orphans(&mut self) -> Result<Vec<RuntimeOrphanReport>, PluginError> {
         Ok(Vec::new())
     }
@@ -2190,6 +2204,182 @@ impl InMemoryPluginHost {
         storage
             .commit_migrated_entries(&source, runtime_result.entries)
             .map_err(|error| self.storage_error(id, "migration-commit-failed", error))
+    }
+
+    pub fn extension_storage_recovery(
+        &self,
+        id: &ExtensionId,
+    ) -> Result<ExtensionStorageRecovery, PluginError> {
+        let manifest = self
+            .manifests
+            .get(id)
+            .ok_or_else(|| PluginError::NotFound(id.clone()))?;
+        let Some(declaration) = manifest.storage.as_ref() else {
+            return Ok(ExtensionStorageRecovery {
+                extension_id: id.clone(),
+                status: ExtensionStorageRecoveryStatus::Unavailable,
+                current_generation: None,
+                previous_generation: None,
+                schema_version: None,
+                previous_schema_version: None,
+                quarantine_generation: None,
+                reason: Some("extension did not declare host-owned storage".into()),
+            });
+        };
+        if self.extension_snapshots.is_none() {
+            return Ok(ExtensionStorageRecovery {
+                extension_id: id.clone(),
+                status: ExtensionStorageRecoveryStatus::Unavailable,
+                current_generation: None,
+                previous_generation: None,
+                schema_version: Some(declaration.schema_version),
+                previous_schema_version: None,
+                quarantine_generation: None,
+                reason: Some(
+                    "extension storage is unavailable before persistence is configured".into(),
+                ),
+            });
+        }
+        let storage = self.extension_storage(id)?;
+        let current = match storage.load() {
+            Ok(current) if current.generation == 0 => {
+                return Ok(ExtensionStorageRecovery {
+                    extension_id: id.clone(),
+                    status: ExtensionStorageRecoveryStatus::Empty,
+                    current_generation: None,
+                    previous_generation: None,
+                    schema_version: Some(storage.schema_version()),
+                    previous_schema_version: None,
+                    quarantine_generation: None,
+                    reason: None,
+                });
+            }
+            Ok(current) => current,
+            Err(error) => {
+                return Ok(ExtensionStorageRecovery {
+                    extension_id: id.clone(),
+                    status: ExtensionStorageRecoveryStatus::Corrupt,
+                    current_generation: None,
+                    previous_generation: None,
+                    schema_version: Some(storage.schema_version()),
+                    previous_schema_version: None,
+                    quarantine_generation: None,
+                    reason: Some(storage_recovery_reason(error)),
+                });
+            }
+        };
+        let previous = match storage.previous() {
+            Ok(previous) => previous,
+            Err(error) => {
+                return Ok(ExtensionStorageRecovery {
+                    extension_id: id.clone(),
+                    status: ExtensionStorageRecoveryStatus::Corrupt,
+                    current_generation: Some(current.generation),
+                    previous_generation: None,
+                    schema_version: Some(current.schema_version),
+                    previous_schema_version: None,
+                    quarantine_generation: Some(current.generation),
+                    reason: Some(storage_recovery_reason(error)),
+                });
+            }
+        };
+        Ok(ExtensionStorageRecovery {
+            extension_id: id.clone(),
+            status: ExtensionStorageRecoveryStatus::Available,
+            current_generation: Some(current.generation),
+            previous_generation: previous.as_ref().map(|view| view.generation),
+            schema_version: Some(current.schema_version),
+            previous_schema_version: previous.as_ref().map(|view| view.schema_version),
+            quarantine_generation: Some(current.generation),
+            reason: None,
+        })
+    }
+
+    pub fn restore_extension_state(
+        &mut self,
+        id: &ExtensionId,
+    ) -> Result<ExtensionStorageView, PluginError> {
+        let storage = self.extension_storage(id)?;
+        let previous = storage
+            .previous()
+            .map_err(|error| self.storage_error(id, "storage-restore-failed", error))?;
+        let Some(previous) = previous else {
+            return Err(self.storage_error(
+                id,
+                "storage-restore-failed",
+                ExtensionStorageError::Unavailable(
+                    "no previous extension storage generation exists".into(),
+                ),
+            ));
+        };
+        if previous.schema_version != storage.schema_version() {
+            return Err(self.storage_error(
+                id,
+                "storage-restore-failed",
+                ExtensionStorageError::SchemaMismatch {
+                    expected: storage.schema_version(),
+                    actual: previous.schema_version,
+                },
+            ));
+        }
+        if self.active.contains(id) {
+            self.disable(id, DisableReason::User)?;
+        }
+        let restored = storage
+            .restore_previous()
+            .map_err(|error| self.storage_error(id, "storage-restore-failed", error))?;
+        self.states.insert(id.clone(), ExtensionState::Disabled);
+        self.record_diagnostic(PluginDiagnosticInput {
+            extension_id: id.clone(),
+            kind: PluginDiagnosticKind::Storage,
+            code: "storage-restored".into(),
+            message: format!(
+                "restored extension storage generation {}",
+                restored.generation
+            ),
+            job_id: None,
+            attempt: None,
+            retryable: false,
+        });
+        Ok(restored)
+    }
+
+    pub fn quarantine_extension_state(
+        &mut self,
+        id: &ExtensionId,
+        generation: u64,
+    ) -> Result<(), PluginError> {
+        let storage = self.extension_storage(id)?;
+        let current = storage
+            .load()
+            .map_err(|error| self.storage_error(id, "storage-quarantine-failed", error))?;
+        if current.generation != generation {
+            return Err(self.storage_error(
+                id,
+                "storage-quarantine-failed",
+                ExtensionStorageError::Conflict {
+                    expected: generation,
+                    actual: current.generation,
+                },
+            ));
+        }
+        if self.active.contains(id) {
+            self.disable(id, DisableReason::User)?;
+        }
+        storage
+            .quarantine_generation(generation)
+            .map_err(|error| self.storage_error(id, "storage-quarantine-failed", error))?;
+        self.states.insert(id.clone(), ExtensionState::Disabled);
+        self.record_diagnostic(PluginDiagnosticInput {
+            extension_id: id.clone(),
+            kind: PluginDiagnosticKind::Storage,
+            code: "storage-quarantined".into(),
+            message: format!("quarantined extension storage generation {generation}"),
+            job_id: None,
+            attempt: None,
+            retryable: false,
+        });
+        Ok(())
     }
 
     fn storage_error(
@@ -4319,6 +4509,28 @@ impl PluginHost for InMemoryPluginHost {
         InMemoryPluginHost::migrate_extension_state_from_runtime(self, id)
     }
 
+    fn extension_storage_recovery(
+        &self,
+        id: &ExtensionId,
+    ) -> Result<ExtensionStorageRecovery, PluginError> {
+        InMemoryPluginHost::extension_storage_recovery(self, id)
+    }
+
+    fn restore_extension_state(
+        &mut self,
+        id: &ExtensionId,
+    ) -> Result<ExtensionStorageView, PluginError> {
+        InMemoryPluginHost::restore_extension_state(self, id)
+    }
+
+    fn quarantine_extension_state(
+        &mut self,
+        id: &ExtensionId,
+        generation: u64,
+    ) -> Result<(), PluginError> {
+        InMemoryPluginHost::quarantine_extension_state(self, id, generation)
+    }
+
     fn reconcile_runtime_orphans(&mut self) -> Result<Vec<RuntimeOrphanReport>, PluginError> {
         InMemoryPluginHost::reconcile_runtime_orphans(self)
     }
@@ -4342,6 +4554,12 @@ fn storage_diagnostic_kind(method: &str) -> PluginDiagnosticKind {
     } else {
         PluginDiagnosticKind::Storage
     }
+}
+
+fn storage_recovery_reason(error: ExtensionStorageError) -> String {
+    sanitize_plugin_diagnostic_message(&format!(
+        "extension storage recovery unavailable: {error:?}"
+    ))
 }
 
 fn permission_allowed(zone: WorkbenchZone, permission: &Permission) -> bool {
@@ -5367,6 +5585,92 @@ mod tests {
             .drain_diagnostics()
             .iter()
             .any(|record| record.code == "storage-runtime-failed"));
+    }
+
+    #[test]
+    fn storage_recovery_projects_generations_and_restores_without_reactivating() {
+        let snapshots = Arc::new(InMemoryStateSnapshotStore::default());
+        let mut host = InMemoryPluginHost::default();
+        host.set_extension_storage_store(snapshots);
+        let id = ExtensionId("storage.recovery".into());
+        host.register(ExtensionManifest {
+            id: id.clone(),
+            storage: Some(ExtensionStorageDeclaration {
+                schema_version: 1,
+                quota_bytes: 1024,
+            }),
+            ..ExtensionManifest::default()
+        })
+        .unwrap();
+        let storage = host.extension_storage(&id).unwrap();
+        let mut first = storage.begin_transaction().unwrap();
+        first.put("value", b"one".to_vec()).unwrap();
+        first.commit().unwrap();
+        let mut second = storage.begin_transaction().unwrap();
+        second.put("value", b"two".to_vec()).unwrap();
+        second.commit().unwrap();
+        host.activate(&id).unwrap();
+
+        let projection = host.extension_storage_recovery(&id).unwrap();
+        assert_eq!(projection.status, ExtensionStorageRecoveryStatus::Available);
+        assert_eq!(projection.current_generation, Some(2));
+        assert_eq!(projection.previous_generation, Some(1));
+        assert_eq!(projection.quarantine_generation, Some(2));
+
+        let restored = host.restore_extension_state(&id).unwrap();
+        assert_eq!(restored.generation, 3);
+        assert_eq!(restored.entries["value"], b"one");
+        assert_eq!(host.discover()[0].state, ExtensionState::Disabled);
+        assert_eq!(
+            host.extension_storage_recovery(&id)
+                .unwrap()
+                .current_generation,
+            Some(3)
+        );
+    }
+
+    #[test]
+    fn storage_recovery_quarantine_is_compare_and_swap_and_isolated() {
+        let snapshots = Arc::new(InMemoryStateSnapshotStore::default());
+        let mut host = InMemoryPluginHost::default();
+        host.set_extension_storage_store(snapshots.clone());
+        let id = ExtensionId("storage.quarantine".into());
+        host.register(ExtensionManifest {
+            id: id.clone(),
+            storage: Some(ExtensionStorageDeclaration {
+                schema_version: 1,
+                quota_bytes: 1024,
+            }),
+            ..ExtensionManifest::default()
+        })
+        .unwrap();
+        let storage = host.extension_storage(&id).unwrap();
+        let mut first = storage.begin_transaction().unwrap();
+        first.put("value", b"one".to_vec()).unwrap();
+        first.commit().unwrap();
+        let mut second = storage.begin_transaction().unwrap();
+        second.put("value", b"two".to_vec()).unwrap();
+        second.commit().unwrap();
+        host.activate(&id).unwrap();
+
+        assert!(matches!(
+            host.quarantine_extension_state(&id, 1),
+            Err(PluginError::ExtensionStorage { message, .. }) if message.contains("Conflict")
+        ));
+        assert_eq!(storage.load().unwrap().generation, 2);
+        assert_eq!(host.discover()[0].state, ExtensionState::Active);
+
+        host.quarantine_extension_state(&id, 2).unwrap();
+        let current = storage.load().unwrap();
+        assert_eq!(current.generation, 1);
+        assert_eq!(current.entries["value"], b"one");
+        assert_eq!(
+            snapshots
+                .load_generation("storage.quarantine", "storage", 2)
+                .unwrap(),
+            None
+        );
+        assert_eq!(host.discover()[0].state, ExtensionState::Disabled);
     }
 
     #[test]

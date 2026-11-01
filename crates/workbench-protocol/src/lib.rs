@@ -166,6 +166,28 @@ pub struct PluginInstallPreviewDto {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
+pub enum PluginStorageRecoveryStatus {
+    Available,
+    Empty,
+    Corrupt,
+    Unavailable,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PluginStorageRecoveryDto {
+    pub extension_id: ExtensionId,
+    pub status: PluginStorageRecoveryStatus,
+    pub current_generation: Option<u64>,
+    pub previous_generation: Option<u64>,
+    pub schema_version: Option<u16>,
+    pub previous_schema_version: Option<u16>,
+    pub quarantine_generation: Option<u64>,
+    pub reason: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum StartupPhase {
     Preflight,
     RecoveringState,
@@ -405,6 +427,13 @@ pub enum Command {
     },
     RestoreRecoverySet,
     QuarantineRecoveryFailure,
+    RestorePluginState {
+        extension_id: ExtensionId,
+    },
+    QuarantinePluginState {
+        extension_id: ExtensionId,
+        generation: u64,
+    },
     UninstallPlugin {
         extension_id: ExtensionId,
     },
@@ -482,6 +511,9 @@ pub enum Query {
     },
     PluginInstallRecoveries,
     PluginInstallRecoveryLog,
+    PluginStorageRecovery {
+        extension_id: ExtensionId,
+    },
     Jobs,
 }
 
@@ -502,6 +534,7 @@ pub enum Response {
     PluginInstallPreview(PluginInstallPreviewDto),
     PluginInstallRecoveries(Vec<ExtensionInstallRecovery>),
     PluginInstallRecoveryLog(Vec<ExtensionInstallRecoveryLogEntry>),
+    PluginStorageRecovery(PluginStorageRecoveryDto),
     PluginProjection(PluginProjectionDto),
     Job(JobSnapshot),
     Jobs(Vec<JobSnapshot>),

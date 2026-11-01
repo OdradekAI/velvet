@@ -96,6 +96,21 @@ const core = {
     if (request.kind === 'query-plugin-install-recovery-log') {
       return { kind: 'plugin-install-recovery-log', log: [] };
     }
+    if (request.kind === 'query-plugin-storage-recovery') {
+      return {
+        kind: 'plugin-storage-recovery',
+        recovery: {
+          extensionId: request.extensionId,
+          status: 'unavailable',
+          currentGeneration: null,
+          previousGeneration: null,
+          schemaVersion: null,
+          previousSchemaVersion: null,
+          quarantineGeneration: null,
+          reason: null,
+        },
+      };
+    }
     if (request.kind === 'install-plugin' || request.kind === 'install-plugin-archive') {
       installed = true;
       installedState = 'registered';
@@ -224,11 +239,12 @@ await act(async () => {
 assert.equal(input?.value, '/tmp/native-plugin.zip');
 assert.equal(requests.at(-1)?.kind, 'inspect-plugin-archive');
 assert.deepEqual(
-  requests.slice(0, 12).map((request) => request.kind),
+  requests.slice(0, 13).map((request) => request.kind),
   [
     'query-extensions',
     'query-plugin-install-recoveries',
     'query-plugin-install-recovery-log',
+    'query-plugin-storage-recovery',
     'inspect-plugin',
     'install-plugin',
     'query-plugin-projection',
@@ -269,7 +285,7 @@ await act(async () => {
 });
 assert.deepEqual(confirmCalls, ['sample.installed']);
 assert.equal(document.querySelector('[aria-label="Uninstall sample.installed"]'), null);
-assert.equal(requests.at(-1)?.kind, 'query-plugin-install-recovery-log');
+assert.equal(requests.at(-1)?.kind, 'query-plugin-storage-recovery');
 assert.equal(requests.find((request) => request.kind === 'install-plugin')?.sourceDir, '/tmp/native-plugin');
 
 await act(() => root.unmount());
@@ -279,6 +295,7 @@ let recoveryVisible = true;
 let recoveryState = 'registered';
 let recoveryAttempts = 0;
 let recoveryLogs = [];
+let storageAvailable = true;
 const recoverySummary = () => ({
   id: 'sample.recovery',
   version: recoveryState === 'active' ? '0.1.0' : '0.2.0',
@@ -311,6 +328,53 @@ const recoveryCore = {
     }
     if (request.kind === 'query-plugin-install-recovery-log') {
       return { kind: 'plugin-install-recovery-log', log: recoveryLogs };
+    }
+    if (request.kind === 'query-plugin-storage-recovery') {
+      return {
+        kind: 'plugin-storage-recovery',
+        recovery: {
+          extensionId: request.extensionId,
+          status: storageAvailable ? 'available' : 'empty',
+          currentGeneration: storageAvailable ? 2 : null,
+          previousGeneration: storageAvailable ? 1 : null,
+          schemaVersion: storageAvailable ? 1 : null,
+          previousSchemaVersion: storageAvailable ? 1 : null,
+          quarantineGeneration: storageAvailable ? 2 : null,
+          reason: null,
+        },
+      };
+    }
+    if (request.kind === 'restore-plugin-state') {
+      storageAvailable = false;
+      return {
+        kind: 'plugin-storage-recovery',
+        recovery: {
+          extensionId: request.extensionId,
+          status: 'empty',
+          currentGeneration: null,
+          previousGeneration: null,
+          schemaVersion: null,
+          previousSchemaVersion: null,
+          quarantineGeneration: null,
+          reason: null,
+        },
+      };
+    }
+    if (request.kind === 'quarantine-plugin-state') {
+      storageAvailable = false;
+      return {
+        kind: 'plugin-storage-recovery',
+        recovery: {
+          extensionId: request.extensionId,
+          status: 'empty',
+          currentGeneration: null,
+          previousGeneration: null,
+          schemaVersion: null,
+          previousSchemaVersion: null,
+          quarantineGeneration: null,
+          reason: null,
+        },
+      };
     }
     if (request.kind === 'resolve-plugin-install-recovery') {
       recoveryAttempts += 1;
@@ -370,6 +434,27 @@ await act(async () => {
 });
 assert.ok(document.querySelector('[data-plugin-install-recoveries]'));
 assert.match(document.body.textContent ?? '', /sample\.recovery/);
+assert.ok(document.querySelector('[data-plugin-storage-recoveries]'));
+const storageRestoreButton = [...document.querySelectorAll('button')]
+  .find((button) => button.textContent === 'Restore storage generation');
+assert.ok(storageRestoreButton);
+await act(async () => {
+  storageRestoreButton.click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+});
+assert.match(document.body.textContent ?? '', /storage restored; extension remains disabled/);
+assert.equal(
+  recoveryRequests.find((request) => request.kind === 'restore-plugin-state')?.extensionId,
+  'sample.recovery',
+);
+await act(async () => {
+  await recoveryClient.quarantineCorePluginState('sample.recovery', 2);
+});
+assert.equal(
+  recoveryRequests.find((request) => request.kind === 'quarantine-plugin-state')?.generation,
+  2,
+);
 const restoreButton = [...document.querySelectorAll('button')]
   .find((button) => button.textContent === 'Restore previous');
 assert.ok(restoreButton);

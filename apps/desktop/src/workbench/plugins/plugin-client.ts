@@ -7,6 +7,7 @@ import {
   type CorePluginInstallRecoveryLogEntry,
   type CorePluginLocalization,
   type CorePluginProjection,
+  type CorePluginStorageRecovery,
   type CorePluginStorageDeclaration,
   type CorePluginDisableReason,
   type CorePluginManifest,
@@ -646,6 +647,62 @@ export class PluginClient {
       );
     }
     return response.log;
+  }
+
+  /** Reads host-owned extension storage metadata without exposing payloads or paths. */
+  public async queryCorePluginStorageRecovery(
+    extensionId: string,
+  ): Promise<CorePluginStorageRecovery> {
+    const response = await this.core.request({
+      protocolVersion: PROTOCOL_VERSION,
+      kind: 'query-plugin-storage-recovery',
+      extensionId,
+    });
+    if (response.kind !== 'plugin-storage-recovery') {
+      throw new PluginLifecycleError(
+        `Expected plugin storage recovery, received ${response.kind}`,
+        extensionId,
+      );
+    }
+    return response.recovery;
+  }
+
+  /** Restores the previous same-schema generation and leaves the extension disabled. */
+  public async restoreCorePluginState(extensionId: string): Promise<CorePluginStorageRecovery> {
+    const response = await this.core.request({
+      protocolVersion: PROTOCOL_VERSION,
+      kind: 'restore-plugin-state',
+      extensionId,
+    });
+    if (response.kind !== 'plugin-storage-recovery') {
+      throw new PluginLifecycleError(
+        `Expected plugin storage recovery after restoring ${extensionId}, received ${response.kind}`,
+        extensionId,
+      );
+    }
+    this.notify();
+    return response.recovery;
+  }
+
+  /** Quarantines an exact current generation using a host-side compare-and-swap. */
+  public async quarantineCorePluginState(
+    extensionId: string,
+    generation: number,
+  ): Promise<CorePluginStorageRecovery> {
+    const response = await this.core.request({
+      protocolVersion: PROTOCOL_VERSION,
+      kind: 'quarantine-plugin-state',
+      extensionId,
+      generation,
+    });
+    if (response.kind !== 'plugin-storage-recovery') {
+      throw new PluginLifecycleError(
+        `Expected plugin storage recovery after quarantining ${extensionId}, received ${response.kind}`,
+        extensionId,
+      );
+    }
+    this.notify();
+    return response.recovery;
   }
 
   public async clearCoreInstallRecoveryLog(): Promise<void> {

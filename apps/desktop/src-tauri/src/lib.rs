@@ -256,6 +256,12 @@ pub enum WireRequest {
         #[serde(rename = "extensionId")]
         extension_id: String,
     },
+    QueryPluginStorageRecovery {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        #[serde(rename = "extensionId")]
+        extension_id: String,
+    },
     RegisterPlugin {
         #[serde(rename = "protocolVersion")]
         protocol_version: u16,
@@ -285,6 +291,19 @@ pub enum WireRequest {
         protocol_version: u16,
         #[serde(rename = "extensionId")]
         extension_id: String,
+    },
+    RestorePluginState {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        #[serde(rename = "extensionId")]
+        extension_id: String,
+    },
+    QuarantinePluginState {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        #[serde(rename = "extensionId")]
+        extension_id: String,
+        generation: u64,
     },
     InstallPlugin {
         #[serde(rename = "protocolVersion")]
@@ -514,6 +533,17 @@ impl WireRequest {
                     },
                 ))
             }
+            Self::QueryPluginStorageRecovery {
+                protocol_version,
+                extension_id,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Query(
+                    velvet_workbench_protocol::Query::PluginStorageRecovery {
+                        extension_id: ExtensionId(extension_id),
+                    },
+                ))
+            }
             Self::RegisterPlugin {
                 protocol_version,
                 manifest,
@@ -568,6 +598,26 @@ impl WireRequest {
                 validate_inner_protocol(outer_protocol_version, protocol_version)?;
                 Ok(Request::Command(Command::RecoverPlugin {
                     extension_id: ExtensionId(extension_id),
+                }))
+            }
+            Self::RestorePluginState {
+                protocol_version,
+                extension_id,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Command(Command::RestorePluginState {
+                    extension_id: ExtensionId(extension_id),
+                }))
+            }
+            Self::QuarantinePluginState {
+                protocol_version,
+                extension_id,
+                generation,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Command(Command::QuarantinePluginState {
+                    extension_id: ExtensionId(extension_id),
+                    generation,
                 }))
             }
             Self::InstallPlugin {
@@ -1029,6 +1079,9 @@ enum WireResponse {
     PluginProjection {
         projection: velvet_workbench_protocol::PluginProjectionDto,
     },
+    PluginStorageRecovery {
+        recovery: velvet_workbench_protocol::PluginStorageRecoveryDto,
+    },
     Job {
         job: WireJobSnapshot,
     },
@@ -1067,6 +1120,9 @@ impl WireResponseEnvelope {
             }
             Response::PluginInstallRecoveryLog(log) => WireResponse::PluginInstallRecoveryLog { log },
             Response::PluginProjection(projection) => WireResponse::PluginProjection { projection },
+            Response::PluginStorageRecovery(recovery) => {
+                WireResponse::PluginStorageRecovery { recovery }
+            }
             Response::Job(job) => WireResponse::Job {
                 job: WireJobSnapshot::from(job),
             },
@@ -1998,6 +2054,37 @@ mod tests {
     }
 
     #[test]
+    fn wire_plugin_storage_recovery_response_preserves_metadata_only_projection() {
+        let value = serde_json::to_value(WireResponseEnvelope::from_core(
+            velvet_workbench_protocol::ResponseEnvelope {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: RequestId(33),
+                response: Response::PluginStorageRecovery(
+                    velvet_workbench_protocol::PluginStorageRecoveryDto {
+                        extension_id: velvet_plugin_api::ExtensionId("velvet.example.echo".into()),
+                        status: velvet_workbench_protocol::PluginStorageRecoveryStatus::Available,
+                        current_generation: Some(7),
+                        previous_generation: Some(6),
+                        schema_version: Some(2),
+                        previous_schema_version: Some(2),
+                        quarantine_generation: Some(7),
+                        reason: None,
+                    },
+                ),
+            },
+        ))
+        .expect("plugin storage recovery should serialize");
+
+        assert_eq!(value["response"]["kind"], "plugin-storage-recovery");
+        assert_eq!(
+            value["response"]["recovery"]["extensionId"],
+            "velvet.example.echo"
+        );
+        assert_eq!(value["response"]["recovery"]["currentGeneration"], 7);
+        assert!(value["response"]["recovery"].get("payload").is_none());
+    }
+
+    #[test]
     fn wire_recovery_query_and_projection_use_stable_names() {
         let envelope: WireRequestEnvelope = serde_json::from_str(
             r#"{
@@ -2293,6 +2380,61 @@ mod tests {
                 .expect("the plugin recovery log query should map"),
             Request::Query(velvet_workbench_protocol::Query::PluginInstallRecoveryLog)
         ));
+
+        let storage_recovery: WireRequestEnvelope = serde_json::from_value(serde_json::json!({
+            "protocolVersion": 1,
+            "requestId": 30,
+            "request": {
+                "kind": "query-plugin-storage-recovery",
+                "protocolVersion": 1,
+                "extensionId": "velvet.example.echo"
+            }
+        }))
+        .expect("the plugin storage recovery query should deserialize");
+        assert!(matches!(
+            storage_recovery
+                .request
+                .into_core(1)
+                .expect("the plugin storage recovery query should map"),
+            Request::Query(velvet_workbench_protocol::Query::PluginStorageRecovery {
+                extension_id
+            }) if extension_id.0 == "velvet.example.echo"
+        ));
+
+        for (kind, request_id, expected) in [
+            ("restore-plugin-state", 31, "restore"),
+            ("quarantine-plugin-state", 32, "quarantine"),
+        ] {
+            let request: WireRequestEnvelope = serde_json::from_value(serde_json::json!({
+                "protocolVersion": 1,
+                "requestId": request_id,
+                "request": {
+                    "kind": kind,
+                    "protocolVersion": 1,
+                    "extensionId": "velvet.example.echo",
+                    "generation": 4
+                }
+            }))
+            .expect("the plugin storage action should deserialize");
+            let mapped = request
+                .request
+                .into_core(1)
+                .expect("the plugin storage action should map");
+            match (expected, mapped) {
+                (
+                    "restore",
+                    Request::Command(Command::RestorePluginState { extension_id }),
+                ) if extension_id.0 == "velvet.example.echo" => {}
+                (
+                    "quarantine",
+                    Request::Command(Command::QuarantinePluginState {
+                        extension_id,
+                        generation,
+                    }),
+                ) if extension_id.0 == "velvet.example.echo" && generation == 4 => {}
+                _ => panic!("the plugin storage action mapped to an unexpected command"),
+            }
+        }
 
         let clear_recovery_log: WireRequestEnvelope = serde_json::from_value(serde_json::json!({
             "protocolVersion": 1,
