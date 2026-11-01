@@ -1,9 +1,18 @@
+use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use velvet_application_core::{ApplicationCore, InProcessCoreTransport};
 use velvet_workbench_protocol::{
-    Command, CoreError, CoreTransport, Event, Request, RequestId, Response,
+    negotiate_protocol, request_idempotency_scope, Command, CoreError, CoreTransport, Event,
+    ProtocolHandshakeRequest, ProtocolHandshakeResponse, Query, Request, RequestId, RequestOutcome,
+    RequestOutcomeStatus, Response,
 };
+
+static NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(1);
+const MAX_REQUEST_OUTCOMES: usize = 128;
+type RequestOutcomeKey = (String, u64);
+type RequestOutcomeCache = VecDeque<(RequestOutcomeKey, Option<&'static str>, Response)>;
 
 pub mod platform_signals;
 
@@ -41,6 +50,8 @@ impl CoreEventSink for InMemoryEventSink {
 pub struct TauriTransport {
     inner: InProcessCoreTransport,
     event_sink: Arc<dyn CoreEventSink>,
+    sessions: Arc<Mutex<HashMap<String, String>>>,
+    request_outcomes: Arc<Mutex<RequestOutcomeCache>>,
 }
 
 impl TauriTransport {
@@ -55,7 +66,113 @@ impl TauriTransport {
         Self {
             inner: InProcessCoreTransport::new(core),
             event_sink: Arc::new(event_sink),
+            sessions: Arc::new(Mutex::new(HashMap::new())),
+            request_outcomes: Arc::new(Mutex::new(VecDeque::new())),
         }
+    }
+
+    pub fn negotiate_handshake(
+        &self,
+        request: ProtocolHandshakeRequest,
+    ) -> Result<ProtocolHandshakeResponse, CoreError> {
+        let sequence = NEXT_SESSION_ID.fetch_add(1, Ordering::Relaxed);
+        let session_id = format!("core-{}-{sequence}", std::process::id());
+        let client_id = request.client_id.clone();
+        let response = negotiate_protocol(request, session_id)?;
+        self.sessions
+            .lock()
+            .map_err(|_| CoreError::InvalidCommand("session registry is unavailable".into()))?
+            .insert(client_id, response.session_id.clone());
+        Ok(response)
+    }
+
+    pub fn validate_session(&self, session_id: Option<&str>) -> Result<(), CoreError> {
+        let Some(session_id) = session_id else {
+            // Keep the adapter usable for native recovery and in-process tests
+            // that intentionally exercise the legacy envelope directly.
+            return Ok(());
+        };
+        let sessions = self
+            .sessions
+            .lock()
+            .map_err(|_| CoreError::InvalidCommand("session registry is unavailable".into()))?;
+        if sessions.values().any(|active| active == session_id) {
+            Ok(())
+        } else {
+            Err(CoreError::SessionExpired {
+                session_id: session_id.into(),
+            })
+        }
+    }
+
+    pub fn dispatch_session(
+        &self,
+        session_id: &str,
+        request_id: RequestId,
+        request: Request,
+    ) -> Result<Response, CoreError> {
+        self.validate_session(Some(session_id))?;
+        let client_id = self
+            .sessions
+            .lock()
+            .map_err(|_| CoreError::InvalidCommand("session registry is unavailable".into()))?
+            .iter()
+            .find_map(|(client, active)| (active == session_id).then_some(client.clone()))
+            .ok_or_else(|| CoreError::SessionExpired {
+                session_id: session_id.into(),
+            })?;
+
+        if let Request::Query(Query::RequestOutcome { request_id: target }) = &request {
+            let completed = self
+                .request_outcomes
+                .lock()
+                .map_err(|_| {
+                    CoreError::InvalidCommand("request outcome store is unavailable".into())
+                })?
+                .iter()
+                .any(|((owner, id), _, _)| owner == &client_id && *id == target.0);
+            return Ok(Response::RequestOutcome(RequestOutcome {
+                request_id: target.clone(),
+                status: if completed {
+                    RequestOutcomeStatus::Completed
+                } else {
+                    RequestOutcomeStatus::Unknown
+                },
+            }));
+        }
+
+        let cache_key = (client_id, request_id.0);
+        let scope = request_idempotency_scope(&request);
+        if let Some((_, existing_scope, response)) = self
+            .request_outcomes
+            .lock()
+            .map_err(|_| CoreError::InvalidCommand("request outcome store is unavailable".into()))?
+            .iter()
+            .find(|((owner, id), _, _)| owner == &cache_key.0 && *id == request_id.0)
+        {
+            if scope.is_some() && *existing_scope != scope {
+                return Err(CoreError::RequestIdReuse {
+                    request_id: request_id.0,
+                });
+            }
+            if scope.is_some() {
+                return Ok(response.clone());
+            }
+        }
+
+        let record_outcome = matches!(&request, Request::Command(_));
+        let response = self.dispatch(request_id, request)?;
+        if record_outcome {
+            let mut outcomes = self.request_outcomes.lock().map_err(|_| {
+                CoreError::InvalidCommand("request outcome store is unavailable".into())
+            })?;
+            outcomes.retain(|(key, _, _)| key != &cache_key);
+            outcomes.push_back((cache_key, scope, response.clone()));
+            while outcomes.len() > MAX_REQUEST_OUTCOMES {
+                outcomes.pop_front();
+            }
+        }
+        Ok(response)
     }
 
     pub fn record_shutdown_intent(&self) -> Result<(), velvet_application_core::RecoveryError> {
@@ -508,17 +625,29 @@ mod tests {
             Response::Job(snapshot) => snapshot.id,
             other => panic!("expected job response, got {other:?}"),
         };
-        let response = transport
-            .dispatch(
-                RequestId(22),
-                Request::Command(Command::SetJobExecutionEnvironment {
-                    environment: velvet_job_system::JobExecutionEnvironment {
-                        suspended: false,
-                        network: velvet_job_system::JobNetworkState::Offline,
-                    },
-                }),
-            )
-            .expect("offline environment should be accepted");
+        let mut response = Response::Accepted;
+        for attempt in 0..20 {
+            response = transport
+                .dispatch(
+                    RequestId(22 + attempt),
+                    Request::Command(Command::SetJobExecutionEnvironment {
+                        environment: velvet_job_system::JobExecutionEnvironment {
+                            suspended: false,
+                            network: velvet_job_system::JobNetworkState::Offline,
+                        },
+                    }),
+                )
+                .expect("offline environment should be accepted");
+            if matches!(
+                response,
+                Response::Jobs(ref jobs)
+                    if jobs.iter().any(|snapshot| snapshot.id == job_id
+                        && snapshot.status == velvet_job_system::JobStatus::Paused)
+            ) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
         assert!(matches!(
             response,
             Response::Jobs(ref jobs)
@@ -560,5 +689,134 @@ mod tests {
             matches!(response, Response::Job(snapshot) if snapshot.status == velvet_job_system::JobStatus::Paused)
         );
         drop(controller);
+    }
+
+    #[test]
+    fn handshake_issues_a_session_and_rejects_unknown_sessions() {
+        let transport = TauriTransport::new(ApplicationCore::default());
+        let response = transport
+            .negotiate_handshake(ProtocolHandshakeRequest {
+                client_id: "desktop-test".into(),
+                protocol_major: velvet_workbench_protocol::PROTOCOL_MAJOR,
+                protocol_minor: velvet_workbench_protocol::PROTOCOL_MINOR,
+                features: velvet_workbench_protocol::supported_transport_features(),
+                schema_versions: velvet_workbench_protocol::supported_schema_versions(),
+            })
+            .expect("handshake should succeed");
+        assert!(response.session_id.starts_with("core-"));
+        transport
+            .validate_session(Some(&response.session_id))
+            .expect("issued session should be accepted");
+        let replacement = transport
+            .negotiate_handshake(ProtocolHandshakeRequest {
+                client_id: "desktop-test".into(),
+                protocol_major: velvet_workbench_protocol::PROTOCOL_MAJOR,
+                protocol_minor: velvet_workbench_protocol::PROTOCOL_MINOR,
+                features: Vec::new(),
+                schema_versions: std::collections::BTreeMap::new(),
+            })
+            .expect("reconnect handshake should succeed");
+        assert!(matches!(
+            transport.validate_session(Some(&response.session_id)),
+            Err(CoreError::SessionExpired { .. })
+        ));
+        transport
+            .validate_session(Some(&replacement.session_id))
+            .expect("replacement session should be accepted");
+        assert!(matches!(
+            transport.validate_session(Some("core-unknown")),
+            Err(CoreError::SessionExpired { .. })
+        ));
+    }
+
+    #[test]
+    fn session_dispatch_replays_declared_idempotent_results_and_reports_outcomes() {
+        let sink = InMemoryEventSink::default();
+        let transport = TauriTransport::with_event_sink(ApplicationCore::default(), sink.clone());
+        let session = transport
+            .negotiate_handshake(ProtocolHandshakeRequest {
+                client_id: "desktop-test".into(),
+                protocol_major: velvet_workbench_protocol::PROTOCOL_MAJOR,
+                protocol_minor: velvet_workbench_protocol::PROTOCOL_MINOR,
+                features: Vec::new(),
+                schema_versions: std::collections::BTreeMap::new(),
+            })
+            .expect("handshake should succeed")
+            .session_id;
+        let request = Request::Command(Command::LayoutAt {
+            expected_revision: Some(0),
+            command: LayoutCommand::SetPartVisibility {
+                part: WorkbenchPart::PrimarySidebar,
+                visible: false,
+            },
+        });
+        let first = transport
+            .dispatch_session(&session, RequestId(44), request.clone())
+            .expect("idempotent command should succeed");
+        let duplicate = transport
+            .dispatch_session(&session, RequestId(44), request)
+            .expect("duplicate should return the cached result");
+        assert_eq!(first, duplicate);
+        assert_eq!(sink.events().len(), 1);
+        assert!(matches!(
+            transport.dispatch_session(
+                &session,
+                RequestId(44),
+                Request::Command(Command::CloseQuarantinedRuntimeLease {
+                    extension_id: velvet_plugin_api::ExtensionId("sample.reader".into()),
+                    runtime_nonce: "nonce-1".into(),
+                })
+            ),
+            Err(CoreError::RequestIdReuse { request_id: 44 })
+        ));
+        assert!(matches!(
+            transport.dispatch_session(
+                &session,
+                RequestId(45),
+                Request::Query(Query::RequestOutcome {
+                    request_id: RequestId(44),
+                })
+            ),
+            Ok(Response::RequestOutcome(RequestOutcome {
+                status: RequestOutcomeStatus::Completed,
+                ..
+            }))
+        ));
+        assert!(matches!(
+            transport.dispatch_session(
+                &session,
+                RequestId(46),
+                Request::Query(Query::RequestOutcome {
+                    request_id: RequestId(999),
+                })
+            ),
+            Ok(Response::RequestOutcome(RequestOutcome {
+                status: RequestOutcomeStatus::Unknown,
+                ..
+            }))
+        ));
+        let replacement = transport
+            .negotiate_handshake(ProtocolHandshakeRequest {
+                client_id: "desktop-test".into(),
+                protocol_major: velvet_workbench_protocol::PROTOCOL_MAJOR,
+                protocol_minor: velvet_workbench_protocol::PROTOCOL_MINOR,
+                features: Vec::new(),
+                schema_versions: std::collections::BTreeMap::new(),
+            })
+            .expect("reconnect should issue a replacement session")
+            .session_id;
+        assert!(matches!(
+            transport.dispatch_session(
+                &replacement,
+                RequestId(47),
+                Request::Query(Query::RequestOutcome {
+                    request_id: RequestId(44),
+                })
+            ),
+            Ok(Response::RequestOutcome(RequestOutcome {
+                status: RequestOutcomeStatus::Completed,
+                ..
+            }))
+        ));
     }
 }

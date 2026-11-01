@@ -4,16 +4,22 @@
  */
 export const PROTOCOL_VERSION = 1 as const;
 export type ProtocolVersion = typeof PROTOCOL_VERSION;
+export const PROTOCOL_MAJOR = 1 as const;
+export const PROTOCOL_MINOR = 0 as const;
+export const TRANSPORT_FEATURE_SESSION_V1 = 'session-v1' as const;
+export const TRANSPORT_FEATURE_SCHEMA_NEGOTIATION_V1 = 'schema-negotiation-v1' as const;
 export const PROFILE_SCHEMA_VERSION = 1 as const;
 export type ProfileSchemaVersion = typeof PROFILE_SCHEMA_VERSION;
 export const PLUGIN_RESOURCE_SCHEMA_VERSION = 1 as const;
 export type PluginResourceSchemaVersion = typeof PLUGIN_RESOURCE_SCHEMA_VERSION;
 export const RECOVERY_SCHEMA_VERSION = 1 as const;
 export type RecoverySchemaVersion = typeof RECOVERY_SCHEMA_VERSION;
+export const CORE_SNAPSHOT_SCHEMA_VERSION = 1 as const;
 export const RECOVERY_DIAGNOSTIC_SCHEMA_VERSION = 1 as const;
 export type RecoveryDiagnosticSchemaVersion = typeof RECOVERY_DIAGNOSTIC_SCHEMA_VERSION;
 export const PLUGIN_DIAGNOSTIC_SCHEMA_VERSION = 1 as const;
 export type PluginDiagnosticSchemaVersion = typeof PLUGIN_DIAGNOSTIC_SCHEMA_VERSION;
+export const CRASH_CAPTURE_SCHEMA_VERSION = 1 as const;
 export type WorkbenchAppId = string;
 /** Compatibility alias for older clients and migration code. */
 export type WorkspaceId = WorkbenchAppId;
@@ -153,6 +159,12 @@ export type CoreRequest =
       readonly kind: 'query-plugin-install-recovery-log';
     }
   | { readonly protocolVersion: ProtocolVersion; readonly kind: 'query-jobs' }
+  | { readonly protocolVersion: ProtocolVersion; readonly kind: 'query-snapshot' }
+  | {
+      readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'query-request-outcome';
+      readonly requestId: number;
+    }
   | {
       readonly protocolVersion: ProtocolVersion;
       readonly kind: 'query-plugin-projection';
@@ -371,7 +383,25 @@ export type CoreResponse =
     }
   | { readonly kind: 'job'; readonly job: CoreJobSnapshot }
   | { readonly kind: 'jobs'; readonly jobs: readonly CoreJobSnapshot[] }
+  | { readonly kind: 'snapshot'; readonly snapshot: CoreAuthoritativeSnapshot }
+  | { readonly kind: 'request-outcome'; readonly outcome: CoreRequestOutcome }
   | { readonly kind: 'accepted' };
+
+export type CoreRequestOutcomeStatus = 'unknown' | 'completed';
+
+export interface CoreRequestOutcome {
+  readonly requestId: number;
+  readonly status: CoreRequestOutcomeStatus;
+}
+
+export interface CoreAuthoritativeSnapshot {
+  readonly schemaVersion: number;
+  readonly layout: LayoutSnapshot;
+  readonly profile: CoreProfileState;
+  readonly recovery: CoreRecoveryProjection;
+  readonly jobs: readonly CoreJobSnapshot[];
+  readonly extensions: readonly CorePluginSummary[];
+}
 
 export interface CorePreviewCandidate {
   readonly providerId: string;
@@ -941,6 +971,29 @@ export interface CorePluginResource {
 export interface CoreTransport {
   request(request: CoreRequest): Promise<CoreResponse>;
   subscribe(listener: (event: CoreEvent) => void): () => void;
+}
+
+export interface ProtocolHandshakeRequest {
+  readonly clientId: string;
+  readonly protocolMajor: number;
+  readonly protocolMinor: number;
+  readonly features: readonly string[];
+  readonly schemaVersions: Readonly<Record<string, number>>;
+}
+
+export interface ProtocolHandshakeResponse {
+  readonly protocolMajor: number;
+  readonly protocolMinor: number;
+  readonly selectedFeatures: readonly string[];
+  readonly schemaVersions: Readonly<Record<string, number>>;
+  readonly sessionId: string;
+}
+
+export interface SessionAwareCoreTransport extends CoreTransport {
+  connect(): Promise<ProtocolHandshakeResponse>;
+  reconnect(): Promise<ProtocolHandshakeResponse>;
+  resync(): Promise<CoreAuthoritativeSnapshot>;
+  queryRequestOutcome(requestId: number): Promise<CoreRequestOutcome>;
 }
 
 export type CoreEvent =

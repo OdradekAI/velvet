@@ -614,12 +614,17 @@ export class PluginClient {
         'core',
       );
     }
+    this.acceptCoreExtensions(response.extensions);
+    return response.extensions;
+  }
+
+  /** Applies the Rust-owned extension inventory after a transport resync. */
+  public acceptCoreExtensions(summaries: readonly CorePluginSummary[]): void {
     this.coreSummaries.clear();
-    for (const summary of response.extensions) {
+    for (const summary of summaries) {
       this.coreSummaries.set(summary.id, summary);
     }
     this.notify();
-    return response.extensions;
   }
 
   public async queryCoreInstallRecoveries(): Promise<readonly CorePluginInstallRecovery[]> {

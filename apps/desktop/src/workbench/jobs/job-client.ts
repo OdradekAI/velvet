@@ -46,6 +46,15 @@ export class JobClient {
     this.emit();
   }
 
+  /** Replaces the renderer projection with the authoritative Rust snapshot. */
+  public acceptSnapshots(snapshots: readonly CoreJobSnapshot[]): void {
+    this.jobs.clear();
+    for (const snapshot of snapshots) {
+      this.jobs.set(snapshot.id, snapshot);
+    }
+    this.emit();
+  }
+
   public subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);

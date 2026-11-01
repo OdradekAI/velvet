@@ -1787,6 +1787,22 @@ impl ApplicationCore {
                 .map(Response::PluginRuntimeRecovery)
                 .map_err(plugin_error),
             Request::Query(Query::Jobs) => Ok(Response::Jobs(self.job_snapshots())),
+            Request::Query(Query::Snapshot) => Ok(Response::Snapshot(
+                velvet_workbench_protocol::AuthoritativeSnapshot {
+                    schema_version: velvet_workbench_protocol::CORE_SNAPSHOT_SCHEMA_VERSION,
+                    layout: self.layout.snapshot(),
+                    profile: self.profile.clone(),
+                    recovery: self.recovery_projection(),
+                    jobs: self.job_snapshots(),
+                    extensions: self.plugins.discover(),
+                },
+            )),
+            Request::Query(Query::RequestOutcome { request_id }) => Ok(Response::RequestOutcome(
+                velvet_workbench_protocol::RequestOutcome {
+                    request_id,
+                    status: velvet_workbench_protocol::RequestOutcomeStatus::Unknown,
+                },
+            )),
             Request::Query(Query::PluginProjection { extension_id }) => self
                 .plugins
                 .projection(&extension_id)

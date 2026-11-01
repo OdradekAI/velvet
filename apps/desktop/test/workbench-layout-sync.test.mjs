@@ -135,4 +135,23 @@ assert.deepEqual(
   },
 );
 
+workbench.applyAuthoritativeSnapshot({
+  schemaVersion: 1,
+  layout: { ...snapshot, revision: snapshot.revision + 1 },
+  profile: { schemaVersion: 1, revision: 2, locale: 'en' },
+  recovery: {
+    schemaVersion: 1,
+    mode: 'ready',
+    phase: 'ready',
+    attemptId: 1,
+    consecutiveFailures: 0,
+    lastFailure: null,
+    lastGood: null,
+    actions: [],
+  },
+  jobs: [],
+  extensions: [],
+});
+assert.equal(workbench.layout.snapshot().revision, snapshot.revision + 1);
+
 console.log('Workbench layout contribution sync tests passed.');

@@ -22,6 +22,11 @@ export class RecoveryClient {
     return this.projectionState;
   }
 
+  /** Applies an authoritative Rust projection after a transport resync. */
+  public acceptSnapshot(projection: CoreRecoveryProjection): void {
+    this.accept(projection);
+  }
+
   public subscribe(listener: (projection: CoreRecoveryProjection) => void): () => void {
     this.listeners.add(listener);
     if (this.projectionState) {

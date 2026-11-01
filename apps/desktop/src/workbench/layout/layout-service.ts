@@ -40,6 +40,11 @@ export class LayoutService {
     return this.snapshotValue;
   }
 
+  /** Applies a Rust-owned snapshot after transport reconnect without issuing a write. */
+  public acceptSnapshot(snapshot: LayoutSnapshot): LayoutSnapshot {
+    return this.setSnapshot(snapshot);
+  }
+
   public subscribe(listener: LayoutListener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);

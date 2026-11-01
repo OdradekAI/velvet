@@ -160,6 +160,11 @@ export class LocalizationService {
     return this.applyProfile(response.state);
   }
 
+  /** Applies the Rust-owned Profile projection after a transport resync. */
+  public acceptProfile(profile: CoreProfileState): boolean {
+    return this.applyProfile(profile);
+  }
+
   /** Registers valid bundles and keeps a broken bundle local to its extension. */
   public registerExtension(
     extensionId: string,

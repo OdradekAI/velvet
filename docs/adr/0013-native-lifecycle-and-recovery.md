@@ -449,29 +449,38 @@ normal Workbench shell.
 `CoreTransport` uses one versioned envelope mapped explicitly through the Tauri
 adapter. Protocol major versions must match; minor versions may add optional
 fields and features. Payload schemas and feature ids are negotiated
-independently. The current alpha `protocolVersion: 1` is treated as major 1,
-minor 0 until the explicit major/minor wire shape is introduced.
+independently. The alpha `protocolVersion: 1` envelope remains the legacy
+per-request discriminator, while the explicit Tauri handshake now carries
+`protocolMajor`, `protocolMinor`, feature ids and schema versions. The core
+selects the lower compatible minor, ignores unknown optional features and
+returns a fresh `sessionId`.
 
-Each transport starts with a typed handshake that selects the protocol,
-features and payload schemas and assigns a fresh `sessionId`. Required envelope
-metadata includes protocol, session, request, kind/method, payload schema,
-revision/sequence and deadline. Unknown optional fields may be ignored;
-unknown required fields and incompatible versions return typed errors.
+Each transport starts with a typed handshake that carries a stable per-client
+`clientId`, selects the protocol, features and payload schemas and assigns a
+fresh `sessionId`. A reconnect for the same client retires its previous
+session. Tauri command envelopes carry and validate that session before core
+dispatch. Event envelopes carry a monotonic sequence; duplicate/old events are
+ignored and a gap triggers a fresh session plus snapshot resync. Unknown
+optional fields may be ignored; unknown required fields and incompatible
+versions return typed errors.
 
 `requestId` is a logical idempotency key only for commands whose contract
-declares idempotency. The core keeps a bounded recent-result record for those
-commands, scoped to the command owner and retention window. Queries may retry
-after reconnect; mutations with unknown outcomes first query authoritative
-state and reuse the same key only when their command contract allows it.
-External side effects are never replayed blindly, and a request id by itself
-does not make an external API call idempotent. Events use monotonic sequence
-numbers and revisioned snapshots; duplicate events are ignored and sequence
-gaps trigger bounded snapshot resync.
+declares idempotency. The Tauri adapter keeps a bounded, client-scoped recent
+outcome record across session replacement, replays only declared idempotent results and exposes a typed
+`query-request-outcome` query. Queries may retry after reconnect; mutations
+with unknown outcomes query the authoritative outcome first and reuse the same
+key only when their command contract allows it. External side effects are
+never replayed blindly, and a request id by itself does not make an external
+API call idempotent.
 
 Reconnect retains the last valid projection in a read-only degraded state,
-creates a fresh session, performs a complete authoritative snapshot resync and
-recreates plugin/UI Bridge sessions from Rust-owned projections. No unbounded
-event replay log is required, and old-session events or handles are ignored.
+creates a fresh session through the typed handshake and queries the bounded
+authoritative snapshot of Layout/Profile/Recovery/Job/Extension projections.
+The desktop transport automatically performs this resync after an event
+sequence gap and hands the snapshot to the Workbench integration seam; it does
+not replay side-effecting commands. Plugin/UI Bridge session recreation and
+read-only projection plumbing remain consumers of this seam. No unbounded event
+replay log is required, and old-session events or handles must be ignored.
 
 ### Plugin and Job resource governance
 

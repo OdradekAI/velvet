@@ -5,7 +5,7 @@ import { JobClient } from './jobs/job-client.js';
 import { PreviewHost } from './preview/preview-host.js';
 import { PreviewRegistry } from './preview/preview-registry.js';
 import { PreviewRendererRegistry } from './preview/preview-renderer-registry.js';
-import type { CoreTransport } from './protocol.js';
+import type { CoreAuthoritativeSnapshot, CoreTransport } from './protocol.js';
 import {
   ActivityBarContributionRegistry,
   WorkbenchAppRegistry,
@@ -80,6 +80,15 @@ export class Workbench {
     this.registerBuiltInLayoutCommands();
     this.layout.subscribe(() => this.scheduleLayoutContributionSync());
     this.views.subscribe(() => this.scheduleLayoutContributionSync());
+  }
+
+  /** Applies one Rust-owned snapshot without replaying renderer mutations. */
+  public applyAuthoritativeSnapshot(snapshot: CoreAuthoritativeSnapshot): void {
+    this.layout.acceptSnapshot(snapshot.layout);
+    this.localization.acceptProfile(snapshot.profile);
+    this.recovery.acceptSnapshot(snapshot.recovery);
+    this.jobs.acceptSnapshots(snapshot.jobs);
+    this.plugins.acceptCoreExtensions(snapshot.extensions);
   }
 
   private registerWorkbenchViews(): void {

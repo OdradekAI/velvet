@@ -17,12 +17,119 @@ use velvet_plugin_api::{
 use velvet_preview_core::{PreviewIntent, PreviewSurface, ResolvedPreview};
 
 pub const PROTOCOL_VERSION: u16 = 1;
+/// Major/minor transport version used during connection negotiation.
+///
+/// `PROTOCOL_VERSION` remains the legacy per-request discriminator while the
+/// handshake gives the desktop and core an explicit compatibility window.
+pub const PROTOCOL_MAJOR: u16 = 1;
+pub const PROTOCOL_MINOR: u16 = 0;
+pub const TRANSPORT_FEATURE_SESSION_V1: &str = "session-v1";
+pub const TRANSPORT_FEATURE_SCHEMA_NEGOTIATION_V1: &str = "schema-negotiation-v1";
 pub const PROFILE_SCHEMA_VERSION: u16 = 1;
 pub const PLUGIN_RESOURCE_SCHEMA_VERSION: u16 = 1;
 pub const RECOVERY_SCHEMA_VERSION: u16 = 1;
 pub const RECOVERY_DIAGNOSTIC_SCHEMA_VERSION: u16 = 1;
 pub const PLUGIN_DIAGNOSTIC_SCHEMA_VERSION: u16 = 1;
 pub const CRASH_CAPTURE_SCHEMA_VERSION: u16 = 1;
+pub const CORE_SNAPSHOT_SCHEMA_VERSION: u16 = 1;
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProtocolHandshakeRequest {
+    pub client_id: String,
+    pub protocol_major: u16,
+    pub protocol_minor: u16,
+    #[serde(default)]
+    pub features: Vec<String>,
+    #[serde(default)]
+    pub schema_versions: BTreeMap<String, u16>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProtocolHandshakeResponse {
+    pub protocol_major: u16,
+    pub protocol_minor: u16,
+    pub selected_features: Vec<String>,
+    pub schema_versions: BTreeMap<String, u16>,
+    pub session_id: String,
+}
+
+pub fn supported_transport_features() -> Vec<String> {
+    vec![
+        TRANSPORT_FEATURE_SESSION_V1.into(),
+        TRANSPORT_FEATURE_SCHEMA_NEGOTIATION_V1.into(),
+    ]
+}
+
+pub fn supported_schema_versions() -> BTreeMap<String, u16> {
+    BTreeMap::from([
+        ("profile".into(), PROFILE_SCHEMA_VERSION),
+        ("recovery".into(), RECOVERY_SCHEMA_VERSION),
+        (
+            "recovery-diagnostic".into(),
+            RECOVERY_DIAGNOSTIC_SCHEMA_VERSION,
+        ),
+        ("plugin-resource".into(), PLUGIN_RESOURCE_SCHEMA_VERSION),
+        ("plugin-diagnostic".into(), PLUGIN_DIAGNOSTIC_SCHEMA_VERSION),
+        ("crash-capture".into(), CRASH_CAPTURE_SCHEMA_VERSION),
+    ])
+}
+
+pub fn negotiate_protocol(
+    request: ProtocolHandshakeRequest,
+    session_id: String,
+) -> Result<ProtocolHandshakeResponse, CoreError> {
+    if request.protocol_major != PROTOCOL_MAJOR {
+        return Err(CoreError::ProtocolMajorMismatch {
+            expected: PROTOCOL_MAJOR,
+            received: request.protocol_major,
+        });
+    }
+    if request.client_id.is_empty() {
+        return Err(CoreError::InvalidCommand(
+            "client id must not be empty".into(),
+        ));
+    }
+    if session_id.is_empty() {
+        return Err(CoreError::InvalidCommand(
+            "session id must not be empty".into(),
+        ));
+    }
+
+    let supported_features = supported_transport_features();
+    let selected_features = request
+        .features
+        .into_iter()
+        .filter(|feature| supported_features.iter().any(|item| item == feature))
+        .collect();
+    let server_schemas = supported_schema_versions();
+    let schema_versions = request
+        .schema_versions
+        .into_iter()
+        .filter_map(|(name, client_version)| {
+            server_schemas
+                .get(&name)
+                .map(|server_version| (name, client_version.min(*server_version)))
+        })
+        .collect();
+
+    Ok(ProtocolHandshakeResponse {
+        protocol_major: PROTOCOL_MAJOR,
+        protocol_minor: negotiate_minor(request.protocol_minor, PROTOCOL_MINOR),
+        selected_features,
+        schema_versions,
+        session_id,
+    })
+}
+
+fn negotiate_minor(client: u16, server: u16) -> u16 {
+    if client < server {
+        client
+    } else {
+        server
+    }
+}
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -30,6 +137,17 @@ pub struct ProfileState {
     pub schema_version: u16,
     pub revision: u64,
     pub locale: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AuthoritativeSnapshot {
+    pub schema_version: u16,
+    pub layout: LayoutState,
+    pub profile: ProfileState,
+    pub recovery: RecoveryProjection,
+    pub jobs: Vec<JobSnapshot>,
+    pub extensions: Vec<ExtensionSummary>,
 }
 
 impl Default for ProfileState {
@@ -647,6 +765,10 @@ pub enum Query {
     },
     PluginRuntimeRecovery,
     Jobs,
+    Snapshot,
+    RequestOutcome {
+        request_id: RequestId,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -672,7 +794,42 @@ pub enum Response {
     Job(JobSnapshot),
     Jobs(Vec<JobSnapshot>),
     Preview(ResolvedPreview),
+    Snapshot(AuthoritativeSnapshot),
+    RequestOutcome(RequestOutcome),
     Accepted,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RequestOutcomeStatus {
+    Unknown,
+    Completed,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RequestOutcome {
+    pub request_id: RequestId,
+    pub status: RequestOutcomeStatus,
+}
+
+/// Commands whose successful result may be safely returned again when the
+/// same request id is received within one transport session.
+pub fn is_idempotent_request(request: &Request) -> bool {
+    request_idempotency_scope(request).is_some()
+}
+
+pub fn request_idempotency_scope(request: &Request) -> Option<&'static str> {
+    match request {
+        Request::Command(Command::LayoutAt { .. }) => Some("layout-at"),
+        Request::Command(Command::CancelJob { .. }) => Some("cancel-job"),
+        Request::Command(Command::CloseQuarantinedRuntimeLease { .. }) => {
+            Some("close-quarantined-runtime-lease")
+        }
+        Request::Command(Command::SetLocale {
+            expected_revision: Some(_),
+            ..
+        }) => Some("set-locale-at-revision"),
+        Request::Command(_) | Request::Query(_) => None,
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -705,6 +862,16 @@ pub enum CoreError {
     ProtocolVersionMismatch {
         expected: u16,
         received: u16,
+    },
+    ProtocolMajorMismatch {
+        expected: u16,
+        received: u16,
+    },
+    SessionExpired {
+        session_id: String,
+    },
+    RequestIdReuse {
+        request_id: u64,
     },
     InvalidCommand(String),
     Layout(String),
@@ -1047,5 +1214,70 @@ mod tests {
         let json = serde_json::to_value(&checkpoint).expect("checkpoint should serialize");
         assert_eq!(json["schemaVersion"], 1);
         assert_eq!(json["payload"]["cursor"], 4);
+    }
+
+    #[test]
+    fn protocol_handshake_negotiates_minor_features_and_schema_versions() {
+        let response = negotiate_protocol(
+            ProtocolHandshakeRequest {
+                client_id: "desktop-test".into(),
+                protocol_major: PROTOCOL_MAJOR,
+                protocol_minor: PROTOCOL_MINOR + 1,
+                features: vec![TRANSPORT_FEATURE_SESSION_V1.into(), "future-feature".into()],
+                schema_versions: BTreeMap::from([
+                    ("profile".into(), PROFILE_SCHEMA_VERSION + 1),
+                    ("future".into(), 1),
+                ]),
+            },
+            "session-test".into(),
+        )
+        .expect("compatible protocol should negotiate");
+
+        assert_eq!(response.protocol_major, PROTOCOL_MAJOR);
+        assert_eq!(response.protocol_minor, PROTOCOL_MINOR);
+        assert_eq!(
+            response.selected_features,
+            vec![TRANSPORT_FEATURE_SESSION_V1]
+        );
+        assert_eq!(response.schema_versions["profile"], PROFILE_SCHEMA_VERSION);
+        assert!(!response.schema_versions.contains_key("future"));
+        assert_eq!(response.session_id, "session-test");
+    }
+
+    #[test]
+    fn protocol_handshake_rejects_a_major_mismatch_before_any_command() {
+        assert_eq!(
+            negotiate_protocol(
+                ProtocolHandshakeRequest {
+                    client_id: "desktop-test".into(),
+                    protocol_major: PROTOCOL_MAJOR + 1,
+                    protocol_minor: 0,
+                    features: Vec::new(),
+                    schema_versions: BTreeMap::new(),
+                },
+                "session-test".into(),
+            ),
+            Err(CoreError::ProtocolMajorMismatch {
+                expected: PROTOCOL_MAJOR,
+                received: PROTOCOL_MAJOR + 1,
+            })
+        );
+    }
+
+    #[test]
+    fn request_outcome_contract_marks_only_declared_commands_idempotent() {
+        assert!(is_idempotent_request(&Request::Command(
+            Command::CancelJob {
+                job_id: JobId("job-1".into()),
+            }
+        )));
+        assert!(!is_idempotent_request(&Request::Command(
+            Command::RetryJob {
+                job_id: JobId("job-1".into()),
+            }
+        )));
+        assert!(!is_idempotent_request(&Request::Command(Command::Layout(
+            LayoutCommand::ResetLayout,
+        ))));
     }
 }

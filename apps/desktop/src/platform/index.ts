@@ -61,6 +61,7 @@ export type {
   CoreStartupPhase,
   CorePluginResource,
   CoreProfileState,
+  CoreAuthoritativeSnapshot,
   CorePreviewContribution,
   CorePreviewContributionIntent,
   CorePreviewContributionSurface,
@@ -70,6 +71,9 @@ export type {
   CoreRequest,
   CoreResponse,
   CoreTransport,
+  SessionAwareCoreTransport,
+  ProtocolHandshakeRequest,
+  ProtocolHandshakeResponse,
   LayoutCommand,
   LayoutCommandId,
   LayoutOrderAnchor,
@@ -88,10 +92,17 @@ export {
   RECOVERY_DIAGNOSTIC_SCHEMA_VERSION,
   PLUGIN_DIAGNOSTIC_SCHEMA_VERSION,
   RECOVERY_SCHEMA_VERSION,
+  CORE_SNAPSHOT_SCHEMA_VERSION,
+  CRASH_CAPTURE_SCHEMA_VERSION,
+  PROTOCOL_MAJOR,
+  PROTOCOL_MINOR,
+  TRANSPORT_FEATURE_SESSION_V1,
+  TRANSPORT_FEATURE_SCHEMA_NEGOTIATION_V1,
 } from './protocol.js';
 export {
   CoreTransportError,
   TauriCoreTransport,
+  DEFAULT_TRANSPORT_SCHEMA_VERSIONS,
 } from './tauri-transport.js';
 export type {
   TauriBridge,

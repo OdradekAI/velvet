@@ -50,8 +50,10 @@ use velvet_tauri_adapter::{
 use velvet_workbench_protocol::{
     Command, CoreError, CoreTransport, CrashCaptureEvidence, CrashCaptureKind, Event,
     PlatformCapabilityStatus,
-    PlatformPreflightEvidence, PluginDisableReason, RecoveryFailureClass, Request, RequestEnvelope,
-    RequestId, Response, StartupPhase, PROTOCOL_VERSION,
+    PlatformPreflightEvidence, PluginDisableReason, RecoveryFailureClass, Request,
+    ProtocolHandshakeRequest, ProtocolHandshakeResponse, RequestId, Response, ResponseEnvelope,
+    StartupPhase,
+    PROTOCOL_VERSION,
 };
 
 use crash_capture::{
@@ -402,13 +404,15 @@ static NATIVE_RECOVERY_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 #[derive(Clone)]
 struct TauriEventSink<R: Runtime> {
     app: AppHandle<R>,
+    sequence: Arc<AtomicU64>,
 }
 
 impl<R: Runtime> CoreEventSink for TauriEventSink<R> {
     fn emit(&self, event: Event) {
+        let sequence = self.sequence.fetch_add(1, Ordering::Relaxed);
         let _ = self
             .app
-            .emit(CORE_EVENT_NAME, WireEventEnvelope::from(event));
+            .emit(CORE_EVENT_NAME, WireEventEnvelope::with_sequence(event, sequence));
     }
 }
 
@@ -428,6 +432,27 @@ impl From<CoreError> for WireError {
             CoreError::ProtocolVersionMismatch { expected, received } => Self {
                 code: "protocol-version-mismatch".into(),
                 message: format!("Expected protocol {expected}, received {received}"),
+                retryable: false,
+                expected_revision: None,
+                actual_revision: None,
+            },
+            CoreError::ProtocolMajorMismatch { expected, received } => Self {
+                code: "protocol-major-mismatch".into(),
+                message: format!("Expected protocol major {expected}, received {received}"),
+                retryable: false,
+                expected_revision: None,
+                actual_revision: None,
+            },
+            CoreError::SessionExpired { session_id } => Self {
+                code: "session-expired".into(),
+                message: format!("Transport session {session_id} is no longer valid"),
+                retryable: false,
+                expected_revision: None,
+                actual_revision: None,
+            },
+            CoreError::RequestIdReuse { request_id } => Self {
+                code: "request-id-reuse".into(),
+                message: format!("Request id {request_id} was already used for another command"),
                 retryable: false,
                 expected_revision: None,
                 actual_revision: None,
@@ -511,6 +536,8 @@ impl From<CoreError> for WireError {
 pub struct WireRequestEnvelope {
     pub protocol_version: u16,
     pub request_id: u64,
+    #[serde(default)]
+    pub session_id: Option<String>,
     pub request: WireRequest,
 }
 
@@ -610,6 +637,16 @@ pub enum WireRequest {
     QueryJobs {
         #[serde(rename = "protocolVersion")]
         protocol_version: u16,
+    },
+    QuerySnapshot {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+    },
+    QueryRequestOutcome {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        #[serde(rename = "requestId")]
+        request_id: u64,
     },
     QueryPluginProjection {
         #[serde(rename = "protocolVersion")]
@@ -903,6 +940,19 @@ impl WireRequest {
             Self::QueryJobs { protocol_version } => {
                 validate_inner_protocol(outer_protocol_version, protocol_version)?;
                 Ok(Request::Query(velvet_workbench_protocol::Query::Jobs))
+            }
+            Self::QuerySnapshot { protocol_version } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Query(velvet_workbench_protocol::Query::Snapshot))
+            }
+            Self::QueryRequestOutcome {
+                protocol_version,
+                request_id,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Query(velvet_workbench_protocol::Query::RequestOutcome {
+                    request_id: RequestId(request_id),
+                }))
             }
             Self::QueryPluginProjection {
                 protocol_version,
@@ -1501,10 +1551,23 @@ enum WireResponse {
     Jobs {
         jobs: Vec<WireJobSnapshot>,
     },
+    Snapshot {
+        snapshot: WireAuthoritativeSnapshot,
+    },
+    RequestOutcome {
+        outcome: WireRequestOutcome,
+    },
     Preview {
         preview: WireResolvedPreview,
     },
     Accepted,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WireRequestOutcome {
+    request_id: u64,
+    status: &'static str,
 }
 
 impl WireResponseEnvelope {
@@ -1544,6 +1607,18 @@ impl WireResponseEnvelope {
             },
             Response::Jobs(jobs) => WireResponse::Jobs {
                 jobs: jobs.into_iter().map(WireJobSnapshot::from).collect(),
+            },
+            Response::Snapshot(snapshot) => WireResponse::Snapshot {
+                snapshot: WireAuthoritativeSnapshot::from(snapshot),
+            },
+            Response::RequestOutcome(outcome) => WireResponse::RequestOutcome {
+                outcome: WireRequestOutcome {
+                    request_id: outcome.request_id.0,
+                    status: match outcome.status {
+                        velvet_workbench_protocol::RequestOutcomeStatus::Unknown => "unknown",
+                        velvet_workbench_protocol::RequestOutcomeStatus::Completed => "completed",
+                    },
+                },
             },
             Response::Preview(preview) => WireResponse::Preview {
                 preview: WireResolvedPreview::from(preview),
@@ -1826,6 +1901,7 @@ impl From<PreviewRenderer> for WirePreviewRenderer {
 #[serde(rename_all = "camelCase")]
 struct WireEventEnvelope {
     protocol_version: u16,
+    sequence: u64,
     event: WireEvent,
 }
 
@@ -1857,6 +1933,12 @@ enum WireEvent {
 
 impl From<Event> for WireEventEnvelope {
     fn from(event: Event) -> Self {
+        Self::with_sequence(event, 1)
+    }
+}
+
+impl WireEventEnvelope {
+    fn with_sequence(event: Event, sequence: u64) -> Self {
         let event = match event {
             Event::LayoutChanged { revision, state } => WireEvent::LayoutChanged {
                 revision,
@@ -1881,6 +1963,7 @@ impl From<Event> for WireEventEnvelope {
         };
         Self {
             protocol_version: PROTOCOL_VERSION,
+            sequence,
             event,
         }
     }
@@ -1904,6 +1987,34 @@ struct WireJobSnapshot {
     input: serde_json::Value,
     provenance: WireJobProvenance,
     result: Option<WireJobResult>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WireAuthoritativeSnapshot {
+    schema_version: u16,
+    layout: WireLayoutState,
+    profile: velvet_workbench_protocol::ProfileState,
+    recovery: velvet_workbench_protocol::RecoveryProjection,
+    jobs: Vec<WireJobSnapshot>,
+    extensions: Vec<WireExtensionSummary>,
+}
+
+impl From<velvet_workbench_protocol::AuthoritativeSnapshot> for WireAuthoritativeSnapshot {
+    fn from(value: velvet_workbench_protocol::AuthoritativeSnapshot) -> Self {
+        Self {
+            schema_version: value.schema_version,
+            layout: WireLayoutState::from(value.layout),
+            profile: value.profile,
+            recovery: value.recovery,
+            jobs: value.jobs.into_iter().map(WireJobSnapshot::from).collect(),
+            extensions: value
+                .extensions
+                .into_iter()
+                .map(WireExtensionSummary::from)
+                .collect(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -1997,8 +2108,50 @@ fn velvet_core_request(
     state: State<'_, AppState>,
     envelope: WireRequestEnvelope,
 ) -> Result<WireResponseEnvelope, WireError> {
+    if envelope.protocol_version != PROTOCOL_VERSION {
+        return Err(WireError::from(CoreError::ProtocolVersionMismatch {
+            expected: PROTOCOL_VERSION,
+            received: envelope.protocol_version,
+        }));
+    }
     let request = envelope.request.into_core(envelope.protocol_version)?;
-    let response = state
+    let transport = state
+        .transport
+        .lock()
+        .map_err(|_| WireError {
+            code: "core-lock-poisoned".into(),
+            message: "The application core lock is poisoned.".into(),
+            retryable: false,
+            expected_revision: None,
+            actual_revision: None,
+        })?;
+    transport
+        .validate_session(envelope.session_id.as_deref())
+        .map_err(WireError::from)?;
+    let session_id = envelope.session_id.as_deref().ok_or_else(|| WireError {
+        code: "session-required".into(),
+        message: "A negotiated transport session is required for Tauri requests.".into(),
+        retryable: false,
+        expected_revision: None,
+        actual_revision: None,
+    })?;
+    let response = transport
+        .dispatch_session(session_id, RequestId(envelope.request_id), request)
+        .map_err(WireError::from)?;
+
+    Ok(WireResponseEnvelope::from_core(ResponseEnvelope {
+        protocol_version: envelope.protocol_version,
+        request_id: RequestId(envelope.request_id),
+        response,
+    }))
+}
+
+#[tauri::command]
+fn velvet_core_handshake(
+    state: State<'_, AppState>,
+    request: ProtocolHandshakeRequest,
+) -> Result<ProtocolHandshakeResponse, WireError> {
+    state
         .transport
         .lock()
         .map_err(|_| WireError {
@@ -2008,14 +2161,8 @@ fn velvet_core_request(
             expected_revision: None,
             actual_revision: None,
         })?
-        .dispatch_envelope(RequestEnvelope {
-            protocol_version: envelope.protocol_version,
-            request_id: RequestId(envelope.request_id),
-            request,
-        })
-        .map_err(WireError::from)?;
-
-    Ok(WireResponseEnvelope::from_core(response))
+        .negotiate_handshake(request)
+        .map_err(WireError::from)
 }
 
 pub fn run() {
@@ -2100,6 +2247,7 @@ pub fn run() {
         .setup(move |app| {
             let sink = TauriEventSink {
                 app: app.handle().clone(),
+                sequence: Arc::new(AtomicU64::new(1)),
             };
             let app_data_dir = app
                 .path()
@@ -2326,7 +2474,10 @@ pub fn run() {
             show_native_recovery_surface(app.handle(), native_recovery);
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![velvet_core_request])
+        .invoke_handler(tauri::generate_handler![
+            velvet_core_handshake,
+            velvet_core_request
+        ])
         .build(tauri::generate_context!());
     match result {
         Ok(app) => {
@@ -2781,6 +2932,63 @@ mod tests {
     use super::*;
 
     #[test]
+    fn wire_transport_envelope_preserves_optional_session_and_handshake_shape() {
+        let envelope: WireRequestEnvelope = serde_json::from_value(serde_json::json!({
+            "protocolVersion": 1,
+            "requestId": 7,
+            "sessionId": "core-test-1",
+            "request": { "kind": "query-profile", "protocolVersion": 1 }
+        }))
+        .expect("session-aware request should deserialize");
+        assert_eq!(envelope.session_id.as_deref(), Some("core-test-1"));
+        assert!(matches!(envelope.request, WireRequest::QueryProfile { .. }));
+
+        let handshake = ProtocolHandshakeRequest {
+            client_id: "desktop-test".into(),
+            protocol_major: 1,
+            protocol_minor: 0,
+            features: vec!["session-v1".into()],
+            schema_versions: BTreeMap::from([("profile".into(), 1)]),
+        };
+        let json = serde_json::to_value(handshake).expect("handshake should use wire names");
+        assert_eq!(json["protocolMajor"], 1);
+        assert_eq!(json["schemaVersions"]["profile"], 1);
+    }
+
+    #[test]
+    fn wire_snapshot_and_request_outcome_keep_resync_contract_typed() {
+        let snapshot = ApplicationCore::default()
+            .dispatch(Request::Query(velvet_workbench_protocol::Query::Snapshot))
+            .expect("snapshot query should succeed");
+        let response = WireResponseEnvelope::from_core(ResponseEnvelope {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: RequestId(51),
+            response: snapshot,
+        });
+        let value = serde_json::to_value(response).expect("snapshot should serialize");
+        assert_eq!(value["response"]["kind"], "snapshot");
+        assert_eq!(value["response"]["snapshot"]["schemaVersion"], 1);
+
+        let outcome: WireRequestEnvelope = serde_json::from_value(serde_json::json!({
+            "protocolVersion": 1,
+            "requestId": 52,
+            "sessionId": "core-test-1",
+            "request": {
+                "kind": "query-request-outcome",
+                "protocolVersion": 1,
+                "requestId": 44
+            }
+        }))
+        .expect("outcome query should deserialize");
+        assert!(matches!(
+            outcome.request.into_core(1).expect("outcome query should map"),
+            Request::Query(velvet_workbench_protocol::Query::RequestOutcome {
+                request_id: RequestId(44)
+            })
+        ));
+    }
+
+    #[test]
     fn native_recovery_state_requires_a_surface_only_for_repairable_host_failures() {
         assert!(!NativeRecoveryState::default().requires_surface());
         assert!(NativeRecoveryState {
@@ -2994,6 +3202,7 @@ mod tests {
         .expect("plugin diagnostic event should serialize");
 
         assert_eq!(value["event"]["kind"], "plugin-diagnostic");
+        assert_eq!(value["sequence"], 1);
         assert_eq!(value["event"]["diagnostic"]["schemaVersion"], 1);
         assert_eq!(value["event"]["diagnostic"]["jobId"], "job-000001");
     }

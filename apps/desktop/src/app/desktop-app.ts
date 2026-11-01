@@ -1,5 +1,5 @@
 import {
-  createNativeTauriTransport,
+  createNativeTauriBridge,
   TauriShortcutAdapter,
   TauriCoreTransport,
   type TauriBridge,
@@ -44,13 +44,30 @@ export function createTauriDesktopApp(
   bridge: TauriBridge,
   options?: TauriTransportOptions,
 ): DesktopApp {
-  return createDesktopApp(new TauriCoreTransport(bridge, options));
+  let app: DesktopApp | undefined;
+  const transport = new TauriCoreTransport(bridge, {
+    ...options,
+    onResync: (snapshot) => {
+      try {
+        app?.workbench.applyAuthoritativeSnapshot(snapshot);
+      } catch {
+        // A renderer projection failure must not break the transport session.
+      }
+      try {
+        options?.onResync?.(snapshot);
+      } catch {
+        // Optional integration callbacks are isolated from core recovery.
+      }
+    },
+  });
+  app = createDesktopApp(transport);
+  return app;
 }
 
 export function createNativeTauriDesktopApp(
   options?: TauriTransportOptions,
 ): DesktopApp {
-  const app = createDesktopApp(createNativeTauriTransport(options));
+  const app = createTauriDesktopApp(createNativeTauriBridge(), options);
   const shortcuts = new TauriShortcutAdapter(app.workbench.keybindings, {
     context: () => ({
       activeAppId: app.workbench.context.snapshot().activeAppId,

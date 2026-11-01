@@ -144,7 +144,7 @@ helper 不创建 Tauri 窗口，因此不请求该集合；若未来恢复界面
 
 ## TransportSession
 
-由协议 handshake 建立的前端到 Rust 核心的逻辑会话。`sessionId` 约束事件、revision、sequence 和 opaque handle 的有效范围；重连会创建新会话并重新同步权威快照，旧会话的消息和 handle 必须丢弃。
+由协议 handshake 建立的前端到 Rust 核心的逻辑会话。当前 Tauri handshake 携带稳定的 `clientId`，协商 major/minor、feature 和 schema，并由核心签发 `sessionId`；同一 client 重连会撤销旧 session，Tauri 请求会携带并校验该 id。事件 sequence gap 会触发新 session 和 Layout/Profile/Recovery/Job/Extension 权威快照重同步；旧 handle 的插件重建仍由上层消费者完成，重连不得盲目重放 mutation。
 
 ## PlatformTier
 

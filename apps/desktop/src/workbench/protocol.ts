@@ -44,6 +44,7 @@ export type {
   CoreStartupPhase,
   CoreEvent,
   CoreError,
+  CoreAuthoritativeSnapshot,
   CoreRequest,
   CoreResponse,
   CoreTransport,
