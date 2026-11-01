@@ -36,9 +36,9 @@ pub use extension_storage::{
 };
 pub use runtime_lease::{
     ConservativeRuntimeOrphanReconciler, InMemoryRuntimeLeaseStore, JsonFileRuntimeLeaseStore,
-    PlatformRuntimeOrphanReconciler, RuntimeLease, RuntimeLeaseError, RuntimeLeaseState,
-    RuntimeLeaseStore, RuntimeOrphanObservation, RuntimeOrphanReconciler, RuntimeOrphanReport,
-    RuntimeProcessIdentity, MAX_RUNTIME_LEASES, MAX_RUNTIME_LEASE_STORE_BYTES,
+    PlatformRuntimeOrphanReconciler, QuarantinedRuntimeLease, RuntimeLease, RuntimeLeaseError,
+    RuntimeLeaseState, RuntimeLeaseStore, RuntimeOrphanObservation, RuntimeOrphanReconciler,
+    RuntimeOrphanReport, RuntimeProcessIdentity, MAX_RUNTIME_LEASES, MAX_RUNTIME_LEASE_STORE_BYTES,
     RUNTIME_LEASE_SCHEMA_VERSION,
 };
 
@@ -1960,6 +1960,12 @@ pub trait PluginHost {
         id: &ExtensionId,
         generation: u64,
     ) -> Result<(), PluginError>;
+    fn quarantined_runtime_leases(&self) -> Result<Vec<QuarantinedRuntimeLease>, PluginError>;
+    fn close_quarantined_runtime_lease(
+        &mut self,
+        extension_id: &ExtensionId,
+        runtime_nonce: &str,
+    ) -> Result<(), PluginError>;
     fn reconcile_runtime_orphans(&mut self) -> Result<Vec<RuntimeOrphanReport>, PluginError> {
         Ok(Vec::new())
     }
@@ -2382,6 +2388,83 @@ impl InMemoryPluginHost {
             kind: PluginDiagnosticKind::Storage,
             code: "storage-quarantined".into(),
             message: format!("quarantined extension storage generation {generation}"),
+            job_id: None,
+            attempt: None,
+            retryable: false,
+        });
+        Ok(())
+    }
+
+    pub fn quarantined_runtime_leases(&self) -> Result<Vec<QuarantinedRuntimeLease>, PluginError> {
+        let Some(store) = self.runtime_leases.as_ref() else {
+            return Ok(Vec::new());
+        };
+        store
+            .load()
+            .map_err(|error| PluginError::RuntimeLease {
+                extension_id: ExtensionId("runtime".into()),
+                message: format!("runtime leases could not be loaded: {error:?}"),
+            })
+            .map(|leases| {
+                leases
+                    .into_iter()
+                    .filter(|lease| matches!(lease.state, RuntimeLeaseState::Quarantined))
+                    .map(|lease| QuarantinedRuntimeLease {
+                        extension_id: lease.extension_id,
+                        runtime_nonce: lease.runtime_nonce,
+                        started_at_ms: lease.started_at_ms,
+                    })
+                    .collect()
+            })
+    }
+
+    pub fn close_quarantined_runtime_lease(
+        &mut self,
+        extension_id: &ExtensionId,
+        runtime_nonce: &str,
+    ) -> Result<(), PluginError> {
+        let Some(store) = self.runtime_leases.as_ref() else {
+            return Err(PluginError::RuntimeLease {
+                extension_id: extension_id.clone(),
+                message: "runtime lease store is unavailable".into(),
+            });
+        };
+        let lease = store
+            .load()
+            .map_err(|error| PluginError::RuntimeLease {
+                extension_id: extension_id.clone(),
+                message: format!("runtime leases could not be loaded: {error:?}"),
+            })?
+            .into_iter()
+            .find(|lease| {
+                lease.extension_id == *extension_id && lease.runtime_nonce == runtime_nonce
+            })
+            .ok_or_else(|| PluginError::RuntimeLease {
+                extension_id: extension_id.clone(),
+                message: "quarantined runtime lease was not found".into(),
+            })?;
+        if !matches!(lease.state, RuntimeLeaseState::Quarantined) {
+            return Err(PluginError::RuntimeLease {
+                extension_id: extension_id.clone(),
+                message: "only a quarantined runtime lease can be closed".into(),
+            });
+        }
+        store
+            .close(extension_id, runtime_nonce)
+            .map_err(|error| PluginError::RuntimeLease {
+                extension_id: extension_id.clone(),
+                message: format!("quarantined runtime lease could not be closed: {error:?}"),
+            })?;
+        if let Some(state) = self.states.get_mut(extension_id) {
+            *state = ExtensionState::Failed;
+        }
+        self.record_diagnostic(PluginDiagnosticInput {
+            extension_id: extension_id.clone(),
+            kind: PluginDiagnosticKind::Runtime,
+            code: "runtime-orphan-quarantine-closed".into(),
+            message:
+                "quarantined runtime evidence was explicitly closed; no process was terminated"
+                    .into(),
             job_id: None,
             attempt: None,
             retryable: false,
@@ -4559,6 +4642,18 @@ impl PluginHost for InMemoryPluginHost {
         generation: u64,
     ) -> Result<(), PluginError> {
         InMemoryPluginHost::quarantine_extension_state(self, id, generation)
+    }
+
+    fn quarantined_runtime_leases(&self) -> Result<Vec<QuarantinedRuntimeLease>, PluginError> {
+        InMemoryPluginHost::quarantined_runtime_leases(self)
+    }
+
+    fn close_quarantined_runtime_lease(
+        &mut self,
+        extension_id: &ExtensionId,
+        runtime_nonce: &str,
+    ) -> Result<(), PluginError> {
+        InMemoryPluginHost::close_quarantined_runtime_lease(self, extension_id, runtime_nonce)
     }
 
     fn reconcile_runtime_orphans(&mut self) -> Result<Vec<RuntimeOrphanReport>, PluginError> {
@@ -7261,6 +7356,16 @@ mod tests {
             .reconcile_runtime_orphans()
             .expect("a quarantined orphan should remain inert");
         assert!(second_reports[0].quarantined);
+        let recoveries = host
+            .quarantined_runtime_leases()
+            .expect("quarantined lease evidence should be queryable");
+        assert_eq!(recoveries.len(), 1);
+        host.close_quarantined_runtime_lease(&id, "uncertain-nonce")
+            .expect("the user should be able to close quarantined evidence");
+        assert!(host
+            .quarantined_runtime_leases()
+            .expect("the lease store should remain readable")
+            .is_empty());
         assert!(host
             .drain_diagnostics()
             .iter()

@@ -163,6 +163,7 @@ export type CoreRequest =
       readonly kind: 'query-plugin-storage-recovery';
       readonly extensionId: string;
     }
+  | { readonly protocolVersion: ProtocolVersion; readonly kind: 'query-plugin-runtime-recovery' }
   | {
       readonly protocolVersion: ProtocolVersion;
       readonly kind: 'register-plugin';
@@ -199,6 +200,12 @@ export type CoreRequest =
       readonly kind: 'quarantine-plugin-state';
       readonly extensionId: string;
       readonly generation: number;
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'close-quarantined-runtime-lease';
+      readonly extensionId: string;
+      readonly runtimeNonce: string;
     }
   | {
       readonly protocolVersion: ProtocolVersion;
@@ -351,6 +358,10 @@ export type CoreResponse =
       readonly kind: 'plugin-storage-recovery';
       readonly recovery: CorePluginStorageRecovery;
     }
+  | {
+      readonly kind: 'plugin-runtime-recovery';
+      readonly recoveries: readonly CorePluginRuntimeRecovery[];
+    }
   | { readonly kind: 'job'; readonly job: CoreJobSnapshot }
   | { readonly kind: 'jobs'; readonly jobs: readonly CoreJobSnapshot[] }
   | { readonly kind: 'accepted' };
@@ -456,7 +467,8 @@ export type CoreRecoveryFailureClass =
   | 'core-migration'
   | 'state-corrupt'
   | 'journal-unavailable'
-  | 'optional-component';
+  | 'optional-component'
+  | 'platform-initialization';
 export type CoreRecoveryAction =
   | 'retry'
   | 'disable-recent-component'
@@ -787,6 +799,15 @@ export interface CorePluginStorageRecovery {
   readonly previousSchemaVersion: number | null;
   readonly quarantineGeneration: number | null;
   readonly reason: string | null;
+}
+
+export type CorePluginRuntimeRecoveryState = 'quarantined';
+
+export interface CorePluginRuntimeRecovery {
+  readonly extensionId: string;
+  readonly runtimeNonce: string;
+  readonly state: CorePluginRuntimeRecoveryState;
+  readonly startedAtMs: number;
 }
 
 export interface CoreError {

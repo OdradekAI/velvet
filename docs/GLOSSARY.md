@@ -48,6 +48,14 @@ FeedItem 关联的内容快照、附件或解析结果。Capture 可以在保留
 
 核心重启时对未关闭 RuntimeLease 的恢复流程。宿主必须先验证 PID/start-token、process group 或 Job Object 等平台身份，再决定终止；身份不确定时进入 quarantine，不因 PID 单独匹配而杀进程。确认孤儿后移除插件投影、将其 Jobs 标为 Interrupted，同时保留已提交扩展数据。
 
+## Quarantined runtime lease
+
+身份无法安全确认或已确认但无法终止的 RuntimeLease。它只保留扩展、runtime nonce 和时间等有限证据，后续启动不会再次探测或终止；用户可通过宿主拥有的显式动作关闭记录，关闭记录不会终止进程。
+
+## Platform initialization failure
+
+Tauri builder、setup 或 run loop 在 Workbench 就绪前报告的宿主初始化失败。宿主把阶段和有界错误文本写入本地 marker，下一次成功启动将其转换为 typed recovery evidence；它不代表平台一定能在 Tauri 代码执行前捕获 WebView/GPU 创建失败。
+
 ## Contribution scope
 
 Contribution 的作用范围。`workbench` 表示全局工作台，`workbench-app` 表示一个指定的 WorkbenchApp，`capability` 表示可复用的数据、预览、处理或任务能力。
@@ -171,6 +179,10 @@ Asset source 当前是否可访问的 Rust 投影。移动硬盘或网络盘断�
 ## Profile locale
 
 由 Rust Profile state 持有的工作台显示语言和 revision。桌面 LocalizationService 通过 CoreTransport 查询、设置并投影该状态；插件 bundle 只提供扩展自己的消息资源，不拥有全局 locale。
+
+## Native host locale
+
+原生恢复动作使用的宿主文案语言。它从 Rust-owned Profile locale 选择受支持的 host copy，并在未知或不受支持的 locale 上回退到 English；插件 localization 不进入原生恢复路径。
 
 ## Plugin resource loader
 

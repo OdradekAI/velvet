@@ -48,6 +48,16 @@ pub struct RuntimeLease {
     pub started_at_ms: u64,
 }
 
+/// Safe, user-facing evidence for a quarantined lease. Process identity and
+/// package paths stay inside the host so a recovery surface cannot turn this
+/// projection into a process-control API.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct QuarantinedRuntimeLease {
+    pub extension_id: ExtensionId,
+    pub runtime_nonce: String,
+    pub started_at_ms: u64,
+}
+
 impl RuntimeLease {
     pub fn starting(
         extension_id: ExtensionId,

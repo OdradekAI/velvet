@@ -135,10 +135,16 @@ The Tauri composition also provides a minimal host-native recovery surface
 through the native dialog plugin. Once Tauri host setup has completed, it is
 shown for Safe Mode, orphan runtime evidence and repairable extension storage
 damage, uses no renderer or plugin code, and offers only typed
-restore/quarantine/continue actions. This covers renderer mount failure without
-making a stronger claim about a platform failure that prevents Tauri setup or
-native dialog initialization; host locale integration, platform WebView-init
-probes and a richer native repair window remain separate gates.
+restore/quarantine/close-evidence/continue actions. Its copy follows the
+Rust-owned Profile locale with a bounded English fallback. The repair flow is
+sequenced so a user can quarantine damaged extension state, then explicitly
+forget a quarantined runtime lease; forgetting evidence never terminates a
+process. Tauri build/setup failures and panics from the run loop are caught by
+the host, written as a bounded startup-failure marker and consumed into the
+next launch's typed recovery projection. A platform failure before Tauri can
+run any code still depends on the OS launcher or release wrapper; platform
+specific WebView/GPU probes and a richer standalone native repair window remain
+separate gates.
 
 The persistence crate now provides a framework-independent `StateSnapshotStore`
 primitive. It validates owner and scope segments, bounds payloads, records a
@@ -179,8 +185,8 @@ component failure and clears that owner's projections and Jobs; it does not
 increment the core pre-ready Safe Mode counter.
 
 This slice is deliberately narrower than the full decision: crash-capture
-correlation in the `DiagnosticBundle`, host locale integration and a richer
-native repair window are still implementation gates. The
+correlation in the `DiagnosticBundle`, platform-specific WebView/GPU probes
+and a richer standalone native repair window are still implementation gates. The
 bundle already carries the bounded persisted plugin/Job history. A successful
 renderer `RecoverySet` restore or quarantine action requests a fresh startup so
 the selected set becomes live; extension-store actions leave only that
@@ -212,8 +218,10 @@ silently deleted. Unknown/corrupt extension generations are repaired by
 quarantining the exact generation discovered from the snapshot filename
 metadata; a later restore can use the previous validated generation. Automatic
 orphan policy now persists uncertain identities as `Quarantined` leases so a
-future launch will not repeatedly inspect or kill them; an explicit lifecycle
-action may close the lease after the user has reviewed the evidence. When an
+future launch will not repeatedly inspect or kill them; the typed
+`query-plugin-runtime-recovery` projection exposes only bounded evidence and
+`close-quarantined-runtime-lease` removes one record after user review without
+terminating a process. When an
 external extension is activated after an installed upgrade and its committed
 store has an older schema, activation runs `storage.migrate` before exposing
 the extension as ready; a failed migration leaves the extension failed and
@@ -461,7 +469,9 @@ failed for the affected extension and is inert on later launches until an
 explicit lifecycle action closes it; this prevents repeated startup probes and
 preserves the evidence without making the process a repeated kill target.
 macOS/Windows identity and termination primitives remain future implementation
-work and degrade to quarantine when unavailable.
+work and degrade to quarantine when unavailable. Tauri initialization failures
+are recorded before the normal Workbench exists and become a
+`platform-initialization` recovery failure on the next successful launch.
 
 Before system suspend, background admission stops, runners checkpoint and Job
 snapshots persist. After wake, local work resumes when its owner and storage
@@ -502,6 +512,15 @@ removable/network-volume integrations; failures degrade the affected feature,
 record a diagnostic and keep the Workbench usable. Exact minimum OS, WebView,
 architecture and signing versions are fixed by the release manifest and release
 policy described below.
+
+The Tauri composition catches builder/setup errors and run-loop panics instead
+of allowing an initialization `expect` to become an unclassified process
+failure. It stores a bounded marker beside the recovery journal and consumes it
+on the next successful setup as `platform-initialization`; the marker contains
+phase and bounded error text, never arbitrary command or plugin input. This
+detects failures observable by the Tauri process. A WebView/GPU failure that
+occurs before Tauri executes application code still requires a platform probe or
+launcher wrapper, and remains a release qualification seam.
 
 A Profile has one active writer. Multiple windows share one `ApplicationCore`
 and keep separate Session/Window restoration hints. A second process forwards

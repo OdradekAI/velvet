@@ -12,6 +12,8 @@ export type {
   CorePluginPermission,
   CorePluginPermissionSet,
   CorePluginProjection,
+  CorePluginRuntimeRecovery,
+  CorePluginRuntimeRecoveryState,
   CorePluginRuntime,
   CorePluginResource,
   CorePluginUiSurfaceKind,

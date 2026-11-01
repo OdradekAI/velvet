@@ -33,6 +33,12 @@ const canonicalManifest = (id, version, targetApp, contributions, runtime = 'bui
 const requests = [];
 let runtimeState = 'registered';
 let installed = false;
+let quarantinedRuntimeLeases = [{
+  extensionId: 'sample.reader',
+  runtimeNonce: 'nonce-7',
+  state: 'quarantined',
+  startedAtMs: 17,
+}];
 const projection = (state, id = 'sample.reader') => ({
   summary: {
     id,
@@ -170,6 +176,15 @@ const core = {
     }
     if (request.kind === 'query-plugin-projection') {
       return { kind: 'plugin-projection', projection: projection(runtimeState, request.extensionId) };
+    }
+    if (request.kind === 'query-plugin-runtime-recovery') {
+      return { kind: 'plugin-runtime-recovery', recoveries: quarantinedRuntimeLeases };
+    }
+    if (request.kind === 'close-quarantined-runtime-lease') {
+      quarantinedRuntimeLeases = quarantinedRuntimeLeases.filter(
+        (lease) => lease.runtimeNonce !== request.runtimeNonce,
+      );
+      return { kind: 'accepted' };
     }
     if (request.kind === 'install-plugin') {
       installed = true;
@@ -332,6 +347,9 @@ assert.deepEqual(
 );
 assert.equal(requests[0].manifest.runtime, 'built-in');
 assert.equal(requests[7].reason, 'user');
+assert.equal((await client.queryCoreRuntimeRecovery())[0].runtimeNonce, 'nonce-7');
+await client.closeCoreQuarantinedRuntimeLease('sample.reader', 'nonce-7');
+assert.equal(quarantinedRuntimeLeases.length, 0);
 
 const failedInstallRequests = [];
 let failedInstallState = 'registered';

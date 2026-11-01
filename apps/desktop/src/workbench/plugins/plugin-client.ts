@@ -7,6 +7,7 @@ import {
   type CorePluginInstallRecoveryLogEntry,
   type CorePluginLocalization,
   type CorePluginProjection,
+  type CorePluginRuntimeRecovery,
   type CorePluginStorageRecovery,
   type CorePluginStorageDeclaration,
   type CorePluginDisableReason,
@@ -703,6 +704,41 @@ export class PluginClient {
     }
     this.notify();
     return response.recovery;
+  }
+
+  /** Lists host-owned runtime leases quarantined after an uncertain orphan check. */
+  public async queryCoreRuntimeRecovery(): Promise<readonly CorePluginRuntimeRecovery[]> {
+    const response = await this.core.request({
+      protocolVersion: PROTOCOL_VERSION,
+      kind: 'query-plugin-runtime-recovery',
+    });
+    if (response.kind !== 'plugin-runtime-recovery') {
+      throw new PluginLifecycleError(
+        `Expected plugin runtime recovery, received ${response.kind}`,
+        'core',
+      );
+    }
+    return response.recoveries;
+  }
+
+  /** Forgets one quarantined lease record; it never terminates a process. */
+  public async closeCoreQuarantinedRuntimeLease(
+    extensionId: string,
+    runtimeNonce: string,
+  ): Promise<void> {
+    const response = await this.core.request({
+      protocolVersion: PROTOCOL_VERSION,
+      kind: 'close-quarantined-runtime-lease',
+      extensionId,
+      runtimeNonce,
+    });
+    if (response.kind !== 'accepted') {
+      throw new PluginLifecycleError(
+        `Expected an accepted response for closing the quarantined runtime lease, received ${response.kind}`,
+        extensionId,
+      );
+    }
+    this.notify();
   }
 
   public async clearCoreInstallRecoveryLog(): Promise<void> {

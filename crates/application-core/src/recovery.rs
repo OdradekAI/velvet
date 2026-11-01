@@ -255,6 +255,7 @@ impl RecoverySupervisor {
                     | RecoveryFailureClass::StartupTimeout
                     | RecoveryFailureClass::CoreMigration
                     | RecoveryFailureClass::StateCorrupt
+                    | RecoveryFailureClass::PlatformInitialization
             ) && phase != StartupPhase::WorkbenchReady
                 && phase != StartupPhase::Ready
             {
@@ -661,6 +662,35 @@ mod tests {
         assert_eq!(
             projection.last_failure.map(|failure| failure.class),
             Some(RecoveryFailureClass::StartupTimeout)
+        );
+    }
+
+    #[test]
+    fn platform_initialization_failures_enter_safe_mode_after_two_attempts() {
+        let journal = Arc::new(InMemoryRecoveryJournalStore::default());
+        let clock = Arc::new(TestClock(AtomicU64::new(1)));
+        let supervisor = RecoverySupervisor::new(journal, clock);
+        supervisor
+            .begin_launch("test")
+            .expect("first launch should start");
+        supervisor
+            .record_failure(
+                RecoveryFailureClass::PlatformInitialization,
+                "Tauri builder failed",
+            )
+            .expect("the first platform failure should persist");
+        supervisor.begin_launch("test").expect("retry should start");
+        let projection = supervisor
+            .record_failure(
+                RecoveryFailureClass::PlatformInitialization,
+                "WebView initialization failed",
+            )
+            .expect("the second platform failure should persist");
+        assert_eq!(projection.mode, RecoveryMode::Safe);
+        assert_eq!(projection.consecutive_failures, 2);
+        assert_eq!(
+            projection.last_failure.map(|failure| failure.class),
+            Some(RecoveryFailureClass::PlatformInitialization)
         );
     }
 }

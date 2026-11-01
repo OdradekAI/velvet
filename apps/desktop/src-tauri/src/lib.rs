@@ -1,7 +1,11 @@
 use std::collections::BTreeMap;
+use std::fs;
+use std::panic::AssertUnwindSafe;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
@@ -29,12 +33,15 @@ use velvet_persistence::{
 use velvet_preview_core::{PreviewIntent, PreviewRenderer, PreviewSurface, ResolvedPreview};
 use velvet_tauri_adapter::{CoreEventSink, TauriTransport};
 use velvet_workbench_protocol::{
-    Command, CoreError, CoreTransport, Event, PluginDisableReason, Request, RequestEnvelope,
-    RequestId, Response, PROTOCOL_VERSION,
+    Command, CoreError, CoreTransport, Event, PluginDisableReason, RecoveryFailureClass, Request,
+    RequestEnvelope, RequestId, Response, PROTOCOL_VERSION,
 };
 
 const CORE_EVENT_NAME: &str = "velvet_core_event";
 const KEYBINDING_EVENT_NAME: &str = "velvet_keybinding";
+const TAURI_STARTUP_FAILURE_SCHEMA_VERSION: u16 = 1;
+const TAURI_STARTUP_FAILURE_FILE: &str = "tauri-startup-failure.json";
+const MAX_TAURI_STARTUP_FAILURE_BYTES: usize = 8 * 1024;
 
 pub struct AppState {
     pub transport: Mutex<TauriTransport>,
@@ -42,15 +49,254 @@ pub struct AppState {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct NativeRecoveryState {
+    locale: String,
     safe_mode: bool,
     orphan_count: usize,
     corrupt_extension_states: Vec<(String, u64)>,
+    quarantined_runtime_leases: Vec<(String, String)>,
 }
 
 impl NativeRecoveryState {
     fn requires_surface(&self) -> bool {
-        self.safe_mode || self.orphan_count > 0 || !self.corrupt_extension_states.is_empty()
+        self.safe_mode
+            || self.orphan_count > 0
+            || !self.corrupt_extension_states.is_empty()
+            || !self.quarantined_runtime_leases.is_empty()
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NativeHostLocale {
+    English,
+    SimplifiedChinese,
+}
+
+impl NativeHostLocale {
+    fn from_profile_locale(locale: &str) -> Self {
+        let normalized = locale.replace('_', "-").to_ascii_lowercase();
+        if normalized == "zh"
+            || normalized.starts_with("zh-")
+                && (normalized.contains("hans")
+                    || normalized.contains("cn")
+                    || normalized.contains("sg"))
+        {
+            Self::SimplifiedChinese
+        } else {
+            Self::English
+        }
+    }
+
+    fn recovery_title(self) -> &'static str {
+        match self {
+            Self::English => "Velvet recovery",
+            Self::SimplifiedChinese => "Velvet 恢复",
+        }
+    }
+
+    fn extension_repair_title(self) -> &'static str {
+        match self {
+            Self::English => "Extension storage repair",
+            Self::SimplifiedChinese => "扩展存储修复",
+        }
+    }
+
+    fn safe_mode_message(self) -> &'static str {
+        match self {
+            Self::English => "Velvet started in Safe Mode; core data was left unchanged.",
+            Self::SimplifiedChinese => "Velvet 已进入安全模式；核心数据未被修改。",
+        }
+    }
+
+    fn orphan_message(self, count: usize) -> String {
+        match self {
+            Self::English => format!(
+                "{count} orphaned plugin runtime lease(s) were processed; uncertain identities were not killed."
+            ),
+            Self::SimplifiedChinese => format!(
+                "已处理 {count} 个孤立插件运行时租约；身份不确定的进程未被终止。"
+            ),
+        }
+    }
+
+    fn corrupt_message(self, count: usize) -> String {
+        match self {
+            Self::English => format!(
+                "{count} extension storage generation(s) are corrupt or from an unknown schema."
+            ),
+            Self::SimplifiedChinese => format!(
+                "有 {count} 个扩展存储代际损坏或使用未知 schema。"
+            ),
+        }
+    }
+
+    fn quarantined_message(self, count: usize) -> String {
+        match self {
+            Self::English => format!(
+                "{count} quarantined runtime lease record(s) remain for review. Closing a record never terminates a process."
+            ),
+            Self::SimplifiedChinese => format!(
+                "仍有 {count} 个已隔离的运行时租约记录等待复核。关闭记录不会终止进程。"
+            ),
+        }
+    }
+
+    fn restore_button(self) -> &'static str {
+        match self {
+            Self::English => "Restore validated state",
+            Self::SimplifiedChinese => "恢复已验证状态",
+        }
+    }
+
+    fn continue_safe_mode_button(self) -> &'static str {
+        match self {
+            Self::English => "Continue Safe Mode",
+            Self::SimplifiedChinese => "继续安全模式",
+        }
+    }
+
+    fn quarantine_button(self) -> &'static str {
+        match self {
+            Self::English => "Quarantine damaged state",
+            Self::SimplifiedChinese => "隔离损坏状态",
+        }
+    }
+
+    fn continue_button(self) -> &'static str {
+        match self {
+            Self::English => "Continue",
+            Self::SimplifiedChinese => "继续",
+        }
+    }
+
+    fn close_lease_button(self) -> &'static str {
+        match self {
+            Self::English => "Forget lease records",
+            Self::SimplifiedChinese => "删除租约记录",
+        }
+    }
+
+    fn repair_success(self) -> &'static str {
+        match self {
+            Self::English => "Damaged extension state was quarantined. Restart or explicitly re-enable the extension after inspection.",
+            Self::SimplifiedChinese => "损坏的扩展状态已隔离。检查后请重启，或显式重新启用扩展。",
+        }
+    }
+
+    fn restore_staged(self) -> &'static str {
+        match self {
+            Self::English => "The last validated recovery set is selected. Restart Velvet to apply it.",
+            Self::SimplifiedChinese => "已选择上一个经过验证的恢复集。请重启 Velvet 以应用它。",
+        }
+    }
+
+    fn restore_error(self, error: &str) -> String {
+        match self {
+            Self::English => format!("Velvet could not restore the validated state: {error}"),
+            Self::SimplifiedChinese => format!("Velvet 无法恢复已验证状态：{error}"),
+        }
+    }
+
+    fn close_success(self) -> &'static str {
+        match self {
+            Self::English => "Quarantined lease records were forgotten. No process was terminated.",
+            Self::SimplifiedChinese => "已删除隔离的租约记录。没有终止任何进程。",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct TauriStartupFailureRecord {
+    schema_version: u16,
+    phase: String,
+    message: String,
+    occurred_at_ms: u64,
+}
+
+fn preflight_app_data_dir() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("VELVET_APP_DATA_DIR") {
+        return Some(PathBuf::from(path));
+    }
+    #[cfg(target_os = "windows")]
+    {
+        return std::env::var_os("APPDATA")
+            .map(PathBuf::from)
+            .map(|path| path.join("com.velvet.desktop"));
+    }
+    #[cfg(target_os = "macos")]
+    {
+        return std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .map(|path| path.join("Library/Application Support/com.velvet.desktop"));
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .or_else(|| {
+                std::env::var_os("HOME")
+                    .map(PathBuf::from)
+                    .map(|path| path.join(".local/share"))
+            })
+            .map(|path| path.join("com.velvet.desktop"))
+    }
+}
+
+fn bounded_startup_failure_message(error: impl std::fmt::Display) -> String {
+    let mut message = error.to_string().replace(['\r', '\n'], " ");
+    if message.len() > MAX_TAURI_STARTUP_FAILURE_BYTES {
+        message = message
+            .chars()
+            .take(MAX_TAURI_STARTUP_FAILURE_BYTES)
+            .collect();
+    }
+    message
+}
+
+fn record_tauri_startup_failure(phase: &str, error: impl std::fmt::Display) {
+    let message = bounded_startup_failure_message(error);
+    eprintln!("Velvet Tauri initialization failed during {phase}: {message}");
+    let Some(root) = preflight_app_data_dir() else {
+        return;
+    };
+    if fs::create_dir_all(&root).is_err() {
+        return;
+    }
+    let record = TauriStartupFailureRecord {
+        schema_version: TAURI_STARTUP_FAILURE_SCHEMA_VERSION,
+        phase: phase.into(),
+        message,
+        occurred_at_ms: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_millis() as u64)
+            .unwrap_or_default(),
+    };
+    let Ok(bytes) = serde_json::to_vec_pretty(&record) else {
+        return;
+    };
+    let path = root.join(TAURI_STARTUP_FAILURE_FILE);
+    let temporary = root.join(format!("{TAURI_STARTUP_FAILURE_FILE}.tmp"));
+    if fs::write(&temporary, bytes).is_ok() {
+        if fs::rename(&temporary, &path).is_err() {
+            let _ = fs::remove_file(&path);
+            let _ = fs::rename(temporary, path);
+        }
+    }
+}
+
+fn consume_tauri_startup_failure(root: &Path) -> Option<TauriStartupFailureRecord> {
+    let path = root.join(TAURI_STARTUP_FAILURE_FILE);
+    let metadata = fs::metadata(&path).ok()?;
+    if metadata.len() > MAX_TAURI_STARTUP_FAILURE_BYTES as u64 {
+        return None;
+    }
+    let bytes = fs::read(&path).ok()?;
+    let record = serde_json::from_slice::<TauriStartupFailureRecord>(&bytes).ok()?;
+    if record.schema_version != TAURI_STARTUP_FAILURE_SCHEMA_VERSION {
+        return None;
+    }
+    let _ = fs::remove_file(path);
+    Some(record)
 }
 
 static NATIVE_RECOVERY_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
@@ -279,6 +525,10 @@ pub enum WireRequest {
         #[serde(rename = "extensionId")]
         extension_id: String,
     },
+    QueryPluginRuntimeRecovery {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+    },
     RegisterPlugin {
         #[serde(rename = "protocolVersion")]
         protocol_version: u16,
@@ -321,6 +571,14 @@ pub enum WireRequest {
         #[serde(rename = "extensionId")]
         extension_id: String,
         generation: u64,
+    },
+    CloseQuarantinedRuntimeLease {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        #[serde(rename = "extensionId")]
+        extension_id: String,
+        #[serde(rename = "runtimeNonce")]
+        runtime_nonce: String,
     },
     InstallPlugin {
         #[serde(rename = "protocolVersion")]
@@ -561,6 +819,12 @@ impl WireRequest {
                     },
                 ))
             }
+            Self::QueryPluginRuntimeRecovery { protocol_version } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Query(
+                    velvet_workbench_protocol::Query::PluginRuntimeRecovery,
+                ))
+            }
             Self::RegisterPlugin {
                 protocol_version,
                 manifest,
@@ -635,6 +899,17 @@ impl WireRequest {
                 Ok(Request::Command(Command::QuarantinePluginState {
                     extension_id: ExtensionId(extension_id),
                     generation,
+                }))
+            }
+            Self::CloseQuarantinedRuntimeLease {
+                protocol_version,
+                extension_id,
+                runtime_nonce,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Command(Command::CloseQuarantinedRuntimeLease {
+                    extension_id: ExtensionId(extension_id),
+                    runtime_nonce,
                 }))
             }
             Self::InstallPlugin {
@@ -1099,6 +1374,9 @@ enum WireResponse {
     PluginStorageRecovery {
         recovery: velvet_workbench_protocol::PluginStorageRecoveryDto,
     },
+    PluginRuntimeRecovery {
+        recoveries: Vec<velvet_workbench_protocol::PluginRuntimeRecoveryDto>,
+    },
     Job {
         job: WireJobSnapshot,
     },
@@ -1139,6 +1417,9 @@ impl WireResponseEnvelope {
             Response::PluginProjection(projection) => WireResponse::PluginProjection { projection },
             Response::PluginStorageRecovery(recovery) => {
                 WireResponse::PluginStorageRecovery { recovery }
+            }
+            Response::PluginRuntimeRecovery(recoveries) => {
+                WireResponse::PluginRuntimeRecovery { recoveries }
             }
             Response::Job(job) => WireResponse::Job {
                 job: WireJobSnapshot::from(job),
@@ -1611,23 +1892,29 @@ fn velvet_core_request(
 }
 
 pub fn run() {
-    let shortcuts = ShortcutBuilder::new()
+    let shortcuts = match ShortcutBuilder::new()
         .with_shortcuts(["CommandOrControl+B", "CommandOrControl+J"])
-        .expect("default Workbench shortcuts must be valid")
-        .with_handler(|app, shortcut, event| {
-            if event.state == ShortcutState::Pressed {
-                let _ = app.emit(
-                    KEYBINDING_EVENT_NAME,
-                    NativeShortcutEvent {
-                        keybinding: shortcut.into_string(),
-                        state: "pressed",
-                    },
-                );
-            }
-        })
-        .build();
+    {
+        Ok(builder) => builder
+            .with_handler(|app, shortcut, event| {
+                if event.state == ShortcutState::Pressed {
+                    let _ = app.emit(
+                        KEYBINDING_EVENT_NAME,
+                        NativeShortcutEvent {
+                            keybinding: shortcut.into_string(),
+                            state: "pressed",
+                        },
+                    );
+                }
+            })
+            .build(),
+        Err(error) => {
+            record_tauri_startup_failure("shortcut-configuration", error);
+            std::process::exit(1);
+        }
+    };
 
-    tauri::Builder::default()
+    let result = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(shortcuts)
         .setup(|app| {
@@ -1637,7 +1924,11 @@ pub fn run() {
             let app_data_dir = app
                 .path()
                 .app_data_dir()
-                .expect("Velvet app data directory should be available");
+                .map_err(|error| {
+                    std::io::Error::other(format!(
+                        "Velvet app data directory should be available: {error}"
+                    ))
+                })?;
             let layout_path = app_data_dir.join("workbench-layout.json");
             let jobs_path = app_data_dir.join("jobs.json");
             let profile_path = app_data_dir.join("profile.json");
@@ -1693,6 +1984,15 @@ pub fn run() {
                     durability,
                 ))),
             );
+            if let Some(failure) = consume_tauri_startup_failure(&app_data_dir) {
+                core.record_recovery_failure(
+                    RecoveryFailureClass::PlatformInitialization,
+                    format!(
+                        "Tauri initialization failed during {}: {}",
+                        failure.phase, failure.message
+                    ),
+                );
+            }
             core.mark_workbench_ready();
             let orphan_count = match core.reconcile_plugin_runtime_orphans() {
                 Ok(reports) => {
@@ -1740,9 +2040,11 @@ pub fn run() {
                 }
             }
             let native_recovery = NativeRecoveryState {
+                locale: core.profile_state().locale,
                 safe_mode: core.in_safe_mode(),
                 orphan_count,
                 corrupt_extension_states: collect_corrupt_extension_states(&core),
+                quarantined_runtime_leases: collect_quarantined_runtime_leases(&core),
             };
             core.mark_ready();
             app.manage(AppState {
@@ -1755,29 +2057,52 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![velvet_core_request])
-        .build(tauri::generate_context!())
-        .expect("error while building the Velvet Tauri application")
-        .run(|app, event| match event {
-            tauri::RunEvent::ExitRequested { .. } => {
-                if let Some(state) = app.try_state::<AppState>() {
-                    if let Ok(transport) = state.transport.lock() {
-                        if let Err(error) = transport.record_shutdown_intent() {
-                            eprintln!("Velvet could not persist shutdown intent: {error:?}");
+        .build(tauri::generate_context!());
+    match result {
+        Ok(app) => {
+            let run_result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                app.run(|app, event| match event {
+                    tauri::RunEvent::ExitRequested { .. } => {
+                        if let Some(state) = app.try_state::<AppState>() {
+                            if let Ok(transport) = state.transport.lock() {
+                                if let Err(error) = transport.record_shutdown_intent() {
+                                    eprintln!("Velvet could not persist shutdown intent: {error:?}");
+                                }
+                            }
                         }
                     }
-                }
-            }
-            tauri::RunEvent::Exit => {
-                if let Some(state) = app.try_state::<AppState>() {
-                    if let Ok(transport) = state.transport.lock() {
-                        if let Err(error) = transport.record_shutdown_complete() {
-                            eprintln!("Velvet could not persist shutdown completion: {error:?}");
+                    tauri::RunEvent::Exit => {
+                        if let Some(state) = app.try_state::<AppState>() {
+                            if let Ok(transport) = state.transport.lock() {
+                                if let Err(error) = transport.record_shutdown_complete() {
+                                    eprintln!("Velvet could not persist shutdown completion: {error:?}");
+                                }
+                            }
                         }
                     }
-                }
+                    _ => {}
+                });
+            }));
+            if let Err(payload) = run_result {
+                record_tauri_startup_failure("tauri-run", panic_payload_message(payload));
+                std::process::exit(1);
             }
-            _ => {}
-        });
+        }
+        Err(error) => {
+            record_tauri_startup_failure("tauri-build", error);
+            std::process::exit(1);
+        }
+    }
+}
+
+fn panic_payload_message(payload: Box<dyn std::any::Any + Send>) -> String {
+    if let Some(message) = payload.downcast_ref::<&str>() {
+        (*message).to_owned()
+    } else if let Some(message) = payload.downcast_ref::<String>() {
+        message.clone()
+    } else {
+        "Tauri run panicked without a string payload".into()
+    }
 }
 
 fn collect_corrupt_extension_states(core: &ApplicationCore) -> Vec<(String, u64)> {
@@ -1795,6 +2120,14 @@ fn collect_corrupt_extension_states(core: &ApplicationCore) -> Vec<(String, u64)
                 None
             }
         })
+        .collect()
+}
+
+fn collect_quarantined_runtime_leases(core: &ApplicationCore) -> Vec<(String, String)> {
+    core.query_plugin_runtime_recovery()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|recovery| (recovery.extension_id.0, recovery.runtime_nonce))
         .collect()
 }
 
@@ -1828,21 +2161,19 @@ fn show_native_recovery_surface<R: Runtime>(
     if !recovery.requires_surface() {
         return;
     }
+    let locale = NativeHostLocale::from_profile_locale(&recovery.locale);
     let mut details = Vec::new();
     if recovery.safe_mode {
-        details.push("Velvet started in Safe Mode; core data was left unchanged.".to_owned());
+        details.push(locale.safe_mode_message().to_owned());
     }
     if recovery.orphan_count > 0 {
-        details.push(format!(
-            "{} orphaned plugin runtime lease(s) were processed; uncertain identities were not killed.",
-            recovery.orphan_count
-        ));
+        details.push(locale.orphan_message(recovery.orphan_count));
     }
     if !recovery.corrupt_extension_states.is_empty() {
-        details.push(format!(
-            "{} extension storage generation(s) are corrupt or from an unknown schema.",
-            recovery.corrupt_extension_states.len()
-        ));
+        details.push(locale.corrupt_message(recovery.corrupt_extension_states.len()));
+    }
+    if !recovery.quarantined_runtime_leases.is_empty() {
+        details.push(locale.quarantined_message(recovery.quarantined_runtime_leases.len()));
     }
     let message = details.join("\n\n");
 
@@ -1850,11 +2181,11 @@ fn show_native_recovery_surface<R: Runtime>(
         let handle = app.clone();
         app.dialog()
             .message(message)
-            .title("Velvet recovery")
+            .title(locale.recovery_title())
             .kind(MessageDialogKind::Warning)
             .buttons(MessageDialogButtons::OkCancelCustom(
-                "Restore validated state".into(),
-                "Continue Safe Mode".into(),
+                locale.restore_button().into(),
+                locale.continue_safe_mode_button().into(),
             ))
             .show(move |restore| {
                 if !restore {
@@ -1863,14 +2194,14 @@ fn show_native_recovery_surface<R: Runtime>(
                 match dispatch_native_recovery_command(&handle, Command::RestoreRecoverySet) {
                     Ok(()) => handle
                         .dialog()
-                        .message("The last validated recovery set is selected. Restart Velvet to apply it.")
-                        .title("Recovery staged")
+                        .message(locale.restore_staged())
+                        .title(locale.recovery_title())
                         .buttons(MessageDialogButtons::Ok)
                         .show(|_| {}),
                     Err(error) => handle
                         .dialog()
-                        .message(format!("Velvet could not restore the validated state: {error}"))
-                        .title("Recovery unavailable")
+                        .message(locale.restore_error(&error))
+                        .title(locale.recovery_title())
                         .kind(MessageDialogKind::Error)
                         .buttons(MessageDialogButtons::Ok)
                         .show(|_| {}),
@@ -1884,11 +2215,11 @@ fn show_native_recovery_surface<R: Runtime>(
         let targets = recovery.corrupt_extension_states;
         app.dialog()
             .message(message)
-            .title("Extension storage repair")
+            .title(locale.extension_repair_title())
             .kind(MessageDialogKind::Warning)
             .buttons(MessageDialogButtons::OkCancelCustom(
-                "Quarantine damaged state".into(),
-                "Continue".into(),
+                locale.quarantine_button().into(),
+                locale.continue_button().into(),
             ))
             .show(move |quarantine| {
                 if !quarantine {
@@ -1907,14 +2238,56 @@ fn show_native_recovery_surface<R: Runtime>(
                     }
                 }
                 let result = if failures.is_empty() {
-                    "Damaged extension state was quarantined. Restart or explicitly re-enable the extension after inspection.".to_owned()
+                    locale.repair_success().to_owned()
                 } else {
                     format!("Some extension state could not be quarantined:\n{}", failures.join("\n"))
                 };
                 handle
                     .dialog()
                     .message(result)
-                    .title("Extension storage repair")
+                    .title(locale.extension_repair_title())
+                    .buttons(MessageDialogButtons::Ok)
+                    .show(|_| {});
+            });
+        return;
+    }
+
+    if !recovery.quarantined_runtime_leases.is_empty() {
+        let handle = app.clone();
+        let targets = recovery.quarantined_runtime_leases;
+        app.dialog()
+            .message(message)
+            .title(locale.recovery_title())
+            .kind(MessageDialogKind::Warning)
+            .buttons(MessageDialogButtons::OkCancelCustom(
+                locale.close_lease_button().into(),
+                locale.continue_button().into(),
+            ))
+            .show(move |close_records| {
+                if !close_records {
+                    return;
+                }
+                let mut failures = Vec::new();
+                for (extension_id, runtime_nonce) in targets {
+                    if let Err(error) = dispatch_native_recovery_command(
+                        &handle,
+                        Command::CloseQuarantinedRuntimeLease {
+                            extension_id: ExtensionId(extension_id.clone()),
+                            runtime_nonce,
+                        },
+                    ) {
+                        failures.push(format!("{extension_id}: {error}"));
+                    }
+                }
+                let result = if failures.is_empty() {
+                    locale.close_success().to_owned()
+                } else {
+                    format!("Some lease records could not be closed:\n{}", failures.join("\n"))
+                };
+                handle
+                    .dialog()
+                    .message(result)
+                    .title(locale.recovery_title())
                     .buttons(MessageDialogButtons::Ok)
                     .show(|_| {});
             });
@@ -1923,7 +2296,7 @@ fn show_native_recovery_surface<R: Runtime>(
 
     app.dialog()
         .message(message)
-        .title("Velvet recovery")
+        .title(locale.recovery_title())
         .kind(MessageDialogKind::Warning)
         .buttons(MessageDialogButtons::Ok)
         .show(|_| {});
@@ -2052,15 +2425,117 @@ mod tests {
     fn native_recovery_state_requires_a_surface_only_for_repairable_host_failures() {
         assert!(!NativeRecoveryState::default().requires_surface());
         assert!(NativeRecoveryState {
+            locale: "en".into(),
             safe_mode: true,
             ..NativeRecoveryState::default()
         }
         .requires_surface());
         assert!(NativeRecoveryState {
+            locale: "en".into(),
             corrupt_extension_states: vec![("sample.reader".into(), 7)],
             ..NativeRecoveryState::default()
         }
         .requires_surface());
+        assert!(NativeRecoveryState {
+            locale: "en".into(),
+            quarantined_runtime_leases: vec![("sample.reader".into(), "nonce".into())],
+            ..NativeRecoveryState::default()
+        }
+        .requires_surface());
+    }
+
+    #[test]
+    fn native_recovery_copy_follows_profile_locale_and_falls_back_to_english() {
+        assert_eq!(
+            NativeHostLocale::from_profile_locale("zh-Hans"),
+            NativeHostLocale::SimplifiedChinese
+        );
+        assert_eq!(
+            NativeHostLocale::from_profile_locale("zh-CN"),
+            NativeHostLocale::SimplifiedChinese
+        );
+        assert_eq!(
+            NativeHostLocale::from_profile_locale("fr-FR"),
+            NativeHostLocale::English
+        );
+        assert_eq!(NativeHostLocale::SimplifiedChinese.continue_button(), "继续");
+        assert_eq!(NativeHostLocale::English.continue_button(), "Continue");
+    }
+
+    #[test]
+    fn tauri_startup_failure_marker_is_bounded_and_consumed() {
+        let root = std::env::temp_dir().join(format!(
+            "velvet-tauri-startup-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        std::env::set_var("VELVET_APP_DATA_DIR", &root);
+        record_tauri_startup_failure("tauri-build", "a\nplatform failure");
+        let record = consume_tauri_startup_failure(&root).expect("the marker should be readable");
+        assert_eq!(record.phase, "tauri-build");
+        assert_eq!(record.message, "a platform failure");
+        assert!(consume_tauri_startup_failure(&root).is_none());
+        std::env::remove_var("VELVET_APP_DATA_DIR");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn wire_runtime_recovery_query_and_close_command_use_stable_names() {
+        let query: WireRequestEnvelope = serde_json::from_str(
+            r#"{
+                "protocolVersion": 1,
+                "requestId": 41,
+                "request": {
+                    "kind": "query-plugin-runtime-recovery",
+                    "protocolVersion": 1
+                }
+            }"#,
+        )
+        .expect("runtime recovery query should deserialize");
+        assert!(matches!(
+            query.request.into_core(1).expect("query should map"),
+            Request::Query(velvet_workbench_protocol::Query::PluginRuntimeRecovery)
+        ));
+
+        let close: WireRequestEnvelope = serde_json::from_str(
+            r#"{
+                "protocolVersion": 1,
+                "requestId": 42,
+                "request": {
+                    "kind": "close-quarantined-runtime-lease",
+                    "protocolVersion": 1,
+                    "extensionId": "sample.reader",
+                    "runtimeNonce": "nonce-7"
+                }
+            }"#,
+        )
+        .expect("runtime lease close should deserialize");
+        assert!(matches!(
+            close.request.into_core(1).expect("command should map"),
+            Request::Command(Command::CloseQuarantinedRuntimeLease {
+                extension_id,
+                runtime_nonce
+            }) if extension_id.0 == "sample.reader" && runtime_nonce == "nonce-7"
+        ));
+
+        let response = WireResponseEnvelope::from_core(
+            velvet_workbench_protocol::ResponseEnvelope {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: RequestId(43),
+                response: Response::PluginRuntimeRecovery(vec![
+                    velvet_workbench_protocol::PluginRuntimeRecoveryDto {
+                        extension_id: ExtensionId("sample.reader".into()),
+                        runtime_nonce: "nonce-7".into(),
+                        state: velvet_workbench_protocol::PluginRuntimeRecoveryState::Quarantined,
+                        started_at_ms: 17,
+                    },
+                ]),
+            },
+        );
+        let value = serde_json::to_value(response).expect("runtime recovery should serialize");
+        assert_eq!(value["response"]["kind"], "plugin-runtime-recovery");
+        assert_eq!(value["response"]["recoveries"][0]["runtimeNonce"], "nonce-7");
+        assert_eq!(value["response"]["recoveries"][0]["state"], "quarantined");
     }
 
     #[test]

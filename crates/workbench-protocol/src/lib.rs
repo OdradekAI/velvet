@@ -188,6 +188,21 @@ pub struct PluginStorageRecoveryDto {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
+pub enum PluginRuntimeRecoveryState {
+    Quarantined,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PluginRuntimeRecoveryDto {
+    pub extension_id: ExtensionId,
+    pub runtime_nonce: String,
+    pub state: PluginRuntimeRecoveryState,
+    pub started_at_ms: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum StartupPhase {
     Preflight,
     RecoveringState,
@@ -215,6 +230,7 @@ pub enum RecoveryFailureClass {
     StateCorrupt,
     JournalUnavailable,
     OptionalComponent,
+    PlatformInitialization,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -434,6 +450,10 @@ pub enum Command {
         extension_id: ExtensionId,
         generation: u64,
     },
+    CloseQuarantinedRuntimeLease {
+        extension_id: ExtensionId,
+        runtime_nonce: String,
+    },
     UninstallPlugin {
         extension_id: ExtensionId,
     },
@@ -514,6 +534,7 @@ pub enum Query {
     PluginStorageRecovery {
         extension_id: ExtensionId,
     },
+    PluginRuntimeRecovery,
     Jobs,
 }
 
@@ -535,6 +556,7 @@ pub enum Response {
     PluginInstallRecoveries(Vec<ExtensionInstallRecovery>),
     PluginInstallRecoveryLog(Vec<ExtensionInstallRecoveryLogEntry>),
     PluginStorageRecovery(PluginStorageRecoveryDto),
+    PluginRuntimeRecovery(Vec<PluginRuntimeRecoveryDto>),
     PluginProjection(PluginProjectionDto),
     Job(JobSnapshot),
     Jobs(Vec<JobSnapshot>),
