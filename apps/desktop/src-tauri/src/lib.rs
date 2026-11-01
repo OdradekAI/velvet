@@ -8,6 +8,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 mod crash_capture;
+#[allow(dead_code)]
+mod launcher_failure;
 mod native_recovery_window;
 mod platform_probe;
 
@@ -37,7 +39,8 @@ use velvet_persistence::{
 use velvet_preview_core::{PreviewIntent, PreviewRenderer, PreviewSurface, ResolvedPreview};
 use velvet_tauri_adapter::{CoreEventSink, TauriTransport};
 use velvet_workbench_protocol::{
-    Command, CoreError, CoreTransport, Event, PlatformCapabilityStatus,
+    Command, CoreError, CoreTransport, CrashCaptureEvidence, CrashCaptureKind, Event,
+    PlatformCapabilityStatus,
     PlatformPreflightEvidence, PluginDisableReason, RecoveryFailureClass, Request, RequestEnvelope,
     RequestId, Response, StartupPhase, PROTOCOL_VERSION,
 };
@@ -46,9 +49,10 @@ use crash_capture::{
     arm_process_receipt, complete_process_receipt, update_process_receipt,
     FileCrashCaptureAdapter,
 };
+use launcher_failure::consume_launcher_failure;
 use native_recovery_window::{
     consume_native_recovery_intent, launch_native_recovery_window, NativeRecoveryAction,
-    NativeRecoveryRequest, NATIVE_RECOVERY_SCHEMA_VERSION,
+    NativeRecoveryPage, NativeRecoveryPageKind, NativeRecoveryRequest, NATIVE_RECOVERY_SCHEMA_VERSION,
 };
 use platform_probe::{HostPlatformPreflightProbe, PlatformPreflightProbe};
 
@@ -275,9 +279,9 @@ fn preflight_app_data_dir() -> Option<PathBuf> {
     }
     #[cfg(target_os = "macos")]
     {
-        return std::env::var_os("HOME")
+        std::env::var_os("HOME")
             .map(PathBuf::from)
-            .map(|path| path.join("Library/Application Support/com.velvet.desktop"));
+            .map(|path| path.join("Library/Application Support/com.velvet.desktop"))
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
@@ -335,11 +339,9 @@ fn record_tauri_startup_failure_with_evidence(
     };
     let path = root.join(TAURI_STARTUP_FAILURE_FILE);
     let temporary = root.join(format!("{TAURI_STARTUP_FAILURE_FILE}.tmp"));
-    if fs::write(&temporary, bytes).is_ok() {
-        if fs::rename(&temporary, &path).is_err() {
-            let _ = fs::remove_file(&path);
-            let _ = fs::rename(temporary, path);
-        }
+    if fs::write(&temporary, bytes).is_ok() && fs::rename(&temporary, &path).is_err() {
+        let _ = fs::remove_file(&path);
+        let _ = fs::rename(temporary, path);
     }
 }
 
@@ -1965,7 +1967,7 @@ pub fn run() {
             .join("\n");
         record_tauri_startup_failure_with_evidence(
             "platform-preflight-webview",
-            message,
+            message.clone(),
             preflight.evidence.clone(),
         );
         if let Some(root) = app_data_root.as_deref() {
@@ -1977,6 +1979,23 @@ pub fn run() {
                     NativeRecoveryAction::Retry,
                     NativeRecoveryAction::RestoreRecoverySet,
                     NativeRecoveryAction::ContinueSafeMode,
+                ],
+                pages: vec![
+                    NativeRecoveryPage {
+                        kind: NativeRecoveryPageKind::Overview,
+                        title: "Velvet recovery".into(),
+                        message: "Velvet could not start its WebView host. This repair flow runs without Tauri or a WebView.".into(),
+                    },
+                    NativeRecoveryPage {
+                        kind: NativeRecoveryPageKind::Evidence,
+                        title: "Platform evidence".into(),
+                        message: message.clone(),
+                    },
+                    NativeRecoveryPage {
+                        kind: NativeRecoveryPageKind::Actions,
+                        title: "Choose a recovery action".into(),
+                        message: "Continue to the action dialog to retry, restore the last validated state, or continue in Safe Mode.".into(),
+                    },
                 ],
             };
             if let Err(error) = launch_native_recovery_window(root, request) {
@@ -2108,6 +2127,27 @@ pub fn run() {
                         "Tauri initialization failed during {}: {}",
                         failure.phase, failure.message
                     ),
+                );
+            }
+            if let Some(failure) = consume_launcher_failure(&app_data_dir) {
+                core.record_crash_evidence(CrashCaptureEvidence {
+                    schema_version: velvet_workbench_protocol::CRASH_CAPTURE_SCHEMA_VERSION,
+                    correlation_id: "launcher".into(),
+                    process_id: std::process::id(),
+                    parent_process_id: None,
+                    attempt_id: 0,
+                    component: "launcher".into(),
+                    kind: CrashCaptureKind::ProcessExit,
+                    code: format!("launcher-{}", failure.phase),
+                    message: failure.message,
+                    runtime_nonce: None,
+                    log_tail: failure.stderr_tail,
+                    artifact: None,
+                    occurred_at_ms: failure.occurred_at_ms,
+                });
+                core.record_recovery_failure(
+                    RecoveryFailureClass::PlatformInitialization,
+                    "launcher reported a pre-ready application failure",
                 );
             }
             if let Some(intent) = consume_native_recovery_intent(&app_data_dir) {

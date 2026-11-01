@@ -47,6 +47,7 @@ export type {
   CorePlatformCapability,
   CorePlatformCapabilityStatus,
   CoreCrashCaptureEvidence,
+  CoreCrashArtifactAttachment,
   CoreCrashCaptureKind,
   RecoveryDiagnosticSchemaVersion,
   PluginDiagnosticSchemaVersion,

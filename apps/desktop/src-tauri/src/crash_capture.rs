@@ -1,17 +1,23 @@
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use velvet_application_core::{CrashCaptureAdapter, RecoveryError};
 use velvet_workbench_protocol::{
-    CrashCaptureEvidence, CrashCaptureKind, StartupPhase, CRASH_CAPTURE_SCHEMA_VERSION,
+    CrashArtifactAttachment, CrashCaptureEvidence, CrashCaptureKind, StartupPhase,
+    CRASH_CAPTURE_SCHEMA_VERSION,
 };
 
 pub const ACTIVE_PROCESS_RECEIPT_DIR: &str = "active-process-receipts";
 pub const CRASH_RECEIPTS_FILE: &str = "crash-receipts.json";
 const MAX_CRASH_RECEIPTS_BYTES: u64 = 256 * 1024;
 const MAX_CRASH_RECEIPTS: usize = 32;
+const MAX_SYSTEM_ARTIFACTS: usize = 4;
+const MAX_SYSTEM_ARTIFACT_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_SYSTEM_ARTIFACT_AGE_MS: u64 = 24 * 60 * 60 * 1000;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -74,14 +80,126 @@ impl CrashCaptureAdapter for FileCrashCaptureAdapter {
                         ),
                         runtime_nonce: None,
                         log_tail: None,
+                        artifact: None,
                         occurred_at_ms: now_ms(),
                     });
                 }
                 let _ = fs::remove_file(active_path);
             }
         }
+        if !evidence.is_empty() {
+            let correlation_id = evidence[0].correlation_id.clone();
+            let process_id = evidence[0].process_id;
+            let attempt_id = evidence[0].attempt_id;
+            evidence.extend(system_crash_artifact_evidence(
+                now_ms(),
+                correlation_id,
+                process_id,
+                attempt_id,
+            ));
+        }
         Ok(evidence)
     }
+}
+
+fn system_crash_artifact_evidence(
+    now: u64,
+    correlation_id: String,
+    process_id: u32,
+    attempt_id: u64,
+) -> Vec<CrashCaptureEvidence> {
+    let mut artifacts = Vec::new();
+    for root in system_crash_roots() {
+        let Ok(entries) = fs::read_dir(root) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            if artifacts.len() >= MAX_SYSTEM_ARTIFACTS {
+                return artifacts;
+            }
+            let path = entry.path();
+            let Some(attachment) = collect_artifact_metadata(&path, now, MAX_SYSTEM_ARTIFACT_AGE_MS)
+            else {
+                continue;
+            };
+            artifacts.push(CrashCaptureEvidence {
+                schema_version: CRASH_CAPTURE_SCHEMA_VERSION,
+                correlation_id: correlation_id.clone(),
+                process_id,
+                parent_process_id: None,
+                attempt_id,
+                component: "core".into(),
+                kind: CrashCaptureKind::Exception,
+                code: "system-crash-artifact".into(),
+                message: "system crash artifact attached".into(),
+                runtime_nonce: None,
+                log_tail: None,
+                artifact: Some(attachment),
+                occurred_at_ms: now,
+            });
+        }
+    }
+    artifacts
+}
+
+fn collect_artifact_metadata(path: &Path, now: u64, max_age_ms: u64) -> Option<CrashArtifactAttachment> {
+    let metadata = fs::metadata(path).ok()?;
+    if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAX_SYSTEM_ARTIFACT_BYTES {
+        return None;
+    }
+    let name = path.file_name()?.to_string_lossy().to_ascii_lowercase();
+    if !name.contains("velvet") {
+        return None;
+    }
+    let modified = metadata.modified().ok()?.duration_since(UNIX_EPOCH).ok()?.as_millis() as u64;
+    if now.saturating_sub(modified) > max_age_ms || modified > now.saturating_add(5_000) {
+        return None;
+    }
+    let mut file = fs::File::open(path).ok()?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut buffer).ok()?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    let sha256 = format!("{:x}", hasher.finalize());
+    let artifact_id = sha256.chars().take(24).collect();
+    let format = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or("unknown")
+        .to_ascii_lowercase();
+    Some(CrashArtifactAttachment {
+        artifact_id,
+        format,
+        size_bytes: metadata.len(),
+        sha256,
+        collected_at_ms: now,
+    })
+}
+
+fn system_crash_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    #[cfg(target_os = "macos")]
+    if let Ok(home) = std::env::var("HOME") {
+        roots.push(PathBuf::from(home).join("Library/Logs/DiagnosticReports"));
+    }
+    #[cfg(target_os = "linux")]
+    {
+        roots.push(PathBuf::from("/var/lib/systemd/coredump"));
+        roots.push(PathBuf::from("/var/lib/apport/coredump"));
+        if let Ok(state) = std::env::var("XDG_STATE_HOME") {
+            roots.push(PathBuf::from(state).join("velvet/crash"));
+        }
+    }
+    #[cfg(target_os = "windows")]
+    if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+        roots.push(PathBuf::from(local_app_data).join("CrashDumps"));
+    }
+    roots
 }
 
 pub fn arm_process_receipt(root: &Path) -> Result<String, String> {
@@ -276,6 +394,7 @@ mod tests {
                 message: "sidecar failed".into(),
                 runtime_nonce: Some("nonce".into()),
                 log_tail: Some("tail".into()),
+                artifact: None,
                 occurred_at_ms: 2,
             },
         )
@@ -284,6 +403,32 @@ mod tests {
             .consume()
             .expect("external receipt should be consumed");
         assert_eq!(evidence[0].runtime_nonce.as_deref(), Some("nonce"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn artifact_metadata_is_bounded_hashed_and_path_free() {
+        let root = std::env::temp_dir().join(format!("velvet-crash-artifact-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("artifact directory should exist");
+        let path = root.join("Velvet-2026-01-01.dmp");
+        fs::write(&path, b"minidump fixture").expect("artifact should be written");
+        let modified = fs::metadata(&path)
+            .expect("artifact metadata should exist")
+            .modified()
+            .expect("artifact should have a timestamp")
+            .duration_since(UNIX_EPOCH)
+            .expect("timestamp should be unix")
+            .as_millis() as u64;
+        let attachment = collect_artifact_metadata(&path, modified, 1_000)
+            .expect("recent Velvet artifact should be attached");
+        assert_eq!(attachment.format, "dmp");
+        assert_eq!(attachment.size_bytes, 16);
+        assert_eq!(attachment.artifact_id.len(), 24);
+        assert_eq!(attachment.sha256.len(), 64);
+        assert!(!serde_json::to_string(&attachment)
+            .expect("attachment should serialize")
+            .contains(root.to_string_lossy().as_ref()));
         let _ = fs::remove_dir_all(root);
     }
 }

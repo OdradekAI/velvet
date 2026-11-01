@@ -359,7 +359,19 @@ pub struct CrashCaptureEvidence {
     pub runtime_nonce: Option<String>,
     #[serde(default)]
     pub log_tail: Option<String>,
+    #[serde(default)]
+    pub artifact: Option<CrashArtifactAttachment>,
     pub occurred_at_ms: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CrashArtifactAttachment {
+    pub artifact_id: String,
+    pub format: String,
+    pub size_bytes: u64,
+    pub sha256: String,
+    pub collected_at_ms: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -876,6 +888,37 @@ mod tests {
             serde_json::from_value(legacy).expect("legacy diagnostic bundle should decode");
         assert!(decoded.plugin_diagnostics.is_empty());
         assert!(!decoded.diagnostics_degraded);
+    }
+
+    #[test]
+    fn crash_artifact_attachment_round_trips_without_a_path() {
+        let evidence = CrashCaptureEvidence {
+            schema_version: CRASH_CAPTURE_SCHEMA_VERSION,
+            correlation_id: "launch-1".into(),
+            process_id: 7,
+            parent_process_id: None,
+            attempt_id: 2,
+            component: "core".into(),
+            kind: CrashCaptureKind::Exception,
+            code: "system-crash-artifact".into(),
+            message: "artifact attached".into(),
+            runtime_nonce: None,
+            log_tail: None,
+            artifact: Some(CrashArtifactAttachment {
+                artifact_id: "0123456789abcdef01234567".into(),
+                format: "dmp".into(),
+                size_bytes: 42,
+                sha256: "a".repeat(64),
+                collected_at_ms: 9,
+            }),
+            occurred_at_ms: 10,
+        };
+        let json = serde_json::to_value(&evidence).expect("crash evidence should serialize");
+        assert_eq!(json["artifact"]["format"], "dmp");
+        assert!(json.get("path").is_none());
+        let decoded: CrashCaptureEvidence =
+            serde_json::from_value(json).expect("crash evidence should deserialize");
+        assert_eq!(decoded, evidence);
     }
 
     #[test]

@@ -1389,6 +1389,7 @@ impl ApplicationCore {
             message: crash.message.clone(),
             runtime_nonce: crash.runtime_nonce,
             log_tail: Some(crash.message),
+            artifact: None,
             occurred_at_ms: crash.occurred_at_ms,
         });
     }

@@ -568,6 +568,12 @@ fn normalize_crash_evidence(mut evidence: CrashCaptureEvidence) -> CrashCaptureE
     evidence.log_tail = evidence
         .log_tail
         .map(|value| bounded_text(&value, MAX_CRASH_EVIDENCE_TEXT));
+    evidence.artifact = evidence.artifact.map(|mut artifact| {
+        artifact.artifact_id = bounded_text(&artifact.artifact_id, 128);
+        artifact.format = bounded_text(&artifact.format, 32);
+        artifact.sha256 = bounded_text(&artifact.sha256, 128);
+        artifact
+    });
     evidence
 }
 
@@ -811,6 +817,7 @@ mod tests {
                 message: "forced termination".into(),
                 runtime_nonce: None,
                 log_tail: Some("tail".into()),
+                artifact: None,
                 occurred_at_ms: 3,
             })
             .expect("crash evidence should persist");

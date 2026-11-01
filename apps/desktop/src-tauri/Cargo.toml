@@ -7,12 +7,17 @@ build = "build.rs"
 
 [workspace]
 
+[[bin]]
+name = "velvet-launcher"
+path = "src/launcher.rs"
+
 [build-dependencies]
 tauri-build = { version = "2.5.2", features = [] }
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
 tauri = { version = "2.9.5", features = ["unstable"] }
 tauri-plugin-dialog = "2.4.0"
 tauri-plugin-global-shortcut = "2.4.1"

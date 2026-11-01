@@ -60,9 +60,13 @@ Tauri builder、setup 或 run loop 在 Workbench 就绪前报告的宿主初始�
 
 在 Tauri builder 之前由宿主探测 WebView 和 GPU 前置能力得到的有界记录。WebView 不可用会转入独立原生恢复进程；GPU 降级进入软件 fallback；未知能力只记录诊断，不被误判为启动失败。
 
+## LauncherFailure
+
+由独立 `velvet-launcher` 记录的启动包装器失败。它覆盖子进程无法加载、无法 exec、等待失败或非零退出，保存阶段、退出码和有界 stderr 尾部；不拥有业务状态，下一次 Core 启动消费后转成 `platform-initialization` 诊断。launcher 自身在 OS 装载器阶段失败仍属于安装包/平台边界。
+
 ## Native recovery window
 
-由同一安装包以独立 helper mode 启动的原生修复进程。它不创建 Tauri 应用或 WebView，只显示固定的系统原生恢复动作，并通过一次性 typed intent 文件把恢复选择交给下一次 ApplicationCore 启动。
+由同一安装包以独立 helper mode 启动的原生修复进程。它不创建 Tauri 应用或 WebView，按 `Overview`、`Evidence`、`Actions`、`Result` 页面显示固定的系统原生恢复动作；页面只投影有界证据，不拥有业务状态，并通过一次性 typed intent 文件把恢复选择交给下一次 ApplicationCore 启动。
 
 ## Contribution scope
 
@@ -107,6 +111,10 @@ WorkbenchApp 在 WorkspaceArea 中呈现的主界面。AppSurface 可以拥有�
 ## CrashCaptureAdapter
 
 负责把平台提供的本地崩溃证据转换为有界、脱敏的诊断记录的宿主适配器。它不决定 Safe Mode、不拥有业务状态、不自动上传数据，也不等同于 RecoverySupervisor；某个平台没有可靠的 native crash capture 时可以只记录退出码、信号和启动 journal。
+
+## CrashArtifactAttachment
+
+系统级 exception/minidump/诊断文件的脱敏附件元数据。只包含稳定的 artifact id、格式、大小、SHA-256 和采集时间，不包含原始路径或转储内容；平台目录不可读、文件过大、过期或不匹配时降级为普通退出/信号证据。
 
 ## Crash correlation
 

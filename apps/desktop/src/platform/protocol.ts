@@ -560,7 +560,16 @@ export interface CoreCrashCaptureEvidence {
   readonly message: string;
   readonly runtimeNonce: string | null;
   readonly logTail: string | null;
+  readonly artifact: CoreCrashArtifactAttachment | null;
   readonly occurredAtMs: number;
+}
+
+export interface CoreCrashArtifactAttachment {
+  readonly artifactId: string;
+  readonly format: string;
+  readonly sizeBytes: number;
+  readonly sha256: string;
+  readonly collectedAtMs: number;
 }
 
 export interface CorePluginDiagnosticEvent {

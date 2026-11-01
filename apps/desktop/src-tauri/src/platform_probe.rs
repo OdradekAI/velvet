@@ -44,9 +44,10 @@ fn probe_webview() -> PlatformPreflightEvidence {
         #[cfg(target_os = "macos")]
         {
             if Path::new("/System/Library/Frameworks/WebKit.framework").exists() {
-                return PlatformCapabilityStatus::Available;
+                PlatformCapabilityStatus::Available
+            } else {
+                PlatformCapabilityStatus::Unavailable
             }
-            return PlatformCapabilityStatus::Unavailable;
         }
         #[cfg(target_os = "windows")]
         {
@@ -83,9 +84,10 @@ fn probe_gpu() -> PlatformPreflightEvidence {
         #[cfg(target_os = "macos")]
         {
             if Path::new("/System/Library/Frameworks/Metal.framework").exists() {
-                return PlatformCapabilityStatus::Available;
+                PlatformCapabilityStatus::Available
+            } else {
+                PlatformCapabilityStatus::Degraded
             }
-            return PlatformCapabilityStatus::Degraded;
         }
         #[cfg(target_os = "linux")]
         {

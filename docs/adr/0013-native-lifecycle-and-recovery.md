@@ -155,6 +155,24 @@ caught by the host, written as a bounded startup-failure marker and consumed
 into the next launch's typed recovery projection. A failure before the binary
 can execute still depends on the OS launcher or release wrapper.
 
+The release artifact also contains an optional `velvet-launcher` wrapper. It
+uses a fixed sibling application path (or an explicit test-only override),
+passes through the original arguments, captures only a bounded stderr tail and
+writes a typed `LauncherFailure` marker for loader/exec, wait and non-zero
+child-exit failures. The next successful Core startup consumes the marker once
+and records it as platform-initialization/crash evidence. The launcher has no
+access to business state and never executes a shell command. A failure while
+the launcher itself is being loaded remains an OS/package-manager boundary.
+
+When an unclean receipt is present, the platform crash adapter scans only known
+OS crash stores and recent files whose names identify Velvet. It accepts at most
+four files and 64 MiB per file, hashes them while streaming, and projects
+`CrashArtifactAttachment` metadata (format, size, digest and collection time)
+without exposing paths or raw dump bytes. The metadata is consumed with the
+receipt and is therefore one-shot. Permission errors, unsupported stores and
+unparseable formats degrade to existing process/signal evidence; they never
+block startup or trigger upload.
+
 The persistence crate now provides a framework-independent `StateSnapshotStore`
 primitive. It validates owner and scope segments, bounds payloads, records a
 schema, generation, checksum and committed marker, publishes staged snapshots
@@ -193,10 +211,11 @@ Runtime failure in an activated optional plugin also records a degraded
 component failure and clears that owner's projections and Jobs; it does not
 increment the core pre-ready Safe Mode counter.
 
-This slice is deliberately narrower than the full decision: platform-specific
-crash dump/minidump attachment and richer multi-page native repair UX remain
-release qualification work. The bundle now carries bounded crash evidence,
-cross-process correlation and persisted plugin/Job history. A successful
+The native helper now supports a backward-compatible typed multi-page flow. Each
+page is an evidence projection and the final action is still one of the fixed
+retry/restore/Safe Mode intents. The bundle carries bounded crash evidence,
+cross-process correlation, optional system artifact metadata and persisted
+plugin/Job history. A successful
 renderer `RecoverySet` restore or quarantine action requests a fresh startup so
 the selected set becomes live; extension-store actions leave only that
 extension disabled and do not restart the core.
@@ -530,7 +549,8 @@ on the next successful setup as `platform-initialization`; the marker contains
 phase, bounded error text and preflight evidence, never arbitrary command or
 plugin input. The preflight probe runs before the Tauri builder and routes a
 fatal WebView result to the standalone native recovery helper. A failure before
-the binary can execute still requires a platform launcher or release wrapper.
+the binary can execute still requires the launcher wrapper; failure before that
+wrapper can execute still requires OS/package diagnostics.
 
 A Profile has one active writer. Multiple windows share one `ApplicationCore`
 and keep separate Session/Window restoration hints. A second process forwards
@@ -732,9 +752,9 @@ Costs:
   writes and failed validation.
 - Release engineering must maintain signing keys, channel manifests, old
   package retention and platform-specific installer rollback paths.
-- Automatic relaunch and platform dump/minidump attachment remain
-  platform-specific work, and crash evidence needs its own privacy and
-  retention policy.
+- Automatic relaunch, OS-before-launcher capture and platform-specific dump
+  parsing remain release work; crash artifact metadata needs its own privacy
+  and retention policy.
 
 ## Alternatives considered
 

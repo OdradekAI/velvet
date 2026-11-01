@@ -19,12 +19,31 @@ pub enum NativeRecoveryAction {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum NativeRecoveryPageKind {
+    Overview,
+    Evidence,
+    Actions,
+    Result,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NativeRecoveryPage {
+    pub kind: NativeRecoveryPageKind,
+    pub title: String,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct NativeRecoveryRequest {
     pub schema_version: u16,
     pub title: String,
     pub message: String,
     pub actions: Vec<NativeRecoveryAction>,
+    #[serde(default)]
+    pub pages: Vec<NativeRecoveryPage>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -52,7 +71,7 @@ pub fn run_native_recovery_window(root: &Path) -> Result<(), String> {
     if request.schema_version != NATIVE_RECOVERY_SCHEMA_VERSION {
         return Err("native recovery request schema is unsupported".into());
     }
-    let action = show_native_dialog(&request).unwrap_or(NativeRecoveryAction::ContinueSafeMode);
+    let action = show_native_recovery_flow(&request).unwrap_or(NativeRecoveryAction::ContinueSafeMode);
     write_json(
         root.join(NATIVE_RECOVERY_INTENT_FILE),
         &NativeRecoveryIntent {
@@ -75,6 +94,32 @@ pub fn consume_native_recovery_intent(root: &Path) -> Option<NativeRecoveryInten
     Some(intent)
 }
 
+fn show_native_recovery_flow(request: &NativeRecoveryRequest) -> Option<NativeRecoveryAction> {
+    for page in &request.pages {
+        if !show_native_page(page) {
+            return Some(NativeRecoveryAction::ContinueSafeMode);
+        }
+    }
+    show_native_dialog(request)
+}
+
+fn show_native_page(page: &NativeRecoveryPage) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        return show_macos_page(page);
+    }
+    #[cfg(target_os = "linux")]
+    {
+        return show_linux_page(page);
+    }
+    #[cfg(target_os = "windows")]
+    {
+        return show_windows_page(page);
+    }
+    #[allow(unreachable_code)]
+    false
+}
+
 fn show_native_dialog(request: &NativeRecoveryRequest) -> Option<NativeRecoveryAction> {
     #[cfg(target_os = "macos")]
     {
@@ -90,6 +135,66 @@ fn show_native_dialog(request: &NativeRecoveryRequest) -> Option<NativeRecoveryA
     }
     #[allow(unreachable_code)]
     None
+}
+
+#[cfg(target_os = "macos")]
+fn show_macos_page(page: &NativeRecoveryPage) -> bool {
+    let script = r#"
+on run argv
+  set result to display dialog (item 2 of argv) with title (item 1 of argv) buttons {"Close", "Next"} default button "Next" cancel button "Close"
+  return button returned of result
+end run
+"#;
+    let output = Command::new("/usr/bin/osascript")
+        .args(["-e", script, "--", &page.title, &page.message])
+        .output();
+    output
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim() == "Next")
+        .unwrap_or(false)
+}
+
+#[cfg(target_os = "linux")]
+fn show_linux_page(page: &NativeRecoveryPage) -> bool {
+    if let Ok(output) = Command::new("zenity")
+        .args([
+            "--question",
+            "--title",
+            &page.title,
+            "--text",
+            &page.message,
+            "--ok-label",
+            "Next",
+            "--cancel-label",
+            "Close",
+        ])
+        .output()
+    {
+        return output.status.success();
+    }
+    Command::new("kdialog")
+        .args(["--title", &page.title, "--yesno", &page.message])
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+#[cfg(target_os = "windows")]
+fn show_windows_page(page: &NativeRecoveryPage) -> bool {
+    let script = r#"
+Add-Type -AssemblyName PresentationFramework
+$result = [System.Windows.MessageBox]::Show($env:VELVET_RECOVERY_MESSAGE, $env:VELVET_RECOVERY_TITLE, [System.Windows.MessageBoxButton]::YesNo, [System.Windows.MessageBoxImage]::Information)
+if ($result -eq [System.Windows.MessageBoxResult]::Yes) { exit 0 }
+exit 1
+"#;
+    Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-Command", script])
+        .env("VELVET_RECOVERY_TITLE", &page.title)
+        .env("VELVET_RECOVERY_MESSAGE", &page.message)
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
 }
 
 #[cfg(target_os = "macos")]
@@ -245,5 +350,28 @@ mod tests {
             Some(NativeRecoveryAction::RestoreRecoverySet)
         );
         assert_eq!(action_from_label("unknown"), None);
+    }
+
+    #[test]
+    fn native_recovery_pages_round_trip_with_legacy_empty_pages() {
+        let request = NativeRecoveryRequest {
+            schema_version: NATIVE_RECOVERY_SCHEMA_VERSION,
+            title: "Recovery".into(),
+            message: "message".into(),
+            actions: vec![NativeRecoveryAction::Retry],
+            pages: vec![NativeRecoveryPage {
+                kind: NativeRecoveryPageKind::Evidence,
+                title: "Evidence".into(),
+                message: "details".into(),
+            }],
+        };
+        let bytes = serde_json::to_vec(&request).expect("request should serialize");
+        let decoded: NativeRecoveryRequest =
+            serde_json::from_slice(&bytes).expect("request should deserialize");
+        assert_eq!(decoded.pages, request.pages);
+        let legacy = br#"{"schemaVersion":1,"title":"Recovery","message":"message","actions":["retry"]}"#;
+        let decoded: NativeRecoveryRequest =
+            serde_json::from_slice(legacy).expect("legacy request should deserialize");
+        assert!(decoded.pages.is_empty());
     }
 }
