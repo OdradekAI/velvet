@@ -59,6 +59,7 @@ assert.equal(
 );
 
 const statusListeners = new Set();
+const registerCalls = [];
 let layoutState = defaultLayoutState();
 const workbench = new Workbench({
   subscribe() {
@@ -104,6 +105,9 @@ const workbench = new Workbench({
             : layoutState.activeApp,
       };
       return { kind: 'layout', state: layoutState };
+    }
+    if (request.kind === 'register-preview-asset') {
+      registerCalls.push(request);
     }
     return { kind: 'accepted' };
   },
@@ -151,8 +155,35 @@ assert.deepEqual(workbench.context.snapshot().selection, [
   { kind: 'asset', id: 'asset-1' },
 ]);
 assert.equal(workbench.workspaceRoutingIntents().length, 1);
-const failedIntent = workbench.workspaceRoutingIntents().find((intent) => intent.kind === 'open-file');
-assert.ok(failedIntent);
+const fileIntent = workbench.workspaceRoutingIntents().find((intent) => intent.kind === 'open-file');
+assert.ok(fileIntent);
+assert.equal(
+  await workbench.consumeWorkspaceRoutingIntent(fileIntent, async (intent) => {
+    const assetId = await workbench.registerFileActivation(intent);
+    workbench.context.apply({
+      kind: 'set-selection',
+      selection: [{ kind: 'asset', id: assetId }],
+    });
+  }),
+  true,
+);
+assert.deepEqual(registerCalls, [{
+  protocolVersion: 1,
+  kind: 'register-preview-asset',
+  assetId: 'activation-request-1-0',
+  sourcePath: '/tmp/asset.png',
+  contentKind: 'application/octet-stream',
+}]);
+assert.deepEqual(workbench.context.snapshot().selection, [
+  { kind: 'asset', id: 'activation-request-1-0' },
+]);
+assert.equal(workbench.workspaceRoutingIntents().length, 0);
+workbench.acceptActivationRequest({
+  schemaVersion: 1,
+  requestId: 'request-3',
+  targets: [{ kind: 'file-path', value: '/tmp/failure.png' }],
+});
+const failedIntent = workbench.workspaceRoutingIntents()[0];
 assert.equal(
   await workbench.consumeWorkspaceRoutingIntent(failedIntent, () => {
     throw new Error('workspace failed');

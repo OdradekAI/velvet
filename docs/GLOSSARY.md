@@ -161,8 +161,11 @@ deep link 继续传递。Tauri transport 重复 runtime shape 校验，并在核
 后投递到有界 Workbench 队列。Workbench 将 file-path 和
 `velvet://asset/<id>` 转成有界、可去重的 `WorkspaceRoutingIntent`，未知 Velvet
 链接保留为 unrouted；intent 不直接执行命令或打开文件，workspace 必须显式消费。
-approved root、能力边界和 workspace consumption 仍属于后续 path/volume slice；source
-owner 的 canonical path 与 volume identity 重验证已经在 Rust 内部执行。
+`open-asset` 会更新 host-owned selection；`open-file` 通过 typed
+`register-preview-asset` 注册为 activation-scoped AssetId，路径不会进入共享
+context 或插件。approved root、能力边界和 workspace consumption 仍属于后续
+path/volume slice；source owner 的 canonical path 与 volume identity 重验证已经在
+Rust 内部执行。
 
 ## Profile lock
 

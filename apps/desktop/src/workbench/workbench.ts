@@ -74,7 +74,7 @@ export class Workbench {
   >();
   private readonly workspaceRoutingKeys = new Set<string>();
 
-  public constructor(core: CoreTransport) {
+  public constructor(private readonly core: CoreTransport) {
     this.recovery = new RecoveryClient(core);
     this.localization.bindCore(core);
     this.layout = new LayoutService(core);
@@ -216,6 +216,25 @@ export class Workbench {
       this.workspaceRoutingKeys.delete(workspaceRoutingIntentKey(intent));
     }
     return true;
+  }
+
+  /** Registers an explicitly selected file through the typed Core source seam. */
+  public async registerFileActivation(intent: WorkspaceRoutingIntent): Promise<string> {
+    if (intent.kind !== 'open-file') {
+      throw new Error('Only file activation intents can be imported');
+    }
+    const assetId = activationAssetId(intent);
+    const response = await this.core.request({
+      protocolVersion: 1,
+      kind: 'register-preview-asset',
+      assetId,
+      sourcePath: intent.path,
+      contentKind: 'application/octet-stream',
+    });
+    if (response.kind !== 'accepted') {
+      throw new Error(`Asset import returned ${response.kind}`);
+    }
+    return assetId;
   }
 
   /** Applies one Rust-owned snapshot without replaying renderer mutations. */
@@ -394,4 +413,8 @@ export class Workbench {
 
 function isSessionAwareCoreTransport(core: CoreTransport): core is SessionAwareCoreTransport {
   return 'subscribeStatus' in core && typeof core.subscribeStatus === 'function';
+}
+
+function activationAssetId(intent: Extract<WorkspaceRoutingIntent, { kind: 'open-file' }>): string {
+  return `activation-${encodeURIComponent(intent.requestId)}-${intent.targetIndex}`;
 }

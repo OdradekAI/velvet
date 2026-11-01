@@ -165,16 +165,22 @@ export function NativeWorkbenchApp() {
     }
 
     const consumeAssetIntent = (intent: WorkspaceRoutingIntent) => {
-      if (intent.kind !== 'open-asset') {
+      if (intent.kind !== 'open-asset' && intent.kind !== 'open-file') {
         return;
       }
       void workbench.consumeWorkspaceRoutingIntent(intent, (consumed) => {
-        if (consumed.kind !== 'open-asset') {
+        if (consumed.kind === 'open-asset') {
+          workbench.context.apply({
+            kind: 'set-selection',
+            selection: [{ kind: 'asset', id: consumed.assetId }],
+          });
           return;
         }
-        workbench.context.apply({
-          kind: 'set-selection',
-          selection: [{ kind: 'asset', id: consumed.assetId }],
+        return workbench.registerFileActivation(consumed).then((assetId) => {
+          workbench.context.apply({
+            kind: 'set-selection',
+            selection: [{ kind: 'asset', id: assetId }],
+          });
         });
       }).catch(() => undefined);
     };
