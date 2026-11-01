@@ -173,8 +173,7 @@ component failure and clears that owner's projections and Jobs; it does not
 increment the core pre-ready Safe Mode counter.
 
 This slice is deliberately narrower than the full decision: native no-WebView
-recovery, runtime-RPC invocation of extension migration participants,
-user-facing extension restore/quarantine confirmation and crash-capture
+recovery, user-facing extension restore/quarantine confirmation and crash-capture
 correlation in the `DiagnosticBundle` are still implementation gates. The
 bundle already carries the bounded persisted plugin/Job history. A successful
 renderer restore or quarantine action requests a fresh startup so the selected
@@ -187,9 +186,20 @@ generation compare-and-swap semantics. `BackupParticipant` receives a typed
 logical view and its output is revalidated by the host; `MigrationParticipant`
 receives a read-only source and a destination transaction. Neither participant
 can publish a core `RecoverySet`, and a failed participant leaves the previous
-extension generation and all other owners untouched. This is a host seam for
-in-process tests and future runtime RPC, not yet a promise that arbitrary
-plugin code can run during startup migration.
+extension generation and all other owners untouched. Isolated runtimes now use
+the same contract through the internal JSONL `invoke-storage` protocol:
+`storage.export` and `storage.migrate` receive only a bounded source schema,
+generation and entry map, then return a bounded candidate entry map. The host
+validates the response schema and quota, commits migration against the source
+generation with compare-and-swap, and never publishes a core `RecoverySet`
+pointer. A runtime rejection leaves the extension active but records a typed
+storage diagnostic; a timeout, crash or malformed response fails and isolates
+only that extension. This is still separate from user-facing extension
+restore/quarantine actions, which remain a follow-up recovery surface. When an
+external extension is activated after an installed upgrade and its committed
+store has an older schema, activation runs `storage.migrate` before exposing
+the extension as ready; a failed migration leaves the extension failed and
+the prior generation authoritative.
 
 Runtime and Job failures now also cross a typed diagnostic seam. `PluginHost`
 keeps a bounded local queue with sequence, extension, failure kind/code,
@@ -200,8 +210,8 @@ user-initiated diagnostic bundle; `tauri-adapter` forwards
 `PluginDiagnosticEvent` without owning retention. A corrupt or unavailable
 diagnostic store marks observability degraded but never blocks Core startup.
 This makes one extension's failure observable and recoverable while leaving
-other extensions and Core available. Native crash capture, cross-process
-correlation and runtime RPC participant invocation remain separate gates.
+other extensions and Core available. Native crash capture and cross-process
+correlation remain separate gates.
 Optional plugin activation is recorded as a degraded component failure and does
 not block the core-ready checkpoint. The file journal is an evidence
 store, not yet a replacement for owner snapshots or a proof that writes are

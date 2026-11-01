@@ -166,6 +166,28 @@ impl ExtensionStorage {
     ) -> Result<ExtensionStorageExport, ExtensionStorageError> {
         let source = self.load()?;
         let entries = participant.export(&source)?;
+        self.export_entries(&source, entries)
+    }
+
+    /// Validates an externally produced backup result without publishing it.
+    /// The source generation is retained so a caller can display or persist a
+    /// portable export without confusing it with a committed extension state.
+    pub fn export_entries(
+        &self,
+        source: &ExtensionStorageView,
+        entries: BTreeMap<String, Vec<u8>>,
+    ) -> Result<ExtensionStorageExport, ExtensionStorageError> {
+        if source.extension_id != self.extension_id {
+            return Err(ExtensionStorageError::Corrupt(
+                "extension storage export has the wrong owner".into(),
+            ));
+        }
+        if source.schema_version != self.schema_version {
+            return Err(ExtensionStorageError::SchemaMismatch {
+                expected: self.schema_version,
+                actual: source.schema_version,
+            });
+        }
         self.validate_entries(&entries)?;
         Ok(ExtensionStorageExport {
             extension_id: self.extension_id.clone(),
@@ -187,6 +209,36 @@ impl ExtensionStorage {
             committed: false,
         };
         participant.migrate(&source, &mut destination)?;
+        destination.commit()
+    }
+
+    /// Loads the latest generation without requiring it to already use the
+    /// destination schema. This is the source view passed to a migration
+    /// participant; callers must not publish it directly.
+    pub fn load_for_migration(&self) -> Result<ExtensionStorageView, ExtensionStorageError> {
+        self.load_any_schema()
+    }
+
+    /// Commits a host-validated migration result against the exact source
+    /// generation that was presented to the participant. A concurrent writer
+    /// therefore produces a conflict instead of losing either update.
+    pub fn commit_migrated_entries(
+        &self,
+        source: &ExtensionStorageView,
+        entries: BTreeMap<String, Vec<u8>>,
+    ) -> Result<ExtensionStorageView, ExtensionStorageError> {
+        if source.extension_id != self.extension_id {
+            return Err(ExtensionStorageError::Corrupt(
+                "extension storage migration has the wrong owner".into(),
+            ));
+        }
+        self.validate_entries(&entries)?;
+        let destination = ExtensionStorageTransaction {
+            storage: self.clone(),
+            base_generation: source.generation,
+            entries,
+            committed: false,
+        };
         destination.commit()
     }
 
@@ -334,6 +386,15 @@ impl ExtensionStorageTransaction {
 
     pub fn remove(&mut self, key: &str) -> bool {
         self.entries.remove(key).is_some()
+    }
+
+    pub fn replace_entries(
+        &mut self,
+        entries: BTreeMap<String, Vec<u8>>,
+    ) -> Result<(), ExtensionStorageError> {
+        self.storage.validate_entries(&entries)?;
+        self.entries = entries;
+        Ok(())
     }
 
     pub fn commit(mut self) -> Result<ExtensionStorageView, ExtensionStorageError> {

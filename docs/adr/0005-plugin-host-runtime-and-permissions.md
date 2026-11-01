@@ -288,10 +288,18 @@ updates with generation conflict detection. Backup export and migration
 participants run before a destination generation is committed. The Rust
 protocol DTO and desktop TypeScript projection carry the declaration, but
 there is deliberately no raw Tauri storage command and no filesystem path in
-the extension API. Runtime RPC invocation, user-facing extension
-restore/quarantine actions and automatic disable policy remain follow-up gates;
-bounded diagnostic history is now persisted by the application owner rather
-than by the extension storage API.
+the extension API. Isolated runtimes now participate through the internal
+versioned JSONL `invoke-storage` kind with `storage.export` and
+`storage.migrate` methods. The host sends only the source schema, generation
+and bounded entries; the runtime returns bounded entries, while the host
+checks the result schema/quota and commits a migration against the exact
+source generation. A rejected or malformed result does not publish a
+generation; a runtime failure removes only that extension's process and
+projections. JSONL responses are bounded before decoding, and the storage
+quota remains the authoritative payload limit. User-facing extension
+restore/quarantine actions and automatic orphan policy remain follow-up gates.
+Bounded diagnostic history is persisted by the application owner rather than
+by the extension storage API.
 
 `PluginHost` also owns a bounded `PluginDiagnosticSink`. Runtime start/crash,
 invocation, Job, shutdown, storage and migration failures become ordered,

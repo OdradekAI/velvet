@@ -189,6 +189,9 @@ fn default_allowed_programs() -> BTreeSet<String> {
 const RUNTIME_PROTOCOL_VERSION: u16 = 1;
 const RUNTIME_INVOCATION_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_JOB_EVENTS: usize = 128;
+const MAX_RUNTIME_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
+const STORAGE_EXPORT_METHOD: &str = "storage.export";
+const STORAGE_MIGRATE_METHOD: &str = "storage.migrate";
 pub const MAX_RUNTIME_STDERR_BYTES: usize = 16 * 1024;
 pub const MAX_PLUGIN_LOCALIZATION_BYTES: usize = 1024 * 1024;
 pub const MAX_PLUGIN_ARCHIVE_BYTES: u64 = 64 * 1024 * 1024;
@@ -678,6 +681,22 @@ pub struct PluginInvocationEvent {
     pub progress: Option<u8>,
     #[serde(default)]
     pub message: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct StorageRuntimeRequest {
+    source_schema_version: u16,
+    target_schema_version: u16,
+    source_generation: u64,
+    entries: BTreeMap<String, Vec<u8>>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct StorageRuntimeResult {
+    schema_version: u16,
+    entries: BTreeMap<String, Vec<u8>>,
 }
 
 /// Runtime input for a declared Job contribution. The host owns Job
@@ -1212,10 +1231,10 @@ impl RuntimeProcess for ChildRuntimeProcess {
 
         let request = RuntimeInvocationRequest {
             protocol_version: RUNTIME_PROTOCOL_VERSION,
-            kind: if invocation.method == "job.run" {
-                "invoke-job"
-            } else {
-                "invoke-command"
+            kind: match invocation.method.as_str() {
+                "job.run" => "invoke-job",
+                STORAGE_EXPORT_METHOD | STORAGE_MIGRATE_METHOD => "invoke-storage",
+                _ => "invoke-command",
             },
             method: &invocation.method,
             extension_id: &invocation.extension_id.0,
@@ -1468,16 +1487,34 @@ fn runtime_io_loop(
                         .and_then(|_| stdin.write_all(b"\n"))
                         .and_then(|_| stdin.flush())
                         .map_err(|error| RuntimeError::InvocationFailed(error.to_string()))?;
-                    let mut response_line = String::new();
-                    let read = stdout
-                        .read_line(&mut response_line)
-                        .map_err(|error| RuntimeError::InvocationFailed(error.to_string()))?;
-                    if read == 0 {
-                        return Err(RuntimeError::InvocationFailed(
-                            "runtime closed stdout without a response".into(),
-                        ));
+                    let mut response_line = Vec::new();
+                    loop {
+                        let available = stdout
+                            .fill_buf()
+                            .map_err(|error| RuntimeError::InvocationFailed(error.to_string()))?;
+                        if available.is_empty() {
+                            if response_line.is_empty() {
+                                return Err(RuntimeError::InvocationFailed(
+                                    "runtime closed stdout without a response".into(),
+                                ));
+                            }
+                            break;
+                        }
+                        let newline = available.iter().position(|byte| *byte == b'\n');
+                        let take = newline.map_or(available.len(), |index| index + 1);
+                        if response_line.len().saturating_add(take) > MAX_RUNTIME_RESPONSE_BYTES {
+                            return Err(RuntimeError::InvocationFailed(format!(
+                                "runtime response exceeded {MAX_RUNTIME_RESPONSE_BYTES} bytes"
+                            )));
+                        }
+                        response_line.extend_from_slice(&available[..take]);
+                        stdout.consume(take);
+                        if newline.is_some() {
+                            break;
+                        }
                     }
-                    Ok(response_line)
+                    String::from_utf8(response_line)
+                        .map_err(|error| RuntimeError::InvocationFailed(error.to_string()))
                 })();
                 let _ = response.send(result);
             }
@@ -1901,6 +1938,14 @@ pub trait PluginHost {
         id: &ExtensionId,
         participant: &dyn MigrationParticipant,
     ) -> Result<ExtensionStorageView, PluginError>;
+    fn export_extension_state_from_runtime(
+        &mut self,
+        id: &ExtensionId,
+    ) -> Result<ExtensionStorageExport, PluginError>;
+    fn migrate_extension_state_from_runtime(
+        &mut self,
+        id: &ExtensionId,
+    ) -> Result<ExtensionStorageView, PluginError>;
     fn reconcile_runtime_orphans(&mut self) -> Result<Vec<RuntimeOrphanReport>, PluginError> {
         Ok(Vec::new())
     }
@@ -2094,6 +2139,252 @@ impl InMemoryPluginHost {
                     message: format!("{error:?}"),
                 }
             })
+    }
+
+    /// Runs a plugin-owned logical backup through the isolated runtime. The
+    /// runtime only receives a bounded source snapshot and returns bounded
+    /// entries; the host remains the owner of export validation and metadata.
+    pub fn export_extension_state_from_runtime(
+        &mut self,
+        id: &ExtensionId,
+    ) -> Result<ExtensionStorageExport, PluginError> {
+        let storage = self.extension_storage(id)?;
+        let source = storage
+            .load()
+            .map_err(|error| self.storage_error(id, "storage-load-failed", error))?;
+        let request = StorageRuntimeRequest {
+            source_schema_version: source.schema_version,
+            target_schema_version: source.schema_version,
+            source_generation: source.generation,
+            entries: source.entries.clone(),
+        };
+        let result = self.invoke_storage_runtime(id, STORAGE_EXPORT_METHOD, &request)?;
+        let runtime_result =
+            self.decode_storage_runtime_result(id, result, source.schema_version)?;
+        storage
+            .export_entries(&source, runtime_result.entries)
+            .map_err(|error| self.storage_error(id, "backup-export-failed", error))
+    }
+
+    /// Runs a plugin-owned schema migration through the isolated runtime. The
+    /// returned entries are committed against the exact source generation; a
+    /// concurrent writer therefore wins or produces a typed conflict, never a
+    /// lost update. No core RecoverySet pointer is touched here.
+    pub fn migrate_extension_state_from_runtime(
+        &mut self,
+        id: &ExtensionId,
+    ) -> Result<ExtensionStorageView, PluginError> {
+        let storage = self.extension_storage(id)?;
+        let source = storage
+            .load_for_migration()
+            .map_err(|error| self.storage_error(id, "migration-source-failed", error))?;
+        let request = StorageRuntimeRequest {
+            source_schema_version: source.schema_version,
+            target_schema_version: storage.schema_version(),
+            source_generation: source.generation,
+            entries: source.entries.clone(),
+        };
+        let result = self.invoke_storage_runtime(id, STORAGE_MIGRATE_METHOD, &request)?;
+        let runtime_result =
+            self.decode_storage_runtime_result(id, result, storage.schema_version())?;
+        storage
+            .commit_migrated_entries(&source, runtime_result.entries)
+            .map_err(|error| self.storage_error(id, "migration-commit-failed", error))
+    }
+
+    fn storage_error(
+        &self,
+        id: &ExtensionId,
+        code: &str,
+        error: ExtensionStorageError,
+    ) -> PluginError {
+        self.record_diagnostic(PluginDiagnosticInput {
+            extension_id: id.clone(),
+            kind: if code.starts_with("migration") {
+                PluginDiagnosticKind::Migration
+            } else {
+                PluginDiagnosticKind::Storage
+            },
+            code: code.into(),
+            message: format!("{error:?}"),
+            job_id: None,
+            attempt: None,
+            retryable: true,
+        });
+        PluginError::ExtensionStorage {
+            extension_id: id.clone(),
+            message: format!("{error:?}"),
+        }
+    }
+
+    fn invoke_storage_runtime(
+        &mut self,
+        id: &ExtensionId,
+        method: &str,
+        request: &StorageRuntimeRequest,
+    ) -> Result<PluginInvocationResult, PluginError> {
+        let state = self
+            .states
+            .get(id)
+            .cloned()
+            .ok_or_else(|| PluginError::NotFound(id.clone()))?;
+        if !self.active.contains(id) {
+            return Err(PluginError::InvalidState {
+                extension_id: id.clone(),
+                state,
+            });
+        }
+        let process = self
+            .processes
+            .get(id)
+            .cloned()
+            .ok_or_else(|| PluginError::InvalidState {
+                extension_id: id.clone(),
+                state: ExtensionState::Failed,
+            })?;
+        let args =
+            serde_json::to_value(request).map_err(|error| PluginError::ExtensionStorage {
+                extension_id: id.clone(),
+                message: format!("storage runtime request could not be encoded: {error}"),
+            })?;
+        let invocation = PluginInvocation {
+            extension_id: id.clone(),
+            method: method.into(),
+            command_id: "storage".into(),
+            args,
+            context: serde_json::json!({
+                "capability": "extension-storage",
+                "operation": method,
+            }),
+        };
+        let result = match process.lock() {
+            Ok(mut process) => process.invoke(&invocation),
+            Err(_) => Err(RuntimeError::InvocationFailed(
+                "plugin runtime lock poisoned".into(),
+            )),
+        };
+        match result {
+            Ok(result) if result.error.is_none() => Ok(result),
+            Ok(result) => {
+                let message = result
+                    .error
+                    .unwrap_or_else(|| "plugin rejected storage operation".into());
+                self.record_diagnostic(PluginDiagnosticInput {
+                    extension_id: id.clone(),
+                    kind: storage_diagnostic_kind(method),
+                    code: "storage-runtime-rejected".into(),
+                    message: message.clone(),
+                    job_id: None,
+                    attempt: None,
+                    retryable: true,
+                });
+                Err(PluginError::ExtensionStorage {
+                    extension_id: id.clone(),
+                    message,
+                })
+            }
+            Err(error) => {
+                let message = runtime_error_message(error);
+                Err(self.fail_storage_runtime(id, method, "storage-runtime-failed", message))
+            }
+        }
+    }
+
+    fn decode_storage_runtime_result(
+        &mut self,
+        id: &ExtensionId,
+        result: PluginInvocationResult,
+        expected_schema_version: u16,
+    ) -> Result<StorageRuntimeResult, PluginError> {
+        let payload = result.result.ok_or_else(|| {
+            self.fail_storage_runtime(
+                id,
+                "storage",
+                "storage-runtime-invalid-result",
+                "plugin returned no storage result".into(),
+            )
+        })?;
+        let runtime_result =
+            serde_json::from_value::<StorageRuntimeResult>(payload).map_err(|error| {
+                self.fail_storage_runtime(
+                    id,
+                    "storage",
+                    "storage-runtime-invalid-result",
+                    format!("plugin storage result is invalid: {error}"),
+                )
+            })?;
+        if runtime_result.schema_version != expected_schema_version {
+            return Err(self.fail_storage_runtime(
+                id,
+                "storage",
+                "storage-runtime-schema-mismatch",
+                format!(
+                    "plugin returned schema {} but host expected {}",
+                    runtime_result.schema_version, expected_schema_version
+                ),
+            ));
+        }
+        Ok(runtime_result)
+    }
+
+    fn fail_storage_runtime(
+        &mut self,
+        id: &ExtensionId,
+        method: &str,
+        code: &str,
+        message: String,
+    ) -> PluginError {
+        if let Some(process) = self.processes.remove(id) {
+            if let Ok(mut process) = process.lock() {
+                let _ = process.shutdown();
+            }
+        }
+        let runtime_nonce = self.runtime_nonces.remove(id);
+        self.close_runtime_lease(id, runtime_nonce.as_deref());
+        self.active.remove(id);
+        self.states.insert(id.clone(), ExtensionState::Failed);
+        self.record_diagnostic(PluginDiagnosticInput {
+            extension_id: id.clone(),
+            kind: storage_diagnostic_kind(method),
+            code: code.into(),
+            message: message.clone(),
+            job_id: None,
+            attempt: None,
+            retryable: true,
+        });
+        PluginError::ExtensionStorage {
+            extension_id: id.clone(),
+            message,
+        }
+    }
+
+    fn runtime_storage_migration_required(
+        &self,
+        manifest: &ExtensionManifest,
+    ) -> Result<bool, PluginError> {
+        if manifest.runtime == RuntimeKind::BuiltIn
+            || manifest.storage.is_none()
+            || self.extension_snapshots.is_none()
+        {
+            return Ok(false);
+        }
+        let storage = self.extension_storage(&manifest.id)?;
+        let source = storage
+            .load_for_migration()
+            .map_err(|error| self.storage_error(&manifest.id, "migration-source-failed", error))?;
+        Ok(source.generation > 0 && source.schema_version != storage.schema_version())
+    }
+
+    fn abort_runtime_activation(&mut self, id: &ExtensionId) {
+        if let Some(process) = self.processes.remove(id) {
+            if let Ok(mut process) = process.lock() {
+                let _ = process.shutdown();
+            }
+        }
+        let runtime_nonce = self.runtime_nonces.remove(id);
+        self.close_runtime_lease(id, runtime_nonce.as_deref());
+        self.active.remove(id);
+        self.states.insert(id.clone(), ExtensionState::Failed);
     }
 
     pub fn register_app(&mut self, app_id: String, api: VersionRange) {
@@ -2867,6 +3158,14 @@ impl PluginHost for InMemoryPluginHost {
             return Ok(());
         }
 
+        let storage_migration_required = match self.runtime_storage_migration_required(&manifest) {
+            Ok(required) => required,
+            Err(error) => {
+                self.states.insert(id.clone(), ExtensionState::Failed);
+                return Err(error);
+            }
+        };
+
         self.states.insert(id.clone(), ExtensionState::Starting);
         let permissions = PermissionGrant::from_manifest(&manifest);
         let package_root = self.package_roots.get(id).cloned();
@@ -2969,6 +3268,14 @@ impl PluginHost for InMemoryPluginHost {
                     .insert(id.clone(), Arc::new(Mutex::new(process)));
                 self.active.insert(id.clone());
                 self.states.insert(id.clone(), ExtensionState::Active);
+                if storage_migration_required {
+                    if let Err(error) = self.migrate_extension_state_from_runtime(id) {
+                        if self.active.contains(id) {
+                            self.abort_runtime_activation(id);
+                        }
+                        return Err(error);
+                    }
+                }
                 Ok(())
             }
             Err(error) => {
@@ -3998,6 +4305,20 @@ impl PluginHost for InMemoryPluginHost {
         InMemoryPluginHost::migrate_extension_state(self, id, participant)
     }
 
+    fn export_extension_state_from_runtime(
+        &mut self,
+        id: &ExtensionId,
+    ) -> Result<ExtensionStorageExport, PluginError> {
+        InMemoryPluginHost::export_extension_state_from_runtime(self, id)
+    }
+
+    fn migrate_extension_state_from_runtime(
+        &mut self,
+        id: &ExtensionId,
+    ) -> Result<ExtensionStorageView, PluginError> {
+        InMemoryPluginHost::migrate_extension_state_from_runtime(self, id)
+    }
+
     fn reconcile_runtime_orphans(&mut self) -> Result<Vec<RuntimeOrphanReport>, PluginError> {
         InMemoryPluginHost::reconcile_runtime_orphans(self)
     }
@@ -4012,6 +4333,14 @@ fn namespace_for(scope: &ContributionScope, extension_id: &ExtensionId) -> Strin
         ContributionScope::Workbench => "workbench".into(),
         ContributionScope::WorkbenchApp { app_id } => format!("workbench.app.{app_id}"),
         ContributionScope::Capability => format!("capability.{}", extension_id.0),
+    }
+}
+
+fn storage_diagnostic_kind(method: &str) -> PluginDiagnosticKind {
+    if method == STORAGE_MIGRATE_METHOD {
+        PluginDiagnosticKind::Migration
+    } else {
+        PluginDiagnosticKind::Storage
     }
 }
 
@@ -4120,7 +4449,7 @@ mod tests {
 
     use super::*;
     use velvet_layout_model::WorkbenchZone;
-    use velvet_persistence::InMemoryStateSnapshotStore;
+    use velvet_persistence::{InMemoryStateSnapshotStore, StateSnapshotStore};
     use velvet_plugin_api::{
         ContextAnchor, ContributionDescriptor, ExtensionId, ExtensionStorageDeclaration,
         LocalizationManifest, Permission, PreviewAugmentationSlot, PreviewContributionDescriptor,
@@ -4153,6 +4482,16 @@ mod tests {
     }
 
     struct LeaseProcess {
+        shutdowns: Arc<Mutex<usize>>,
+    }
+
+    struct StorageRuntime {
+        observed: Arc<Mutex<Vec<PluginInvocation>>>,
+        shutdowns: Arc<Mutex<usize>>,
+    }
+
+    struct StorageProcess {
+        observed: Arc<Mutex<Vec<PluginInvocation>>>,
         shutdowns: Arc<Mutex<usize>>,
     }
 
@@ -4414,6 +4753,66 @@ mod tests {
                 error: None,
                 events: Vec::new(),
             })
+        }
+    }
+
+    impl RuntimeProcess for StorageProcess {
+        fn poll(&mut self) -> RuntimeHealth {
+            RuntimeHealth::Running
+        }
+
+        fn shutdown(&mut self) -> Result<(), RuntimeError> {
+            *self
+                .shutdowns
+                .lock()
+                .expect("shutdown counter should not be poisoned") += 1;
+            Ok(())
+        }
+
+        fn invoke(
+            &mut self,
+            invocation: &PluginInvocation,
+        ) -> Result<PluginInvocationResult, RuntimeError> {
+            self.observed
+                .lock()
+                .expect("invocation log should not be poisoned")
+                .push(invocation.clone());
+            let request = serde_json::from_value::<StorageRuntimeRequest>(invocation.args.clone())
+                .map_err(|error| RuntimeError::InvocationFailed(error.to_string()))?;
+            let target_schema_version = request.target_schema_version;
+            let entries = if invocation.method == STORAGE_MIGRATE_METHOD {
+                request
+                    .entries
+                    .into_iter()
+                    .map(|(key, value)| (format!("{key}.v2"), value))
+                    .collect()
+            } else {
+                request.entries
+            };
+            Ok(PluginInvocationResult {
+                result: Some(
+                    serde_json::to_value(StorageRuntimeResult {
+                        schema_version: target_schema_version,
+                        entries,
+                    })
+                    .expect("storage result should serialize"),
+                ),
+                error: None,
+                events: Vec::new(),
+            })
+        }
+    }
+
+    impl PluginRuntime for StorageRuntime {
+        fn start(
+            &mut self,
+            _manifest: &ExtensionManifest,
+            _permissions: &PermissionGrant,
+        ) -> Result<Box<dyn RuntimeProcess>, RuntimeError> {
+            Ok(Box::new(StorageProcess {
+                observed: self.observed.clone(),
+                shutdowns: self.shutdowns.clone(),
+            }))
         }
     }
 
@@ -4763,6 +5162,211 @@ mod tests {
         ));
         assert_eq!(first_storage.load().unwrap().generation, 1);
         assert!(second_storage.load().unwrap().entries.is_empty());
+    }
+
+    #[test]
+    fn runtime_storage_export_is_host_validated_and_does_not_publish_state() {
+        let snapshots = Arc::new(InMemoryStateSnapshotStore::default());
+        let observed = Arc::new(Mutex::new(Vec::new()));
+        let shutdowns = Arc::new(Mutex::new(0));
+        let mut host = InMemoryPluginHost::with_runtime(Box::new(StorageRuntime {
+            observed: observed.clone(),
+            shutdowns,
+        }));
+        host.set_extension_storage_store(snapshots);
+        let manifest = ExtensionManifest {
+            id: ExtensionId("runtime.backup".into()),
+            runtime: RuntimeKind::Wasm,
+            launch: Some(RuntimeLaunchSpec {
+                program: "runner".into(),
+                args: Vec::new(),
+            }),
+            storage: Some(ExtensionStorageDeclaration {
+                schema_version: 1,
+                quota_bytes: 1024,
+            }),
+            ..ExtensionManifest::default()
+        };
+        let id = manifest.id.clone();
+        host.register(manifest).unwrap();
+        let storage = host.extension_storage(&id).unwrap();
+        let mut transaction = storage.begin_transaction().unwrap();
+        transaction.put("answer", b"42".to_vec()).unwrap();
+        transaction.commit().unwrap();
+        host.activate(&id).unwrap();
+
+        let export = host.export_extension_state_from_runtime(&id).unwrap();
+        assert_eq!(export.schema_version, 1);
+        assert_eq!(export.source_generation, 1);
+        assert_eq!(export.entries["answer"], b"42");
+        assert_eq!(storage.load().unwrap().generation, 1);
+        let invocation = &observed.lock().unwrap()[0];
+        assert_eq!(invocation.method, STORAGE_EXPORT_METHOD);
+        assert_eq!(invocation.command_id, "storage");
+        assert_eq!(invocation.context["capability"], "extension-storage");
+    }
+
+    #[test]
+    fn runtime_storage_migration_commits_only_the_new_extension_generation() {
+        let snapshots = Arc::new(InMemoryStateSnapshotStore::default());
+        let observed = Arc::new(Mutex::new(Vec::new()));
+        let mut host = InMemoryPluginHost::with_runtime(Box::new(StorageRuntime {
+            observed: observed.clone(),
+            shutdowns: Arc::new(Mutex::new(0)),
+        }));
+        host.set_extension_storage_store(snapshots.clone());
+        let first = ExtensionManifest {
+            id: ExtensionId("runtime.migration".into()),
+            runtime: RuntimeKind::Wasm,
+            launch: Some(RuntimeLaunchSpec {
+                program: "runner".into(),
+                args: Vec::new(),
+            }),
+            storage: Some(ExtensionStorageDeclaration {
+                schema_version: 1,
+                quota_bytes: 1024,
+            }),
+            ..ExtensionManifest::default()
+        };
+        let id = first.id.clone();
+        host.register(first).unwrap();
+        let storage = host.extension_storage(&id).unwrap();
+        let mut transaction = storage.begin_transaction().unwrap();
+        transaction.put("answer", b"42".to_vec()).unwrap();
+        transaction.commit().unwrap();
+        host.activate(&id).unwrap();
+
+        host.manifests.get_mut(&id).unwrap().storage = Some(ExtensionStorageDeclaration {
+            schema_version: 2,
+            quota_bytes: 1024,
+        });
+        let migrated = host.migrate_extension_state_from_runtime(&id).unwrap();
+        assert_eq!(migrated.schema_version, 2);
+        assert_eq!(migrated.generation, 2);
+        assert_eq!(migrated.entries["answer.v2"], b"42");
+        assert_eq!(storage.load_for_migration().unwrap().generation, 2);
+        let invocation = &observed.lock().unwrap()[0];
+        let request: StorageRuntimeRequest =
+            serde_json::from_value(invocation.args.clone()).unwrap();
+        assert_eq!(invocation.method, STORAGE_MIGRATE_METHOD);
+        assert_eq!(request.source_schema_version, 1);
+        assert_eq!(request.target_schema_version, 2);
+        assert_eq!(request.source_generation, 1);
+        assert_eq!(
+            snapshots
+                .load_latest("extension.runtime.migration", "storage")
+                .unwrap()
+                .unwrap()
+                .metadata
+                .generation,
+            2
+        );
+    }
+
+    #[test]
+    fn external_activation_migrates_an_existing_storage_generation_before_ready() {
+        let snapshots = Arc::new(InMemoryStateSnapshotStore::default());
+        let observed = Arc::new(Mutex::new(Vec::new()));
+        let mut host = InMemoryPluginHost::with_runtime(Box::new(StorageRuntime {
+            observed: observed.clone(),
+            shutdowns: Arc::new(Mutex::new(0)),
+        }));
+        host.set_extension_storage_store(snapshots);
+        let manifest = ExtensionManifest {
+            id: ExtensionId("runtime.activation-migration".into()),
+            runtime: RuntimeKind::Wasm,
+            launch: Some(RuntimeLaunchSpec {
+                program: "runner".into(),
+                args: Vec::new(),
+            }),
+            storage: Some(ExtensionStorageDeclaration {
+                schema_version: 1,
+                quota_bytes: 1024,
+            }),
+            ..ExtensionManifest::default()
+        };
+        let id = manifest.id.clone();
+        host.register(manifest).unwrap();
+        let storage = host.extension_storage(&id).unwrap();
+        let mut transaction = storage.begin_transaction().unwrap();
+        transaction.put("answer", b"42".to_vec()).unwrap();
+        transaction.commit().unwrap();
+        host.activate(&id).unwrap();
+        host.disable(&id, DisableReason::User).unwrap();
+
+        host.manifests.get_mut(&id).unwrap().storage = Some(ExtensionStorageDeclaration {
+            schema_version: 2,
+            quota_bytes: 1024,
+        });
+        host.activate(&id)
+            .expect("activation should migrate before exposing the runtime as ready");
+        let migrated = host
+            .extension_storage(&id)
+            .unwrap()
+            .load_for_migration()
+            .unwrap();
+        assert_eq!(migrated.schema_version, 2);
+        assert_eq!(migrated.entries["answer.v2"], b"42");
+        assert_eq!(
+            observed
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|invocation| invocation.method == STORAGE_MIGRATE_METHOD)
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn runtime_storage_failure_disables_only_the_failing_extension_and_keeps_state() {
+        let snapshots = Arc::new(InMemoryStateSnapshotStore::default());
+        let shutdowns = Arc::new(Mutex::new(0));
+        let mut host = InMemoryPluginHost::with_runtime(Box::new(FakeRuntime {
+            plans: VecDeque::from([StartPlan::ProcessWithInvocation(
+                vec![RuntimeHealth::Running],
+                RuntimeError::InvocationFailed("migration crashed".into()),
+            )]),
+            grants: Arc::new(Mutex::new(Vec::new())),
+            shutdowns: shutdowns.clone(),
+        }));
+        host.set_extension_storage_store(snapshots);
+        let id = ExtensionId("runtime.failed-migration".into());
+        let manifest = ExtensionManifest {
+            id: id.clone(),
+            runtime: RuntimeKind::Wasm,
+            launch: Some(RuntimeLaunchSpec {
+                program: "runner".into(),
+                args: Vec::new(),
+            }),
+            storage: Some(ExtensionStorageDeclaration {
+                schema_version: 2,
+                quota_bytes: 1024,
+            }),
+            ..ExtensionManifest::default()
+        };
+        host.register(manifest).unwrap();
+        let storage = host.extension_storage(&id).unwrap();
+        let mut transaction = storage.begin_transaction().unwrap();
+        transaction.put("answer", b"42".to_vec()).unwrap();
+        transaction.commit().unwrap();
+        host.activate(&id).unwrap();
+
+        assert!(matches!(
+            host.migrate_extension_state_from_runtime(&id),
+            Err(PluginError::ExtensionStorage { .. })
+        ));
+        assert_eq!(host.discover()[0].state, ExtensionState::Failed);
+        assert_eq!(storage.load_for_migration().unwrap().generation, 1);
+        assert_eq!(
+            storage.load_for_migration().unwrap().entries["answer"],
+            b"42"
+        );
+        assert_eq!(*shutdowns.lock().unwrap(), 1);
+        assert!(host
+            .drain_diagnostics()
+            .iter()
+            .any(|record| record.code == "storage-runtime-failed"));
     }
 
     #[test]
@@ -5455,6 +6059,59 @@ mod tests {
         process
             .shutdown()
             .expect("the sidecar should be stoppable after invocation");
+    }
+
+    #[test]
+    fn process_runtime_marks_storage_participants_with_the_storage_invocation_kind() {
+        let mut runtime = ProcessPluginRuntime;
+        let manifest = ExtensionManifest {
+            id: ExtensionId("process.storage-invocation".into()),
+            version: "1.0.0".into(),
+            host_api: VersionRange("^1".into()),
+            runtime: RuntimeKind::Sidecar,
+            launch: Some(RuntimeLaunchSpec {
+                program: "sh".into(),
+                args: vec![
+                    "-c".into(),
+                    "IFS= read -r line; if printf '%s' \"$line\" | grep -q '\"kind\":\"invoke-storage\"' && printf '%s' \"$line\" | grep -q 'storage.migrate'; then printf '%s\\n' '{\"protocolVersion\":1,\"ok\":true,\"result\":{\"schemaVersion\":2,\"entries\":{}}}'; else printf '%s\\n' '{\"protocolVersion\":1,\"ok\":false,\"error\":\"unexpected storage request\"}'; fi; sleep 5".into(),
+                ],
+            }),
+            target_app: None,
+            contributions: vec![],
+            permission_sets: vec![],
+            ..ExtensionManifest::default()
+        };
+        let mut process = runtime
+            .start(&manifest, &PermissionGrant::default())
+            .expect("the declared sidecar should start");
+        let result = process
+            .invoke(&PluginInvocation {
+                extension_id: manifest.id.clone(),
+                method: STORAGE_MIGRATE_METHOD.into(),
+                command_id: "storage".into(),
+                args: serde_json::json!({
+                    "sourceSchemaVersion": 1,
+                    "targetSchemaVersion": 2,
+                    "sourceGeneration": 1,
+                    "entries": {}
+                }),
+                context: serde_json::json!({
+                    "capability": "extension-storage",
+                    "operation": STORAGE_MIGRATE_METHOD,
+                }),
+            })
+            .expect("the storage participant should answer the JSONL invocation");
+        assert_eq!(result.error, None);
+        assert_eq!(
+            result.result,
+            Some(serde_json::json!({
+                "schemaVersion": 2,
+                "entries": {}
+            }))
+        );
+        process
+            .shutdown()
+            .expect("the storage participant should be stoppable after invocation");
     }
 
     #[test]
