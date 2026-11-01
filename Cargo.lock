@@ -293,6 +293,7 @@ dependencies = [
  "velvet-layout-model",
  "velvet-persistence",
  "velvet-plugin-api",
+ "windows-sys",
  "zip",
 ]
 

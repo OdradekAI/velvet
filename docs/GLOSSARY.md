@@ -48,6 +48,10 @@ FeedItem 关联的内容快照、附件或解析结果。Capture 可以在保留
 
 核心重启时对未关闭 RuntimeLease 的恢复流程。宿主必须先验证 PID/start-token、process group 或 Job Object 等平台身份，再决定终止；身份不确定时进入 quarantine，不因 PID 单独匹配而杀进程。确认孤儿后移除插件投影、将其 Jobs 标为 Interrupted，同时保留已提交扩展数据。
 
+## ProcessSupervisor
+
+由 `PluginHost` 持有的平台进程生命周期适配器。Unix 使用进程组和平台可用的父进程退出保护，macOS 使用 `proc_pidinfo` 身份和下一次启动的 orphan reconciliation，Windows 使用带 `KILL_ON_JOB_CLOSE` 的 Job Object 以及进程创建时间。它只负责运行时树的生命周期和身份确认，不是安全沙箱，也不向插件开放原生进程控制。
+
 ## Quarantined runtime lease
 
 身份无法安全确认或已确认但无法终止的 RuntimeLease。它只保留扩展、runtime nonce 和时间等有限证据，后续启动不会再次探测或终止；用户可通过宿主拥有的显式动作关闭记录，关闭记录不会终止进程。

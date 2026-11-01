@@ -13,6 +13,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use platform_process::ProcessSupervisor;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use velvet_layout_model::WorkbenchZone;
@@ -26,6 +27,7 @@ use velvet_plugin_api::{
 };
 
 mod extension_storage;
+mod platform_process;
 mod runtime_lease;
 
 pub use extension_storage::{
@@ -1104,9 +1106,15 @@ impl PluginRuntime for ProcessPluginRuntime {
         command.process_group(0);
         #[cfg(target_os = "linux")]
         configure_linux_parent_death(&mut command);
+        let process_supervisor = ProcessSupervisor::new().map_err(RuntimeError::StartFailed)?;
         let mut child = command
             .spawn()
             .map_err(|error| RuntimeError::StartFailed(error.to_string()))?;
+        if let Err(error) = process_supervisor.assign(child.id()) {
+            let _ = terminate_child(&mut child);
+            let _ = child.wait();
+            return Err(RuntimeError::StartFailed(error));
+        }
 
         let stdin = match child.stdin.take() {
             Some(stdin) => stdin,
@@ -1166,6 +1174,7 @@ impl PluginRuntime for ProcessPluginRuntime {
         };
 
         Ok(Box::new(ChildRuntimeProcess {
+            process_supervisor,
             start_token: process_start_token(child.id()),
             child,
             requests: Some(requests),
@@ -1189,6 +1198,7 @@ enum RuntimeIoRequest {
 }
 
 struct ChildRuntimeProcess {
+    process_supervisor: ProcessSupervisor,
     start_token: Option<String>,
     child: Child,
     requests: Option<Sender<RuntimeIoRequest>>,
@@ -1223,6 +1233,10 @@ impl RuntimeProcess for ChildRuntimeProcess {
                 Ok(())
             }
             Ok(None) => {
+                self.process_supervisor
+                    .terminate()
+                    .map_err(RuntimeError::ShutdownFailed)?;
+                #[cfg(not(windows))]
                 terminate_child(&mut self.child)?;
                 self.child
                     .wait()
@@ -1419,7 +1433,12 @@ fn process_start_token(pid: u32) -> Option<String> {
     fields.split_whitespace().nth(19).map(ToOwned::to_owned)
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(any(target_os = "macos", windows))]
+fn process_start_token(pid: u32) -> Option<String> {
+    platform_process::inspect_process(pid).and_then(|identity| identity.start_token)
+}
+
+#[cfg(all(not(target_os = "linux"), not(target_os = "macos"), not(windows)))]
 fn process_start_token(_pid: u32) -> Option<String> {
     None
 }
@@ -6504,6 +6523,16 @@ mod tests {
         assert_eq!(host.discover()[0].state, ExtensionState::Active);
         host.disable(&id, DisableReason::User).unwrap();
         assert_eq!(*shutdowns.lock().unwrap(), 2);
+    }
+
+    #[cfg(any(target_os = "macos", windows))]
+    #[test]
+    fn process_runtime_records_native_start_identity() {
+        let token = process_start_token(std::process::id());
+        assert!(
+            token.is_some(),
+            "the platform start identity should be readable"
+        );
     }
 
     #[test]

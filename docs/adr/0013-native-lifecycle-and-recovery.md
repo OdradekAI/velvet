@@ -475,9 +475,16 @@ shutdown; Linux additionally arms a parent-death signal before exec. Package
 launch allow-lists are enforced for discovered and installed packages;
 the host now persists a bounded per-runtime lease with a starting-to-running
 commit barrier, child process identity and atomic close on normal shutdown or
-failure cleanup. Equivalent parent-death/process-group behavior on other
-supported platforms remain qualification gates; Linux now verifies the
-`/proc/<pid>/stat` start token and process group before termination.
+failure cleanup. The platform supervisor keeps this lifecycle seam explicit:
+macOS records `proc_pidinfo` start time and process-group identity, then uses
+the existing process-group cleanup plus next-start reconciliation because macOS
+does not provide the Linux parent-death signal used here; Windows assigns the
+child to a host-owned Job Object with `KILL_ON_JOB_CLOSE`, records process
+creation time through `GetProcessTimes`, and terminates the Job Object as a
+tree. The Windows Job Object is a lifecycle containment primitive, not a
+security sandbox or a substitute for manifest capabilities. Linux, macOS and
+Windows all reject an unreadable identity as uncertain and quarantine rather
+than kill by PID alone.
 
 The planned reconciler uses a host-owned per-runtime lease rather than a
 plugin-visible callback. The lease binds extension id, committed package
@@ -497,10 +504,18 @@ quarantined lease is persisted with `RuntimeLeaseState::Quarantined`, is marked
 failed for the affected extension and is inert on later launches until an
 explicit lifecycle action closes it; this prevents repeated startup probes and
 preserves the evidence without making the process a repeated kill target.
-macOS/Windows identity and termination primitives remain future implementation
-work and degrade to quarantine when unavailable. Tauri initialization failures
+The macOS and Windows identity and termination adapters are now implemented.
+macOS intentionally retains the next-start reconciliation fallback for an
+abrupt Core loss; platform release qualification must exercise that path,
+Windows descendant cleanup, permission-denied inspection, PID reuse and
+identity races. Tauri initialization failures
 are recorded before the normal Workbench exists and become a
 `platform-initialization` recovery failure on the next successful launch.
+The platform adapter is private to `plugin-host`; `RuntimeProcessIdentity` is
+stored only inside the host lease, so this change adds no Rust/Tauri command,
+TypeScript envelope or plugin-visible capability. The existing typed recovery
+projection continues to expose only bounded lease evidence and explicit close
+actions.
 
 Before system suspend, background admission stops, runners checkpoint and Job
 snapshots persist. After wake, local work resumes when its owner and storage

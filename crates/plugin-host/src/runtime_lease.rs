@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(windows)]
+use crate::platform_process;
 use serde::{Deserialize, Serialize};
 use velvet_persistence::DurabilityMode;
 use velvet_plugin_api::ExtensionId;
@@ -27,8 +29,8 @@ pub struct RuntimeProcessIdentity {
     pub pid: u32,
     #[serde(default)]
     pub process_group_id: Option<u32>,
-    /// Linux `/proc/<pid>/stat` start time in clock ticks. Other platforms
-    /// leave this unset until they expose an equivalent instance token.
+    /// Linux `/proc/<pid>/stat` start time in clock ticks, macOS process start
+    /// time, or Windows process creation time, depending on the host platform.
     #[serde(default)]
     pub start_token: Option<String>,
 }
@@ -353,8 +355,8 @@ pub trait RuntimeOrphanReconciler: Send + Sync {
 }
 
 /// Uses the strongest identity primitive available on the current platform.
-/// Linux can verify PID reuse with `/proc`; other platforms conservatively
-/// report an uncertain identity until their native process adapter is wired.
+/// Linux verifies PID reuse with `/proc`; macOS uses `proc_pidinfo`; Windows
+/// uses the process creation time and Job Object lifetime adapter.
 #[derive(Default)]
 pub struct PlatformRuntimeOrphanReconciler;
 
@@ -368,9 +370,10 @@ impl RuntimeOrphanReconciler for PlatformRuntimeOrphanReconciler {
             Some(actual) if process_identity_matches(expected, &actual) => {
                 RuntimeOrphanObservation::Matching
             }
-            Some(_) if cfg!(target_os = "linux") && expected.start_token.is_some() => {
-                RuntimeOrphanObservation::DifferentProcess
+            Some(actual) if actual.start_token.is_none() => {
+                RuntimeOrphanObservation::IdentityUncertain
             }
+            Some(_) if expected.start_token.is_some() => RuntimeOrphanObservation::DifferentProcess,
             Some(_) => RuntimeOrphanObservation::IdentityUncertain,
         }
     }
@@ -408,7 +411,11 @@ impl RuntimeOrphanReconciler for PlatformRuntimeOrphanReconciler {
             }
             Ok(())
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
+        {
+            platform_process::terminate_process(process.pid).map_err(RuntimeLeaseError::Unavailable)
+        }
+        #[cfg(all(not(unix), not(windows)))]
         {
             let _ = process;
             Err(RuntimeLeaseError::Unavailable(
@@ -458,7 +465,7 @@ fn inspect_process(pid: u32) -> Option<RuntimeProcessIdentity> {
     let (_, fields) = contents.rsplit_once(") ")?;
     let fields = fields.split_whitespace().collect::<Vec<_>>();
     let process_group_id = fields.get(2)?.parse::<u32>().ok()?;
-    let start_token = fields.get(19)?.to_owned();
+    let start_token = fields.get(19)?.to_string();
     Some(RuntimeProcessIdentity {
         pid,
         process_group_id: Some(process_group_id),
@@ -468,18 +475,29 @@ fn inspect_process(pid: u32) -> Option<RuntimeProcessIdentity> {
 
 #[cfg(all(unix, not(target_os = "linux")))]
 fn inspect_process(pid: u32) -> Option<RuntimeProcessIdentity> {
-    let result = unsafe { libc::kill(pid as i32, 0) };
-    if result != 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
-        return None;
+    #[cfg(target_os = "macos")]
+    return crate::platform_process::inspect_process(pid);
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let result = unsafe { libc::kill(pid as i32, 0) };
+        if result != 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
+            return None;
+        }
+        Some(RuntimeProcessIdentity {
+            pid,
+            process_group_id: None,
+            start_token: None,
+        })
     }
-    Some(RuntimeProcessIdentity {
-        pid,
-        process_group_id: None,
-        start_token: None,
-    })
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn inspect_process(pid: u32) -> Option<RuntimeProcessIdentity> {
+    crate::platform_process::inspect_process(pid)
+}
+
+#[cfg(all(not(unix), not(windows)))]
 fn inspect_process(_pid: u32) -> Option<RuntimeProcessIdentity> {
     None
 }
@@ -655,6 +673,24 @@ mod tests {
         assert_eq!(
             reconciler.observe(&reused_lease),
             RuntimeOrphanObservation::DifferentProcess
+        );
+    }
+
+    #[cfg(any(target_os = "macos", windows))]
+    #[test]
+    fn native_reconciler_uses_platform_start_identity() {
+        let process = inspect_process(std::process::id()).expect("the test process should exist");
+        assert!(process.start_token.is_some());
+        let lease = RuntimeLease::starting(
+            ExtensionId("example.plugin".into()),
+            "1.0.0".into(),
+            None,
+            "nonce-native".into(),
+        )
+        .running(process);
+        assert_eq!(
+            PlatformRuntimeOrphanReconciler.observe(&lease),
+            RuntimeOrphanObservation::Matching
         );
     }
 }
