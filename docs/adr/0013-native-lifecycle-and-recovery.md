@@ -730,13 +730,15 @@ fallbacks; the renderer never becomes a second file-change owner.
 
 File associations, drag/drop, command-line input and deep links use one typed
 `ActivationRequest`. The current cross-process seam validates the schema,
-request-id bounds, target count/size, NUL exclusion and `velvet://`/`file://`
-schemes in Rust and repeats the runtime shape check in the Tauri transport
-before queuing it until startup reaches `ready`. Canonical path roots, file
-type policy, volume identity, capability checks, request deduplication and
-workspace routing are the next path/volume slice; a queued activation does
-not yet open a file by itself. Clipboard, notification, tray and shortcut
-integrations are capability-scoped adapters with in-app or no-op fallbacks.
+request-id bounds, target count/size and NUL exclusion in Rust, canonicalizes
+existing regular-file targets (including percent-decoded `file://` URIs), and
+permits only the `velvet://` deep-link scheme after normalization. The Tauri
+transport repeats the runtime shape check before queuing the result until
+startup reaches `ready`. Approved-root policy, volume identity, capability
+checks, request deduplication and workspace routing are the remaining
+path/volume slice; a queued activation does not yet open a file by itself.
+Clipboard, notification, tray and shortcut integrations are capability-scoped
+adapters with in-app or no-op fallbacks.
 They do not resolve commands or mutate layout directly.
 
 Window restore clamps missing-monitor or changed-work-area bounds to a visible

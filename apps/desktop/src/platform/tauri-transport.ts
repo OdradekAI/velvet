@@ -571,8 +571,7 @@ function isValidActivationRequest(value: unknown): value is CoreActivationReques
     }
     return (
       activationTarget.kind !== 'deep-link' ||
-      activationTarget.value.startsWith('velvet://') ||
-      activationTarget.value.startsWith('file://')
+      activationTarget.value.startsWith('velvet://')
     );
   });
 }

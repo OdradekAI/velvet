@@ -118,6 +118,13 @@ activationListener({
     targets: [{ kind: 'deep-link', value: 'https://example.invalid' }],
   },
 });
+activationListener({
+  payload: {
+    schemaVersion: 1,
+    requestId: 'un-normalized-file-uri',
+    targets: [{ kind: 'deep-link', value: 'file:///tmp/asset' }],
+  },
+});
 assert.equal(activation?.requestId, 'activation-1');
 
 const unsubscribe = transport.subscribe(() => undefined);

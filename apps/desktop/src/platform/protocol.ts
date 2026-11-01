@@ -28,6 +28,7 @@ export type CoreActivationTargetKind = 'file-path' | 'deep-link';
 
 export interface CoreActivationTarget {
   readonly kind: CoreActivationTargetKind;
+  /** `file-path` is canonicalized by the native host before delivery. */
   readonly value: string;
 }
 

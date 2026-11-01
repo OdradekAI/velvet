@@ -7,7 +7,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
-use velvet_workbench_protocol::{ActivationRequest, CoreError};
+use velvet_workbench_protocol::{ActivationRequest, ActivationTargetKind, CoreError};
 
 const LOCK_SCHEMA_VERSION: u16 = 1;
 const LOCK_FILE_NAME: &str = "profile.lock";
@@ -55,9 +55,13 @@ impl ProfileInstanceCoordinator {
     pub fn acquire(root: impl Into<PathBuf>, request: &ActivationRequest) -> io::Result<AcquireOutcome> {
         let root = root.into();
         fs::create_dir_all(&root)?;
-        request
-            .validate()
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error_message(error)))?;
+        let normalized = normalize_activation_request(request.clone())?;
+        if normalized != *request {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "activation request must be normalized before instance acquisition",
+            ));
+        }
 
         let lock_path = root.join(LOCK_FILE_NAME);
         let socket_path = root.join(SOCKET_FILE_NAME);
@@ -132,7 +136,7 @@ impl ProfileInstanceCoordinator {
                     match listener.accept() {
                         Ok((mut stream, _)) => {
                             if let Ok(request) = read_frame(&mut stream) {
-                                if request.validate().is_ok() {
+                                if let Ok(request) = normalize_activation_request(request) {
                                     handler(request);
                                     let _ = write_ack(&mut stream, true);
                                 } else {
@@ -203,6 +207,112 @@ fn forward_to_primary(record: &ProfileLockRecord, request: &ActivationRequest) -
             }
         }
         Ok(false)
+    }
+}
+
+/// Applies the native activation path policy before a request crosses the
+/// process or renderer boundary. Deep links stay opaque; file targets become
+/// canonical existing regular files. Volume/root ownership remains with the
+/// later Asset source registration path.
+pub fn normalize_activation_request(
+    mut request: ActivationRequest,
+) -> io::Result<ActivationRequest> {
+    request
+        .validate()
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error_message(error)))?;
+    let current_dir = std::env::current_dir()?;
+    for target in &mut request.targets {
+        match target.kind {
+            ActivationTargetKind::FilePath => {
+                target.value = canonical_file_path(&target.value, &current_dir)?;
+            }
+            ActivationTargetKind::DeepLink if target.value.starts_with("file://") => {
+                let path = file_uri_path(&target.value)?;
+                target.kind = ActivationTargetKind::FilePath;
+                target.value = canonical_file_path(&path.to_string_lossy(), &current_dir)?;
+            }
+            ActivationTargetKind::DeepLink => {}
+        }
+    }
+    request
+        .validate()
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error_message(error)))?;
+    Ok(request)
+}
+
+fn canonical_file_path(raw: &str, current_dir: &Path) -> io::Result<String> {
+    let candidate = Path::new(raw);
+    let candidate = if candidate.is_absolute() {
+        candidate.to_path_buf()
+    } else {
+        current_dir.join(candidate)
+    };
+    let canonical = fs::canonicalize(candidate)?;
+    if !fs::metadata(&canonical)?.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "activation path is not a regular file",
+        ));
+    }
+    let value = canonical.to_str().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "activation path is not valid UTF-8",
+        )
+    })?;
+    if value.len() > 4096 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "activation path is too long",
+        ));
+    }
+    Ok(value.to_owned())
+}
+
+fn file_uri_path(value: &str) -> io::Result<PathBuf> {
+    let encoded = value
+        .strip_prefix("file://")
+        .filter(|value| value.starts_with('/'))
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "file URI host is not allowed"))?;
+    let decoded = percent_decode(encoded)?;
+    Ok(PathBuf::from(decoded))
+}
+
+fn percent_decode(value: &str) -> io::Result<String> {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            if index + 2 >= bytes.len() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "file URI percent escape is incomplete",
+                ));
+            }
+            let high = hex_value(bytes[index + 1]).ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidInput, "file URI percent escape is invalid")
+            })?;
+            let low = hex_value(bytes[index + 2]).ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidInput, "file URI percent escape is invalid")
+            })?;
+            decoded.push((high << 4) | low);
+            index += 3;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(decoded)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "file URI is not UTF-8"))
+}
+
+fn hex_value(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        b'A'..=b'F' => Some(value - b'A' + 10),
+        _ => None,
     }
 }
 
@@ -512,5 +622,63 @@ mod tests {
         assert!(matches!(outcome, AcquireOutcome::Locked(_)));
         assert!(root.join(LOCK_FILE_NAME).exists());
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn file_activation_is_canonicalized_to_a_regular_file() {
+        let root = std::env::temp_dir().join(format!("velvet-activation-path-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("activation root");
+        let file = root.join("asset.txt");
+        fs::write(&file, b"asset").expect("asset file");
+        let request = ActivationRequest {
+            schema_version: 1,
+            request_id: "path".into(),
+            targets: vec![velvet_workbench_protocol::ActivationTarget {
+                kind: velvet_workbench_protocol::ActivationTargetKind::FilePath,
+                value: root.join(".").join("asset.txt").to_string_lossy().into_owned(),
+            }],
+        };
+        let normalized = normalize_activation_request(request).expect("canonical file path");
+        assert_eq!(normalized.targets[0].value, fs::canonicalize(&file).unwrap().to_string_lossy());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn file_uri_activation_decodes_and_canonicalizes() {
+        let root = std::env::temp_dir().join(format!("velvet-activation-uri-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("activation root");
+        let file = root.join("asset with space.txt");
+        fs::write(&file, b"asset").expect("asset file");
+        let uri = format!("file://{}", file.to_string_lossy().replace(' ', "%20"));
+        let request = ActivationRequest {
+            schema_version: 1,
+            request_id: "file-uri".into(),
+            targets: vec![velvet_workbench_protocol::ActivationTarget {
+                kind: velvet_workbench_protocol::ActivationTargetKind::DeepLink,
+                value: uri,
+            }],
+        };
+        let normalized = normalize_activation_request(request).expect("canonical file URI");
+        assert_eq!(
+            normalized.targets[0].kind,
+            velvet_workbench_protocol::ActivationTargetKind::FilePath
+        );
+        assert_eq!(normalized.targets[0].value, fs::canonicalize(&file).unwrap().to_string_lossy());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn activation_rejects_missing_or_non_file_paths() {
+        let request = ActivationRequest {
+            schema_version: 1,
+            request_id: "missing".into(),
+            targets: vec![velvet_workbench_protocol::ActivationTarget {
+                kind: velvet_workbench_protocol::ActivationTargetKind::FilePath,
+                value: "/definitely/missing/velvet-activation".into(),
+            }],
+        };
+        assert!(normalize_activation_request(request).is_err());
     }
 }

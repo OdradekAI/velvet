@@ -67,7 +67,7 @@ use native_recovery_window::{
     consume_native_recovery_intent, launch_native_recovery_window, NativeRecoveryAction,
     NativeRecoveryPage, NativeRecoveryPageKind, NativeRecoveryRequest, NATIVE_RECOVERY_SCHEMA_VERSION,
 };
-use instance::{AcquireOutcome, ProfileInstanceCoordinator};
+use instance::{normalize_activation_request, AcquireOutcome, ProfileInstanceCoordinator};
 use platform_probe::{HostPlatformPreflightProbe, PlatformPreflightProbe};
 
 const CORE_EVENT_NAME: &str = "velvet_core_event";
@@ -362,10 +362,21 @@ fn activation_request_from_args() -> ActivationRequest {
         })
         .take(32)
         .collect();
-    ActivationRequest {
+    let request = ActivationRequest {
         schema_version: velvet_workbench_protocol::ACTIVATION_SCHEMA_VERSION,
         request_id: format!("{}-{}", std::process::id(), now_ms()),
         targets,
+    };
+    match normalize_activation_request(request) {
+        Ok(request) => request,
+        Err(error) => {
+            eprintln!("Velvet ignored an invalid activation target: {error}");
+            ActivationRequest {
+                schema_version: velvet_workbench_protocol::ACTIVATION_SCHEMA_VERSION,
+                request_id: format!("{}-{}", std::process::id(), now_ms()),
+                targets: Vec::new(),
+            }
+        }
     }
 }
 

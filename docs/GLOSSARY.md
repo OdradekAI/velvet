@@ -155,10 +155,11 @@ Transport status 在 `resyncing`、`degraded` 或 `disconnected` 时保留最后
 ## ActivationRequest
 
 由文件关联、拖放、命令行或深链接产生的统一激活请求。当前 schema 固定为
-1，Rust 和 Tauri transport 校验 request id、数量/长度、NUL 和允许的
-`velvet://`/`file://` scheme，并在核心 ready 后投递到有界 Workbench 队列。
-路径根、文件类型、卷身份、能力、去重和 workspace 路由属于后续
-path/volume slice；请求本身不直接执行命令或打开文件。
+1，Rust 校验 request id、数量/长度和 NUL，canonicalize 已存在的 regular file，
+并将 percent-decoded `file://` URI 转为 `file-path`；只有 `velvet://` 作为 opaque
+deep link 继续传递。Tauri transport 重复 runtime shape 校验，并在核心 ready
+后投递到有界 Workbench 队列。approved root、symlink/volume identity、能力、
+去重和 workspace 路由属于后续 path/volume slice；请求本身不直接执行命令或打开文件。
 
 ## Profile lock
 
