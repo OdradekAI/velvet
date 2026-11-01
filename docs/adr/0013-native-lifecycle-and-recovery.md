@@ -754,7 +754,10 @@ does not mutate layout; a workspace must explicitly consume an intent.
 The host consumes an intent only after a layout snapshot exists, activates the
 target workspace, and leaves the intent pending if the workspace handler fails.
 `approvedRoot` is the only recursive path boundary; omitting it never grants
-directory traversal. Windows capability checks remain path/volume gates.
+directory traversal. Native Workbench currently consumes `open-asset` intents
+by selecting the AssetId in the host-owned workspace context; `open-file`
+intents remain pending until the Asset Manager import handler exists. Windows
+capability checks remain path/volume gates.
 Clipboard, notification, tray and shortcut integrations are capability-scoped
 adapters with in-app or no-op fallbacks.
 They do not resolve commands or mutate layout directly.

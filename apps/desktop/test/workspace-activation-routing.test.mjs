@@ -121,23 +121,38 @@ const request = {
 const initialSnapshot = workbench.layout.snapshot();
 workbench.acceptActivationRequest(request);
 workbench.acceptActivationRequest(request);
-workbench.acceptActivationRequest({ ...request, requestId: 'request-2' });
+workbench.acceptActivationRequest({
+  schemaVersion: 1,
+  requestId: 'request-2',
+  targets: [{ kind: 'deep-link', value: 'velvet://asset/asset-1' }],
+});
 assert.equal(routed.length, 2);
 assert.equal(workbench.workspaceRoutingIntents().length, 2);
 assert.equal(workbench.layout.snapshot(), initialSnapshot);
 workbench.layout.acceptSnapshot(layoutState);
-const pendingIntent = workbench.workspaceRoutingIntents()[0];
+const pendingIntent = workbench.workspaceRoutingIntents().find((intent) => intent.kind === 'open-asset');
+assert.ok(pendingIntent);
 const consumed = [];
 assert.equal(
   await workbench.consumeWorkspaceRoutingIntent(pendingIntent, (intent) => {
     consumed.push(intent);
+    if (intent.kind === 'open-asset') {
+      workbench.context.apply({
+        kind: 'set-selection',
+        selection: [{ kind: 'asset', id: intent.assetId }],
+      });
+    }
   }),
   true,
 );
 assert.equal(consumed.length, 1);
 assert.equal(workbench.context.snapshot().activeAppId, 'asset-manager');
+assert.deepEqual(workbench.context.snapshot().selection, [
+  { kind: 'asset', id: 'asset-1' },
+]);
 assert.equal(workbench.workspaceRoutingIntents().length, 1);
-const failedIntent = workbench.workspaceRoutingIntents()[0];
+const failedIntent = workbench.workspaceRoutingIntents().find((intent) => intent.kind === 'open-file');
+assert.ok(failedIntent);
 assert.equal(
   await workbench.consumeWorkspaceRoutingIntent(failedIntent, () => {
     throw new Error('workspace failed');

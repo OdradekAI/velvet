@@ -20,6 +20,7 @@ import { createNativeFileExporter } from '../../platform/tauri-file-exporter.js'
 import { PreviewOverlay } from './preview-overlay.js';
 import { RecoveryBoundary, RecoverySurface } from './recovery-surface.js';
 import type { CoreRecoveryProjection } from '../../platform/protocol.js';
+import type { WorkspaceRoutingIntent } from '../../workbench/activation-routing.js';
 
 interface NativeWorkbenchState {
   readonly app: DesktopApp;
@@ -162,6 +163,27 @@ export function NativeWorkbenchApp() {
     if (!workbench) {
       return undefined;
     }
+
+    const consumeAssetIntent = (intent: WorkspaceRoutingIntent) => {
+      if (intent.kind !== 'open-asset') {
+        return;
+      }
+      void workbench.consumeWorkspaceRoutingIntent(intent, (consumed) => {
+        if (consumed.kind !== 'open-asset') {
+          return;
+        }
+        workbench.context.apply({
+          kind: 'set-selection',
+          selection: [{ kind: 'asset', id: consumed.assetId }],
+        });
+      }).catch(() => undefined);
+    };
+
+    const unsubscribeWorkspaceRouting = workbench.subscribeWorkspaceRouting(consumeAssetIntent);
+    for (const intent of workbench.workspaceRoutingIntents()) {
+      consumeAssetIntent(intent);
+    }
+
     const recoverMissingActiveApp = () => {
       const activeAppId = workbench.layout.snapshot()?.activeApp;
       if (activeAppId && !workbench.apps.get(activeAppId)) {
@@ -174,11 +196,15 @@ export function NativeWorkbenchApp() {
       }
     };
     recoverMissingActiveApp();
-    return workbench.apps.subscribe(() => {
+    const unsubscribeApps = workbench.apps.subscribe(() => {
       setAppRevision((revision) => revision + 1);
       recoverMissingActiveApp();
     });
-  }, [state?.app]);
+    return () => {
+      unsubscribeWorkspaceRouting();
+      unsubscribeApps();
+    };
+  }, [state?.app, state?.layout]);
 
   function retryStartup(): void {
     setStartupError(undefined);
