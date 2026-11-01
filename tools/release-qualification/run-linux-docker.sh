@@ -63,11 +63,14 @@ docker "${docker_args[@]}" "$image" -c '
   persistence_exit=$?
   cargo test -p velvet-plugin-host --lib "runtime_lease::tests::native_reconciler_terminates_confirmed_orphan_process_group" -- --nocapture
   runtime_exit=$?
+  bash tools/release-qualification/test-launcher-wrapper.sh
+  launcher_exit=$?
   printf "QUALIFICATION_RESULT persistence %s\n" "$persistence_exit"
   printf "QUALIFICATION_RESULT runtime %s\n" "$runtime_exit"
+  printf "QUALIFICATION_RESULT launcher %s\n" "$launcher_exit"
   bash tools/release-qualification/probe-volume.sh "${VELVET_REMOVABLE_VOLUME:-}" removable
   bash tools/release-qualification/probe-volume.sh "${VELVET_NETWORK_VOLUME:-}" network
-  if [[ "$persistence_exit" -ne 0 || "$runtime_exit" -ne 0 ]]; then
+  if [[ "$persistence_exit" -ne 0 || "$runtime_exit" -ne 0 || "$launcher_exit" -ne 0 ]]; then
     exit 1
   fi
 ' >"$output_dir/persistence.log" 2>&1
@@ -76,8 +79,10 @@ set -e
 
 persistence_status="$(awk '$2 == "persistence" {print $3; exit}' "$output_dir/persistence.log" || true)"
 runtime_status="$(awk '$2 == "runtime" {print $3; exit}' "$output_dir/persistence.log" || true)"
+launcher_status="$(awk '$2 == "launcher" {print $3; exit}' "$output_dir/persistence.log" || true)"
 [[ "$persistence_status" == "0" ]] && persistence_status="pass" || persistence_status="fail"
 [[ "$runtime_status" == "0" ]] && runtime_status="pass" || runtime_status="fail"
+[[ "$launcher_status" == "0" ]] && launcher_status="pass" || launcher_status="fail"
 acl_status="pass"
 if grep -q 'ACL probe skipped' "$output_dir/persistence.log"; then
   acl_status="not-enforced"
@@ -92,7 +97,7 @@ network_status="$(awk '$2 == "network" {print $3; exit}' "$output_dir/persistenc
 [[ -n "$network_status" ]] || network_status="not-configured"
 
 overall_status="pass"
-if [[ "$persistence_status" != "pass" || "$runtime_status" != "pass" || "$acl_status" == "not-enforced" || "$readonly_status" == "not-enforced" ]]; then
+if [[ "$persistence_status" != "pass" || "$runtime_status" != "pass" || "$launcher_status" != "pass" || "$acl_status" == "not-enforced" || "$readonly_status" == "not-enforced" ]]; then
   overall_status="incomplete"
 fi
 if [[ "$removable_status" != "pass" || "$network_status" != "pass" ]]; then
@@ -104,6 +109,9 @@ fi
 if [[ "$runtime_status" == "fail" ]]; then
   overall_status="fail"
 fi
+if [[ "$launcher_status" == "fail" ]]; then
+  overall_status="fail"
+fi
 
 cat >"$output_dir/result.json" <<EOF
 {
@@ -111,6 +119,7 @@ cat >"$output_dir/result.json" <<EOF
   "status": "$overall_status",
   "persistence": "$persistence_status",
   "runtimeSupervision": "$runtime_status",
+  "launcherWrapper": "$launcher_status",
   "acl": "$acl_status",
   "readonly": "$readonly_status",
   "removableVolume": "$removable_status",

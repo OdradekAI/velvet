@@ -17,6 +17,7 @@ fn run() -> i32 {
     let executable = std::env::var_os("VELVET_APP_BINARY")
         .map(PathBuf::from)
         .unwrap_or_else(default_application_binary);
+    let _ = launcher_failure::arm_launcher_attempt(&root);
     let mut command = Command::new(&executable);
     command
         .args(std::env::args_os().skip(1))
@@ -36,9 +37,13 @@ fn run() -> i32 {
             return 1;
         }
     };
+    let _ = launcher_failure::record_launcher_child(&root, child.id());
     let stderr = child.stderr.take().map(read_bounded_tail).unwrap_or_default();
     match child.wait() {
-        Ok(status) if status.success() => 0,
+        Ok(status) if status.success() => {
+            let _ = launcher_failure::complete_launcher_attempt(&root);
+            0
+        }
         Ok(status) => {
             let tail = bounded_tail(&stderr);
             let _ = launcher_failure::record_launcher_failure(
@@ -134,9 +139,16 @@ fn default_application_binary() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    fn environment_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(())).lock().expect("test environment lock")
+    }
 
     #[test]
     fn loader_failure_writes_a_marker_without_starting_core() {
+        let _lock = environment_lock();
         let root = std::env::temp_dir().join(format!("velvet-launcher-run-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::env::set_var("VELVET_APP_DATA_DIR", &root);
@@ -145,6 +157,56 @@ mod tests {
         let record = launcher_failure::consume_launcher_failure(&root)
             .expect("loader failure should be recorded");
         assert_eq!(record.phase, "loader");
+        std::env::remove_var("VELVET_APP_DATA_DIR");
+        std::env::remove_var("VELVET_APP_BINARY");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn child_exit_records_bounded_failure_and_success_clears_attempt() {
+        let _lock = environment_lock();
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = std::env::temp_dir().join(format!("velvet-launcher-child-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("test root should exist");
+        let child = root.join("fake-velvet.sh");
+        std::fs::write(
+            &child,
+            "#!/bin/sh\nprintf '%012800d' 0 >&2\nexit 23\n",
+        )
+        .expect("fake child should be written");
+        let mut permissions = std::fs::metadata(&child)
+            .expect("fake child metadata")
+            .permissions();
+        permissions.set_mode(0o700);
+        std::fs::set_permissions(&child, permissions).expect("fake child should be executable");
+        std::env::set_var("VELVET_APP_DATA_DIR", &root);
+        std::env::set_var("VELVET_APP_BINARY", &child);
+
+        assert_eq!(run(), 23);
+        let failure = launcher_failure::consume_launcher_failure(&root)
+            .expect("child failure should be recorded");
+        assert_eq!(failure.phase, "exit");
+        assert_eq!(failure.exit_code, Some(23));
+        assert!(failure.stderr_tail.expect("stderr tail").chars().count() <= 8 * 1024);
+        let attempt = launcher_failure::consume_launcher_attempt(&root)
+            .expect("failed attempt should remain for next launch");
+        assert!(attempt.child_process_id.is_some());
+
+        let success = root.join("successful-velvet.sh");
+        std::fs::write(&success, "#!/bin/sh\nexit 0\n").expect("success child should be written");
+        let mut permissions = std::fs::metadata(&success)
+            .expect("success child metadata")
+            .permissions();
+        permissions.set_mode(0o700);
+        std::fs::set_permissions(&success, permissions)
+            .expect("success child should be executable");
+        std::env::set_var("VELVET_APP_BINARY", &success);
+        assert_eq!(run(), 0);
+        assert!(launcher_failure::consume_launcher_attempt(&root).is_none());
+
         std::env::remove_var("VELVET_APP_DATA_DIR");
         std::env::remove_var("VELVET_APP_BINARY");
         let _ = std::fs::remove_dir_all(root);

@@ -574,6 +574,15 @@ fn normalize_crash_evidence(mut evidence: CrashCaptureEvidence) -> CrashCaptureE
         artifact.artifact_id = bounded_text(&artifact.artifact_id, 128);
         artifact.format = bounded_text(&artifact.format, 32);
         artifact.sha256 = bounded_text(&artifact.sha256, 128);
+        artifact.metadata = artifact.metadata.map(|mut metadata| {
+            metadata.process_name = metadata.process_name.map(|value| bounded_text(&value, 128));
+            metadata.exception_type = metadata
+                .exception_type
+                .map(|value| bounded_text(&value, 128));
+            metadata.signal = metadata.signal.map(|value| bounded_text(&value, 64));
+            metadata.reason = metadata.reason.map(|value| bounded_text(&value, 256));
+            metadata
+        });
         artifact
     });
     evidence

@@ -11,6 +11,9 @@ without simulating a physical power cut:
 - the durability report describes the effective atomic and `fsync` behavior;
 - a confirmed orphan sidecar is terminated only after platform process
   identity verification, using its isolated process group;
+- the fixed-path `velvet-launcher` writes a pre-spawn attempt marker, preserves
+  it across loader/exit failure, bounds child stderr and removes it after a
+  successful child exit;
 - an operator-supplied removable or network mount can be checked for
   reachability and write policy.
 
@@ -24,6 +27,14 @@ Run the native macOS gate from the repository root:
 
 ```sh
 ./tools/release-qualification/run-macos.sh
+```
+
+The launcher wrapper fixture can be run independently. It invokes the actual
+Rust `velvet-launcher` binary against failing, missing and successful child
+fixtures, and does not start Tauri or access application data:
+
+```sh
+./tools/release-qualification/test-launcher-wrapper.sh
 ```
 
 Optional mount probes can be supplied as paths. The paths must be actual

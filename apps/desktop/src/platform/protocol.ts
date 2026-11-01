@@ -692,6 +692,15 @@ export interface CoreCrashArtifactAttachment {
   readonly sizeBytes: number;
   readonly sha256: string;
   readonly collectedAtMs: number;
+  readonly metadata: CoreCrashArtifactMetadata | null;
+}
+
+export interface CoreCrashArtifactMetadata {
+  readonly processName: string | null;
+  readonly processId: number | null;
+  readonly exceptionType: string | null;
+  readonly signal: string | null;
+  readonly reason: string | null;
 }
 
 export interface CorePluginDiagnosticEvent {

@@ -3,11 +3,15 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::launcher_failure::{
+    consume_launcher_attempt_at, read_launcher_attempts, LauncherAttemptRecord,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use velvet_application_core::{CrashCaptureAdapter, RecoveryError};
 use velvet_workbench_protocol::{
-    CrashArtifactAttachment, CrashCaptureEvidence, CrashCaptureKind, StartupPhase,
+    CrashArtifactAttachment, CrashArtifactMetadata, CrashCaptureEvidence, CrashCaptureKind,
+    StartupPhase,
     CRASH_CAPTURE_SCHEMA_VERSION,
 };
 
@@ -18,6 +22,7 @@ const MAX_CRASH_RECEIPTS: usize = 32;
 const MAX_SYSTEM_ARTIFACTS: usize = 4;
 const MAX_SYSTEM_ARTIFACT_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_SYSTEM_ARTIFACT_AGE_MS: u64 = 24 * 60 * 60 * 1000;
+const MAX_DUMP_METADATA_BYTES: usize = 128 * 1024;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -52,6 +57,9 @@ impl FileCrashCaptureAdapter {
 impl CrashCaptureAdapter for FileCrashCaptureAdapter {
     fn consume(&self) -> Result<Vec<CrashCaptureEvidence>, RecoveryError> {
         let mut evidence = read_external_receipts(&self.root)?;
+        if let Some(launcher_evidence) = consume_stale_launcher_attempt(&self.root) {
+            evidence.push(launcher_evidence);
+        }
         if let Ok(entries) = fs::read_dir(self.root.join(ACTIVE_PROCESS_RECEIPT_DIR)) {
             for entry in entries.flatten() {
                 let active_path = entry.path();
@@ -143,15 +151,23 @@ fn system_crash_artifact_evidence(
 }
 
 fn collect_artifact_metadata(path: &Path, now: u64, max_age_ms: u64) -> Option<CrashArtifactAttachment> {
-    let metadata = fs::metadata(path).ok()?;
-    if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAX_SYSTEM_ARTIFACT_BYTES {
+    let file_metadata = fs::metadata(path).ok()?;
+    if !file_metadata.is_file()
+        || file_metadata.len() == 0
+        || file_metadata.len() > MAX_SYSTEM_ARTIFACT_BYTES
+    {
         return None;
     }
     let name = path.file_name()?.to_string_lossy().to_ascii_lowercase();
     if !name.contains("velvet") {
         return None;
     }
-    let modified = metadata.modified().ok()?.duration_since(UNIX_EPOCH).ok()?.as_millis() as u64;
+    let modified = file_metadata
+        .modified()
+        .ok()?
+        .duration_since(UNIX_EPOCH)
+        .ok()?
+        .as_millis() as u64;
     if now.saturating_sub(modified) > max_age_ms || modified > now.saturating_add(5_000) {
         return None;
     }
@@ -172,13 +188,155 @@ fn collect_artifact_metadata(path: &Path, now: u64, max_age_ms: u64) -> Option<C
         .and_then(|extension| extension.to_str())
         .unwrap_or("unknown")
         .to_ascii_lowercase();
+    let dump_metadata = parse_platform_dump_metadata(path, &format);
     Some(CrashArtifactAttachment {
         artifact_id,
         format,
-        size_bytes: metadata.len(),
+        size_bytes: file_metadata.len(),
         sha256,
         collected_at_ms: now,
+        metadata: dump_metadata,
     })
+}
+
+fn parse_platform_dump_metadata(path: &Path, format: &str) -> Option<CrashArtifactMetadata> {
+    let file = fs::File::open(path).ok()?;
+    let mut bytes = Vec::new();
+    file.take(MAX_DUMP_METADATA_BYTES as u64)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    match format {
+        "crash" => parse_macos_crash_metadata(&String::from_utf8_lossy(&bytes)),
+        "ips" | "json" => parse_macos_ips_metadata(&bytes),
+        _ => None,
+    }
+}
+
+fn parse_macos_crash_metadata(text: &str) -> Option<CrashArtifactMetadata> {
+    let process_line = text.lines().find_map(|line| line.strip_prefix("Process:"));
+    let process_name = process_line.map(|value| {
+        let value = value.trim();
+        let (name, pid) = value.rsplit_once('[').unwrap_or((value, ""));
+        let pid = pid.trim_end_matches(']').trim().parse::<u32>().ok();
+        (name.trim().to_owned(), pid)
+    });
+    let exception = text
+        .lines()
+        .find_map(|line| line.strip_prefix("Exception Type:"))
+        .map(str::trim)
+        .map(parse_exception_and_signal);
+    let reason = text
+        .lines()
+        .find_map(|line| line.strip_prefix("Termination Reason:"))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
+    let metadata = CrashArtifactMetadata {
+        process_name: process_name.as_ref().map(|(name, _)| name.clone()),
+        process_id: process_name.and_then(|(_, pid)| pid),
+        exception_type: exception.as_ref().map(|(exception_type, _)| exception_type.clone()),
+        signal: exception.and_then(|(_, signal)| signal),
+        reason,
+    };
+    has_dump_metadata(&metadata).then_some(metadata)
+}
+
+fn parse_macos_ips_metadata(bytes: &[u8]) -> Option<CrashArtifactMetadata> {
+    let value = serde_json::from_slice::<serde_json::Value>(bytes).ok()?;
+    let exception = value.get("exception");
+    let termination = value.get("termination");
+    let metadata = CrashArtifactMetadata {
+        process_name: first_json_string(&value, &["app_name", "procName", "process"]),
+        process_id: first_json_u32(&value, &["pid", "process_id"]),
+        exception_type: exception.and_then(|value| {
+            first_json_string(value, &["type", "exception_type"])
+        }),
+        signal: exception.and_then(|value| first_json_string(value, &["signal"])),
+        reason: termination.and_then(|value| {
+            first_json_string(value, &["reason", "description"])
+        }),
+    };
+    has_dump_metadata(&metadata).then_some(metadata)
+}
+
+fn parse_exception_and_signal(value: &str) -> (String, Option<String>) {
+    if let Some((exception_type, signal)) = value.split_once('(') {
+        return (
+            exception_type.trim().to_owned(),
+            Some(signal.trim_end_matches(')').trim().to_owned()),
+        );
+    }
+    (value.to_owned(), None)
+}
+
+fn first_json_string(value: &serde_json::Value, keys: &[&str]) -> Option<String> {
+    keys.iter()
+        .find_map(|key| value.get(*key).and_then(serde_json::Value::as_str))
+        .map(str::to_owned)
+}
+
+fn first_json_u32(value: &serde_json::Value, keys: &[&str]) -> Option<u32> {
+    keys.iter().find_map(|key| {
+        value
+            .get(*key)
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|value| u32::try_from(value).ok())
+    })
+}
+
+fn has_dump_metadata(metadata: &CrashArtifactMetadata) -> bool {
+    metadata.process_name.is_some()
+        || metadata.process_id.is_some()
+        || metadata.exception_type.is_some()
+        || metadata.signal.is_some()
+        || metadata.reason.is_some()
+}
+
+fn consume_stale_launcher_attempt(root: &Path) -> Option<CrashCaptureEvidence> {
+    for (path, record) in read_launcher_attempts(root) {
+        if launcher_attempt_is_current(&record) {
+            continue;
+        }
+        if let Some(record) = consume_launcher_attempt_at(&path) {
+            return Some(CrashCaptureEvidence {
+                schema_version: CRASH_CAPTURE_SCHEMA_VERSION,
+                correlation_id: record.correlation_id,
+                process_id: record.child_process_id.unwrap_or(record.launcher_process_id),
+                parent_process_id: Some(record.launcher_process_id),
+                attempt_id: 0,
+                component: "launcher".into(),
+                kind: CrashCaptureKind::ProcessExit,
+                code: "launcher-unclean-attempt".into(),
+                message: "the release wrapper did not complete its previous launch".into(),
+                runtime_nonce: None,
+                log_tail: None,
+                artifact: None,
+                occurred_at_ms: record.started_at_ms,
+            });
+        }
+    }
+    None
+}
+
+fn launcher_attempt_is_current(record: &LauncherAttemptRecord) -> bool {
+    if current_parent_process_id() == Some(record.launcher_process_id) {
+        return record
+            .child_process_id
+            .map(|child_process_id| child_process_id == std::process::id())
+            .unwrap_or(true);
+    }
+    record.child_process_id == Some(std::process::id())
+}
+
+#[cfg(unix)]
+fn current_parent_process_id() -> Option<u32> {
+    let parent = unsafe { libc::getppid() };
+    u32::try_from(parent).ok()
+}
+
+#[cfg(not(unix))]
+fn current_parent_process_id() -> Option<u32> {
+    None
 }
 
 fn system_crash_roots() -> Vec<PathBuf> {
@@ -426,9 +584,91 @@ mod tests {
         assert_eq!(attachment.size_bytes, 16);
         assert_eq!(attachment.artifact_id.len(), 24);
         assert_eq!(attachment.sha256.len(), 64);
+        assert_eq!(attachment.metadata, None);
         assert!(!serde_json::to_string(&attachment)
             .expect("attachment should serialize")
             .contains(root.to_string_lossy().as_ref()));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn macos_crash_report_metadata_is_parsed_without_a_path() {
+        let metadata = parse_macos_crash_metadata(
+            "Process:               Velvet [1234]\nException Type:        EXC_BAD_ACCESS (SIGSEGV)\nTermination Reason:    Namespace SIGNAL, Code 11\n",
+        )
+        .expect("macOS crash metadata should parse");
+        assert_eq!(metadata.process_name.as_deref(), Some("Velvet"));
+        assert_eq!(metadata.process_id, Some(1234));
+        assert_eq!(metadata.exception_type.as_deref(), Some("EXC_BAD_ACCESS"));
+        assert_eq!(metadata.signal.as_deref(), Some("SIGSEGV"));
+        assert_eq!(metadata.reason.as_deref(), Some("Namespace SIGNAL, Code 11"));
+    }
+
+    #[test]
+    fn macos_ips_metadata_is_bounded_and_typed() {
+        let metadata = parse_macos_ips_metadata(
+            br#"{"app_name":"Velvet","pid":55,"exception":{"type":"EXC_CRASH","signal":"SIGABRT"},"termination":{"reason":"abort"}}"#,
+        )
+        .expect("macOS IPS metadata should parse");
+        assert_eq!(metadata.process_name.as_deref(), Some("Velvet"));
+        assert_eq!(metadata.process_id, Some(55));
+        assert_eq!(metadata.exception_type.as_deref(), Some("EXC_CRASH"));
+        assert_eq!(metadata.signal.as_deref(), Some("SIGABRT"));
+        assert_eq!(metadata.reason.as_deref(), Some("abort"));
+    }
+
+    #[test]
+    fn artifact_attachment_includes_parsed_macos_metadata() {
+        let root = std::env::temp_dir().join(format!(
+            "velvet-crash-report-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("report directory should exist");
+        let path = root.join("Velvet-2026-01-01.crash");
+        fs::write(
+            &path,
+            "Process:               Velvet [1234]\nException Type:        EXC_CRASH (SIGABRT)\n",
+        )
+        .expect("report should be written");
+        let modified = fs::metadata(&path)
+            .expect("report metadata")
+            .modified()
+            .expect("report timestamp")
+            .duration_since(UNIX_EPOCH)
+            .expect("report timestamp should be unix")
+            .as_millis() as u64;
+        let attachment = collect_artifact_metadata(&path, modified, 1_000)
+            .expect("report metadata should be collected");
+        assert_eq!(
+            attachment
+                .metadata
+                .as_ref()
+                .and_then(|metadata| metadata.signal.as_deref()),
+            Some("SIGABRT")
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn stale_launcher_attempt_is_consumed_and_enables_artifact_scan() {
+        let root = std::env::temp_dir().join(format!(
+            "velvet-launcher-attempt-capture-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let mut record = crate::launcher_failure::arm_launcher_attempt(&root)
+            .expect("launcher attempt should be armed");
+        record.child_process_id = Some(7001);
+        let path = root.join(crate::launcher_failure::LAUNCHER_ATTEMPT_FILE);
+        write_json(path, &record).expect("launcher attempt should be updated");
+        let evidence = FileCrashCaptureAdapter::new(&root)
+            .consume()
+            .expect("launcher attempt should be consumed");
+        assert_eq!(evidence.len(), 1);
+        assert_eq!(evidence[0].code, "launcher-unclean-attempt");
+        assert_eq!(evidence[0].process_id, 7001);
+        assert!(read_launcher_attempts(&root).is_empty());
         let _ = fs::remove_dir_all(root);
     }
 }

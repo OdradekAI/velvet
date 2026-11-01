@@ -13,6 +13,7 @@ output_dir="${VELVET_QUALIFICATION_OUTPUT_DIR:-$repo_root/artifacts/release-qual
 mkdir -p "$output_dir"
 log_path="$output_dir/persistence.log"
 runtime_log_path="$output_dir/runtime-supervision.log"
+launcher_log_path="$output_dir/launcher-wrapper.log"
 
 set +e
 (
@@ -34,6 +35,16 @@ runtime_exit=$?
 set -e
 runtime_status="pass"
 [[ "$runtime_exit" -eq 0 ]] || runtime_status="fail"
+
+set +e
+(
+  cd "$repo_root"
+  bash tools/release-qualification/test-launcher-wrapper.sh
+) >"$launcher_log_path" 2>&1
+launcher_exit=$?
+set -e
+launcher_status="pass"
+[[ "$launcher_exit" -eq 0 ]] || launcher_status="fail"
 
 acl_status="pass"
 if grep -q 'ACL probe skipped' "$log_path"; then
@@ -57,7 +68,7 @@ removable_status="$(probe_volume "${VELVET_REMOVABLE_VOLUME:-}" removable)"
 network_status="$(probe_volume "${VELVET_NETWORK_VOLUME:-}" network)"
 
 overall_status="pass"
-if [[ "$persistence_status" != "pass" || "$runtime_status" != "pass" || "$acl_status" == "not-enforced" || "$readonly_status" == "not-enforced" ]]; then
+if [[ "$persistence_status" != "pass" || "$runtime_status" != "pass" || "$launcher_status" != "pass" || "$acl_status" == "not-enforced" || "$readonly_status" == "not-enforced" ]]; then
   overall_status="incomplete"
 fi
 if [[ "$removable_status" != "pass" || "$network_status" != "pass" ]]; then
@@ -69,6 +80,9 @@ fi
 if [[ "$runtime_status" == "fail" ]]; then
   overall_status="fail"
 fi
+if [[ "$launcher_status" == "fail" ]]; then
+  overall_status="fail"
+fi
 
 cat >"$output_dir/result.json" <<EOF
 {
@@ -76,6 +90,7 @@ cat >"$output_dir/result.json" <<EOF
   "status": "$overall_status",
   "persistence": "$persistence_status",
   "runtimeSupervision": "$runtime_status",
+  "launcherWrapper": "$launcher_status",
   "acl": "$acl_status",
   "readonly": "$readonly_status",
   "removableVolume": "$removable_status",

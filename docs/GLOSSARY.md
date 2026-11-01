@@ -72,6 +72,10 @@ Tauri builder、setup 或 run loop 在 Workbench 就绪前报告的宿主初始�
 
 由独立 `velvet-launcher` 记录的启动包装器失败。它覆盖子进程无法加载、无法 exec、等待失败或非零退出，保存阶段、退出码和有界 stderr 尾部；不拥有业务状态，下一次 Core 启动消费后转成 `platform-initialization` 诊断。launcher 自身在 OS 装载器阶段失败仍属于安装包/平台边界。
 
+## LauncherAttempt
+
+由 `velvet-launcher` 在 spawn 子进程前写入的一次性启动尝试记录。它只保存关联 id、launcher/child 进程身份和时间；子进程成功退出后删除，wrapper 或 OS 在 child 就绪前中断时由下一次 Core 启动消费。它让 `CrashCaptureAdapter` 可以把已知 OS crash artifact 与 launcher 边界关联，但无法替代操作系统对 launcher 自身装载失败的记录。
+
 ## Native recovery window
 
 由同一安装包以独立 helper mode 启动的原生修复进程。它不创建 Tauri 应用或 WebView，按 `Overview`、`Evidence`、`Actions`、`Result` 页面显示固定的系统原生恢复动作；页面只投影有界证据，不拥有业务状态，并通过一次性 typed intent 文件把恢复选择交给下一次 ApplicationCore 启动。
@@ -128,7 +132,7 @@ helper 不创建 Tauri 窗口，因此不请求该集合；若未来恢复界面
 
 ## CrashArtifactAttachment
 
-系统级 exception/minidump/诊断文件的脱敏附件元数据。只包含稳定的 artifact id、格式、大小、SHA-256 和采集时间，不包含原始路径或转储内容；平台目录不可读、文件过大、过期或不匹配时降级为普通退出/信号证据。
+系统级 exception/minidump/诊断文件的脱敏附件元数据。只包含稳定的 artifact id、格式、大小、SHA-256、采集时间和有限的进程/异常/信号/reason 字段，不包含原始路径或转储内容；平台目录不可读、文件过大、过期或不匹配时降级为普通退出/信号证据。
 
 ## Crash correlation
 

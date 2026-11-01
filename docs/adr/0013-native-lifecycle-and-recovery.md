@@ -157,21 +157,37 @@ can execute still depends on the OS launcher or release wrapper.
 
 The release artifact also contains an optional `velvet-launcher` wrapper. It
 uses a fixed sibling application path (or an explicit test-only override),
-passes through the original arguments, captures only a bounded stderr tail and
-writes a typed `LauncherFailure` marker for loader/exec, wait and non-zero
-child-exit failures. The next successful Core startup consumes the marker once
-and records it as platform-initialization/crash evidence. The launcher has no
-access to business state and never executes a shell command. A failure while
-the launcher itself is being loaded remains an OS/package-manager boundary.
+passes through the original arguments, and writes a `LauncherAttempt` marker
+before spawning the child. The marker contains only a correlation id, launcher
+and child process identities and a timestamp. A successful child removes it;
+loader/exec, wait and non-zero child-exit failures leave it beside the bounded
+`LauncherFailure` marker. The next successful Core startup consumes a stale
+attempt once, verifies the current child/parent identity before leaving an
+in-flight attempt alone, and records an unclean launcher boundary as typed
+crash evidence. The launcher has no access to business state and never
+executes a shell command. A failure while the wrapper binary itself is being
+loaded cannot be observed by code inside that binary; the release wrapper and
+OS crash stores are the boundary for that case.
 
-When an unclean receipt is present, the platform crash adapter scans only known
-OS crash stores and recent files whose names identify Velvet. It accepts at most
-four files and 64 MiB per file, hashes them while streaming, and projects
-`CrashArtifactAttachment` metadata (format, size, digest and collection time)
-without exposing paths or raw dump bytes. The metadata is consumed with the
-receipt and is therefore one-shot. Permission errors, unsupported stores and
+When an unclean Core receipt or stale `LauncherAttempt` is present, the
+platform crash adapter scans only known OS crash stores and recent files whose
+names identify Velvet. It accepts at most four files and 64 MiB per file,
+hashes them while streaming, and projects `CrashArtifactAttachment` metadata
+(format, size, digest, collection time and bounded platform header fields)
+without exposing paths or raw dump bytes. macOS `.crash` and `.ips` reports
+parse process, pid, exception, signal and termination reason; minidump/core
+formats still contribute bounded file metadata when no safe header parser is
+available. The metadata is consumed with the receipt and is therefore
+one-shot. Permission errors, unsupported stores, malformed headers and
 unparseable formats degrade to existing process/signal evidence; they never
 block startup or trigger upload.
+
+The release qualification harness runs the actual `velvet-launcher` binary
+against fake loader, failing-child and successful-child fixtures. It verifies
+bounded stderr, the retained attempt marker after failure, one-shot cleanup
+after success and the loader/exit phase distinction. This is an integration
+test of the packaged wrapper boundary; it does not claim to reproduce an OS
+failure before the wrapper image can be loaded.
 
 The persistence crate now provides a framework-independent `StateSnapshotStore`
 primitive. It validates owner and scope segments, bounds payloads, records a
@@ -952,9 +968,11 @@ Costs:
   writes and failed validation.
 - Release engineering must maintain signing keys, channel manifests, old
   package retention and platform-specific installer rollback paths.
-- Automatic relaunch, OS-before-launcher capture and platform-specific dump
-  parsing remain release work; crash artifact metadata needs its own privacy
-  and retention policy.
+- Automatic relaunch remains optional. Launcher-attempt capture, bounded
+  macOS dump metadata parsing and wrapper integration are implemented; actual
+  pre-wrapper OS loader failures and platform-specific minidump decoding remain
+  release/OS evidence work. Crash artifact metadata keeps its own privacy and
+  retention policy.
 
 ## Alternatives considered
 

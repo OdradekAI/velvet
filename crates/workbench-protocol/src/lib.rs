@@ -573,6 +573,25 @@ pub struct CrashArtifactAttachment {
     pub size_bytes: u64,
     pub sha256: String,
     pub collected_at_ms: u64,
+    #[serde(default)]
+    pub metadata: Option<CrashArtifactMetadata>,
+}
+
+/// Bounded, path-free fields parsed from a platform crash artifact header.
+/// The raw dump/report never crosses the transport boundary.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CrashArtifactMetadata {
+    #[serde(default)]
+    pub process_name: Option<String>,
+    #[serde(default)]
+    pub process_id: Option<u32>,
+    #[serde(default)]
+    pub exception_type: Option<String>,
+    #[serde(default)]
+    pub signal: Option<String>,
+    #[serde(default)]
+    pub reason: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -1189,11 +1208,19 @@ mod tests {
                 size_bytes: 42,
                 sha256: "a".repeat(64),
                 collected_at_ms: 9,
+                metadata: Some(CrashArtifactMetadata {
+                    process_name: Some("Velvet".into()),
+                    process_id: Some(7),
+                    exception_type: Some("EXC_CRASH".into()),
+                    signal: Some("SIGABRT".into()),
+                    reason: Some("abort".into()),
+                }),
             }),
             occurred_at_ms: 10,
         };
         let json = serde_json::to_value(&evidence).expect("crash evidence should serialize");
         assert_eq!(json["artifact"]["format"], "dmp");
+        assert_eq!(json["artifact"]["metadata"]["signal"], "SIGABRT");
         assert!(json.get("path").is_none());
         let decoded: CrashCaptureEvidence =
             serde_json::from_value(json).expect("crash evidence should deserialize");
