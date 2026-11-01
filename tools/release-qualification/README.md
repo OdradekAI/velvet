@@ -9,6 +9,8 @@ without simulating a physical power cut:
 - an ACL-denied or read-only snapshot directory returns typed unavailability
   and never overwrites existing evidence;
 - the durability report describes the effective atomic and `fsync` behavior;
+- a confirmed orphan sidecar is terminated only after platform process
+  identity verification, using its isolated process group;
 - an operator-supplied removable or network mount can be checked for
   reachability and write policy.
 
@@ -34,7 +36,7 @@ VELVET_NETWORK_VOLUME=/Volumes/VelvetNetworkQualification \
 ./tools/release-qualification/run-macos.sh
 ```
 
-Run the Linux gate in the versioned `rust:1.85-bookworm` image. The container
+Run the Linux gate in the versioned `rust:1.88-bookworm` image. The container
 runs the test process as the invoking user so Unix mode bits are enforced:
 
 ```sh

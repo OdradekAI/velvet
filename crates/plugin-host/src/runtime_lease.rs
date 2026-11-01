@@ -693,4 +693,36 @@ mod tests {
             RuntimeOrphanObservation::Matching
         );
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn native_reconciler_terminates_confirmed_orphan_process_group() {
+        use std::os::unix::process::CommandExt;
+        use std::process::Command;
+
+        let mut child = Command::new("sleep")
+            .arg("30")
+            .process_group(0)
+            .spawn()
+            .expect("the release qualification child should start");
+        let process = inspect_process(child.id()).expect("the child identity should be readable");
+        let lease = RuntimeLease::starting(
+            ExtensionId("example.plugin".into()),
+            "1.0.0".into(),
+            None,
+            "nonce-orphan-process".into(),
+        )
+        .running(process);
+        let reconciler = PlatformRuntimeOrphanReconciler;
+
+        assert_eq!(
+            reconciler.observe(&lease),
+            RuntimeOrphanObservation::Matching
+        );
+        reconciler
+            .terminate(&lease)
+            .expect("a confirmed orphan process group should be terminable");
+        let status = child.wait().expect("the child status should be reapable");
+        assert!(!status.success(), "the orphan child should be terminated");
+    }
 }

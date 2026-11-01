@@ -2,10 +2,12 @@
 
 Status: active release gate; observed on 2026-11-01
 
-Current host result: macOS core persistence/ACL/read-only checks are `pass`,
+Current host result: macOS core persistence/ACL/read-only/runtime supervision
+checks are `pass`,
 but the overall harness result is `incomplete` because no removable or network
 mount was supplied. Linux Docker persistence/ACL/read-only checks are also
-`pass` and its overall result is `incomplete` for the same missing mounts;
+`pass`, including runtime supervision, and its overall result is `incomplete`
+for the same missing mounts;
 Windows is `deferred`.
 
 The persistence suite is a deterministic cross-target gate. This matrix adds
@@ -20,9 +22,10 @@ compilation is evidence that code builds; it does not qualify runtime behavior.
 | ACL denied snapshot directory | `pass` | `pass` | `deferred` | Both runs passed with OS-enforced mode bits; Linux Docker ran as the invoking non-root UID. |
 | Read-only snapshot directory | `pass` | `pass` | `deferred` | Both runs passed; a failed stage does not create defaults or replace a committed generation. |
 | Durability report and unsupported capability | `pass` | `pass` | `deferred` | Both runs passed; the report records effective atomic/file/directory sync behavior and never overstates crash durability. |
+| Confirmed orphan sidecar identity and process-group termination | `pass` | `pass` | `deferred` | Native release scripts run the platform runtime lease test: start-token identity must match before the isolated process group is terminated. Windows Job Object runtime remains deferred. |
 | Supplied removable-volume reachability | `not-configured` unless an actual mount is supplied | `not-configured` unless an actual mount is supplied | `deferred` | The probe requires a mounted filesystem and marker create/remove proves reachability only; mount identity and disconnect/reconnect evidence are recorded by the operator. |
 | Supplied network-volume reachability | `not-configured` unless an actual mount is supplied | `not-configured` unless an actual mount is supplied | `deferred` | The probe requires a mounted filesystem. A disconnected source keeps identity and becomes typed unavailable; this application-level policy remains a P1 seam. |
-| Physical power interruption | `manual-required` | `manual-required` | `deferred` | Requires a disposable test volume and operator-controlled interruption. The scripts do not claim to reproduce power loss. |
+| Physical power interruption | `deferred` | `deferred` | `deferred` | Deferred for the current release qualification cycle. When enabled, it requires a disposable test volume and operator-controlled interruption; the scripts do not claim to reproduce power loss. |
 
 Commands:
 

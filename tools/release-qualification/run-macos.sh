@@ -12,6 +12,7 @@ stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 output_dir="${VELVET_QUALIFICATION_OUTPUT_DIR:-$repo_root/artifacts/release-qualification/macos-$stamp}"
 mkdir -p "$output_dir"
 log_path="$output_dir/persistence.log"
+runtime_log_path="$output_dir/runtime-supervision.log"
 
 set +e
 (
@@ -23,6 +24,17 @@ set -e
 
 persistence_status="pass"
 [[ "$test_exit" -eq 0 ]] || persistence_status="fail"
+
+set +e
+(
+  cd "$repo_root"
+  cargo test -p velvet-plugin-host --lib 'runtime_lease::tests::native_reconciler_terminates_confirmed_orphan_process_group' -- --nocapture
+) >"$runtime_log_path" 2>&1
+runtime_exit=$?
+set -e
+runtime_status="pass"
+[[ "$runtime_exit" -eq 0 ]] || runtime_status="fail"
+
 acl_status="pass"
 if grep -q 'ACL probe skipped' "$log_path"; then
   acl_status="not-enforced"
@@ -45,7 +57,7 @@ removable_status="$(probe_volume "${VELVET_REMOVABLE_VOLUME:-}" removable)"
 network_status="$(probe_volume "${VELVET_NETWORK_VOLUME:-}" network)"
 
 overall_status="pass"
-if [[ "$persistence_status" != "pass" || "$acl_status" == "not-enforced" || "$readonly_status" == "not-enforced" ]]; then
+if [[ "$persistence_status" != "pass" || "$runtime_status" != "pass" || "$acl_status" == "not-enforced" || "$readonly_status" == "not-enforced" ]]; then
   overall_status="incomplete"
 fi
 if [[ "$removable_status" != "pass" || "$network_status" != "pass" ]]; then
@@ -54,12 +66,16 @@ fi
 if [[ "$persistence_status" == "fail" ]]; then
   overall_status="fail"
 fi
+if [[ "$runtime_status" == "fail" ]]; then
+  overall_status="fail"
+fi
 
 cat >"$output_dir/result.json" <<EOF
 {
   "platform": "macos",
   "status": "$overall_status",
   "persistence": "$persistence_status",
+  "runtimeSupervision": "$runtime_status",
   "acl": "$acl_status",
   "readonly": "$readonly_status",
   "removableVolume": "$removable_status",
@@ -72,5 +88,8 @@ cat "$output_dir/result.json"
 printf 'Evidence: %s\n' "$output_dir"
 if [[ "$test_exit" -ne 0 ]]; then
   exit "$test_exit"
+fi
+if [[ "$runtime_exit" -ne 0 ]]; then
+  exit "$runtime_exit"
 fi
 [[ "$overall_status" == "pass" ]]
