@@ -359,6 +359,7 @@ struct Inner {
     fallback_runner: Arc<dyn JobRunner>,
     budget: Mutex<JobBudgetLedger>,
     environment: Mutex<JobExecutionEnvironment>,
+    active_attempts: Mutex<BTreeMap<JobId, u32>>,
 }
 
 struct RegisteredRunner {
@@ -443,6 +444,7 @@ impl JobSystem {
                 fallback_runner: Arc::new(DeterministicJobRunner),
                 budget: Mutex::new(JobBudgetLedger::new(policy)),
                 environment: Mutex::new(JobExecutionEnvironment::default()),
+                active_attempts: Mutex::new(BTreeMap::new()),
             }),
         };
         let _ = system.persist();
@@ -842,8 +844,12 @@ impl JobSystem {
                     && !self.should_pause(&snapshot.policy)
                 {
                     // A paused runner may still be unwinding. Fence its late
-                    // progress/results before starting the resumed attempt.
-                    snapshot.attempt = snapshot.attempt.saturating_add(1);
+                    // progress/results before starting a replacement attempt;
+                    // an initially blocked Job has no active runner and keeps
+                    // its attempt number.
+                    if self.is_active(&snapshot.id, snapshot.attempt) {
+                        snapshot.attempt = snapshot.attempt.saturating_add(1);
+                    }
                     snapshot.status = JobStatus::Queued;
                     snapshot.message = Some("Resuming after environment recovery".into());
                     to_resume.push(snapshot.id.clone());
@@ -900,6 +906,29 @@ impl JobSystem {
         if let Ok(mut budget) = self.inner.budget.lock() {
             budget.release(&id.0);
         }
+    }
+
+    fn mark_active(&self, id: &JobId, attempt: u32) {
+        if let Ok(mut active) = self.inner.active_attempts.lock() {
+            active.insert(id.clone(), attempt);
+        }
+    }
+
+    fn mark_inactive(&self, id: &JobId, attempt: u32) {
+        if let Ok(mut active) = self.inner.active_attempts.lock() {
+            if active.get(id).is_some_and(|current| *current == attempt) {
+                active.remove(id);
+            }
+        }
+    }
+
+    fn is_active(&self, id: &JobId, attempt: u32) -> bool {
+        self.inner
+            .active_attempts
+            .lock()
+            .ok()
+            .and_then(|active| active.get(id).copied())
+            .is_some_and(|current| current == attempt)
     }
 
     fn should_pause(&self, policy: &JobExecutionPolicy) -> bool {
@@ -1128,6 +1157,7 @@ impl JobSystem {
                 return;
             };
             let attempt = initial.attempt;
+            system.mark_active(&id, attempt);
             let attempt_started = Instant::now();
             system.spawn_deadline_watchdog(
                 id.clone(),
@@ -1136,6 +1166,7 @@ impl JobSystem {
                 initial.policy.cancellation_grace_ms,
             );
             let Some(runner) = system.runner_for(&initial) else {
+                system.mark_inactive(&id, attempt);
                 let _ = system.fail_attempt(
                     &id,
                     attempt,
@@ -1199,6 +1230,7 @@ impl JobSystem {
                     let _ = system.fail_attempt(&id, attempt, "Job runner panicked".into());
                 }
             }
+            system.mark_inactive(&id, attempt);
         });
     }
 

@@ -515,8 +515,9 @@ Checkpoint payloads are schema-versioned and bounded to 256 KiB. A runner can
 save only for its current attempt while `Running` or `Paused`; unsupported or
 oversized checkpoints are discarded on load with a diagnosable message. Retry
 transitions increment the attempt before starting another runner, while a
-suspend/offline pause preserves the attempt and checkpoint so wake recovery can
-resume it. `JobSystem::set_execution_environment` is exposed as a typed Core /
+suspend/offline pause preserves its checkpoint; if an old runner is still
+unwinding, wake recovery fences it with a new attempt before starting the
+replacement. `JobSystem::set_execution_environment` is exposed as a typed Core /
 Tauri / TypeScript command and returns changed snapshots; platform sleep and
 network adapters are responsible for supplying those signals and are not
 allowed to create a second scheduler.
