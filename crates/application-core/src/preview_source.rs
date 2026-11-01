@@ -176,7 +176,11 @@ impl AssetSourceLocationResolver for PersistentAssetSourceLocationResolver {
         let Some(location) = locations.get(asset_id) else {
             return Err(PreviewSourceError::NotFound);
         };
-        let metadata = fs::metadata(&location.source_path).map_err(map_revalidation_error)?;
+        let canonical = fs::canonicalize(&location.source_path).map_err(map_revalidation_error)?;
+        if location.volume_identity.is_some() && canonical != location.source_path {
+            return Err(PreviewSourceError::Unavailable);
+        }
+        let metadata = fs::metadata(&canonical).map_err(map_revalidation_error)?;
         if !metadata.is_file() {
             return Err(PreviewSourceError::Unavailable);
         }
@@ -790,5 +794,43 @@ mod tests {
             Err(PreviewSourceError::Unavailable)
         );
         let _ = fs::remove_file(path);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn canonical_path_revalidation_rejects_symlink_replacement() {
+        let root = std::env::temp_dir().join(format!(
+            "velvet-persistent-preview-symlink-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time should be valid")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).expect("source root should be writable");
+        let path = root.join("asset.txt");
+        let replacement = root.join("replacement.txt");
+        fs::write(&path, "original").expect("source should be writable");
+        fs::write(&replacement, "replacement").expect("replacement should be writable");
+
+        let resolver = PersistentAssetSourceLocationResolver::new(Arc::new(
+            InMemoryAssetSourceLocationStore::default(),
+        ));
+        resolver
+            .register(
+                AssetId("asset-symlink".into()),
+                &path,
+                ContentKindId("text/plain".into()),
+                None,
+            )
+            .expect("the source location should be registered");
+        fs::remove_file(&path).expect("original source should be removed");
+        std::os::unix::fs::symlink(&replacement, &path).expect("replacement symlink should exist");
+
+        assert_eq!(
+            resolver.resolve(&AssetId("asset-symlink".into())),
+            Err(PreviewSourceError::Unavailable)
+        );
+        let _ = fs::remove_dir_all(root);
     }
 }

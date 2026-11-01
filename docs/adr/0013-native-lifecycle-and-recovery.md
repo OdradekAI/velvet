@@ -718,10 +718,12 @@ the owner can prove a committed destination.
 Rust canonicalizes source paths before registration and records the available
 platform volume identity beside the Asset source location. Every source read
 revalidates the regular file and, when recorded, the volume identity; a
-missing path or changed volume returns retryable `source-unavailable`, while
+missing path, canonical-path replacement or changed volume returns retryable `source-unavailable`, while
 an access denial remains the typed `PermissionDenied` result so the user can
 repair permissions before retrying. Neither result deletes or rebinds the
-Asset. Symlinks are
+Asset. New registrations also reject a canonical-path change during
+revalidation, so replacing the registered file with a symlink cannot silently
+rebind it. Symlinks are
 allowed only inside approved roots with loop/escape detection, and archive
 extraction rejects symlink entries; approved-root policy and Windows volume
 identity remain release gates. Removable and network volumes preserve Asset
