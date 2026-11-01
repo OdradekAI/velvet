@@ -13,3 +13,4 @@ translate/
 .env
 .env.*
 !.env.example
+/artifacts/

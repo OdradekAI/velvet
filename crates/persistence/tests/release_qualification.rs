@@ -205,6 +205,56 @@ fn unreadable_snapshot_directory_is_reported_without_default_overwrite() {
     let _ = fs::remove_dir_all(root);
 }
 
+#[cfg(unix)]
+#[test]
+fn acl_and_readonly_snapshot_directory_are_typed_unavailable() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = temporary_root("acl-readonly");
+    let store = JsonFileStateSnapshotStore::new(&root);
+    store
+        .stage(&snapshot(1, false))
+        .expect("initial stage should work");
+    store
+        .commit("layout", "workspace", 1)
+        .expect("initial commit should work");
+
+    let scope = root.join("layout/workspace");
+    let restore_permissions = || {
+        fs::set_permissions(&scope, fs::Permissions::from_mode(0o700))
+            .expect("snapshot directory permissions should be restorable");
+    };
+
+    fs::set_permissions(&scope, fs::Permissions::from_mode(0o000))
+        .expect("snapshot directory should become unreadable");
+    let unreadable = store.load_latest("layout", "workspace");
+    if unreadable.is_ok() {
+        // Root and other privilege-bypassing test runners can read mode-000
+        // directories. The native harness records that limitation separately;
+        // this test must not claim an ACL denial that the OS did not enforce.
+        eprintln!("ACL probe skipped: the test process can bypass mode-000 permissions");
+        restore_permissions();
+        let _ = fs::remove_dir_all(root);
+        return;
+    }
+    assert!(matches!(unreadable, Err(SnapshotError::Unavailable(_))));
+
+    restore_permissions();
+    fs::set_permissions(&scope, fs::Permissions::from_mode(0o555))
+        .expect("snapshot directory should become read-only");
+    let readonly_write = store.stage(&snapshot(2, false));
+    if readonly_write.is_ok() {
+        eprintln!(
+            "read-only probe skipped: the test process can bypass directory write permissions"
+        );
+    } else {
+        assert!(matches!(readonly_write, Err(SnapshotError::Unavailable(_))));
+    }
+
+    restore_permissions();
+    let _ = fs::remove_dir_all(root);
+}
+
 #[test]
 fn durability_report_release_matrix_matches_platform_capabilities() {
     let atomic = DurabilityReport::for_mode(DurabilityMode::AtomicRenameOnly);

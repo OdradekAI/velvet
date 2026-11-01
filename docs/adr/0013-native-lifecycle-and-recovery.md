@@ -232,6 +232,27 @@ they do not claim to reproduce physical power loss. Each supported OS/filesystem
 still needs an abrupt-process and, where practical, power-interruption run that
 checks the same invariants before release.
 
+The repeatable host harness lives under
+[`tools/release-qualification/`](../../tools/release-qualification/), with the
+tracked status in the [native release qualification matrix](../engineering/native-release-qualification-matrix.md).
+`run-macos.sh` runs natively and includes the Unix ACL/read-only probe;
+`run-linux-docker.sh` uses a versioned Rust image and runs as the invoking UID so
+mode-bit denials are meaningful. Both scripts accept operator-supplied
+removable and network mount paths, but report `not-configured` unless a real
+mount is supplied. A writable marker only proves reachability; the operator
+must record the filesystem/mount identity and a disconnected/reconnected run.
+Windows remains explicitly `deferred` while no Windows environment is
+available. Cross-target compilation is retained as build evidence and cannot
+replace the Windows runtime gate. If Docker or its daemon is unavailable, the
+Linux harness records `blocked` and does not claim a pass.
+If either volume path is omitted, the host harness records the core
+process/permission results but marks the overall release result `incomplete`.
+
+These scripts qualify abrupt process termination, permissions and the
+durability report. They do not emulate a physical power cut. Power
+interruption remains a manual release action on a disposable volume, with the
+same previous-generation and recovery-pointer invariants checked afterward.
+
 Runtime failure in an activated optional plugin also records a degraded
 component failure and clears that owner's projections and Jobs; it does not
 increment the core pre-ready Safe Mode counter.

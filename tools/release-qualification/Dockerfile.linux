@@ -1,0 +1,4 @@
+FROM rust:1.85-bookworm
+
+WORKDIR /workspace
+ENTRYPOINT ["bash"]
