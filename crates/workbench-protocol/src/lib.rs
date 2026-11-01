@@ -745,6 +745,7 @@ pub enum Command {
         asset_id: AssetId,
         source_path: String,
         content_kind: String,
+        approved_root: Option<String>,
     },
     RemovePreviewAsset {
         asset_id: AssetId,

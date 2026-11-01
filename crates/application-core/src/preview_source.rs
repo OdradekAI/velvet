@@ -47,6 +47,7 @@ pub struct PreviewAssetRegistration {
     pub content_kind: ContentKindId,
     pub fingerprint: Option<ContentFingerprint>,
     pub volume_identity: Option<String>,
+    pub approved_root: Option<PathBuf>,
 }
 
 struct StoredAssetSourceLocation {
@@ -54,6 +55,7 @@ struct StoredAssetSourceLocation {
     content_kind: ContentKindId,
     fingerprint: Option<ContentFingerprint>,
     volume_identity: Option<String>,
+    approved_root: Option<PathBuf>,
 }
 
 /// Rust-owned persistent mapping from opaque Asset identities to local files.
@@ -94,6 +96,17 @@ impl PersistentAssetSourceLocationResolver {
         content_kind: ContentKindId,
         fingerprint: Option<ContentFingerprint>,
     ) -> Result<(), PreviewSourceError> {
+        self.register_with_approved_root(asset_id, source_path, content_kind, fingerprint, None)
+    }
+
+    pub fn register_with_approved_root(
+        &self,
+        asset_id: AssetId,
+        source_path: impl AsRef<Path>,
+        content_kind: ContentKindId,
+        fingerprint: Option<ContentFingerprint>,
+        approved_root: Option<&Path>,
+    ) -> Result<(), PreviewSourceError> {
         validate_asset_id(&asset_id)?;
         validate_content_kind(&content_kind)?;
         validate_fingerprint(&fingerprint)?;
@@ -103,6 +116,10 @@ impl PersistentAssetSourceLocationResolver {
         if !metadata.is_file() {
             return Err(PreviewSourceError::NotFound);
         }
+        let approved_root = approved_root.map(canonical_approved_root).transpose()?;
+        if let Some(root) = approved_root.as_deref() {
+            ensure_path_is_within_root(&source_path, root)?;
+        }
         let volume_identity = source_volume_identity(&metadata);
 
         let registration = StoredAssetSourceLocation {
@@ -110,6 +127,7 @@ impl PersistentAssetSourceLocationResolver {
             content_kind,
             fingerprint,
             volume_identity,
+            approved_root,
         };
         let key = asset_id.clone();
         let mut locations = self
@@ -162,6 +180,7 @@ impl PersistentAssetSourceLocationResolver {
             content_kind: location.content_kind.clone(),
             fingerprint: location.fingerprint.clone(),
             volume_identity: location.volume_identity.clone(),
+            approved_root: location.approved_root.clone(),
         })
     }
 }
@@ -177,8 +196,17 @@ impl AssetSourceLocationResolver for PersistentAssetSourceLocationResolver {
             return Err(PreviewSourceError::NotFound);
         };
         let canonical = fs::canonicalize(&location.source_path).map_err(map_revalidation_error)?;
-        if location.volume_identity.is_some() && canonical != location.source_path {
+        if (location.volume_identity.is_some() || location.approved_root.is_some())
+            && canonical != location.source_path
+        {
             return Err(PreviewSourceError::Unavailable);
+        }
+        if let Some(expected_root) = location.approved_root.as_deref() {
+            let root = fs::canonicalize(expected_root).map_err(map_revalidation_error)?;
+            if root != expected_root {
+                return Err(PreviewSourceError::Unavailable);
+            }
+            ensure_path_is_within_root(&canonical, &root)?;
         }
         let metadata = fs::metadata(&canonical).map_err(map_revalidation_error)?;
         if !metadata.is_file() {
@@ -214,10 +242,14 @@ fn record_to_location(
     let content_kind = ContentKindId(record.content_kind);
     let source_path = PathBuf::from(record.source_path);
     let fingerprint = record.fingerprint.map(ContentFingerprint);
+    let approved_root = record.approved_root.map(PathBuf::from);
     if validate_asset_id(&asset_id).is_err()
         || validate_content_kind(&content_kind).is_err()
         || !source_path.is_absolute()
         || validate_fingerprint(&fingerprint).is_err()
+        || approved_root
+            .as_deref()
+            .is_some_and(|root| !root.is_absolute())
     {
         return None;
     }
@@ -228,6 +260,7 @@ fn record_to_location(
             content_kind,
             fingerprint,
             volume_identity: record.volume_identity,
+            approved_root,
         },
     ))
 }
@@ -246,6 +279,10 @@ fn location_records(
                 .as_ref()
                 .map(|fingerprint| fingerprint.0.clone()),
             volume_identity: location.volume_identity.clone(),
+            approved_root: location
+                .approved_root
+                .as_ref()
+                .map(|root| root.to_string_lossy().into_owned()),
         })
         .collect()
 }
@@ -282,6 +319,25 @@ fn validate_fingerprint(
         ))
     } else {
         Ok(())
+    }
+}
+
+fn canonical_approved_root(path: &Path) -> Result<PathBuf, PreviewSourceError> {
+    let root = fs::canonicalize(path).map_err(map_io_error)?;
+    let metadata = fs::metadata(&root).map_err(map_io_error)?;
+    if !metadata.is_dir() {
+        return Err(PreviewSourceError::InvalidRequest(
+            "approved source root must be a directory".into(),
+        ));
+    }
+    Ok(root)
+}
+
+fn ensure_path_is_within_root(path: &Path, root: &Path) -> Result<(), PreviewSourceError> {
+    if path.starts_with(root) {
+        Ok(())
+    } else {
+        Err(PreviewSourceError::PermissionDenied)
     }
 }
 
@@ -785,6 +841,7 @@ mod tests {
                 content_kind: "text/plain".into(),
                 fingerprint: None,
                 volume_identity: Some("unix-dev:other-volume".into()),
+                approved_root: None,
             }])
             .expect("volume fixture should persist");
         let resolver = PersistentAssetSourceLocationResolver::new(store);
@@ -832,5 +889,64 @@ mod tests {
             Err(PreviewSourceError::Unavailable)
         );
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn approved_root_rejects_escape_and_revalidates_root_identity() {
+        let base = std::env::temp_dir().join(format!(
+            "velvet-persistent-preview-approved-root-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time should be valid")
+                .as_nanos()
+        ));
+        let approved = base.join("approved");
+        let outside = base.join("outside");
+        fs::create_dir_all(&approved).expect("approved root should be writable");
+        fs::create_dir_all(&outside).expect("outside root should be writable");
+        let inside_file = approved.join("inside.txt");
+        let outside_file = outside.join("outside.txt");
+        fs::write(&inside_file, "inside").expect("inside source should be writable");
+        fs::write(&outside_file, "outside").expect("outside source should be writable");
+
+        let resolver = PersistentAssetSourceLocationResolver::new(Arc::new(
+            InMemoryAssetSourceLocationStore::default(),
+        ));
+        resolver
+            .register_with_approved_root(
+                AssetId("asset-approved".into()),
+                &inside_file,
+                ContentKindId("text/plain".into()),
+                None,
+                Some(&approved),
+            )
+            .expect("source inside the approved root should register");
+        assert_eq!(
+            resolver
+                .registration(&AssetId("asset-approved".into()))
+                .expect("registration should exist")
+                .approved_root,
+            Some(fs::canonicalize(&approved).expect("root should canonicalize"))
+        );
+        assert_eq!(
+            resolver.register_with_approved_root(
+                AssetId("asset-outside".into()),
+                &outside_file,
+                ContentKindId("text/plain".into()),
+                None,
+                Some(&approved),
+            ),
+            Err(PreviewSourceError::PermissionDenied)
+        );
+
+        let moved_root = base.join("approved-moved");
+        fs::rename(&approved, &moved_root).expect("approved root should be movable");
+        assert_eq!(
+            resolver.resolve(&AssetId("asset-approved".into())),
+            Err(PreviewSourceError::Unavailable)
+        );
+        let _ = fs::remove_dir_all(base);
     }
 }

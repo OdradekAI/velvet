@@ -250,7 +250,7 @@ pub const ASSET_SOURCE_LOCATION_SCHEMA_VERSION: u16 = 1;
 /// Storage-facing representation of an application-owned Asset source.
 ///
 /// The persistence adapter stores the canonical path and optional volume
-/// identity because the application core owns source-location policy. It
+/// identity/root because the application core owns source-location policy. It
 /// never projects this record to the renderer or an extension runtime.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -261,6 +261,8 @@ pub struct AssetSourceLocationRecord {
     pub fingerprint: Option<String>,
     #[serde(default)]
     pub volume_identity: Option<String>,
+    #[serde(default)]
+    pub approved_root: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -601,6 +603,7 @@ mod tests {
             content_kind: "text/plain".into(),
             fingerprint: Some("sha256:asset-1".into()),
             volume_identity: Some("test-volume".into()),
+            approved_root: Some("/tmp".into()),
         }];
 
         store
@@ -632,6 +635,7 @@ mod tests {
         assert_eq!(locations.len(), 1);
         assert_eq!(locations[0].asset_id, "asset-legacy");
         assert_eq!(locations[0].volume_identity, None);
+        assert_eq!(locations[0].approved_root, None);
 
         let _ = fs::remove_file(path);
     }

@@ -181,9 +181,10 @@ socket 不可用或确认失败都 fail-closed，不会仅凭 PID 删除锁。Wi
 Asset source 当前是否可访问的 Rust 投影。注册时 source owner 在支持的平台记录
 volume identity；移动硬盘或网络盘断开、canonical path 被替换或卷身份变化时，AssetId、元数据和 source
 registration 保留，SourceAvailability 进入 degraded，并返回 retryable
-`source-unavailable`；访问权限不足则保留 typed `PermissionDenied`，便于用户先
-修复权限再重试。路径和卷身份重新校验后才恢复 Preview 或 Job。旧记录没有 volume
-identity 时只提供兼容性读取，不宣称卷连续性。
+`source-unavailable`；访问权限不足或 source 不在持久化的 `approvedRoot` 内则保留
+typed `PermissionDenied`，便于用户先修复权限再重试。未声明 `approvedRoot` 只代表
+明确的单文件导入，不授予目录遍历。路径、root 和卷身份重新校验后才恢复 Preview
+或 Job。旧记录没有 volume identity/root 时只提供兼容性读取，不宣称卷或 root 连续性。
 
 ## DiagnosticBundle
 

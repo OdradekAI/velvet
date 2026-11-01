@@ -809,8 +809,30 @@ impl ApplicationCore {
         content_kind: ContentKindId,
         fingerprint: Option<ContentFingerprint>,
     ) -> Result<(), velvet_preview_core::PreviewSourceError> {
-        self.preview_locations
-            .register(asset_id, source_path, content_kind, fingerprint)
+        self.register_preview_asset_with_approved_root(
+            asset_id,
+            source_path,
+            content_kind,
+            fingerprint,
+            None,
+        )
+    }
+
+    pub fn register_preview_asset_with_approved_root(
+        &self,
+        asset_id: AssetId,
+        source_path: impl AsRef<std::path::Path>,
+        content_kind: ContentKindId,
+        fingerprint: Option<ContentFingerprint>,
+        approved_root: Option<&std::path::Path>,
+    ) -> Result<(), velvet_preview_core::PreviewSourceError> {
+        self.preview_locations.register_with_approved_root(
+            asset_id,
+            source_path,
+            content_kind,
+            fingerprint,
+            approved_root,
+        )
     }
 
     pub fn remove_preview_asset(
@@ -1677,12 +1699,14 @@ impl ApplicationCore {
                 asset_id,
                 source_path,
                 content_kind,
+                approved_root,
             }) => self
-                .register_preview_asset(
+                .register_preview_asset_with_approved_root(
                     asset_id.clone(),
                     source_path,
                     ContentKindId(content_kind),
                     None,
+                    approved_root.as_deref().map(std::path::Path::new),
                 )
                 .map(|_| Response::Accepted)
                 .map_err(|error| preview_source_error(&asset_id, error)),
@@ -3364,6 +3388,13 @@ mod tests {
                     asset_id: AssetId("asset-restart".into()),
                     source_path: source_path.to_string_lossy().into_owned(),
                     content_kind: "text/plain".into(),
+                    approved_root: Some(
+                        source_path
+                            .parent()
+                            .expect("source should have a parent")
+                            .to_string_lossy()
+                            .into_owned(),
+                    ),
                 }))
                 .expect("the source location should register"),
             Response::Accepted

@@ -4,6 +4,7 @@ import {
   workspaceRoutingIntentKey,
 } from '/tmp/velvet-plugin-tests/workbench/activation-routing.js';
 import { Workbench } from '/tmp/velvet-plugin-tests/workbench/workbench.js';
+import { defaultLayoutState } from '/tmp/velvet-plugin-tests/workbench/layout/layout-state.js';
 
 const intents = routeActivationRequest({
   schemaVersion: 1,
@@ -58,6 +59,7 @@ assert.equal(
 );
 
 const statusListeners = new Set();
+let layoutState = defaultLayoutState();
 const workbench = new Workbench({
   subscribe() {
     return () => undefined;
@@ -67,7 +69,42 @@ const workbench = new Workbench({
     listener({ state: 'connected' });
     return () => statusListeners.delete(listener);
   },
-  async request() {
+  async request(request) {
+    if (request.kind === 'layout-command') {
+      if (request.command.id === 'workbench.upsert-view-container') {
+        layoutState = {
+          ...layoutState,
+          containers: {
+            ...layoutState.containers,
+            [request.command.containerId]: {
+              visible: request.command.visible,
+              order: request.command.order,
+            },
+          },
+        };
+      } else if (request.command.id === 'workbench.upsert-view') {
+        layoutState = {
+          ...layoutState,
+          views: {
+            ...layoutState.views,
+            [request.command.viewId]: {
+              visible: request.command.visible,
+              order: request.command.order,
+              containerId: request.command.containerId,
+            },
+          },
+        };
+      }
+      layoutState = {
+        ...layoutState,
+        revision: layoutState.revision + 1,
+        activeApp:
+          request.command.id === 'workbench.activate-app'
+            ? request.command.appId
+            : layoutState.activeApp,
+      };
+      return { kind: 'layout', state: layoutState };
+    }
     return { kind: 'accepted' };
   },
 });
@@ -88,6 +125,26 @@ workbench.acceptActivationRequest({ ...request, requestId: 'request-2' });
 assert.equal(routed.length, 2);
 assert.equal(workbench.workspaceRoutingIntents().length, 2);
 assert.equal(workbench.layout.snapshot(), initialSnapshot);
+workbench.layout.acceptSnapshot(layoutState);
+const pendingIntent = workbench.workspaceRoutingIntents()[0];
+const consumed = [];
+assert.equal(
+  await workbench.consumeWorkspaceRoutingIntent(pendingIntent, (intent) => {
+    consumed.push(intent);
+  }),
+  true,
+);
+assert.equal(consumed.length, 1);
+assert.equal(workbench.context.snapshot().activeAppId, 'asset-manager');
+assert.equal(workbench.workspaceRoutingIntents().length, 1);
+const failedIntent = workbench.workspaceRoutingIntents()[0];
+assert.equal(
+  await workbench.consumeWorkspaceRoutingIntent(failedIntent, () => {
+    throw new Error('workspace failed');
+  }),
+  false,
+);
+assert.equal(workbench.workspaceRoutingIntents().length, 1);
 workbench.dispose();
 
 console.log('Workspace activation routing tests passed.');

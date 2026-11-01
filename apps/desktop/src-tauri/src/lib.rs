@@ -794,6 +794,8 @@ pub enum WireRequest {
         source_path: String,
         #[serde(rename = "contentKind")]
         content_kind: String,
+        #[serde(rename = "approvedRoot", default)]
+        approved_root: Option<String>,
     },
     RemovePreviewAsset {
         #[serde(rename = "protocolVersion")]
@@ -1151,12 +1153,14 @@ impl WireRequest {
                 asset_id,
                 source_path,
                 content_kind,
+                approved_root,
             } => {
                 validate_inner_protocol(outer_protocol_version, protocol_version)?;
                 Ok(Request::Command(Command::RegisterPreviewAsset {
                     asset_id: velvet_asset_core::AssetId(asset_id),
                     source_path,
                     content_kind,
+                    approved_root,
                 }))
             }
             Self::RemovePreviewAsset {
@@ -3996,7 +4000,8 @@ mod tests {
                 "protocolVersion": 1,
                 "assetId": "asset-1",
                 "sourcePath": "/tmp/asset-1.txt",
-                "contentKind": "text/plain"
+                "contentKind": "text/plain",
+                "approvedRoot": "/tmp"
             }
         }))
         .expect("asset registration should deserialize");
@@ -4009,9 +4014,32 @@ mod tests {
                 asset_id,
                 source_path,
                 content_kind,
+                approved_root,
             }) if asset_id.0 == "asset-1"
                 && source_path == "/tmp/asset-1.txt"
                 && content_kind == "text/plain"
+                && approved_root.as_deref() == Some("/tmp")
+        ));
+
+        let legacy_register: WireRequestEnvelope = serde_json::from_value(serde_json::json!({
+            "protocolVersion": 1,
+            "requestId": 46,
+            "request": {
+                "kind": "register-preview-asset",
+                "protocolVersion": 1,
+                "assetId": "asset-legacy",
+                "sourcePath": "/tmp/asset-legacy.txt",
+                "contentKind": "text/plain"
+            }
+        }))
+        .expect("legacy asset registration should deserialize");
+        assert!(matches!(
+            legacy_register
+                .request
+                .into_core(1)
+                .expect("legacy asset registration should map"),
+            Request::Command(Command::RegisterPreviewAsset { approved_root, .. })
+                if approved_root.is_none()
         ));
 
         let resolve: WireRequestEnvelope = serde_json::from_value(serde_json::json!({

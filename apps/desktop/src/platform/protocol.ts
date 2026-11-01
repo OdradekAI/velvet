@@ -291,6 +291,8 @@ export type CoreRequest =
       readonly assetId: string;
       readonly sourcePath: string;
       readonly contentKind: string;
+      /** Canonical directory boundary enforced by the Rust source owner. */
+      readonly approvedRoot?: string;
     }
   | {
       readonly protocolVersion: ProtocolVersion;

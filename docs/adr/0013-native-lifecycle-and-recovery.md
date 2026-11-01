@@ -716,20 +716,23 @@ with repair, move-data or export actions; new durable writes are rejected until
 the owner can prove a committed destination.
 
 Rust canonicalizes source paths before registration and records the available
-platform volume identity beside the Asset source location. Every source read
-revalidates the regular file and, when recorded, the volume identity; a
-missing path, canonical-path replacement or changed volume returns retryable `source-unavailable`, while
-an access denial remains the typed `PermissionDenied` result so the user can
-repair permissions before retrying. Neither result deletes or rebinds the
-Asset. New registrations also reject a canonical-path change during
-revalidation, so replacing the registered file with a symlink cannot silently
-rebind it. Symlinks are
-allowed only inside approved roots with loop/escape detection, and archive
-extraction rejects symlink entries; approved-root policy and Windows volume
-identity remain release gates. Removable and network volumes preserve Asset
-identity when disconnected and resume only after volume and path
-revalidation. Legacy source records without a volume identity remain readable
-under compatibility mode but do not claim strong volume continuity.
+platform volume identity beside the Asset source location. A registration may
+also carry an `approvedRoot`; Rust canonicalizes it, requires a directory and
+checks that the source remains inside it. The root is persisted with the
+source-owner record so the policy survives restart. Every source read
+revalidates the regular file, canonical path, approved root (when present) and
+volume identity; a missing path, canonical-path replacement or changed volume
+returns retryable `source-unavailable`, while an access denial or root escape
+remains the typed `PermissionDenied` result so the user can repair the policy
+or permissions before retrying. Neither result deletes or rebinds the Asset.
+Replacing a newly registered file with a symlink cannot silently rebind it.
+Registrations without `approvedRoot` are explicit single-file imports and do
+not grant recursive directory access. Archive extraction still rejects
+symlink entries; Windows volume identity and release mount qualification
+remain gates. Removable and network volumes preserve Asset identity when
+disconnected and resume only after volume and path revalidation. Legacy source
+records without a volume identity or approved root remain readable under
+compatibility mode but do not claim strong continuity.
 
 OS file-watcher notifications are hints, not authoritative mutations. The
 Asset/source owner revalidates path, volume identity and `ContentFingerprint`,
@@ -748,7 +751,10 @@ deduplicated `WorkspaceRoutingIntent`: file targets and `velvet://asset/<id>`
 are offered to Asset Manager, while unknown Velvet links remain unrouted for
 diagnostics. The router has no filesystem, plugin or command capability and
 does not mutate layout; a workspace must explicitly consume an intent.
-Approved-root policy and Windows capability checks remain path/volume gates.
+The host consumes an intent only after a layout snapshot exists, activates the
+target workspace, and leaves the intent pending if the workspace handler fails.
+`approvedRoot` is the only recursive path boundary; omitting it never grants
+directory traversal. Windows capability checks remain path/volume gates.
 Clipboard, notification, tray and shortcut integrations are capability-scoped
 adapters with in-app or no-op fallbacks.
 They do not resolve commands or mutate layout directly.

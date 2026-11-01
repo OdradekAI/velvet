@@ -184,6 +184,40 @@ export class Workbench {
     return () => this.workspaceRoutingListeners.delete(listener);
   }
 
+  /**
+   * Lets a workspace explicitly consume one pending routing intent. The host
+   * activates the target workspace first, then delegates the intent. A failed
+   * consumer leaves the intent pending so a later retry can recover it.
+   */
+  public async consumeWorkspaceRoutingIntent(
+    intent: WorkspaceRoutingIntent,
+    consumer: (intent: WorkspaceRoutingIntent) => void | Promise<void>,
+  ): Promise<boolean> {
+    if (intent.kind === 'unrouted-deep-link' || !this.hasWorkspaceRoutingIntent(intent)) {
+      return false;
+    }
+    if (!this.layout.snapshot()) {
+      return false;
+    }
+
+    try {
+      await this.layout.activateWorkspace(intent.workspaceId);
+      this.context.apply({ kind: 'activate-app', appId: intent.workspaceId });
+      await consumer(intent);
+    } catch {
+      return false;
+    }
+
+    const index = this.workspaceRoutingIntentsValue.findIndex(
+      (candidate) => workspaceRoutingIntentKey(candidate) === workspaceRoutingIntentKey(intent),
+    );
+    if (index >= 0) {
+      this.workspaceRoutingIntentsValue.splice(index, 1);
+      this.workspaceRoutingKeys.delete(workspaceRoutingIntentKey(intent));
+    }
+    return true;
+  }
+
   /** Applies one Rust-owned snapshot without replaying renderer mutations. */
   public applyAuthoritativeSnapshot(snapshot: CoreAuthoritativeSnapshot): void {
     this.layout.acceptSnapshot(snapshot.layout);
@@ -200,6 +234,10 @@ export class Workbench {
     this.activationListeners.clear();
     this.workspaceRoutingListeners.clear();
     this.preview.dispose();
+  }
+
+  private hasWorkspaceRoutingIntent(intent: WorkspaceRoutingIntent): boolean {
+    return this.workspaceRoutingKeys.has(workspaceRoutingIntentKey(intent));
   }
 
   private handleTransportStatus(status: CoreTransportStatus): void {
