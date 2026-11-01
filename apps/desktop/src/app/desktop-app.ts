@@ -6,11 +6,16 @@ import {
   type TauriTransportOptions,
 } from '../platform/index.js';
 import type { CoreTransport, LayoutSnapshot } from '../platform/protocol.js';
+import type {
+  ActivationAwareCoreTransport,
+  CoreActivationRequest,
+} from '../platform/protocol.js';
 import { Workbench } from '../workbench/workbench.js';
 
 /** The desktop composition root owns startup ordering, not feature modules. */
 export interface DesktopApp {
   readonly workbench: Workbench;
+  subscribeActivation(listener: (request: CoreActivationRequest) => void): () => void;
   start(): Promise<LayoutSnapshot>;
   dispose(): Promise<void>;
 }
@@ -18,9 +23,15 @@ export interface DesktopApp {
 /** Compose the framework-independent workbench with a platform transport. */
 export function createDesktopApp(core: CoreTransport): DesktopApp {
   const workbench = new Workbench(core);
+  const unsubscribeActivationTransport = isActivationAwareTransport(core)
+    ? core.subscribeActivation((request) => workbench.acceptActivationRequest(request))
+    : undefined;
 
   return {
     workbench,
+    subscribeActivation(listener) {
+      return workbench.subscribeActivation(listener);
+    },
     async start() {
       await workbench.recovery.load();
       const layout = await workbench.layout.load();
@@ -28,6 +39,7 @@ export function createDesktopApp(core: CoreTransport): DesktopApp {
       return layout;
     },
     async dispose() {
+      unsubscribeActivationTransport?.();
       workbench.dispose();
       workbench.layout.dispose();
       workbench.localization.dispose();
@@ -95,4 +107,10 @@ function isDisposableTransport(
   core: CoreTransport,
 ): core is CoreTransport & { dispose: () => Promise<void> } {
   return 'dispose' in core && typeof core.dispose === 'function';
+}
+
+function isActivationAwareTransport(
+  core: CoreTransport,
+): core is ActivationAwareCoreTransport {
+  return 'subscribeActivation' in core && typeof core.subscribeActivation === 'function';
 }

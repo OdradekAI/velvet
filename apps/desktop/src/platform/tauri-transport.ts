@@ -8,9 +8,11 @@ import {
   RECOVERY_DIAGNOSTIC_SCHEMA_VERSION,
   RECOVERY_SCHEMA_VERSION,
   CRASH_CAPTURE_SCHEMA_VERSION,
+  ACTIVATION_SCHEMA_VERSION,
   TRANSPORT_FEATURE_SCHEMA_NEGOTIATION_V1,
   TRANSPORT_FEATURE_SESSION_V1,
   type CoreError,
+  type CoreActivationRequest,
   type CoreAuthoritativeSnapshot,
   type CoreRequestOutcome,
   type CoreEvent,
@@ -21,6 +23,7 @@ import {
   type ProtocolHandshakeRequest,
   type ProtocolHandshakeResponse,
   type SessionAwareCoreTransport,
+  type ActivationAwareCoreTransport,
   type ProtocolVersion,
 } from './protocol.js';
 
@@ -64,6 +67,8 @@ export interface TauriTransportOptions {
   readonly requestCommand?: string;
   readonly handshakeCommand?: string;
   readonly eventName?: string;
+  readonly activationEventName?: string;
+  readonly activationPendingCommand?: string;
   readonly clientFeatures?: readonly string[];
   readonly schemaVersions?: Readonly<Record<string, number>>;
   readonly onSequenceGap?: (expected: number, received: number) => void;
@@ -93,10 +98,12 @@ export class CoreTransportError extends Error {
  * Explicit mapping seam for the future native Tauri command and event
  * bindings. It intentionally knows nothing about React or the Tauri package.
  */
-export class TauriCoreTransport implements SessionAwareCoreTransport {
+export class TauriCoreTransport implements SessionAwareCoreTransport, ActivationAwareCoreTransport {
   private readonly requestCommand: string;
   private readonly handshakeCommand: string;
   private readonly eventName: string;
+  private readonly activationEventName: string;
+  private readonly activationPendingCommand: string;
   private readonly clientFeatures: readonly string[];
   private readonly schemaVersions: Readonly<Record<string, number>>;
   private readonly clientId: string;
@@ -110,8 +117,11 @@ export class TauriCoreTransport implements SessionAwareCoreTransport {
   private lastEventSequence: number | undefined;
   private readonly listeners = new Set<(event: CoreEvent) => void>();
   private readonly statusListeners = new Set<(status: CoreTransportStatus) => void>();
+  private readonly activationListeners = new Set<(request: CoreActivationRequest) => void>();
   private transportStatus: CoreTransportStatus = { state: 'disconnected' };
   private eventSubscription: Promise<(() => void)> | undefined;
+  private activationSubscription: Promise<(() => void)> | undefined;
+  private activationDrainPromise: Promise<void> | undefined;
   private disposed = false;
 
   public constructor(
@@ -121,6 +131,8 @@ export class TauriCoreTransport implements SessionAwareCoreTransport {
     this.requestCommand = options.requestCommand ?? 'velvet_core_request';
     this.handshakeCommand = options.handshakeCommand ?? 'velvet_core_handshake';
     this.eventName = options.eventName ?? 'velvet_core_event';
+    this.activationEventName = options.activationEventName ?? 'velvet_activation_request';
+    this.activationPendingCommand = options.activationPendingCommand ?? 'velvet_activation_pending';
     this.clientFeatures = options.clientFeatures ?? [
       TRANSPORT_FEATURE_SESSION_V1,
       TRANSPORT_FEATURE_SCHEMA_NEGOTIATION_V1,
@@ -282,6 +294,13 @@ export class TauriCoreTransport implements SessionAwareCoreTransport {
     };
   }
 
+  public subscribeActivation(listener: (request: CoreActivationRequest) => void): () => void {
+    this.ensureUsable();
+    this.activationListeners.add(listener);
+    void this.ensureActivationSubscription().catch(() => undefined);
+    return () => this.activationListeners.delete(listener);
+  }
+
   public async dispose(): Promise<void> {
     if (this.disposed) {
       return;
@@ -291,11 +310,17 @@ export class TauriCoreTransport implements SessionAwareCoreTransport {
     this.setStatus({ state: 'disconnected' });
     this.listeners.clear();
     this.statusListeners.clear();
+    this.activationListeners.clear();
 
     const unsubscribe = this.eventSubscription;
     this.eventSubscription = undefined;
     if (unsubscribe) {
       (await unsubscribe)();
+    }
+    const unsubscribeActivation = this.activationSubscription;
+    this.activationSubscription = undefined;
+    if (unsubscribeActivation) {
+      (await unsubscribeActivation)();
     }
   }
 
@@ -321,6 +346,32 @@ export class TauriCoreTransport implements SessionAwareCoreTransport {
         const details = normalizeCoreError(error);
         this.setStatus({ state: 'degraded', reason: details.message });
         throw new CoreTransportError(details);
+      }
+    }
+  }
+
+  private async ensureActivationSubscription(): Promise<void> {
+    if (this.activationSubscription || this.disposed || this.activationListeners.size === 0) {
+      return;
+    }
+
+    this.activationSubscription = this.bridge.listen<CoreActivationRequest>(
+      this.activationEventName,
+      ({ payload }) => this.handleActivation(payload),
+    );
+
+    try {
+      const unsubscribe = await this.activationSubscription;
+      if (this.disposed || this.activationListeners.size === 0) {
+        unsubscribe();
+        this.activationSubscription = undefined;
+        return;
+      }
+      await this.drainActivationQueue();
+    } catch (error) {
+      this.activationSubscription = undefined;
+      if (!this.disposed) {
+        throw new CoreTransportError(normalizeCoreError(error));
       }
     }
   }
@@ -371,6 +422,42 @@ export class TauriCoreTransport implements SessionAwareCoreTransport {
         // A failing projection listener must not interrupt other subscribers.
       }
     }
+  }
+
+  private handleActivation(payload: unknown): void {
+    if (!isValidActivationRequest(payload)) {
+      return;
+    }
+    void this.drainActivationQueue().catch(() => undefined);
+  }
+
+  private async drainActivationQueue(): Promise<void> {
+    if (this.activationDrainPromise) {
+      return this.activationDrainPromise;
+    }
+    this.activationDrainPromise = this.bridge
+      .invoke<readonly CoreActivationRequest[]>(this.activationPendingCommand)
+      .then((requests) => {
+        if (!Array.isArray(requests)) {
+          return;
+        }
+        for (const request of requests) {
+          if (!isValidActivationRequest(request)) {
+            continue;
+          }
+          for (const listener of this.activationListeners) {
+            try {
+              listener(request);
+            } catch {
+              // A consumer must not block subsequent activation requests.
+            }
+          }
+        }
+      })
+      .finally(() => {
+        this.activationDrainPromise = undefined;
+      });
+    return this.activationDrainPromise;
   }
 
   private validateResponse(
@@ -447,6 +534,47 @@ export class TauriCoreTransport implements SessionAwareCoreTransport {
       }
     }
   }
+}
+
+function isValidActivationRequest(value: unknown): value is CoreActivationRequest {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const candidate = value as {
+    schemaVersion?: unknown;
+    requestId?: unknown;
+    targets?: unknown;
+  };
+  if (
+    candidate.schemaVersion !== ACTIVATION_SCHEMA_VERSION ||
+    typeof candidate.requestId !== 'string' ||
+    candidate.requestId.length === 0 ||
+    candidate.requestId.length > 128 ||
+    !Array.isArray(candidate.targets) ||
+    candidate.targets.length > 32
+  ) {
+    return false;
+  }
+  return candidate.targets.every((target) => {
+    if (typeof target !== 'object' || target === null) {
+      return false;
+    }
+    const activationTarget = target as { kind?: unknown; value?: unknown };
+    if (
+      (activationTarget.kind !== 'file-path' && activationTarget.kind !== 'deep-link') ||
+      typeof activationTarget.value !== 'string' ||
+      activationTarget.value.length === 0 ||
+      activationTarget.value.length > 4096 ||
+      activationTarget.value.includes('\0')
+    ) {
+      return false;
+    }
+    return (
+      activationTarget.kind !== 'deep-link' ||
+      activationTarget.value.startsWith('velvet://') ||
+      activationTarget.value.startsWith('file://')
+    );
+  });
 }
 
 function createClientId(): string {

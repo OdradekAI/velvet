@@ -154,7 +154,21 @@ Transport status 在 `resyncing`、`degraded` 或 `disconnected` 时保留最后
 
 ## ActivationRequest
 
-由文件关联、拖放、命令行或深链接产生的统一激活请求。平台适配器只负责解码，Rust 负责校验 scheme、路径根、文件类型、能力和幂等性，并在核心 ready 后投递。
+由文件关联、拖放、命令行或深链接产生的统一激活请求。当前 schema 固定为
+1，Rust 和 Tauri transport 校验 request id、数量/长度、NUL 和允许的
+`velvet://`/`file://` scheme，并在核心 ready 后投递到有界 Workbench 队列。
+路径根、文件类型、卷身份、能力、去重和 workspace 路由属于后续
+path/volume slice；请求本身不直接执行命令或打开文件。
+
+## Profile lock
+
+Profile 的单写者记录。当前 alpha 在 Tauri/Core 启动前以原子创建并同步
+`profile.lock`，记录 schema、PID、启动时间、instance nonce 和 Unix socket
+路径。macOS/Linux 的第二实例只通过已验证的 `ActivationRequest` socket 帧向
+主实例转发并等待确认；主实例将请求放入有界 native pending queue，并以事件
+唤醒 renderer，再通过 typed drain command 交付，因此 listener 尚未注册时也不会
+丢失。锁损坏、socket 不可用或确认失败都 fail-closed，不会自动删除锁。Windows
+转发和经过身份验证的 stale-lock 恢复仍是后续平台门槛。
 
 ## SourceAvailability
 

@@ -7,6 +7,7 @@ import { PreviewRegistry } from './preview/preview-registry.js';
 import { PreviewRendererRegistry } from './preview/preview-renderer-registry.js';
 import type {
   CoreAuthoritativeSnapshot,
+  CoreActivationRequest,
   CorePluginSummary,
   CoreTransport,
   CoreTransportStatus,
@@ -60,6 +61,8 @@ export class Workbench {
   private readonly unsubscribeTransportStatus: (() => void) | undefined;
   private transportRecoveryLifecycle: Promise<void> = Promise.resolve();
   private pendingCoreExtensionSummaries: readonly CorePluginSummary[] | undefined;
+  private readonly activationRequestsValue: CoreActivationRequest[] = [];
+  private readonly activationListeners = new Set<(request: CoreActivationRequest) => void>();
 
   public constructor(core: CoreTransport) {
     this.recovery = new RecoveryClient(core);
@@ -114,6 +117,30 @@ export class Workbench {
     return () => this.transportStatusListeners.delete(listener);
   }
 
+  /** Returns validated OS activation requests that have not been consumed by a workspace. */
+  public activationRequests(): readonly CoreActivationRequest[] {
+    return [...this.activationRequestsValue];
+  }
+
+  public acceptActivationRequest(request: CoreActivationRequest): void {
+    this.activationRequestsValue.push(request);
+    while (this.activationRequestsValue.length > 32) {
+      this.activationRequestsValue.shift();
+    }
+    for (const listener of this.activationListeners) {
+      try {
+        listener(request);
+      } catch {
+        // One activation consumer must not block other workspaces.
+      }
+    }
+  }
+
+  public subscribeActivation(listener: (request: CoreActivationRequest) => void): () => void {
+    this.activationListeners.add(listener);
+    return () => this.activationListeners.delete(listener);
+  }
+
   /** Applies one Rust-owned snapshot without replaying renderer mutations. */
   public applyAuthoritativeSnapshot(snapshot: CoreAuthoritativeSnapshot): void {
     this.layout.acceptSnapshot(snapshot.layout);
@@ -127,6 +154,7 @@ export class Workbench {
   public dispose(): void {
     this.unsubscribeTransportStatus?.();
     this.transportStatusListeners.clear();
+    this.activationListeners.clear();
     this.preview.dispose();
   }
 

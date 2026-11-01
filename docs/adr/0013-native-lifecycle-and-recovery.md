@@ -685,13 +685,28 @@ fatal WebView result to the standalone native recovery helper. A failure before
 the binary can execute still requires the launcher wrapper; failure before that
 wrapper can execute still requires OS/package diagnostics.
 
-A Profile has one active writer. Multiple windows share one `ApplicationCore`
-and keep separate Session/Window restoration hints. A second process forwards
-validated file, deep-link and command-line activation requests to the first
-instance and exits after acknowledgement. A stale lock is recoverable only
-after process identity verification using a recorded process start time and
-instance nonce rather than a PID alone; concurrent Profile writes are never
-merged.
+A Profile has one active writer. The alpha Tauri composition acquires a
+`profile.lock` with `create_new` and `sync_all` before WebView preflight,
+Tauri builder setup or `ApplicationCore` construction. The record contains a
+schema, PID, launch timestamp, instance nonce and (on Unix) a bounded local
+socket path. Multiple windows still share one `ApplicationCore` and keep
+separate Session/Window restoration hints. On macOS/Linux, a second process
+validates a versioned `ActivationRequest`, forwards it over the recorded Unix
+socket, waits for an acknowledgement and exits only after the primary accepts
+the frame. The primary puts the request in a bounded native pending queue and
+emits a typed Tauri event as a wake signal. The desktop drains the queue through
+the typed `velvet_activation_pending` command after subscription and keeps a
+bounded Workbench queue until a workspace claims the request; this also covers
+an event emitted before the renderer listener exists.
+
+An existing lock with an invalid record, an unavailable socket or an
+unacknowledged frame is fail-closed: the second process reports the owner
+identity when available and exits without deleting the lock or attempting a
+concurrent write. The timestamp and nonce are recorded evidence for the next
+identity-verification slice; this alpha path does not yet perform automatic
+stale-lock takeover. Windows forwarding, verified stale-process recovery,
+canonical path/volume checks and workspace-specific activation routing remain
+release gates. A stale lock is never removed based on PID alone.
 
 If the Profile/state volume is read-only or unavailable, the core does not
 silently switch to a fresh writable default. It enters read-only degraded mode
@@ -713,9 +728,13 @@ unavailable or loses events, scan-on-use and explicit rescan remain valid
 fallbacks; the renderer never becomes a second file-change owner.
 
 File associations, drag/drop, command-line input and deep links use one typed
-`ActivationRequest`. The adapter decodes the OS payload and Rust validates
-scheme, path root, file type, capability and idempotency before queuing it
-until startup reaches `ready`. Clipboard, notification, tray and shortcut
+`ActivationRequest`. The current cross-process seam validates the schema,
+request-id bounds, target count/size, NUL exclusion and `velvet://`/`file://`
+schemes in Rust and repeats the runtime shape check in the Tauri transport
+before queuing it until startup reaches `ready`. Canonical path roots, file
+type policy, volume identity, capability checks, request deduplication and
+workspace routing are the next path/volume slice; a queued activation does
+not yet open a file by itself. Clipboard, notification, tray and shortcut
 integrations are capability-scoped adapters with in-app or no-op fallbacks.
 They do not resolve commands or mutate layout directly.
 

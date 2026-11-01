@@ -6,11 +6,16 @@ import {
 
 const calls = [];
 let eventListener;
+let activationListener;
+const pendingActivations = [];
 let resynced;
 const statuses = [];
 const bridge = {
   async invoke(command, args) {
     calls.push({ command, args });
+    if (command === 'velvet_activation_pending') {
+      return pendingActivations.splice(0);
+    }
     if (command === 'velvet_core_handshake') {
       return {
         protocolMajor: 1,
@@ -54,8 +59,12 @@ const bridge = {
       },
     };
   },
-  async listen(_event, listener) {
-    eventListener = listener;
+  async listen(event, listener) {
+    if (event === 'velvet_activation_request') {
+      activationListener = listener;
+    } else {
+      eventListener = listener;
+    }
     return () => undefined;
   },
 };
@@ -70,10 +79,46 @@ const transport = new TauriCoreTransport(bridge, {
   },
 });
 const unsubscribeStatus = transport.subscribeStatus((status) => statuses.push(status.state));
+let activation;
+pendingActivations.push({
+  schemaVersion: 1,
+  requestId: 'activation-boot',
+  targets: [{ kind: 'file-path', value: '/tmp/boot.asset' }],
+});
+const unsubscribeActivation = transport.subscribeActivation((request) => {
+  activation = request;
+});
+await new Promise((resolve) => setImmediate(resolve));
+assert.equal(activation?.requestId, 'activation-boot');
 const response = await transport.request({ protocolVersion: 1, kind: 'query-profile' });
 assert.equal(response.kind, 'profile');
 assert.equal(calls.filter(({ command }) => command === 'velvet_core_handshake').length, 1);
 assert.equal(calls.filter(({ command }) => command === 'velvet_core_request').length, 1);
+await new Promise((resolve) => setImmediate(resolve));
+pendingActivations.push({
+  schemaVersion: 1,
+  requestId: 'activation-1',
+  targets: [{ kind: 'deep-link', value: 'velvet://asset/1' }],
+});
+activationListener({
+  payload: {
+    schemaVersion: 1,
+    requestId: 'activation-1',
+    targets: [{ kind: 'deep-link', value: 'velvet://asset/1' }],
+  },
+});
+await new Promise((resolve) => setImmediate(resolve));
+assert.equal(activation?.targets[0]?.value, 'velvet://asset/1');
+activationListener({ payload: null });
+activationListener({ payload: { schemaVersion: 1, requestId: 'malformed', targets: null } });
+activationListener({
+  payload: {
+    schemaVersion: 1,
+    requestId: 'invalid-scheme',
+    targets: [{ kind: 'deep-link', value: 'https://example.invalid' }],
+  },
+});
+assert.equal(activation?.requestId, 'activation-1');
 
 const unsubscribe = transport.subscribe(() => undefined);
 await new Promise((resolve) => setImmediate(resolve));
@@ -97,6 +142,7 @@ assert.ok(statuses.includes('connected'));
 assert.ok(statuses.includes('resyncing'));
 unsubscribe();
 unsubscribeStatus();
+unsubscribeActivation();
 
 const outcome = await transport.queryRequestOutcome(11);
 assert.deepEqual(outcome, { requestId: 11, status: 'unknown' });

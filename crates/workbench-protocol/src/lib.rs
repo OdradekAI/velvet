@@ -32,6 +32,7 @@ pub const RECOVERY_DIAGNOSTIC_SCHEMA_VERSION: u16 = 1;
 pub const PLUGIN_DIAGNOSTIC_SCHEMA_VERSION: u16 = 1;
 pub const CRASH_CAPTURE_SCHEMA_VERSION: u16 = 1;
 pub const CORE_SNAPSHOT_SCHEMA_VERSION: u16 = 1;
+pub const ACTIVATION_SCHEMA_VERSION: u16 = 1;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -53,6 +54,65 @@ pub struct ProtocolHandshakeResponse {
     pub selected_features: Vec<String>,
     pub schema_versions: BTreeMap<String, u16>,
     pub session_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ActivationRequest {
+    pub schema_version: u16,
+    pub request_id: String,
+    pub targets: Vec<ActivationTarget>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ActivationTarget {
+    pub kind: ActivationTargetKind,
+    pub value: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ActivationTargetKind {
+    FilePath,
+    DeepLink,
+}
+
+impl ActivationRequest {
+    pub fn validate(&self) -> Result<(), CoreError> {
+        if self.schema_version != ACTIVATION_SCHEMA_VERSION {
+            return Err(CoreError::InvalidCommand(format!(
+                "unsupported activation schema {}",
+                self.schema_version
+            )));
+        }
+        if self.request_id.is_empty() || self.request_id.len() > 128 {
+            return Err(CoreError::InvalidCommand(
+                "activation request id must contain 1..=128 bytes".into(),
+            ));
+        }
+        if self.targets.len() > 32 {
+            return Err(CoreError::InvalidCommand(
+                "activation request contains too many targets".into(),
+            ));
+        }
+        for target in &self.targets {
+            if target.value.is_empty() || target.value.len() > 4096 || target.value.contains('\0') {
+                return Err(CoreError::InvalidCommand(
+                    "activation target is empty, oversized or contains NUL".into(),
+                ));
+            }
+            if matches!(target.kind, ActivationTargetKind::DeepLink)
+                && !target.value.starts_with("velvet://")
+                && !target.value.starts_with("file://")
+            {
+                return Err(CoreError::InvalidCommand(
+                    "activation deep link scheme is not allowed".into(),
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 pub fn supported_transport_features() -> Vec<String> {

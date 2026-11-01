@@ -66,11 +66,14 @@ may fail without taking down the shell or unrelated state. Each boundary has
 a host-owned recovery action and a contract test through a fake adapter.
 
 A Profile has one active writer. Multiple desktop windows share the same
-`ApplicationCore` and use separate Session/Window restoration hints. A second
-process forwards validated activation requests to the existing instance and
-does not open the Profile concurrently. A stale lock is recoverable only after
-the host verifies that the recorded process is no longer alive; the host never
-merges concurrent Profile writes.
+`ApplicationCore` and use separate Session/Window restoration hints. The alpha
+Tauri composition acquires the Profile lock before WebView/Core startup and,
+on macOS/Linux, a second process forwards a bounded validated activation frame
+to the existing instance before exiting. A lock with an invalid record,
+unavailable owner or missing acknowledgement fails closed; the current alpha
+does not automatically take over stale locks. The next platform slice must
+verify process identity using the recorded start time and instance nonce before
+offering stale-lock recovery. The host never merges concurrent Profile writes.
 
 Do not split the Rust core into a separate local daemon in v1. A process split would add packaging, startup, crash recovery and IPC versioning before the product has a second client. The plugin runtime remains independently isolatable because untrusted extensions do not run inside the Tauri process.
 

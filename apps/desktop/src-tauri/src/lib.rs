@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 mod crash_capture;
+mod instance;
 #[allow(dead_code)]
 mod capability_policy;
 #[allow(dead_code)]
@@ -48,7 +49,8 @@ use velvet_tauri_adapter::{
     platform_signals::PlatformSignalController, CoreEventSink, TauriTransport,
 };
 use velvet_workbench_protocol::{
-    Command, CoreError, CoreTransport, CrashCaptureEvidence, CrashCaptureKind, Event,
+    ActivationRequest, ActivationTarget, ActivationTargetKind, Command, CoreError, CoreTransport,
+    CrashCaptureEvidence, CrashCaptureKind, Event,
     PlatformCapabilityStatus,
     PlatformPreflightEvidence, PluginDisableReason, RecoveryFailureClass, Request,
     ProtocolHandshakeRequest, ProtocolHandshakeResponse, RequestId, Response, ResponseEnvelope,
@@ -65,10 +67,13 @@ use native_recovery_window::{
     consume_native_recovery_intent, launch_native_recovery_window, NativeRecoveryAction,
     NativeRecoveryPage, NativeRecoveryPageKind, NativeRecoveryRequest, NATIVE_RECOVERY_SCHEMA_VERSION,
 };
+use instance::{AcquireOutcome, ProfileInstanceCoordinator};
 use platform_probe::{HostPlatformPreflightProbe, PlatformPreflightProbe};
 
 const CORE_EVENT_NAME: &str = "velvet_core_event";
 const KEYBINDING_EVENT_NAME: &str = "velvet_keybinding";
+const ACTIVATION_EVENT_NAME: &str = "velvet_activation_request";
+const MAX_PENDING_ACTIVATIONS: usize = 32;
 const TAURI_STARTUP_FAILURE_SCHEMA_VERSION: u16 = 1;
 const TAURI_STARTUP_FAILURE_FILE: &str = "tauri-startup-failure.json";
 const MAX_TAURI_STARTUP_FAILURE_BYTES: usize = 8 * 1024;
@@ -76,6 +81,8 @@ const MAX_TAURI_STARTUP_FAILURE_BYTES: usize = 8 * 1024;
 pub struct AppState {
     pub transport: Mutex<TauriTransport>,
     pub platform_signals: PlatformSignalController,
+    pub instance: Option<Mutex<ProfileInstanceCoordinator>>,
+    pub pending_activation: Arc<Mutex<Vec<ActivationRequest>>>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -333,6 +340,40 @@ fn preflight_app_data_dir() -> Option<PathBuf> {
             })
             .map(|path| path.join("com.velvet.desktop"))
     }
+}
+
+fn activation_request_from_args() -> ActivationRequest {
+    let targets = std::env::args()
+        .skip(1)
+        .filter_map(|argument| {
+            if argument.is_empty() || argument.starts_with('-') {
+                return None;
+            }
+            if argument.starts_with("velvet://") || argument.starts_with("file://") {
+                return Some(ActivationTarget {
+                    kind: ActivationTargetKind::DeepLink,
+                    value: argument,
+                });
+            }
+            Some(ActivationTarget {
+                kind: ActivationTargetKind::FilePath,
+                value: argument,
+            })
+        })
+        .take(32)
+        .collect();
+    ActivationRequest {
+        schema_version: velvet_workbench_protocol::ACTIVATION_SCHEMA_VERSION,
+        request_id: format!("{}-{}", std::process::id(), now_ms()),
+        targets,
+    }
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or_default()
 }
 
 fn bounded_startup_failure_message(error: impl std::fmt::Display) -> String {
@@ -2165,8 +2206,50 @@ fn velvet_core_handshake(
         .map_err(WireError::from)
 }
 
+#[tauri::command]
+fn velvet_activation_pending(
+    state: State<'_, AppState>,
+) -> Result<Vec<ActivationRequest>, WireError> {
+    let mut pending = state.pending_activation.lock().map_err(|_| WireError {
+        code: "activation-queue-poisoned".into(),
+        message: "The native activation queue is unavailable.".into(),
+        retryable: true,
+        expected_revision: None,
+        actual_revision: None,
+    })?;
+    Ok(std::mem::take(&mut *pending))
+}
+
+fn enqueue_activation(queue: &Mutex<Vec<ActivationRequest>>, request: ActivationRequest) {
+    if let Ok(mut pending) = queue.lock() {
+        pending.push(request);
+        while pending.len() > MAX_PENDING_ACTIVATIONS {
+            pending.remove(0);
+        }
+    }
+}
+
 pub fn run() {
     let app_data_root = preflight_app_data_dir();
+    let initial_activation = activation_request_from_args();
+    let instance = match app_data_root.as_ref() {
+        Some(root) => match ProfileInstanceCoordinator::acquire(root, &initial_activation) {
+            Ok(AcquireOutcome::Primary(instance)) => Some(instance),
+            Ok(AcquireOutcome::Forwarded) => return,
+            Ok(AcquireOutcome::Locked(record)) => {
+                eprintln!(
+                    "Velvet profile is already owned by pid {} (instance {})",
+                    record.pid, record.instance_nonce
+                );
+                return;
+            }
+            Err(error) => {
+                eprintln!("Velvet could not acquire the Profile lock: {error}");
+                return;
+            }
+        },
+        None => None,
+    };
     if let Some(root) = app_data_root.as_deref() {
         let _ = arm_process_receipt(root);
     }
@@ -2245,6 +2328,24 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(shortcuts)
         .setup(move |app| {
+            let mut instance = instance;
+            let pending_activation = Arc::new(Mutex::new(
+                if initial_activation.targets.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![initial_activation.clone()]
+                },
+            ));
+            if let Some(coordinator) = instance.as_mut() {
+                let activation_app = app.handle().clone();
+                let activation_queue = pending_activation.clone();
+                coordinator.start_listener(move |request| {
+                    enqueue_activation(&activation_queue, request.clone());
+                    if let Err(error) = activation_app.emit(ACTIVATION_EVENT_NAME, request) {
+                        eprintln!("Velvet could not forward an activation request: {error}");
+                    }
+                })?;
+            }
             let sink = TauriEventSink {
                 app: app.handle().clone(),
                 sequence: Arc::new(AtomicU64::new(1)),
@@ -2470,13 +2571,19 @@ pub fn run() {
             app.manage(AppState {
                 transport: Mutex::new(transport),
                 platform_signals,
+                instance: instance.map(Mutex::new),
+                pending_activation: pending_activation.clone(),
             });
+            if !initial_activation.targets.is_empty() {
+                app.emit(ACTIVATION_EVENT_NAME, initial_activation.clone())?;
+            }
             show_native_recovery_surface(app.handle(), native_recovery);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             velvet_core_handshake,
-            velvet_core_request
+            velvet_core_request,
+            velvet_activation_pending
         ])
         .build(tauri::generate_context!());
     match result {

@@ -20,7 +20,22 @@ export type RecoveryDiagnosticSchemaVersion = typeof RECOVERY_DIAGNOSTIC_SCHEMA_
 export const PLUGIN_DIAGNOSTIC_SCHEMA_VERSION = 1 as const;
 export type PluginDiagnosticSchemaVersion = typeof PLUGIN_DIAGNOSTIC_SCHEMA_VERSION;
 export const CRASH_CAPTURE_SCHEMA_VERSION = 1 as const;
+export const ACTIVATION_SCHEMA_VERSION = 1 as const;
+export type ActivationSchemaVersion = typeof ACTIVATION_SCHEMA_VERSION;
 export type WorkbenchAppId = string;
+
+export type CoreActivationTargetKind = 'file-path' | 'deep-link';
+
+export interface CoreActivationTarget {
+  readonly kind: CoreActivationTargetKind;
+  readonly value: string;
+}
+
+export interface CoreActivationRequest {
+  readonly schemaVersion: ActivationSchemaVersion;
+  readonly requestId: string;
+  readonly targets: readonly CoreActivationTarget[];
+}
 /** Compatibility alias for older clients and migration code. */
 export type WorkspaceId = WorkbenchAppId;
 export type Zone = 'navigation' | 'contextual' | 'operations';
@@ -1007,6 +1022,10 @@ export interface SessionAwareCoreTransport extends CoreTransport {
   resync(): Promise<CoreAuthoritativeSnapshot>;
   queryRequestOutcome(requestId: number): Promise<CoreRequestOutcome>;
   subscribeStatus(listener: (status: CoreTransportStatus) => void): () => void;
+}
+
+export interface ActivationAwareCoreTransport extends CoreTransport {
+  subscribeActivation(listener: (request: CoreActivationRequest) => void): () => void;
 }
 
 export type CoreEvent =
