@@ -178,19 +178,22 @@ primitive. It validates owner and scope segments, bounds payloads, records a
 schema, generation, checksum and committed marker, publishes staged snapshots
 through same-directory atomic replacement and can quarantine a staged or
 committed generation. Its in-memory implementation is used by fault-injection
-tests. This is a storage seam only; `ApplicationCore` has not yet migrated
-its generic embedded constructors to it, and no cross-owner `RecoverySet` is
-published by those constructors.
+tests. This is a storage seam only; generic embedded constructors may still use
+their own test stores, but the native composition has one canonical snapshot
+owner path and publishes a cross-owner `RecoverySet` before Core reads state.
 
 The native Tauri composition now wraps Layout, Profile and Job stores with that
-primitive. A wrapper reads the committed generation named by the current core
-`RecoverySet` when one exists, falls back to the legacy owner store only while
-that owner has no snapshot, and writes the owner payload as a new staged
-generation. A successful owner write proposes a new set by replacing only the
-changed owner; all other members are copied from the current set. This prevents
-startup persistence of one owner from reintroducing a generation that the user
-just restored. The set pointer is published only after every referenced
-generation validates.
+primitive. These adapters read only the committed generations named by the
+current core `RecoverySet`; they do not construct or consult legacy stores at
+runtime. Before `ApplicationCore` is composed, one-time owner migration
+participants read the legacy Layout/Profile/Job files, stage every missing
+owner generation, commit those bytes, and publish the core `RecoverySet` last.
+A participant failure leaves the legacy files and the previous pointer intact;
+a fresh install imports defaults as the first complete set. A successful owner
+write proposes a new set by replacing only the changed owner; all other members
+are copied from the current set. This prevents startup persistence of one owner
+from reintroducing a generation that the user just restored. The set pointer is
+published only after every referenced generation validates.
 
 `RecoverySetStore` supports a previous-set restore. The typed
 `restore-recovery-set` action publishes that previous set for the next startup;
@@ -200,12 +203,20 @@ set, then quarantines the failed owner generation. The recovery projection
 includes the owner, scope and generation target only when the failure can be
 quarantined, so the renderer never invents a path or generation.
 
+For a corrupt or unknown core snapshot, the persistence adapter preserves the
+generation in a typed `RecoveryTarget`. `quarantine-recovery-failure` first
+publishes the previous validated `RecoverySet`, then moves exactly that
+generation to quarantine; restart therefore uses the previous set without
+silently replacing the damaged bytes with defaults.
+
 The native file stores expose a durability mode. Unix Tauri builds request file
 and parent-directory `fsync` before advertising a committed snapshot or set;
 platforms without directory sync support use atomic rename only and remain
-diagnosable as weaker durability. A failed required sync does not publish a
-committed file. This is a crash-durability seam, not a claim that power-loss
-survival has been proven on every filesystem.
+diagnosable as weaker durability. A persisted durability report records the
+requested mode and effective atomic/file/directory sync capabilities, and is
+included in the recovery projection and diagnostic export. A failed required
+sync does not publish a committed file. This is a crash-durability seam, not a
+claim that power-loss survival has been proven on every filesystem.
 
 Runtime failure in an activated optional plugin also records a degraded
 component failure and clears that owner's projections and Jobs; it does not
@@ -268,11 +279,9 @@ other extensions and Core available. Native crash capture is consumed through
 the separate local receipt adapter; missing platform dump support degrades to
 exit/signal, phase, process and bounded log evidence.
 Optional plugin activation is recorded as a degraded component failure and does
-not block the core-ready checkpoint. The file journal is an evidence
-store, not yet a replacement for owner snapshots or a proof that writes are
-crash-durable on every platform; the persistence durability report remains a
-follow-up acceptance test. Shutdown completion is only evidence from the Tauri
-event loop; it is not a proof against power loss or an OS-level kill.
+not block the core-ready checkpoint. The file journal is an evidence store and
+does not replace owner snapshots. Shutdown completion is only evidence from the
+Tauri event loop; it is not a proof against power loss or an OS-level kill.
 
 Plugin crashes and timeouts remain inside `PluginHost`; plugin-owned Jobs
 remain inside `JobSystem`; a WebView or AppSurface failure is handled by the
@@ -325,11 +334,11 @@ may publish one owner alone only after reference validation proves that its
 dependent owners remain compatible; otherwise it stages and commits the whole
 set. `RecoverySetTransaction` is the persistence seam for the latter case: it
 stages every changed owner, commits those bytes, and publishes the new pointer
-last. Until the first complete set exists, snapshot-backed owner adapters keep
-the legacy owner state visible; they never expose an individually committed
-bootstrap generation. Individual owner bytes may be written before the barrier,
-but readers use only generations referenced by the last committed
-recovery-index pointer; unreferenced bytes remain staging/quarantine evidence.
+last. Until the first complete set exists, snapshot-backed owner adapters return
+no state; the composition migration must publish the initial complete set before
+Core reads it. Individual owner bytes may be written before the barrier, but
+readers use only generations referenced by the last committed recovery-index
+pointer; unreferenced bytes remain staging/quarantine evidence.
 The recovery index never copies domain payloads or changes their owners.
 
 Migrations are owner-specific and copy-on-write:

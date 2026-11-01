@@ -16,12 +16,17 @@ mod owner_snapshots;
 mod recovery_set;
 mod snapshot;
 
-pub use durability::DurabilityMode;
+pub use durability::{
+    DurabilityMode, DurabilityReport, DurabilityReportStore, InMemoryDurabilityReportStore,
+    JsonFileDurabilityReportStore, DURABILITY_REPORT_SCHEMA_VERSION,
+};
 
 pub use owner_snapshots::{
-    SnapshotJobStateStore, SnapshotLayoutStateStore, SnapshotProfileStateStore, JOB_SNAPSHOT_OWNER,
-    JOB_SNAPSHOT_SCOPE, LAYOUT_SNAPSHOT_OWNER, LAYOUT_SNAPSHOT_SCOPE, PROFILE_SNAPSHOT_OWNER,
-    PROFILE_SNAPSHOT_SCOPE,
+    migrate_legacy_owner_snapshots, LegacyJobMigrationParticipant,
+    LegacyLayoutMigrationParticipant, LegacyProfileMigrationParticipant, OwnerMigrationParticipant,
+    OwnerMigrationReport, SnapshotJobStateStore, SnapshotLayoutStateStore,
+    SnapshotProfileStateStore, JOB_SNAPSHOT_OWNER, JOB_SNAPSHOT_SCOPE, LAYOUT_SNAPSHOT_OWNER,
+    LAYOUT_SNAPSHOT_SCOPE, PROFILE_SNAPSHOT_OWNER, PROFILE_SNAPSHOT_SCOPE,
 };
 pub use recovery_set::{
     commit_current_recovery_set, commit_recovery_set_after_owner_change,
@@ -39,6 +44,11 @@ pub use snapshot::{
 pub enum PersistenceError {
     Unavailable,
     CorruptState,
+    CorruptOwner {
+        owner_id: String,
+        scope: String,
+        generation: u64,
+    },
 }
 
 pub const DIAGNOSTIC_EVENT_STORE_SCHEMA_VERSION: u16 = 1;

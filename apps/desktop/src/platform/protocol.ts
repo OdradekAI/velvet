@@ -497,6 +497,18 @@ export interface CoreRecoveryCheckpoint {
   readonly atMs: number;
 }
 
+export type CoreDurabilityMode = 'atomic-rename-only' | 'require-fsync';
+
+export interface CoreDurabilityReport {
+  readonly schemaVersion: number;
+  readonly mode: CoreDurabilityMode;
+  readonly atomicReplace: boolean;
+  readonly fileSync: boolean;
+  readonly directorySync: boolean;
+  readonly crashDurable: boolean;
+  readonly detail: string;
+}
+
 export interface CoreRecoveryProjection {
   readonly schemaVersion: RecoverySchemaVersion;
   readonly mode: CoreRecoveryMode;
@@ -507,6 +519,7 @@ export interface CoreRecoveryProjection {
   readonly lastGood: CoreRecoveryCheckpoint | null;
   readonly actions: readonly CoreRecoveryAction[];
   readonly platformPreflight?: readonly CorePlatformPreflightEvidence[];
+  readonly durabilityReport?: CoreDurabilityReport | null;
 }
 
 export interface CoreRecoveryDiagnosticBundle {

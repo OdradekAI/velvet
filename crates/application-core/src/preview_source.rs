@@ -262,6 +262,9 @@ fn map_persistence_error(error: PersistenceError) -> PreviewSourceError {
         PersistenceError::CorruptState => {
             PreviewSourceError::Failed("asset source location state is corrupt".into())
         }
+        PersistenceError::CorruptOwner { .. } => {
+            PreviewSourceError::Failed("asset source location state is corrupt".into())
+        }
     }
 }
 

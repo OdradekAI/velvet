@@ -273,6 +273,25 @@ pub struct RecoveryCheckpoint {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DurabilityMode {
+    AtomicRenameOnly,
+    RequireFsync,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DurabilityReport {
+    pub schema_version: u16,
+    pub mode: DurabilityMode,
+    pub atomic_replace: bool,
+    pub file_sync: bool,
+    pub directory_sync: bool,
+    pub crash_durable: bool,
+    pub detail: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RecoveryProjection {
     pub schema_version: u16,
@@ -285,6 +304,8 @@ pub struct RecoveryProjection {
     pub actions: Vec<RecoveryAction>,
     #[serde(default)]
     pub platform_preflight: Vec<PlatformPreflightEvidence>,
+    #[serde(default)]
+    pub durability_report: Option<DurabilityReport>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -838,6 +859,15 @@ mod tests {
             last_good: None,
             actions: vec![RecoveryAction::Retry, RecoveryAction::RestoreSnapshot],
             platform_preflight: Vec::new(),
+            durability_report: Some(DurabilityReport {
+                schema_version: 1,
+                mode: DurabilityMode::RequireFsync,
+                atomic_replace: true,
+                file_sync: true,
+                directory_sync: true,
+                crash_durable: true,
+                detail: "fsync".into(),
+            }),
         };
         let json = serde_json::to_value(&projection).expect("recovery should serialize");
         assert_eq!(json["schemaVersion"], RECOVERY_SCHEMA_VERSION);
@@ -845,6 +875,7 @@ mod tests {
         assert_eq!(json["phase"], "preflight");
         assert_eq!(json["lastFailure"]["class"], "abnormal-exit");
         assert_eq!(json["actions"][1], "restore-snapshot");
+        assert_eq!(json["durabilityReport"]["mode"], "require-fsync");
         let decoded: RecoveryProjection =
             serde_json::from_value(json).expect("recovery should deserialize");
         assert_eq!(decoded, projection);
@@ -865,6 +896,7 @@ mod tests {
                 last_good: None,
                 actions: vec![RecoveryAction::Retry, RecoveryAction::ExportDiagnostics],
                 platform_preflight: Vec::new(),
+                durability_report: None,
             },
             plugin_diagnostics: Vec::new(),
             diagnostics_degraded: false,

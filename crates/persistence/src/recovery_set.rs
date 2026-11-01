@@ -647,6 +647,10 @@ fn map_snapshot_error(error: SnapshotError) -> RecoverySetError {
         SnapshotError::Invalid(message) => RecoverySetError::Invalid(message),
         SnapshotError::Unavailable(message) => RecoverySetError::Unavailable(message),
         SnapshotError::Corrupt(message) => RecoverySetError::Corrupt(message),
+        SnapshotError::CorruptGeneration {
+            generation,
+            message,
+        } => RecoverySetError::Corrupt(format!("generation {generation}: {message}")),
         SnapshotError::NotFound => RecoverySetError::NotFound,
     }
 }

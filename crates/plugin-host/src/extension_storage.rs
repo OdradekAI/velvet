@@ -509,6 +509,7 @@ impl From<SnapshotError> for ExtensionStorageError {
             SnapshotError::Invalid(message) => Self::Invalid(message),
             SnapshotError::Unavailable(message) => Self::Unavailable(message),
             SnapshotError::Corrupt(message) => Self::Corrupt(message),
+            SnapshotError::CorruptGeneration { message, .. } => Self::Corrupt(message),
             SnapshotError::NotFound => {
                 Self::Unavailable("extension storage snapshot not found".into())
             }

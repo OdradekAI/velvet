@@ -387,6 +387,7 @@ impl RecoverySupervisor {
                 last_good: None,
                 actions: vec![RecoveryAction::Retry, RecoveryAction::ExportDiagnostics],
                 platform_preflight: Vec::new(),
+                durability_report: None,
             })
     }
 
@@ -547,6 +548,7 @@ fn projection(inner: &RecoveryInner) -> RecoveryProjection {
         last_good: state.last_good.clone(),
         actions,
         platform_preflight: state.platform_preflight.clone(),
+        durability_report: None,
     }
 }
 

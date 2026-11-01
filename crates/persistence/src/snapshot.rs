@@ -35,6 +35,7 @@ pub enum SnapshotError {
     Invalid(String),
     Unavailable(String),
     Corrupt(String),
+    CorruptGeneration { generation: u64, message: String },
     NotFound,
 }
 
@@ -162,22 +163,29 @@ impl JsonFileStateSnapshotStore {
             let Some(generation_text) = file_name.strip_suffix(".snapshot.json") else {
                 continue;
             };
-            let generation = generation_text.parse::<u64>().map_err(|_| {
-                SnapshotError::Corrupt(format!(
-                    "snapshot filename has an invalid generation: {file_name}"
-                ))
-            })?;
+            let Ok(generation) = generation_text.parse::<u64>() else {
+                // Files that cannot be addressed by a RecoverySet are retained
+                // as evidence and ignored so one stray directory entry cannot
+                // hide otherwise valid owner generations.
+                continue;
+            };
+            if generation == 0 {
+                continue;
+            }
             let snapshot = decode_snapshot(&fs::read(&path).map_err(|error| {
                 SnapshotError::Unavailable(format!("snapshot could not be read: {error}"))
-            })?)?;
-            validate_snapshot(&snapshot, true)?;
+            })?)
+            .map_err(|error| with_generation(error, generation))?;
+            validate_snapshot(&snapshot, true)
+                .map_err(|error| with_generation(error, generation))?;
             if snapshot.metadata.owner_id != owner_id
                 || snapshot.metadata.scope != scope
                 || snapshot.metadata.generation != generation
             {
-                return Err(SnapshotError::Corrupt(
-                    "committed snapshot identity does not match its path".into(),
-                ));
+                return Err(SnapshotError::CorruptGeneration {
+                    generation,
+                    message: "committed snapshot identity does not match its path".into(),
+                });
             }
             snapshots.push(snapshot);
         }
@@ -257,15 +265,17 @@ impl StateSnapshotStore for JsonFileStateSnapshotStore {
                 )))
             }
         };
-        let snapshot = decode_snapshot(&bytes)?;
-        validate_snapshot(&snapshot, true)?;
+        let snapshot =
+            decode_snapshot(&bytes).map_err(|error| with_generation(error, generation))?;
+        validate_snapshot(&snapshot, true).map_err(|error| with_generation(error, generation))?;
         if snapshot.metadata.owner_id != owner_id
             || snapshot.metadata.scope != scope
             || snapshot.metadata.generation != generation
         {
-            return Err(SnapshotError::Corrupt(
-                "committed snapshot identity does not match its path".into(),
-            ));
+            return Err(SnapshotError::CorruptGeneration {
+                generation,
+                message: "committed snapshot identity does not match its path".into(),
+            });
         }
         Ok(Some(snapshot))
     }
@@ -296,15 +306,11 @@ impl StateSnapshotStore for JsonFileStateSnapshotStore {
             let Some(generation_text) = file_name.strip_suffix(".snapshot.json") else {
                 continue;
             };
-            let generation = generation_text.parse::<u64>().map_err(|_| {
-                SnapshotError::Corrupt(format!(
-                    "snapshot filename has an invalid generation: {file_name}"
-                ))
-            })?;
+            let Ok(generation) = generation_text.parse::<u64>() else {
+                continue;
+            };
             if generation == 0 {
-                return Err(SnapshotError::Corrupt(
-                    "snapshot filename contains a zero generation".into(),
-                ));
+                continue;
             }
             generations.push(generation);
         }
@@ -388,7 +394,9 @@ impl StateSnapshotStore for InMemoryStateSnapshotStore {
             .max_by_key(|snapshot| snapshot.metadata.generation)
             .cloned()
             .map_or(Ok(None), |snapshot| {
-                validate_snapshot(&snapshot, true)?;
+                let generation = snapshot.metadata.generation;
+                validate_snapshot(&snapshot, true)
+                    .map_err(|error| with_generation(error, generation))?;
                 Ok(Some(snapshot))
             })
     }
@@ -417,7 +425,9 @@ impl StateSnapshotStore for InMemoryStateSnapshotStore {
             .nth(1)
             .cloned()
             .map_or(Ok(None), |snapshot| {
-                validate_snapshot(&snapshot, true)?;
+                let generation = snapshot.metadata.generation;
+                validate_snapshot(&snapshot, true)
+                    .map_err(|error| with_generation(error, generation))?;
                 Ok(Some(snapshot))
             })
     }
@@ -436,7 +446,8 @@ impl StateSnapshotStore for InMemoryStateSnapshotStore {
             .filter(|snapshot| snapshot.metadata.committed)
             .cloned();
         snapshot.map_or(Ok(None), |snapshot| {
-            validate_snapshot(&snapshot, true)?;
+            validate_snapshot(&snapshot, true)
+                .map_err(|error| with_generation(error, generation))?;
             Ok(Some(snapshot))
         })
     }
@@ -518,6 +529,18 @@ fn validate_segment(value: &str, label: &str) -> Result<(), SnapshotError> {
         )));
     }
     Ok(())
+}
+
+fn with_generation(error: SnapshotError, generation: u64) -> SnapshotError {
+    match error {
+        SnapshotError::Invalid(message)
+        | SnapshotError::Corrupt(message)
+        | SnapshotError::CorruptGeneration { message, .. } => SnapshotError::CorruptGeneration {
+            generation,
+            message,
+        },
+        other => other,
+    }
 }
 
 fn decode_snapshot(bytes: &[u8]) -> Result<StateSnapshot, SnapshotError> {
@@ -652,7 +675,7 @@ mod tests {
 
         assert!(matches!(
             store.load_latest("layout", "workspace"),
-            Err(SnapshotError::Corrupt(_))
+            Err(SnapshotError::CorruptGeneration { generation: 2, .. })
         ));
         store
             .quarantine("layout", "workspace", 2)
@@ -662,6 +685,30 @@ mod tests {
             Some(snapshot(1, true))
         );
         assert!(root.join("layout/workspace/2.quarantine.json").exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn unknown_directory_entries_do_not_hide_valid_generations() {
+        let root = temporary_root();
+        let store = JsonFileStateSnapshotStore::new(&root);
+        store.stage(&snapshot(1, false)).expect("stage should work");
+        store
+            .commit("layout", "workspace", 1)
+            .expect("commit should work");
+        let directory = root.join("layout/workspace");
+        fs::write(directory.join("damaged.snapshot.json"), b"not-json")
+            .expect("unknown entry should write");
+        assert_eq!(
+            store.load_latest("layout", "workspace").unwrap(),
+            Some(snapshot(1, true))
+        );
+        assert_eq!(
+            store
+                .list_committed_generations("layout", "workspace")
+                .unwrap(),
+            vec![1]
+        );
         let _ = fs::remove_dir_all(root);
     }
 

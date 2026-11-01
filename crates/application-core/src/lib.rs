@@ -28,6 +28,7 @@ pub struct ApplicationRecoveryStores {
     pub recovery_sets: Option<Arc<dyn RecoverySetStore>>,
     pub diagnostics: Option<Arc<dyn DiagnosticEventStore>>,
     pub runtime_leases: Option<Arc<dyn velvet_plugin_host::RuntimeLeaseStore>>,
+    pub durability_report: Option<velvet_workbench_protocol::DurabilityReport>,
 }
 
 impl ApplicationRecoveryStores {
@@ -42,6 +43,7 @@ impl ApplicationRecoveryStores {
             recovery_sets,
             diagnostics: None,
             runtime_leases: None,
+            durability_report: None,
         }
     }
 
@@ -55,6 +57,14 @@ impl ApplicationRecoveryStores {
         runtime_leases: Arc<dyn velvet_plugin_host::RuntimeLeaseStore>,
     ) -> Self {
         self.runtime_leases = Some(runtime_leases);
+        self
+    }
+
+    pub fn with_durability_report(
+        mut self,
+        durability_report: velvet_workbench_protocol::DurabilityReport,
+    ) -> Self {
+        self.durability_report = Some(durability_report);
         self
     }
 
@@ -119,6 +129,7 @@ pub struct ApplicationCore {
     recovery: RecoverySupervisor,
     recovery_snapshots: Option<Arc<dyn StateSnapshotStore>>,
     recovery_sets: Option<Arc<dyn RecoverySetStore>>,
+    durability_report: Option<velvet_workbench_protocol::DurabilityReport>,
     diagnostic_store: Option<Arc<dyn DiagnosticEventStore>>,
     plugin_diagnostics: VecDeque<PluginDiagnosticEvent>,
     diagnostic_history: VecDeque<PluginDiagnosticEvent>,
@@ -416,6 +427,7 @@ impl ApplicationCore {
             journal: recovery_journal,
             snapshots: recovery_snapshots,
             recovery_sets,
+            durability_report,
             diagnostics: diagnostic_store,
             runtime_leases,
         } = recovery_stores;
@@ -439,6 +451,19 @@ impl ApplicationCore {
                 }
             }
             Ok(None) => {}
+            Err(velvet_persistence::PersistenceError::CorruptOwner {
+                owner_id,
+                scope,
+                generation,
+            }) => {
+                let _ = recovery.record_failure_for_owner(
+                    velvet_workbench_protocol::RecoveryFailureClass::StateCorrupt,
+                    "layout snapshot generation is corrupt",
+                    owner_id,
+                    scope,
+                    generation,
+                );
+            }
             Err(error) => {
                 let _ = recovery.record_failure(
                     velvet_workbench_protocol::RecoveryFailureClass::StateCorrupt,
@@ -460,6 +485,20 @@ impl ApplicationCore {
                 ProfileState::default()
             }
             Ok(None) => ProfileState::default(),
+            Err(velvet_persistence::PersistenceError::CorruptOwner {
+                owner_id,
+                scope,
+                generation,
+            }) => {
+                let _ = recovery.record_failure_for_owner(
+                    velvet_workbench_protocol::RecoveryFailureClass::StateCorrupt,
+                    "profile snapshot generation is corrupt",
+                    owner_id,
+                    scope,
+                    generation,
+                );
+                ProfileState::default()
+            }
             Err(error) => {
                 let _ = recovery.record_failure(
                     velvet_workbench_protocol::RecoveryFailureClass::StateCorrupt,
@@ -514,6 +553,7 @@ impl ApplicationCore {
             recovery,
             recovery_snapshots,
             recovery_sets,
+            durability_report,
             diagnostic_store,
             plugin_diagnostics: VecDeque::new(),
             diagnostic_history: diagnostic_history.into_iter().collect(),
@@ -537,7 +577,9 @@ impl ApplicationCore {
     }
 
     pub fn recovery_projection(&self) -> velvet_workbench_protocol::RecoveryProjection {
-        self.recovery.projection()
+        let mut projection = self.recovery.projection();
+        projection.durability_report = self.durability_report.clone();
+        projection
     }
 
     pub fn recovery_launch_identity(&self) -> Option<(String, u64)> {
@@ -610,9 +652,14 @@ impl ApplicationCore {
             ));
         };
         if let Some(recovery_sets) = self.recovery_sets.as_deref() {
-            recovery_sets
+            let restored = recovery_sets
                 .restore_previous(CORE_RECOVERY_SET_ID)
                 .map_err(|error| CoreError::Recovery(format!("{error:?}")))?;
+            if restored.is_none() {
+                return Err(CoreError::Recovery(
+                    "no previous committed recovery set is available".into(),
+                ));
+            }
         }
         snapshot_store
             .quarantine(&target.owner_id, &target.scope, target.generation)
@@ -2402,8 +2449,9 @@ mod tests {
         InMemoryAssetSourceLocationStore, InMemoryDiagnosticEventStore, InMemoryLayoutStateStore,
         InMemoryProfileStateStore, InMemoryRecoveryJournalStore, InMemoryRecoverySetStore,
         InMemoryStateSnapshotStore, JsonFileAssetSourceLocationStore, JsonFileDiagnosticEventStore,
-        JsonFileJobStateStore, JsonFileLayoutStateStore, LayoutStateStore, SnapshotJobStateStore,
-        SnapshotLayoutStateStore, SnapshotProfileStateStore,
+        JsonFileJobStateStore, JsonFileLayoutStateStore, LayoutStateStore, SnapshotError,
+        SnapshotJobStateStore, SnapshotLayoutStateStore, SnapshotProfileStateStore, StateSnapshot,
+        StateSnapshotStore,
     };
     use velvet_plugin_api::{
         ContributionDescriptor, ContributionKind, ContributionScope, ExtensionId,
@@ -2428,6 +2476,76 @@ mod tests {
             "velvet-application-core-restart-{}-{nonce}-{sequence}.json",
             std::process::id(),
         ))
+    }
+
+    struct CorruptGenerationStore {
+        inner: Arc<InMemoryStateSnapshotStore>,
+        owner_id: &'static str,
+        scope: &'static str,
+        generation: u64,
+    }
+
+    impl StateSnapshotStore for CorruptGenerationStore {
+        fn stage(&self, snapshot: &StateSnapshot) -> Result<(), SnapshotError> {
+            self.inner.stage(snapshot)
+        }
+
+        fn commit(
+            &self,
+            owner_id: &str,
+            scope: &str,
+            generation: u64,
+        ) -> Result<(), SnapshotError> {
+            self.inner.commit(owner_id, scope, generation)
+        }
+
+        fn load_latest(
+            &self,
+            owner_id: &str,
+            scope: &str,
+        ) -> Result<Option<StateSnapshot>, SnapshotError> {
+            self.inner.load_latest(owner_id, scope)
+        }
+
+        fn load_previous(
+            &self,
+            owner_id: &str,
+            scope: &str,
+        ) -> Result<Option<StateSnapshot>, SnapshotError> {
+            self.inner.load_previous(owner_id, scope)
+        }
+
+        fn load_generation(
+            &self,
+            owner_id: &str,
+            scope: &str,
+            generation: u64,
+        ) -> Result<Option<StateSnapshot>, SnapshotError> {
+            if owner_id == self.owner_id && scope == self.scope && generation == self.generation {
+                return Err(SnapshotError::CorruptGeneration {
+                    generation,
+                    message: "fixture corruption".into(),
+                });
+            }
+            self.inner.load_generation(owner_id, scope, generation)
+        }
+
+        fn list_committed_generations(
+            &self,
+            owner_id: &str,
+            scope: &str,
+        ) -> Result<Vec<u64>, SnapshotError> {
+            self.inner.list_committed_generations(owner_id, scope)
+        }
+
+        fn quarantine(
+            &self,
+            owner_id: &str,
+            scope: &str,
+            generation: u64,
+        ) -> Result<(), SnapshotError> {
+            self.inner.quarantine(owner_id, scope, generation)
+        }
     }
 
     struct PreviewRuntime {
@@ -4180,18 +4298,15 @@ mod tests {
                 Arc::new(SnapshotLayoutStateStore::new(
                     snapshots.clone(),
                     Some(recovery_sets.clone()),
-                    Arc::new(InMemoryLayoutStateStore::default()),
                 )),
                 &plugin_root,
                 Arc::new(SnapshotJobStateStore::new(
                     snapshots.clone(),
                     Some(recovery_sets.clone()),
-                    Arc::new(velvet_job_system::InMemoryJobStateStore::default()),
                 )),
                 Arc::new(SnapshotProfileStateStore::new(
                     snapshots.clone(),
                     Some(recovery_sets.clone()),
-                    Arc::new(InMemoryProfileStateStore::default()),
                 )),
                 asset_sources.clone(),
                 ApplicationRecoveryStores::new(
@@ -4285,6 +4400,131 @@ mod tests {
         assert_eq!(
             after_quarantine.layout_snapshot().active_app,
             WorkbenchAppId::FeedWorkbench
+        );
+        let _ = fs::remove_dir_all(plugin_root);
+    }
+
+    #[test]
+    fn corrupt_snapshot_generation_is_targeted_and_quarantine_restores_previous_set() {
+        let snapshots = Arc::new(InMemoryStateSnapshotStore::default());
+        let recovery_sets = Arc::new(InMemoryRecoverySetStore::default());
+        let plugin_root = temporary_layout_path().with_extension("plugins");
+        let asset_sources = Arc::new(InMemoryAssetSourceLocationStore::default());
+        let build_core = |snapshot_store: Arc<dyn StateSnapshotStore>| {
+            ApplicationCore::with_store_and_plugin_directory_and_job_store_and_profile_store_and_asset_source_store_and_recovery_stores(
+                Arc::new(SnapshotLayoutStateStore::new(
+                    snapshot_store.clone(),
+                    Some(recovery_sets.clone()),
+                )),
+                &plugin_root,
+                Arc::new(SnapshotJobStateStore::new(
+                    snapshot_store.clone(),
+                    Some(recovery_sets.clone()),
+                )),
+                Arc::new(SnapshotProfileStateStore::new(
+                    snapshot_store.clone(),
+                    Some(recovery_sets.clone()),
+                )),
+                asset_sources.clone(),
+                ApplicationRecoveryStores::new(
+                    Arc::new(InMemoryRecoveryJournalStore::default()),
+                    Some(snapshot_store),
+                    Some(recovery_sets.clone()),
+                ),
+            )
+        };
+
+        let mut first = build_core(snapshots.clone());
+        first
+            .dispatch(Request::Command(Command::Layout(
+                LayoutCommand::SetPartVisibility {
+                    part: WorkbenchPart::PrimarySidebar,
+                    visible: false,
+                },
+            )))
+            .expect("first layout should persist");
+        first
+            .dispatch(Request::Command(Command::SetLocale {
+                locale: "zh-Hans".into(),
+                expected_revision: Some(0),
+            }))
+            .expect("first profile should persist");
+
+        let mut second = build_core(snapshots.clone());
+        second
+            .dispatch(Request::Command(Command::Layout(
+                LayoutCommand::ActivateApp(WorkbenchAppId::FeedWorkbench),
+            )))
+            .expect("second layout should persist");
+        second
+            .dispatch(Request::Command(Command::SetLocale {
+                locale: "en-US".into(),
+                expected_revision: Some(1),
+            }))
+            .expect("second profile should persist");
+        let current = recovery_sets
+            .load_latest(CORE_RECOVERY_SET_ID)
+            .expect("current recovery set should load")
+            .expect("current recovery set should exist");
+        let target_generation = current
+            .members
+            .get("layout:workspace")
+            .expect("layout should be indexed")
+            .generation;
+        let previous_set = recovery_sets
+            .load_previous(CORE_RECOVERY_SET_ID)
+            .expect("previous recovery set should load")
+            .expect("previous recovery set should exist");
+        let previous_layout_generation = previous_set
+            .members
+            .get("layout:workspace")
+            .expect("previous layout should be indexed")
+            .generation;
+
+        let corrupt_store: Arc<dyn StateSnapshotStore> = Arc::new(CorruptGenerationStore {
+            inner: snapshots.clone(),
+            owner_id: "layout",
+            scope: "workspace",
+            generation: target_generation,
+        });
+        let mut third = build_core(corrupt_store);
+        let projection = third.recovery_projection();
+        let target = projection
+            .last_failure
+            .as_ref()
+            .and_then(|failure| failure.target.as_ref())
+            .expect("corrupt generation should be targeted");
+        assert_eq!(target.owner_id, "layout");
+        assert_eq!(target.scope, "workspace");
+        assert_eq!(target.generation, target_generation);
+        assert!(projection
+            .actions
+            .contains(&velvet_workbench_protocol::RecoveryAction::QuarantineState));
+
+        third
+            .dispatch(Request::Command(Command::QuarantineRecoveryFailure))
+            .expect("quarantine should restore the previous set");
+        let restored_set = recovery_sets
+            .load_latest(CORE_RECOVERY_SET_ID)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            restored_set
+                .members
+                .get("layout:workspace")
+                .expect("restored layout should be indexed")
+                .generation,
+            previous_layout_generation
+        );
+        assert!(snapshots
+            .load_generation("layout", "workspace", target_generation)
+            .expect("quarantined generation lookup should work")
+            .is_none());
+        let restored = build_core(snapshots.clone());
+        assert_eq!(restored.profile_state().locale, "zh-Hans");
+        assert_eq!(
+            restored.layout_snapshot().active_app,
+            WorkbenchAppId::AssetManager
         );
         let _ = fs::remove_dir_all(plugin_root);
     }

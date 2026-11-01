@@ -186,6 +186,10 @@ Asset source 当前是否可访问的 Rust 投影。移动硬盘或网络盘断�
 
 由 `persistence` 提供的通用快照存储适配器。它只负责 owner/scope 路径校验、有界 payload、校验和、staged 到 committed 的原子发布和 quarantine；它不决定领域 schema、跨 owner 提交或恢复动作。
 
+## OwnerMigrationParticipant
+
+由应用组合根调用的一次性 owner 迁移边界。它把旧版本的单一 owner 状态转换为待提交的 StateSnapshot；宿主统一执行校验、提交屏障和 RecoverySet 发布，participant 不能单独发布恢复索引。
+
 ## RecoverySetStore
 
 由 `persistence` 提供的恢复索引适配器。它只发布一组已经提交且可校验的 owner generation，支持读取当前/上一组、恢复上一组和隔离索引；它不复制领域 payload，也不改变 owner 的 schema 所有权。
@@ -194,13 +198,17 @@ Asset source 当前是否可访问的 Rust 投影。移动硬盘或网络盘断�
 
 持久化适配器的发布强度。`AtomicRenameOnly` 只保证同目录临时文件替换，`RequireFsync` 还要求临时文件和父目录同步成功；后者失败时不能把 generation 或 `RecoverySet` 宣布为已提交。
 
+## DurabilityReport
+
+持久化适配器保存的有界能力证据，记录请求的 DurabilityMode 以及实际的原子替换、文件同步和目录同步结果。它用于恢复界面和诊断导出，不等同于所有文件系统上的断电生存保证。
+
 ## RecoverySet
 
 由恢复索引记录的一组相关 StateSnapshot generation。它表示一次跨 owner 变更或迁移的可恢复提交点；只有在引用校验通过并完成提交屏障后，相关 generation 才能一起成为当前状态。RecoverySet 不取代各 owner 对数据和 schema 的所有权。
 
 ## RecoverySetTransaction
 
-持久化层提供的跨 owner 写入 seam。它先 stage 所有变更 owner 的 StateSnapshot，再逐个提交 payload，最后发布新的 RecoverySet 指针；指针提交前，读取者继续使用上一组或 bootstrap 时的 legacy owner 状态。
+持久化层提供的跨 owner 写入 seam。它先 stage 所有变更 owner 的 StateSnapshot，再逐个提交 payload，最后发布新的 RecoverySet 指针；指针提交前，读取者继续使用上一组，首次启动则必须先完成组合根迁移。
 
 ## QuarantinedState
 

@@ -34,9 +34,11 @@ use velvet_plugin_api::{
 use velvet_plugin_host::JsonFileRuntimeLeaseStore;
 use velvet_persistence::{
     DurabilityMode, JsonFileAssetSourceLocationStore, JsonFileDiagnosticEventStore,
-    JsonFileJobStateStore, JsonFileLayoutStateStore, JsonFileProfileStateStore,
-    JsonFileRecoveryJournalStore, JsonFileRecoverySetStore, JsonFileStateSnapshotStore,
-    SnapshotJobStateStore, SnapshotLayoutStateStore, SnapshotProfileStateStore,
+    DurabilityReportStore, JsonFileDurabilityReportStore, JsonFileRecoveryJournalStore,
+    JsonFileRecoverySetStore, JsonFileStateSnapshotStore, LegacyJobMigrationParticipant,
+    LegacyLayoutMigrationParticipant, LegacyProfileMigrationParticipant,
+    OwnerMigrationParticipant, SnapshotJobStateStore, SnapshotLayoutStateStore,
+    SnapshotProfileStateStore, migrate_legacy_owner_snapshots,
 };
 use velvet_preview_core::{PreviewIntent, PreviewRenderer, PreviewSurface, ResolvedPreview};
 use velvet_tauri_adapter::{CoreEventSink, TauriTransport};
@@ -72,6 +74,7 @@ pub struct AppState {
 struct NativeRecoveryState {
     locale: String,
     safe_mode: bool,
+    core_recovery_target: Option<(String, String, u64)>,
     orphan_count: usize,
     corrupt_extension_states: Vec<(String, u64)>,
     quarantined_runtime_leases: Vec<(String, String)>,
@@ -82,6 +85,7 @@ struct NativeRecoveryState {
 impl NativeRecoveryState {
     fn requires_surface(&self) -> bool {
         self.safe_mode
+            || self.core_recovery_target.is_some()
             || self.orphan_count > 0
             || !self.corrupt_extension_states.is_empty()
             || !self.quarantined_runtime_leases.is_empty()
@@ -156,6 +160,31 @@ impl NativeHostLocale {
             Self::SimplifiedChinese => format!(
                 "有 {count} 个扩展存储代际损坏或使用未知 schema。"
             ),
+        }
+    }
+
+    fn core_corrupt_message(self, owner: &str, scope: &str, generation: u64) -> String {
+        match self {
+            Self::English => format!(
+                "Core state {owner}:{scope} generation {generation} is corrupt and can be quarantined."
+            ),
+            Self::SimplifiedChinese => format!(
+                "核心状态 {owner}:{scope} 第 {generation} 代已损坏，可以隔离。"
+            ),
+        }
+    }
+
+    fn quarantine_core_button(self) -> &'static str {
+        match self {
+            Self::English => "Quarantine damaged state",
+            Self::SimplifiedChinese => "隔离损坏状态",
+        }
+    }
+
+    fn quarantine_core_success(self) -> &'static str {
+        match self {
+            Self::English => "The damaged generation was quarantined and the previous validated state is selected. Restart Velvet to apply it.",
+            Self::SimplifiedChinese => "损坏的数据代际已隔离，并已选择上一个经过验证的状态。请重启 Velvet 以应用。",
         }
     }
 
@@ -2051,6 +2080,7 @@ pub fn run() {
             let asset_sources_path = app_data_dir.join("asset-sources.json");
             let recovery_path = app_data_dir.join("recovery-journal.json");
             let diagnostic_events_path = app_data_dir.join("diagnostic-events.json");
+            let durability_report_path = app_data_dir.join("durability-report.json");
             let snapshot_root = app_data_dir.join("snapshots");
             let recovery_set_root = app_data_dir.join("recovery-sets");
             let runtime_leases_path = app_data_dir.join("runtime-leases.json");
@@ -2069,22 +2099,44 @@ pub fn run() {
                 recovery_set_root,
                 durability,
             ));
+            let legacy_participants: Vec<Box<dyn OwnerMigrationParticipant>> = vec![
+                Box::new(LegacyLayoutMigrationParticipant::new(layout_path.clone())),
+                Box::new(LegacyProfileMigrationParticipant::new(profile_path.clone())),
+                Box::new(LegacyJobMigrationParticipant::new(jobs_path.clone())),
+            ];
+            let migration_participants: Vec<&dyn OwnerMigrationParticipant> = legacy_participants
+                .iter()
+                .map(|participant| participant.as_ref() as &dyn OwnerMigrationParticipant)
+                .collect();
+            let migration_result = migrate_legacy_owner_snapshots(
+                snapshot_store.as_ref(),
+                recovery_set_store.as_ref(),
+                &migration_participants,
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|duration| duration.as_millis() as u64)
+                    .unwrap_or_default(),
+            );
+            let durability_report = velvet_persistence::DurabilityReport::for_mode(durability);
+            let durability_report_store =
+                JsonFileDurabilityReportStore::new(durability_report_path);
+            let durability_report_error = durability_report_store
+                .save(&durability_report)
+                .err()
+                .map(|error| error.to_string());
             let mut core = ApplicationCore::with_store_and_plugin_directory_and_job_store_and_profile_store_and_asset_source_store_and_recovery_stores(
                 Arc::new(SnapshotLayoutStateStore::new(
                     snapshot_store.clone(),
                     Some(recovery_set_store.clone()),
-                    Arc::new(JsonFileLayoutStateStore::new(layout_path)),
                 )),
                 &plugin_directory,
                 Arc::new(SnapshotJobStateStore::new(
                     snapshot_store.clone(),
                     Some(recovery_set_store.clone()),
-                    Arc::new(JsonFileJobStateStore::new(jobs_path)),
                 )),
                 Arc::new(SnapshotProfileStateStore::new(
                     snapshot_store.clone(),
                     Some(recovery_set_store.clone()),
-                    Arc::new(JsonFileProfileStateStore::new(profile_path)),
                 )),
                 Arc::new(JsonFileAssetSourceLocationStore::new(asset_sources_path)),
                 ApplicationRecoveryStores::new(
@@ -2099,8 +2151,18 @@ pub fn run() {
                 .with_runtime_leases(Arc::new(JsonFileRuntimeLeaseStore::with_durability(
                     runtime_leases_path,
                     durability,
-                ))),
+                )))
+                .with_durability_report(protocol_durability_report(&durability_report)),
             );
+            if let Err(error) = migration_result {
+                core.record_recovery_failure(
+                    RecoveryFailureClass::CoreMigration,
+                    format!("legacy owner migration failed: {error:?}"),
+                );
+            }
+            if let Some(error) = durability_report_error {
+                eprintln!("Velvet could not persist its durability report: {error}");
+            }
             if let Some((instance_id, attempt_id)) = core.recovery_launch_identity() {
                 core.configure_runtime_correlation(
                     instance_id.clone(),
@@ -2208,6 +2270,11 @@ pub fn run() {
             let native_recovery = NativeRecoveryState {
                 locale: core.profile_state().locale,
                 safe_mode: core.in_safe_mode(),
+                core_recovery_target: core
+                    .recovery_projection()
+                    .last_failure
+                    .and_then(|failure| failure.target)
+                    .map(|target| (target.owner_id, target.scope, target.generation)),
                 orphan_count,
                 corrupt_extension_states: collect_corrupt_extension_states(&core),
                 quarantined_runtime_leases: collect_quarantined_runtime_leases(&core),
@@ -2282,6 +2349,27 @@ fn panic_payload_message(payload: Box<dyn std::any::Any + Send>) -> String {
         message.clone()
     } else {
         "Tauri run panicked without a string payload".into()
+    }
+}
+
+fn protocol_durability_report(
+    report: &velvet_persistence::DurabilityReport,
+) -> velvet_workbench_protocol::DurabilityReport {
+    velvet_workbench_protocol::DurabilityReport {
+        schema_version: report.schema_version,
+        mode: match report.mode {
+            DurabilityMode::AtomicRenameOnly => {
+                velvet_workbench_protocol::DurabilityMode::AtomicRenameOnly
+            }
+            DurabilityMode::RequireFsync => {
+                velvet_workbench_protocol::DurabilityMode::RequireFsync
+            }
+        },
+        atomic_replace: report.atomic_replace,
+        file_sync: report.file_sync,
+        directory_sync: report.directory_sync,
+        crash_durable: report.crash_durable,
+        detail: report.detail.clone(),
     }
 }
 
@@ -2388,6 +2476,44 @@ fn show_native_recovery_surface<R: Runtime>(
                     Ok(()) => handle
                         .dialog()
                         .message(locale.restore_staged())
+                        .title(locale.recovery_title())
+                        .buttons(MessageDialogButtons::Ok)
+                        .show(|_| {}),
+                    Err(error) => handle
+                        .dialog()
+                        .message(locale.restore_error(&error))
+                        .title(locale.recovery_title())
+                        .kind(MessageDialogKind::Error)
+                        .buttons(MessageDialogButtons::Ok)
+                        .show(|_| {}),
+                }
+            });
+        return;
+    }
+
+    if let Some((owner_id, scope, generation)) = recovery.core_recovery_target {
+        let handle = app.clone();
+        details.push(locale.core_corrupt_message(&owner_id, &scope, generation));
+        let message = details.join("\n\n");
+        app.dialog()
+            .message(message)
+            .title(locale.recovery_title())
+            .kind(MessageDialogKind::Warning)
+            .buttons(MessageDialogButtons::OkCancelCustom(
+                locale.quarantine_core_button().into(),
+                locale.continue_button().into(),
+            ))
+            .show(move |quarantine| {
+                if !quarantine {
+                    return;
+                }
+                match dispatch_native_recovery_command(
+                    &handle,
+                    Command::QuarantineRecoveryFailure,
+                ) {
+                    Ok(()) => handle
+                        .dialog()
+                        .message(locale.quarantine_core_success())
                         .title(locale.recovery_title())
                         .buttons(MessageDialogButtons::Ok)
                         .show(|_| {}),
@@ -2625,6 +2751,12 @@ mod tests {
         .requires_surface());
         assert!(NativeRecoveryState {
             locale: "en".into(),
+            core_recovery_target: Some(("layout".into(), "workspace".into(), 2)),
+            ..NativeRecoveryState::default()
+        }
+        .requires_surface());
+        assert!(NativeRecoveryState {
+            locale: "en".into(),
             corrupt_extension_states: vec![("sample.reader".into(), 7)],
             ..NativeRecoveryState::default()
         }
@@ -2646,6 +2778,18 @@ mod tests {
             ..NativeRecoveryState::default()
         }
         .requires_surface());
+    }
+
+    #[test]
+    fn durability_report_mapping_preserves_protocol_fields() {
+        let report = velvet_persistence::DurabilityReport::for_mode(DurabilityMode::AtomicRenameOnly);
+        let wire = protocol_durability_report(&report);
+        assert_eq!(wire.schema_version, report.schema_version);
+        assert_eq!(wire.atomic_replace, report.atomic_replace);
+        assert_eq!(wire.file_sync, report.file_sync);
+        assert_eq!(wire.directory_sync, report.directory_sync);
+        assert_eq!(wire.crash_durable, report.crash_durable);
+        assert_eq!(wire.detail, report.detail);
     }
 
     #[test]
@@ -3002,6 +3146,7 @@ mod tests {
                     last_good: None,
                     actions: vec![velvet_workbench_protocol::RecoveryAction::Retry],
                     platform_preflight: Vec::new(),
+                    durability_report: None,
                 }),
             },
         );
