@@ -320,7 +320,15 @@ provenance 记录 owner、输入、provider 和设置指纹。
 
 ## JobCheckpoint
 
-Job 在睡眠、资源压力或进程重启前由 owner 写入的可恢复生命周期快照。它保存 attempt、取消/重试状态和 provenance；派生结果是否可复用仍由完整 provenance 决定。
+Job 在睡眠、资源压力或进程重启前由 Runner 写入的、带 schema 版本和大小上限的可恢复 payload。Checkpoint 属于 Job attempt；宿主保存 attempt、取消/重试状态和 provenance，派生结果是否可复用仍由完整 provenance 决定。未知 schema 或超限 payload 会被丢弃并留下诊断消息。
+
+## JobExecutionPolicy
+
+Job 的宿主执行边界，包括单调 deadline、取消宽限、有限指数退避、网络策略和后台资格。它由 Rust JobSystem 归一化和持久化，并通过 Core/Tauri/TypeScript 投影；扩展不能放宽宿主预算。
+
+## JobExecutionEnvironment
+
+宿主观察到的 suspend 与网络状态。它通过一个 typed command 进入 JobSystem，使 `Queued`/`Running` Job 进入 `Paused`，条件恢复后重新排队；它不是第二个调度器，也不由渲染器自行推断。
 
 ## Product extension
 

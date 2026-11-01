@@ -112,7 +112,9 @@ deadline/diagnostic path. `JobSystem` rejects all late progress and completion
 using the Job id, attempt and provenance.
 
 Only typed transient failures are automatically retried. The default policy
-allows three attempts with bounded exponential backoff and jitter. Permission,
+allows three attempts with bounded exponential backoff. The alpha scheduler
+does not add random jitter so retry timing remains deterministic and testable;
+the backoff and attempt caps are still bounded per Job. Permission,
 schema, invalid-input, explicit cancellation and deterministic provider
 failures require explicit user retry. A missing runner or invalid provenance
 remains a diagnosed retryable state and never executes under another owner.
@@ -125,15 +127,24 @@ rate-limited so queue recovery cannot overwhelm the device.
 
 ## Consequences
 
-The v0.0.3 host slice implements the shared lifecycle seam: JobSystem owns
+The v0.0.4 alpha host slice implements the shared lifecycle seam: JobSystem owns
 snapshots and transitions, the persistence adapter writes them under the
 application data directory, and projections travel through CoreTransport.
 Queued/running work maps to retryable `Interrupted` state after a restart. The
 current slice now also proves runner registration, cooperative cancellation,
-panic isolation, persisted result payloads and provenance projection. Product
-thumbnail, indexing, feed-sync and facet-specific runners remain consumers of
-the same contract. Capability owners can now opt into exact provenance reuse
-without creating a second cache or persistence owner.
+panic isolation, persisted result payloads and provenance projection. P0 Job
+governance now adds a bounded `JobExecutionPolicy` (monotonic deadline,
+cancellation grace, retry cap/backoff, network class and background flag),
+typed `Retrying`/`Cancelling`/`Paused` states, schema-versioned checkpoints
+with a 256 KiB payload limit, and a typed suspend/network environment seam.
+`Transient` and deadline failures alone enter automatic retry; cancellation,
+invalid input, permission and deterministic failures remain explicit user
+actions. Attempt ids reject late progress/results, and a retry increments the
+attempt before the next runner starts. The same policy is projected through
+Rust protocol, Tauri wire and TypeScript without giving the renderer a second
+scheduler. Product thumbnail, indexing, feed-sync and facet-specific runners
+remain consumers of the same contract. Capability owners can now opt into
+exact provenance reuse without creating a second cache or persistence owner.
 
 Positive:
 
@@ -144,7 +155,9 @@ Positive:
 Costs:
 
 - Job schemas and cache policies must be versioned.
-- Backpressure and memory limits need explicit defaults.
+- Runtime memory/process claims and soft CPU/network scheduling still need
+  measured platform adapters; the P0 contract only exposes bounded hard
+  admission and a typed environment signal.
 
 ## Open questions
 

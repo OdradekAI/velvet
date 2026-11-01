@@ -75,8 +75,9 @@ impl ApplicationRecoveryStores {
 
 use velvet_asset_core::{AssetId, ContentFingerprint, ContentKindId};
 use velvet_job_system::{
-    JobError, JobExecutionContext, JobExecutionError, JobExecutionResult, JobId, JobProvenance,
-    JobRunner, JobSpec, JobStateStore, JobStatus, JobSystem, JOB_SCHEMA_VERSION,
+    JobError, JobExecutionContext, JobExecutionEnvironment, JobExecutionError, JobExecutionPolicy,
+    JobExecutionResult, JobId, JobProvenance, JobRunner, JobSpec, JobStateStore, JobStatus,
+    JobSystem, JOB_SCHEMA_VERSION,
 };
 use velvet_layout_model::{InMemoryLayoutService, LayoutService};
 use velvet_persistence::{
@@ -166,17 +167,34 @@ impl JobRunner for PluginJobRunner {
             provenance: serde_json::to_value(&context.provenance).map_err(|error| {
                 JobExecutionError::Failed(format!("job provenance could not be encoded: {error}"))
             })?,
+            deadline_ms: context.deadline_ms(),
+            cancellation_grace_ms: context.cancellation_grace_ms(),
+            checkpoint: context.checkpoint().cloned(),
         };
         let execution = self
             .handle
             .invoke(invocation)
             .map_err(|error| JobExecutionError::Failed(format!("{error:?}")))?;
         for event in execution.events {
+            if event.kind == "checkpoint" {
+                let payload = event.checkpoint.ok_or_else(|| {
+                    JobExecutionError::Failed(
+                        "plugin Job checkpoint event is missing payload".into(),
+                    )
+                })?;
+                context.save_checkpoint(payload).map_err(|error| {
+                    JobExecutionError::Failed(format!("plugin Job checkpoint failed: {error:?}"))
+                })?;
+                continue;
+            }
             if event.kind != "progress" {
                 return Err(JobExecutionError::Failed(format!(
                     "unsupported plugin Job event kind {}",
                     event.kind
                 )));
+            }
+            if context.is_paused() {
+                return Err(JobExecutionError::Paused);
             }
             let progress = event.progress.ok_or_else(|| {
                 JobExecutionError::Failed("plugin Job progress event is missing progress".into())
@@ -184,6 +202,9 @@ impl JobRunner for PluginJobRunner {
             if !context.report_progress(progress, event.message.unwrap_or_default()) {
                 return Err(JobExecutionError::Cancelled);
             }
+        }
+        if context.is_paused() {
+            return Err(JobExecutionError::Paused);
         }
         if context.is_cancelled() {
             return Err(JobExecutionError::Cancelled);
@@ -1130,6 +1151,26 @@ impl ApplicationCore {
         })
     }
 
+    pub fn create_job_with_policy(
+        &self,
+        kind: String,
+        duration_ms: u64,
+        will_fail: bool,
+        input: serde_json::Value,
+        policy: JobExecutionPolicy,
+    ) -> Result<velvet_job_system::JobSnapshot, JobError> {
+        self.jobs.submit_or_reuse_with_policy(
+            JobSpec {
+                kind,
+                duration_ms,
+                will_fail,
+                input,
+                provenance: JobProvenance::for_owner("core"),
+            },
+            policy,
+        )
+    }
+
     pub fn register_job_runner(
         &self,
         kind: impl Into<String>,
@@ -1361,6 +1402,13 @@ impl ApplicationCore {
 
     pub fn retry_job(&self, id: &JobId) -> Result<velvet_job_system::JobSnapshot, JobError> {
         self.jobs.retry(id)
+    }
+
+    pub fn set_job_execution_environment(
+        &self,
+        environment: JobExecutionEnvironment,
+    ) -> Result<Vec<velvet_job_system::JobSnapshot>, JobError> {
+        self.jobs.set_execution_environment(environment)
     }
 
     pub fn job_snapshots(&self) -> Vec<velvet_job_system::JobSnapshot> {
@@ -1664,14 +1712,9 @@ impl ApplicationCore {
                 duration_ms,
                 will_fail,
                 input,
+                policy,
             }) => self
-                .create_job_with_provenance_and_input(
-                    kind,
-                    duration_ms,
-                    will_fail,
-                    JobProvenance::for_owner("core"),
-                    input,
-                )
+                .create_job_with_policy(kind, duration_ms, will_fail, input, policy)
                 .map(Response::Job)
                 .map_err(job_error),
             Request::Command(Command::CancelJob { job_id }) => self
@@ -1681,6 +1724,10 @@ impl ApplicationCore {
             Request::Command(Command::RetryJob { job_id }) => self
                 .retry_job(&job_id)
                 .map(Response::Job)
+                .map_err(job_error),
+            Request::Command(Command::SetJobExecutionEnvironment { environment }) => self
+                .set_job_execution_environment(environment)
+                .map(Response::Jobs)
                 .map_err(job_error),
             Request::Command(Command::SetLocale {
                 locale,
@@ -2612,6 +2659,7 @@ mod tests {
                         kind: "progress".into(),
                         progress: Some(100),
                         message: Some("Completed".into()),
+                        checkpoint: None,
                     }],
                 });
             }
@@ -4261,6 +4309,8 @@ mod tests {
                 retryable: true,
                 duration_ms: 30_000,
                 will_fail: false,
+                policy: velvet_job_system::JobExecutionPolicy::default(),
+                checkpoint: None,
                 input: serde_json::Value::Null,
                 provenance: velvet_job_system::JobProvenance::for_owner("test"),
                 result: None,

@@ -353,6 +353,13 @@ Initial ownership is:
 | Extension | `PluginHost` | Migrate independently; quarantine only the failing extension store and disable that extension |
 | Derived cache | Capability owner | Invalidate or delete and recompute through `JobSystem` |
 
+The Job snapshot is the durable boundary for execution policy as well as
+progress: it carries the bounded deadline/grace/retry/network policy and an
+optional schema-versioned checkpoint. Loading an older snapshot supplies the
+default policy; loading an unsupported or oversized checkpoint clears only the
+checkpoint and records a diagnostic message. A result payload remains derived
+unless another owner explicitly promotes it to authoritative data.
+
 Writes use a same-directory temporary file, bounded payloads and atomic
 replacement. Where supported, the adapter flushes the file and parent
 directory before publication. The adapter reports whether the platform can
@@ -491,6 +498,29 @@ are not used to reject admission. This is a process-local ledger, not a claim
 of cross-process device enforcement, and it is intentionally not a new Tauri
 or TypeScript scheduler contract.
 
+The P0 execution policy is explicit at the Job boundary. A
+`JobExecutionPolicy` is bounded before admission: deadlines and cancellation
+grace periods use a monotonic clock, retry attempts are capped at eight with a
+bounded exponential delay, and `background` plus `LocalOnly`/`Unmetered`/
+`AnyNetwork` classify whether a Job may run. A running cancellation first
+enters `Cancelling`, releases its budget reservation, and gives the runner the
+configured grace period before the host marks the attempt `Cancelled`. A
+cooperative deadline returns a typed timeout; the watchdog fences an
+unresponsive in-process attempt after the same grace window and applies the
+same retry/terminal policy. Only typed
+`Transient` and timeout errors auto-retry; explicit cancellation, malformed
+input, permission, schema and deterministic failures remain user-driven.
+
+Checkpoint payloads are schema-versioned and bounded to 256 KiB. A runner can
+save only for its current attempt while `Running` or `Paused`; unsupported or
+oversized checkpoints are discarded on load with a diagnosable message. Retry
+transitions increment the attempt before starting another runner, while a
+suspend/offline pause preserves the attempt and checkpoint so wake recovery can
+resume it. `JobSystem::set_execution_environment` is exposed as a typed Core /
+Tauri / TypeScript command and returns changed snapshots; platform sleep and
+network adapters are responsible for supplying those signals and are not
+allowed to create a second scheduler.
+
 The alpha policy must provide a bounded per-extension runtime, Job, staging,
 event/log queue and free-space profile, but the numeric values are release
 configuration rather than this architecture's compatibility promise. The
@@ -505,7 +535,7 @@ malformed response, crash or unhealthy runtime may receive a bounded grace
 period and then be terminated as its own process group. Core in-process runners
 cannot be force-killed and must observe deadlines and cancellation tokens.
 Typed transient failures receive a finite attempt count with bounded
-exponential backoff and jitter; permission, schema, invalid-input and
+exponential backoff; permission, schema, invalid-input and
 deterministic failures require explicit user retry. A repeated extension crash
 or failed recovery quarantines only that extension.
 
@@ -572,7 +602,9 @@ id, attempt and provenance. Deadlines, retry backoff and grace periods use a
 monotonic clock; wall-clock changes affect display/diagnostic timestamps only.
 If a checkpoint cannot be persisted before suspend, the Job is marked
 interrupted/retryable and is not allowed to continue as if its partial state
-were durable.
+were durable. The current alpha implementation proves this policy with an
+in-process environment seam; OS sleep/network event delivery and resource
+claims beyond the ledger remain platform qualification work.
 
 ### Platform compatibility and OS integration
 

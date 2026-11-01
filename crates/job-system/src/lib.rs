@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 mod budget;
 
@@ -25,10 +25,139 @@ pub struct JobId(pub String);
 pub enum JobStatus {
     Queued,
     Running,
+    Retrying,
+    Cancelling,
+    Paused,
     Interrupted,
     Cancelled,
     Failed,
     Completed,
+}
+
+pub const JOB_CHECKPOINT_SCHEMA_VERSION: u16 = 1;
+pub const MAX_JOB_CHECKPOINT_BYTES: usize = 256 * 1024;
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct JobRetryPolicy {
+    #[serde(default = "default_max_attempts")]
+    pub max_attempts: u32,
+    #[serde(default = "default_initial_backoff_ms")]
+    pub initial_backoff_ms: u64,
+    #[serde(default = "default_max_backoff_ms")]
+    pub max_backoff_ms: u64,
+}
+
+impl JobRetryPolicy {
+    pub fn bounded(self) -> Self {
+        let initial_backoff_ms = self.initial_backoff_ms.min(60_000);
+        Self {
+            max_attempts: self.max_attempts.clamp(1, 8),
+            initial_backoff_ms,
+            max_backoff_ms: self.max_backoff_ms.clamp(initial_backoff_ms, 300_000),
+        }
+    }
+}
+
+impl Default for JobRetryPolicy {
+    fn default() -> Self {
+        Self {
+            max_attempts: default_max_attempts(),
+            initial_backoff_ms: default_initial_backoff_ms(),
+            max_backoff_ms: default_max_backoff_ms(),
+        }
+    }
+}
+
+fn default_max_attempts() -> u32 {
+    3
+}
+
+fn default_initial_backoff_ms() -> u64 {
+    100
+}
+
+fn default_max_backoff_ms() -> u64 {
+    2_000
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum JobNetworkPolicy {
+    #[default]
+    LocalOnly,
+    Unmetered,
+    AnyNetwork,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct JobExecutionPolicy {
+    #[serde(default)]
+    pub deadline_ms: Option<u64>,
+    #[serde(default = "default_cancel_grace_ms")]
+    pub cancellation_grace_ms: u64,
+    #[serde(default)]
+    pub retry: JobRetryPolicy,
+    #[serde(default)]
+    pub network: JobNetworkPolicy,
+    #[serde(default = "default_background")]
+    pub background: bool,
+}
+
+impl Default for JobExecutionPolicy {
+    fn default() -> Self {
+        Self {
+            deadline_ms: None,
+            cancellation_grace_ms: default_cancel_grace_ms(),
+            retry: JobRetryPolicy::default(),
+            network: JobNetworkPolicy::default(),
+            background: default_background(),
+        }
+    }
+}
+
+impl JobExecutionPolicy {
+    fn bounded(self) -> Self {
+        Self {
+            deadline_ms: self.deadline_ms.map(|value| value.clamp(1, 86_400_000)),
+            cancellation_grace_ms: self.cancellation_grace_ms.clamp(1, 60_000),
+            retry: self.retry.bounded(),
+            network: self.network,
+            background: self.background,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct JobCheckpoint {
+    pub schema_version: u16,
+    pub payload: Value,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum JobNetworkState {
+    #[default]
+    Online,
+    Metered,
+    Offline,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JobExecutionEnvironment {
+    pub suspended: bool,
+    pub network: JobNetworkState,
+}
+
+fn default_cancel_grace_ms() -> u64 {
+    1_000
+}
+
+fn default_background() -> bool {
+    true
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -80,6 +209,10 @@ pub struct JobSnapshot {
     pub duration_ms: u64,
     pub will_fail: bool,
     #[serde(default)]
+    pub policy: JobExecutionPolicy,
+    #[serde(default)]
+    pub checkpoint: Option<JobCheckpoint>,
+    #[serde(default)]
     pub input: Value,
     #[serde(default)]
     pub provenance: JobProvenance,
@@ -105,6 +238,9 @@ pub struct JobExecutionResult {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum JobExecutionError {
     Cancelled,
+    Paused,
+    TimedOut,
+    Transient(String),
     Failed(String),
 }
 
@@ -120,6 +256,10 @@ pub struct JobExecutionContext {
     pub will_fail: bool,
     pub input: Value,
     pub provenance: JobProvenance,
+    deadline_ms: Option<u64>,
+    cancellation_grace_ms: u64,
+    checkpoint: Option<JobCheckpoint>,
+    deadline_at: Option<Instant>,
     reporter: JobProgressReporter,
     cancellation: JobCancellation,
 }
@@ -127,6 +267,33 @@ pub struct JobExecutionContext {
 impl JobExecutionContext {
     pub fn is_cancelled(&self) -> bool {
         self.cancellation.is_cancelled()
+    }
+
+    pub fn is_paused(&self) -> bool {
+        self.cancellation.is_paused()
+    }
+
+    pub fn is_deadline_exceeded(&self) -> bool {
+        self.deadline_at
+            .is_some_and(|deadline| Instant::now() >= deadline)
+    }
+
+    pub fn deadline_ms(&self) -> Option<u64> {
+        self.deadline_ms
+    }
+
+    pub fn cancellation_grace_ms(&self) -> u64 {
+        self.cancellation_grace_ms
+    }
+
+    pub fn checkpoint(&self) -> Option<&Value> {
+        self.checkpoint
+            .as_ref()
+            .map(|checkpoint| &checkpoint.payload)
+    }
+
+    pub fn save_checkpoint(&self, payload: Value) -> Result<(), JobError> {
+        self.reporter.checkpoint(payload)
     }
 
     pub fn report_progress(&self, progress: u8, message: impl Into<String>) -> bool {
@@ -191,6 +358,7 @@ struct Inner {
     runners: RwLock<BTreeMap<String, RegisteredRunner>>,
     fallback_runner: Arc<dyn JobRunner>,
     budget: Mutex<JobBudgetLedger>,
+    environment: Mutex<JobExecutionEnvironment>,
 }
 
 struct RegisteredRunner {
@@ -226,9 +394,32 @@ impl JobSystem {
         let mut next_id = 1;
         for mut snapshot in loaded {
             snapshot.provenance = normalize_provenance(snapshot.provenance);
-            if matches!(snapshot.status, JobStatus::Queued | JobStatus::Running) {
+            snapshot.policy = snapshot.policy.clone().bounded();
+            if snapshot.checkpoint.as_ref().is_some_and(|checkpoint| {
+                checkpoint.schema_version != JOB_CHECKPOINT_SCHEMA_VERSION
+                    || serde_json::to_vec(&checkpoint.payload)
+                        .map(|bytes| bytes.len() > MAX_JOB_CHECKPOINT_BYTES)
+                        .unwrap_or(true)
+            }) {
+                snapshot.checkpoint = None;
+                snapshot.message =
+                    Some("Checkpoint discarded because it is unsupported or invalid".into());
+            }
+            if matches!(
+                snapshot.status,
+                JobStatus::Queued
+                    | JobStatus::Running
+                    | JobStatus::Retrying
+                    | JobStatus::Cancelling
+                    | JobStatus::Paused
+            ) {
                 snapshot.status = JobStatus::Interrupted;
-                snapshot.message = Some("Interrupted by application restart".into());
+                snapshot.message = Some(match snapshot.message.take() {
+                    Some(message) if !message.is_empty() => {
+                        format!("{message}; interrupted by application restart")
+                    }
+                    _ => "Interrupted by application restart".into(),
+                });
                 snapshot.retryable = true;
             }
             if let Some(number) = snapshot
@@ -251,6 +442,7 @@ impl JobSystem {
                 runners: RwLock::new(BTreeMap::new()),
                 fallback_runner: Arc::new(DeterministicJobRunner),
                 budget: Mutex::new(JobBudgetLedger::new(policy)),
+                environment: Mutex::new(JobExecutionEnvironment::default()),
             }),
         };
         let _ = system.persist();
@@ -266,12 +458,29 @@ impl JobSystem {
         spec: JobSpec,
         budget: JobBudgetRequest,
     ) -> Result<JobSnapshot, JobError> {
+        self.submit_with_policy_and_budget(spec, JobExecutionPolicy::default(), budget)
+    }
+
+    pub fn submit_with_policy(
+        &self,
+        spec: JobSpec,
+        policy: JobExecutionPolicy,
+    ) -> Result<JobSnapshot, JobError> {
+        self.submit_with_policy_and_budget(spec, policy, JobBudgetRequest::default())
+    }
+
+    pub fn submit_with_policy_and_budget(
+        &self,
+        spec: JobSpec,
+        policy: JobExecutionPolicy,
+        budget: JobBudgetRequest,
+    ) -> Result<JobSnapshot, JobError> {
         let _submission = self
             .inner
             .submission
             .lock()
             .map_err(|_| JobError::Store("job submission lock poisoned".into()))?;
-        self.submit_locked(spec, budget)
+        self.submit_locked(spec, policy, budget)
     }
 
     /// Reuses a completed result only when the producer supplied an input
@@ -287,6 +496,23 @@ impl JobSystem {
         spec: JobSpec,
         budget: JobBudgetRequest,
     ) -> Result<JobSnapshot, JobError> {
+        self.submit_or_reuse_with_policy_and_budget(spec, JobExecutionPolicy::default(), budget)
+    }
+
+    pub fn submit_or_reuse_with_policy(
+        &self,
+        spec: JobSpec,
+        policy: JobExecutionPolicy,
+    ) -> Result<JobSnapshot, JobError> {
+        self.submit_or_reuse_with_policy_and_budget(spec, policy, JobBudgetRequest::default())
+    }
+
+    pub fn submit_or_reuse_with_policy_and_budget(
+        &self,
+        spec: JobSpec,
+        policy: JobExecutionPolicy,
+        budget: JobBudgetRequest,
+    ) -> Result<JobSnapshot, JobError> {
         let _submission = self
             .inner
             .submission
@@ -297,7 +523,7 @@ impl JobSystem {
         if let Some(snapshot) = self.find_reusable_result(&spec.kind, &spec.provenance) {
             return Ok(snapshot);
         }
-        self.submit_locked(spec, budget)
+        self.submit_locked(spec, policy, budget)
     }
 
     pub fn find_reusable_result(
@@ -328,6 +554,7 @@ impl JobSystem {
     fn submit_locked(
         &self,
         spec: JobSpec,
+        policy: JobExecutionPolicy,
         budget: JobBudgetRequest,
     ) -> Result<JobSnapshot, JobError> {
         validate_json_size("Job input", &spec.input, MAX_JOB_INPUT_BYTES)?;
@@ -343,16 +570,24 @@ impl JobSystem {
         };
         let owner_id = normalize_provenance(spec.provenance.clone()).owner_id;
         self.reserve_budget(&id, &owner_id, &budget)?;
+        let policy = policy.bounded();
+        let initially_paused = self.should_pause(&policy);
         let snapshot = JobSnapshot {
             id: id.clone(),
             kind: spec.kind,
-            status: JobStatus::Queued,
+            status: if initially_paused {
+                JobStatus::Paused
+            } else {
+                JobStatus::Queued
+            },
             progress: 0,
-            message: None,
+            message: initially_paused.then(|| self.pause_message(&policy)),
             attempt: 1,
             retryable: true,
             duration_ms: spec.duration_ms.clamp(200, 30_000),
             will_fail: spec.will_fail,
+            policy,
+            checkpoint: None,
             input: spec.input,
             provenance: normalize_provenance(spec.provenance),
             result: None,
@@ -361,7 +596,9 @@ impl JobSystem {
             self.release_budget(&id);
             return Err(error);
         }
-        self.spawn_worker(id);
+        if snapshot.status == JobStatus::Queued {
+            self.spawn_worker(id);
+        }
         Ok(snapshot)
     }
 
@@ -411,7 +648,14 @@ impl JobSystem {
             let mut cancelled = Vec::new();
             for snapshot in jobs.values_mut() {
                 if snapshot.provenance.owner_id != owner_id
-                    || !matches!(snapshot.status, JobStatus::Queued | JobStatus::Running)
+                    || !matches!(
+                        snapshot.status,
+                        JobStatus::Queued
+                            | JobStatus::Running
+                            | JobStatus::Retrying
+                            | JobStatus::Cancelling
+                            | JobStatus::Paused
+                    )
                 {
                     continue;
                 }
@@ -434,13 +678,37 @@ impl JobSystem {
     }
 
     pub fn cancel(&self, id: &JobId) -> Result<JobSnapshot, JobError> {
-        self.update(id, |snapshot| {
-            if matches!(snapshot.status, JobStatus::Queued | JobStatus::Running) {
+        let snapshot = self.update(id, |snapshot| match snapshot.status {
+            JobStatus::Running => {
+                snapshot.status = JobStatus::Cancelling;
+                snapshot.message = Some("Cancellation requested".into());
+                snapshot.retryable = true;
+            }
+            JobStatus::Queued
+            | JobStatus::Retrying
+            | JobStatus::Paused
+            | JobStatus::Interrupted => {
                 snapshot.status = JobStatus::Cancelled;
                 snapshot.message = Some("Cancelled by user".into());
                 snapshot.retryable = true;
             }
-        })
+            JobStatus::Cancelling
+            | JobStatus::Cancelled
+            | JobStatus::Failed
+            | JobStatus::Completed => {}
+        })?;
+        if snapshot.status == JobStatus::Cancelling {
+            // A cancelling job no longer consumes an execution slot. The
+            // watchdog only observes the attempt and will become a no-op if
+            // the job is retried or otherwise leaves Cancelling first.
+            self.release_budget(&snapshot.id);
+            self.spawn_cancellation_watchdog(
+                snapshot.id.clone(),
+                snapshot.attempt,
+                snapshot.policy.cancellation_grace_ms,
+            );
+        }
+        Ok(snapshot)
     }
 
     pub fn retry(&self, id: &JobId) -> Result<JobSnapshot, JobError> {
@@ -450,6 +718,23 @@ impl JobSystem {
     pub fn retry_with_budget(
         &self,
         id: &JobId,
+        budget: JobBudgetRequest,
+    ) -> Result<JobSnapshot, JobError> {
+        self.retry_with_policy_and_budget(id, JobExecutionPolicy::default(), budget)
+    }
+
+    pub fn retry_with_policy(
+        &self,
+        id: &JobId,
+        policy: JobExecutionPolicy,
+    ) -> Result<JobSnapshot, JobError> {
+        self.retry_with_policy_and_budget(id, policy, JobBudgetRequest::default())
+    }
+
+    pub fn retry_with_policy_and_budget(
+        &self,
+        id: &JobId,
+        policy: JobExecutionPolicy,
         budget: JobBudgetRequest,
     ) -> Result<JobSnapshot, JobError> {
         let _submission = self
@@ -462,7 +747,11 @@ impl JobSystem {
             .ok_or_else(|| JobError::NotFound(id.clone()))?;
         if !matches!(
             current.status,
-            JobStatus::Failed | JobStatus::Cancelled | JobStatus::Interrupted
+            JobStatus::Failed
+                | JobStatus::Cancelled
+                | JobStatus::Interrupted
+                | JobStatus::Paused
+                | JobStatus::Cancelling
         ) {
             return Err(JobError::NotRetryable(id.clone()));
         }
@@ -474,6 +763,7 @@ impl JobSystem {
             snapshot.message = None;
             snapshot.retryable = true;
             snapshot.result = None;
+            snapshot.policy = policy.bounded();
         }) {
             Ok(snapshot) => snapshot,
             Err(error) => {
@@ -507,6 +797,70 @@ impl JobSystem {
             .lock()
             .map(|budget| budget.usage())
             .unwrap_or_default()
+    }
+
+    pub fn execution_environment(&self) -> JobExecutionEnvironment {
+        self.inner
+            .environment
+            .lock()
+            .map(|environment| *environment)
+            .unwrap_or_default()
+    }
+
+    /// Applies suspend/offline policy to all eligible Jobs. Running runners
+    /// observe `Paused` through their context, persist a checkpoint and return
+    /// `JobExecutionError::Paused`; late results are rejected by attempt/state
+    /// validation.
+    pub fn set_execution_environment(
+        &self,
+        environment: JobExecutionEnvironment,
+    ) -> Result<Vec<JobSnapshot>, JobError> {
+        {
+            let mut current = self
+                .inner
+                .environment
+                .lock()
+                .map_err(|_| JobError::Store("Job environment lock poisoned".into()))?;
+            *current = environment;
+        }
+        let mut changed = Vec::new();
+        let mut to_resume = Vec::new();
+        {
+            let mut jobs = self
+                .inner
+                .jobs
+                .lock()
+                .map_err(|_| JobError::Store("job lock poisoned".into()))?;
+            for snapshot in jobs.values_mut() {
+                if matches!(snapshot.status, JobStatus::Queued | JobStatus::Running)
+                    && self.should_pause(&snapshot.policy)
+                {
+                    snapshot.status = JobStatus::Paused;
+                    snapshot.message = Some(self.pause_message(&snapshot.policy));
+                    changed.push(snapshot.clone());
+                } else if snapshot.status == JobStatus::Paused
+                    && !self.should_pause(&snapshot.policy)
+                {
+                    // A paused runner may still be unwinding. Fence its late
+                    // progress/results before starting the resumed attempt.
+                    snapshot.attempt = snapshot.attempt.saturating_add(1);
+                    snapshot.status = JobStatus::Queued;
+                    snapshot.message = Some("Resuming after environment recovery".into());
+                    to_resume.push(snapshot.id.clone());
+                    changed.push(snapshot.clone());
+                }
+            }
+        }
+        if !changed.is_empty() {
+            self.persist()?;
+            for snapshot in &changed {
+                self.emit(snapshot.clone());
+            }
+        }
+        for id in to_resume {
+            self.spawn_worker(id);
+        }
+        Ok(changed)
     }
 
     pub fn drain_events(&self) -> Vec<JobSnapshot> {
@@ -546,6 +900,185 @@ impl JobSystem {
         if let Ok(mut budget) = self.inner.budget.lock() {
             budget.release(&id.0);
         }
+    }
+
+    fn should_pause(&self, policy: &JobExecutionPolicy) -> bool {
+        let environment = self.execution_environment();
+        if environment.suspended && policy.background {
+            return true;
+        }
+        match policy.network {
+            JobNetworkPolicy::LocalOnly => false,
+            JobNetworkPolicy::Unmetered => environment.network != JobNetworkState::Online,
+            JobNetworkPolicy::AnyNetwork => environment.network == JobNetworkState::Offline,
+        }
+    }
+
+    fn pause_message(&self, policy: &JobExecutionPolicy) -> String {
+        let environment = self.execution_environment();
+        if environment.suspended && policy.background {
+            return "Paused while the device is suspended".into();
+        }
+        match environment.network {
+            JobNetworkState::Offline => "Paused while the network is offline".into(),
+            JobNetworkState::Metered => "Paused on a metered network".into(),
+            JobNetworkState::Online => "Paused by execution policy".into(),
+        }
+    }
+
+    pub fn save_checkpoint(
+        &self,
+        id: &JobId,
+        attempt: u32,
+        payload: Value,
+    ) -> Result<Option<JobSnapshot>, JobError> {
+        validate_json_size("Job checkpoint", &payload, MAX_JOB_CHECKPOINT_BYTES)?;
+        let checkpoint = JobCheckpoint {
+            schema_version: JOB_CHECKPOINT_SCHEMA_VERSION,
+            payload,
+        };
+        let snapshot = {
+            let mut jobs = self
+                .inner
+                .jobs
+                .lock()
+                .map_err(|_| JobError::Store("job lock poisoned".into()))?;
+            let snapshot = jobs
+                .get_mut(id)
+                .ok_or_else(|| JobError::NotFound(id.clone()))?;
+            if snapshot.attempt != attempt
+                || !matches!(snapshot.status, JobStatus::Running | JobStatus::Paused)
+            {
+                return Ok(None);
+            }
+            snapshot.checkpoint = Some(checkpoint);
+            snapshot.clone()
+        };
+        self.persist()?;
+        self.emit(snapshot.clone());
+        Ok(Some(snapshot))
+    }
+
+    fn spawn_cancellation_watchdog(&self, id: JobId, attempt: u32, grace_ms: u64) {
+        let system = self.clone();
+        thread::spawn(move || {
+            thread::sleep(Duration::from_millis(grace_ms));
+            let _ = system.update_attempt_if(&id, attempt, |snapshot| {
+                if snapshot.status == JobStatus::Cancelling {
+                    snapshot.status = JobStatus::Cancelled;
+                    snapshot.message = Some("Cancelled after the grace period".into());
+                }
+            });
+        });
+    }
+
+    fn spawn_deadline_watchdog(
+        &self,
+        id: JobId,
+        attempt: u32,
+        deadline_ms: Option<u64>,
+        grace_ms: u64,
+    ) {
+        let Some(deadline_ms) = deadline_ms else {
+            return;
+        };
+        let system = self.clone();
+        thread::spawn(move || {
+            thread::sleep(Duration::from_millis(deadline_ms));
+            thread::sleep(Duration::from_millis(grace_ms));
+            if system.snapshot(&id).is_some_and(|snapshot| {
+                snapshot.attempt == attempt && snapshot.status == JobStatus::Running
+            }) {
+                // Route an unresponsive runner through the same bounded retry
+                // policy as a cooperative timeout. Retrying fences the old
+                // attempt before a replacement runner can start.
+                system.schedule_retry(&id, attempt, "Job deadline exceeded".into());
+            }
+        });
+    }
+
+    fn schedule_retry(&self, id: &JobId, attempt: u32, message: String) {
+        let Some(snapshot) = self.snapshot(id) else {
+            return;
+        };
+        if snapshot.attempt != attempt || snapshot.status != JobStatus::Running {
+            return;
+        }
+        let policy = snapshot.policy.retry.bounded();
+        if attempt >= policy.max_attempts {
+            let _ = self.fail_attempt(id, attempt, message);
+            return;
+        }
+        let exponent = attempt.saturating_sub(1).min(31);
+        let delay_ms = policy
+            .initial_backoff_ms
+            .saturating_mul(1u64 << exponent)
+            .min(policy.max_backoff_ms);
+        let _ = self.update_attempt(id, attempt, |snapshot| {
+            snapshot.status = JobStatus::Retrying;
+            snapshot.message = Some(format!("Retrying in {delay_ms}ms: {message}"));
+            snapshot.retryable = true;
+        });
+        let system = self.clone();
+        let id = id.clone();
+        thread::spawn(move || {
+            thread::sleep(Duration::from_millis(delay_ms));
+            let should_start = system
+                .update_attempt_if(&id, attempt, |snapshot| {
+                    if snapshot.status == JobStatus::Retrying {
+                        if system.should_pause(&snapshot.policy) {
+                            snapshot.status = JobStatus::Paused;
+                            snapshot.message = Some(system.pause_message(&snapshot.policy));
+                        } else {
+                            snapshot.attempt = snapshot.attempt.saturating_add(1);
+                            snapshot.progress = 0;
+                            snapshot.status = JobStatus::Queued;
+                            snapshot.message = Some("Retrying".into());
+                        }
+                    }
+                })
+                .ok()
+                .flatten()
+                .is_some_and(|snapshot| snapshot.status == JobStatus::Queued);
+            if should_start {
+                system.spawn_worker(id);
+            }
+        });
+    }
+
+    fn update_attempt_if<F>(
+        &self,
+        id: &JobId,
+        attempt: u32,
+        update: F,
+    ) -> Result<Option<JobSnapshot>, JobError>
+    where
+        F: FnOnce(&mut JobSnapshot),
+    {
+        let snapshot = {
+            let mut jobs = self
+                .inner
+                .jobs
+                .lock()
+                .map_err(|_| JobError::Store("job lock poisoned".into()))?;
+            let snapshot = jobs
+                .get_mut(id)
+                .ok_or_else(|| JobError::NotFound(id.clone()))?;
+            if snapshot.attempt != attempt {
+                return Ok(None);
+            }
+            update(snapshot);
+            snapshot.clone()
+        };
+        self.persist()?;
+        self.emit(snapshot.clone());
+        if matches!(
+            snapshot.status,
+            JobStatus::Cancelled | JobStatus::Failed | JobStatus::Completed
+        ) {
+            self.release_budget(id);
+        }
+        Ok(Some(snapshot))
     }
 
     fn update<F>(&self, id: &JobId, update: F) -> Result<JobSnapshot, JobError>
@@ -595,6 +1128,13 @@ impl JobSystem {
                 return;
             };
             let attempt = initial.attempt;
+            let attempt_started = Instant::now();
+            system.spawn_deadline_watchdog(
+                id.clone(),
+                attempt,
+                initial.policy.deadline_ms,
+                initial.policy.cancellation_grace_ms,
+            );
             let Some(runner) = system.runner_for(&initial) else {
                 let _ = system.fail_attempt(
                     &id,
@@ -614,6 +1154,13 @@ impl JobSystem {
                 will_fail: initial.will_fail,
                 input: initial.input.clone(),
                 provenance: initial.provenance.clone(),
+                deadline_ms: initial.policy.deadline_ms,
+                cancellation_grace_ms: initial.policy.cancellation_grace_ms,
+                checkpoint: initial.checkpoint.clone(),
+                deadline_at: initial
+                    .policy
+                    .deadline_ms
+                    .map(|deadline| attempt_started + Duration::from_millis(deadline)),
                 reporter: JobProgressReporter {
                     system: system.clone(),
                     id: id.clone(),
@@ -632,6 +1179,18 @@ impl JobSystem {
                 }
                 Ok(Err(JobExecutionError::Cancelled)) => {
                     let _ = system.cancel_attempt(&id, attempt);
+                }
+                Ok(Err(JobExecutionError::Paused)) => {
+                    let _ = system.update_attempt_if(&id, attempt, |snapshot| {
+                        snapshot.status = JobStatus::Paused;
+                        snapshot.message = Some(system.pause_message(&snapshot.policy));
+                    });
+                }
+                Ok(Err(JobExecutionError::TimedOut)) => {
+                    system.schedule_retry(&id, attempt, "Job deadline exceeded".into());
+                }
+                Ok(Err(JobExecutionError::Transient(message))) => {
+                    system.schedule_retry(&id, attempt, message);
                 }
                 Ok(Err(JobExecutionError::Failed(message))) => {
                     let _ = system.fail_attempt(&id, attempt, message);
@@ -656,7 +1215,7 @@ impl JobSystem {
     }
 
     fn start_attempt(&self, id: &JobId) -> Result<Option<JobSnapshot>, JobError> {
-        let snapshot = {
+        let (snapshot, paused) = {
             let mut jobs = self
                 .inner
                 .jobs
@@ -668,10 +1227,21 @@ impl JobSystem {
             if snapshot.status != JobStatus::Queued {
                 return Ok(None);
             }
-            snapshot.status = JobStatus::Running;
-            snapshot.message = Some("Running".into());
-            snapshot.clone()
+            if self.should_pause(&snapshot.policy) {
+                snapshot.status = JobStatus::Paused;
+                snapshot.message = Some(self.pause_message(&snapshot.policy));
+                (snapshot.clone(), true)
+            } else {
+                snapshot.status = JobStatus::Running;
+                snapshot.message = Some("Running".into());
+                (snapshot.clone(), false)
+            }
         };
+        if paused {
+            self.persist()?;
+            self.emit(snapshot);
+            return Ok(None);
+        }
         self.persist()?;
         self.emit(snapshot.clone());
         Ok(Some(snapshot))
@@ -754,10 +1324,12 @@ impl JobSystem {
     }
 
     fn cancel_attempt(&self, id: &JobId, attempt: u32) -> Result<Option<JobSnapshot>, JobError> {
-        self.update_attempt(id, attempt, |snapshot| {
-            snapshot.status = JobStatus::Cancelled;
-            snapshot.message = Some("Cancelled by runner".into());
-            snapshot.retryable = true;
+        self.update_attempt_if(id, attempt, |snapshot| {
+            if matches!(snapshot.status, JobStatus::Running | JobStatus::Cancelling) {
+                snapshot.status = JobStatus::Cancelled;
+                snapshot.message = Some("Cancelled by runner".into());
+                snapshot.retryable = true;
+            }
         })
     }
 }
@@ -780,6 +1352,12 @@ impl JobProgressReporter {
             .flatten()
             .is_some()
     }
+
+    fn checkpoint(&self, payload: Value) -> Result<(), JobError> {
+        self.system
+            .save_checkpoint(&self.id, self.attempt, payload)
+            .map(|_| ())
+    }
 }
 
 #[derive(Clone)]
@@ -793,7 +1371,22 @@ impl JobCancellation {
     fn is_cancelled(&self) -> bool {
         self.system.snapshot(&self.id).is_none_or(|snapshot| {
             snapshot.attempt != self.attempt
-                || !matches!(snapshot.status, JobStatus::Queued | JobStatus::Running)
+                || matches!(
+                    snapshot.status,
+                    JobStatus::Cancelling
+                        | JobStatus::Cancelled
+                        | JobStatus::Retrying
+                        | JobStatus::Paused
+                        | JobStatus::Interrupted
+                        | JobStatus::Failed
+                        | JobStatus::Completed
+                )
+        })
+    }
+
+    fn is_paused(&self) -> bool {
+        self.system.snapshot(&self.id).is_some_and(|snapshot| {
+            snapshot.attempt == self.attempt && snapshot.status == JobStatus::Paused
         })
     }
 }
@@ -805,8 +1398,28 @@ impl JobRunner for DeterministicJobRunner {
     fn run(&self, context: JobExecutionContext) -> Result<JobExecutionResult, JobExecutionError> {
         let steps = 20u8;
         let delay = Duration::from_millis((context.duration_ms / steps as u64).max(20));
-        for step in 1..=steps {
+        let starting_step = context
+            .checkpoint()
+            .and_then(|checkpoint| checkpoint.get("step"))
+            .and_then(Value::as_u64)
+            .map(|step| step.min(steps as u64) as u8)
+            .unwrap_or(0);
+        for step in starting_step.saturating_add(1)..=steps {
             thread::sleep(delay);
+            if context.is_paused() {
+                context
+                    .save_checkpoint(json!({
+                        "step": step,
+                        "progress": step.saturating_mul(5).min(99),
+                    }))
+                    .map_err(|error| {
+                        JobExecutionError::Failed(format!("checkpoint failed: {error:?}"))
+                    })?;
+                return Err(JobExecutionError::Paused);
+            }
+            if context.is_deadline_exceeded() {
+                return Err(JobExecutionError::TimedOut);
+            }
             if context.is_cancelled() {
                 return Err(JobExecutionError::Cancelled);
             }
@@ -868,6 +1481,7 @@ fn validate_json_size(field: &str, value: &Value, max_bytes: usize) -> Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
     struct ResultRunner;
@@ -938,6 +1552,57 @@ mod tests {
         }
     }
 
+    struct TransientThenSuccessRunner {
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl JobRunner for TransientThenSuccessRunner {
+        fn run(
+            &self,
+            context: JobExecutionContext,
+        ) -> Result<JobExecutionResult, JobExecutionError> {
+            let call = self.calls.fetch_add(1, Ordering::SeqCst);
+            if call == 0 {
+                return Err(JobExecutionError::Transient(
+                    "temporary network failure".into(),
+                ));
+            }
+            Ok(JobExecutionResult {
+                content_type: "application/json".into(),
+                payload: json!({ "attempt": context.attempt }),
+            })
+        }
+    }
+
+    struct DeadlineRunner;
+
+    impl JobRunner for DeadlineRunner {
+        fn run(
+            &self,
+            context: JobExecutionContext,
+        ) -> Result<JobExecutionResult, JobExecutionError> {
+            while !context.is_deadline_exceeded() {
+                thread::sleep(Duration::from_millis(5));
+            }
+            Err(JobExecutionError::TimedOut)
+        }
+    }
+
+    struct IgnoringDeadlineRunner;
+
+    impl JobRunner for IgnoringDeadlineRunner {
+        fn run(
+            &self,
+            _context: JobExecutionContext,
+        ) -> Result<JobExecutionResult, JobExecutionError> {
+            thread::sleep(Duration::from_millis(150));
+            Ok(JobExecutionResult {
+                content_type: "application/json".into(),
+                payload: Value::Null,
+            })
+        }
+    }
+
     #[test]
     fn jobs_report_progress_and_complete() {
         let jobs = JobSystem::default();
@@ -963,6 +1628,19 @@ mod tests {
     }
 
     #[test]
+    fn retry_policy_bounds_malformed_large_values_without_panicking() {
+        let bounded = JobRetryPolicy {
+            max_attempts: u32::MAX,
+            initial_backoff_ms: u64::MAX,
+            max_backoff_ms: 1,
+        }
+        .bounded();
+        assert_eq!(bounded.max_attempts, 8);
+        assert_eq!(bounded.initial_backoff_ms, 60_000);
+        assert_eq!(bounded.max_backoff_ms, 60_000);
+    }
+
+    #[test]
     fn jobs_can_cancel_and_retry() {
         let jobs = JobSystem::default();
         let created = jobs
@@ -975,7 +1653,10 @@ mod tests {
             })
             .expect("submit");
         let cancelled = jobs.cancel(&created.id).expect("cancel");
-        assert_eq!(cancelled.status, JobStatus::Cancelled);
+        assert!(matches!(
+            cancelled.status,
+            JobStatus::Cancelled | JobStatus::Cancelling
+        ));
         let retried = jobs.retry(&created.id).expect("retry");
         assert_eq!(retried.status, JobStatus::Queued);
     }
@@ -1005,6 +1686,224 @@ mod tests {
     }
 
     #[test]
+    fn transient_failures_use_bounded_exponential_retry_and_complete() {
+        let jobs = JobSystem::default();
+        let calls = Arc::new(AtomicUsize::new(0));
+        jobs.register_runner(
+            "sample.extension",
+            "transient",
+            Arc::new(TransientThenSuccessRunner {
+                calls: calls.clone(),
+            }),
+        )
+        .expect("runner should register");
+        let created = jobs
+            .submit_with_policy(
+                JobSpec {
+                    kind: "transient".into(),
+                    duration_ms: 200,
+                    will_fail: false,
+                    input: Value::Null,
+                    provenance: JobProvenance::for_owner("sample.extension"),
+                },
+                JobExecutionPolicy {
+                    retry: JobRetryPolicy {
+                        max_attempts: 2,
+                        initial_backoff_ms: 20,
+                        max_backoff_ms: 20,
+                    },
+                    ..JobExecutionPolicy::default()
+                },
+            )
+            .expect("job should submit");
+        for _ in 0..40 {
+            if jobs
+                .snapshot(&created.id)
+                .is_some_and(|snapshot| snapshot.status == JobStatus::Completed)
+            {
+                let snapshot = jobs.snapshot(&created.id).expect("completed snapshot");
+                assert_eq!(snapshot.attempt, 2);
+                assert_eq!(calls.load(Ordering::SeqCst), 2);
+                return;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        panic!(
+            "transient job did not complete: {:?}",
+            jobs.snapshot(&created.id)
+        );
+    }
+
+    #[test]
+    fn deadline_is_observed_and_transient_timeout_is_limited_by_policy() {
+        let jobs = JobSystem::default();
+        jobs.register_runner("core", "deadline", Arc::new(DeadlineRunner))
+            .expect("runner should register");
+        let created = jobs
+            .submit_with_policy(
+                JobSpec {
+                    kind: "deadline".into(),
+                    duration_ms: 200,
+                    will_fail: false,
+                    input: Value::Null,
+                    provenance: JobProvenance::for_owner("core"),
+                },
+                JobExecutionPolicy {
+                    deadline_ms: Some(20),
+                    cancellation_grace_ms: 5,
+                    retry: JobRetryPolicy {
+                        max_attempts: 1,
+                        initial_backoff_ms: 1,
+                        max_backoff_ms: 1,
+                    },
+                    ..JobExecutionPolicy::default()
+                },
+            )
+            .expect("job should submit");
+        for _ in 0..30 {
+            if jobs
+                .snapshot(&created.id)
+                .is_some_and(|snapshot| snapshot.status == JobStatus::Failed)
+            {
+                let snapshot = jobs.snapshot(&created.id).expect("failed snapshot");
+                assert!(snapshot.message.unwrap_or_default().contains("deadline"));
+                return;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        panic!(
+            "deadline job did not fail: {:?}",
+            jobs.snapshot(&created.id)
+        );
+    }
+
+    #[test]
+    fn unresponsive_runner_is_fenced_after_deadline_grace() {
+        let jobs = JobSystem::default();
+        jobs.register_runner(
+            "core",
+            "ignoring-deadline",
+            Arc::new(IgnoringDeadlineRunner),
+        )
+        .expect("runner should register");
+        let created = jobs
+            .submit_with_policy(
+                JobSpec {
+                    kind: "ignoring-deadline".into(),
+                    duration_ms: 200,
+                    will_fail: false,
+                    input: Value::Null,
+                    provenance: JobProvenance::for_owner("core"),
+                },
+                JobExecutionPolicy {
+                    deadline_ms: Some(20),
+                    cancellation_grace_ms: 5,
+                    retry: JobRetryPolicy {
+                        max_attempts: 1,
+                        initial_backoff_ms: 1,
+                        max_backoff_ms: 1,
+                    },
+                    ..JobExecutionPolicy::default()
+                },
+            )
+            .expect("job should submit");
+        for _ in 0..20 {
+            if jobs
+                .snapshot(&created.id)
+                .is_some_and(|snapshot| snapshot.status == JobStatus::Failed)
+            {
+                return;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        panic!(
+            "unresponsive job was not fenced: {:?}",
+            jobs.snapshot(&created.id)
+        );
+    }
+
+    #[test]
+    fn checkpoint_and_environment_pause_resume_are_durable() {
+        let store = Arc::new(InMemoryJobStateStore::default());
+        let jobs = JobSystem::with_store(store.clone());
+        let created = jobs
+            .submit_with_policy(
+                JobSpec {
+                    kind: "networked".into(),
+                    duration_ms: 1_000,
+                    will_fail: false,
+                    input: Value::Null,
+                    provenance: JobProvenance::for_owner("core"),
+                },
+                JobExecutionPolicy {
+                    network: JobNetworkPolicy::Unmetered,
+                    ..JobExecutionPolicy::default()
+                },
+            )
+            .expect("job should submit");
+        jobs.set_execution_environment(JobExecutionEnvironment {
+            suspended: false,
+            network: JobNetworkState::Offline,
+        })
+        .expect("offline environment should apply");
+        let paused = jobs.snapshot(&created.id).expect("paused job");
+        assert_eq!(paused.status, JobStatus::Paused);
+        jobs.save_checkpoint(&created.id, paused.attempt, json!({ "step": 3 }))
+            .expect("checkpoint should persist");
+        let restored = JobSystem::with_store(store.clone())
+            .snapshot(&created.id)
+            .expect("checkpoint should survive restart");
+        assert_eq!(restored.checkpoint.unwrap().payload["step"], 3);
+
+        let invalid_store = Arc::new(InMemoryJobStateStore::default());
+        invalid_store
+            .save(&[JobSnapshot {
+                id: JobId("job-000099".into()),
+                kind: "invalid-checkpoint".into(),
+                status: JobStatus::Paused,
+                progress: 10,
+                message: None,
+                attempt: 1,
+                retryable: true,
+                duration_ms: 200,
+                will_fail: false,
+                policy: JobExecutionPolicy::default(),
+                checkpoint: Some(JobCheckpoint {
+                    schema_version: JOB_CHECKPOINT_SCHEMA_VERSION + 1,
+                    payload: Value::Null,
+                }),
+                input: Value::Null,
+                provenance: JobProvenance::for_owner("core"),
+                result: None,
+            }])
+            .expect("invalid checkpoint fixture should persist");
+        let invalid = JobSystem::with_store(invalid_store)
+            .snapshot(&JobId("job-000099".into()))
+            .expect("invalid checkpoint job");
+        assert!(invalid.checkpoint.is_none());
+        assert!(invalid
+            .message
+            .unwrap_or_default()
+            .contains("Checkpoint discarded"));
+
+        jobs.set_execution_environment(JobExecutionEnvironment::default())
+            .expect("online environment should resume");
+        for _ in 0..60 {
+            if jobs
+                .snapshot(&created.id)
+                .is_some_and(|snapshot| snapshot.status == JobStatus::Completed)
+            {
+                return;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        panic!(
+            "resumed job did not complete: {:?}",
+            jobs.snapshot(&created.id)
+        );
+    }
+
+    #[test]
     fn queued_and_running_jobs_are_marked_interrupted_on_restart() {
         let store = Arc::new(InMemoryJobStateStore::default());
         store
@@ -1018,6 +1917,8 @@ mod tests {
                 retryable: true,
                 duration_ms: 30_000,
                 will_fail: false,
+                policy: JobExecutionPolicy::default(),
+                checkpoint: None,
                 input: serde_json::Value::Null,
                 provenance: JobProvenance::for_owner("test"),
                 result: None,

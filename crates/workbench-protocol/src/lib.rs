@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use velvet_asset_core::AssetId;
-use velvet_job_system::{JobId, JobSnapshot};
+use velvet_job_system::{JobExecutionEnvironment, JobExecutionPolicy, JobId, JobSnapshot};
 use velvet_layout_model::{LayoutCommand, LayoutState};
 use velvet_plugin_api::{
     AppTarget, ContributionDescriptor, ExtensionId, ExtensionInstallPreview,
@@ -589,12 +589,16 @@ pub enum Command {
         duration_ms: u64,
         will_fail: bool,
         input: Value,
+        policy: JobExecutionPolicy,
     },
     CancelJob {
         job_id: JobId,
     },
     RetryJob {
         job_id: JobId,
+    },
+    SetJobExecutionEnvironment {
+        environment: JobExecutionEnvironment,
     },
     SetLocale {
         locale: String,
@@ -997,5 +1001,47 @@ mod tests {
                 .expect("quarantine action should serialize"),
             "quarantine-state"
         );
+    }
+
+    #[test]
+    fn job_governance_contract_round_trips_policy_checkpoint_and_environment() {
+        let policy = JobExecutionPolicy {
+            deadline_ms: Some(5_000),
+            cancellation_grace_ms: 250,
+            retry: velvet_job_system::JobRetryPolicy {
+                max_attempts: 4,
+                initial_backoff_ms: 50,
+                max_backoff_ms: 500,
+            },
+            network: velvet_job_system::JobNetworkPolicy::Unmetered,
+            background: true,
+        };
+        let request = Request::Command(Command::CreateJob {
+            kind: "index".into(),
+            duration_ms: 1_000,
+            will_fail: false,
+            input: Value::Null,
+            policy: policy.clone(),
+        });
+        assert_eq!(
+            match request {
+                Request::Command(Command::CreateJob { policy: actual, .. }) => actual,
+                _ => unreachable!(),
+            },
+            policy
+        );
+        let environment = JobExecutionEnvironment {
+            suspended: true,
+            network: velvet_job_system::JobNetworkState::Metered,
+        };
+        let command = Command::SetJobExecutionEnvironment { environment };
+        assert_eq!(command, Command::SetJobExecutionEnvironment { environment });
+        let checkpoint = velvet_job_system::JobCheckpoint {
+            schema_version: velvet_job_system::JOB_CHECKPOINT_SCHEMA_VERSION,
+            payload: serde_json::json!({ "cursor": 4 }),
+        };
+        let json = serde_json::to_value(&checkpoint).expect("checkpoint should serialize");
+        assert_eq!(json["schemaVersion"], 1);
+        assert_eq!(json["payload"]["cursor"], 4);
     }
 }

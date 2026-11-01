@@ -297,6 +297,7 @@ export type CoreRequest =
       readonly durationMs: number;
       readonly willFail: boolean;
       readonly input?: unknown;
+      readonly policy?: CoreJobExecutionPolicy;
     }
   | {
       readonly protocolVersion: ProtocolVersion;
@@ -307,6 +308,11 @@ export type CoreRequest =
       readonly protocolVersion: ProtocolVersion;
       readonly kind: 'retry-job';
       readonly jobId: string;
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'set-job-execution-environment';
+      readonly environment: CoreJobExecutionEnvironment;
     }
   | {
       readonly protocolVersion: ProtocolVersion;
@@ -416,10 +422,40 @@ export interface CoreResolvedPreviewAugmentation {
 export type CoreJobStatus =
   | 'queued'
   | 'running'
+  | 'retrying'
+  | 'cancelling'
+  | 'paused'
   | 'interrupted'
   | 'cancelled'
   | 'failed'
   | 'completed';
+
+export type CoreJobNetworkPolicy = 'local-only' | 'unmetered' | 'any-network';
+export type CoreJobNetworkState = 'online' | 'metered' | 'offline';
+
+export interface CoreJobRetryPolicy {
+  readonly maxAttempts: number;
+  readonly initialBackoffMs: number;
+  readonly maxBackoffMs: number;
+}
+
+export interface CoreJobExecutionPolicy {
+  readonly deadlineMs: number | null;
+  readonly cancellationGraceMs: number;
+  readonly retry: CoreJobRetryPolicy;
+  readonly network: CoreJobNetworkPolicy;
+  readonly background: boolean;
+}
+
+export interface CoreJobExecutionEnvironment {
+  readonly suspended: boolean;
+  readonly network: CoreJobNetworkState;
+}
+
+export interface CoreJobCheckpoint {
+  readonly schemaVersion: number;
+  readonly payload: unknown;
+}
 
 export interface CoreJobSnapshot {
   readonly id: string;
@@ -431,6 +467,8 @@ export interface CoreJobSnapshot {
   readonly retryable: boolean;
   readonly durationMs: number;
   readonly willFail: boolean;
+  readonly policy: CoreJobExecutionPolicy;
+  readonly checkpoint: CoreJobCheckpoint | null;
   readonly input: unknown;
   readonly provenance: CoreJobProvenance;
   readonly result: CoreJobResult | null;

@@ -367,7 +367,10 @@ values are release configuration rather than a plugin ABI promise.
 
 Interactive runtime invocation keeps the existing five-second timeout. Job
 invocations carry an owner deadline, progress heartbeat and cancellation
-token. User cancellation is cooperative first; protocol v1 does not tear down
+token. The host also passes the current bounded checkpoint and cancellation
+grace to `job.run`; a runtime may return a bounded `checkpoint` event, but it
+cannot write the core store directly. User cancellation is cooperative first;
+protocol v1 does not tear down
 a healthy shared runtime for one cancelled Job. A deadline, malformed response,
 crash or unhealthy runtime receives a bounded grace period and may then be
 terminated as a process group. Built-in in-process adapters cannot be
@@ -377,7 +380,7 @@ Workbench running.
 
 Recovery starts a fresh runtime and re-projects Rust-owned contributions.
 Transient failures use at most three attempts with bounded exponential
-backoff/jitter; permission, schema, invalid-input and deterministic provider
+backoff; permission, schema, invalid-input and deterministic provider
 errors do not auto-retry. Three failures in five minutes or two failed
 recovery attempts quarantine the extension until an explicit user action.
 

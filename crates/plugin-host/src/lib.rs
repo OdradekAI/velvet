@@ -716,6 +716,8 @@ pub struct PluginInvocationEvent {
     pub progress: Option<u8>,
     #[serde(default)]
     pub message: Option<String>,
+    #[serde(default)]
+    pub checkpoint: Option<Value>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -744,6 +746,16 @@ pub struct PluginJobInvocation {
     pub attempt: u32,
     pub input: Value,
     pub provenance: Value,
+    #[serde(default)]
+    pub deadline_ms: Option<u64>,
+    #[serde(default = "default_job_cancellation_grace_ms")]
+    pub cancellation_grace_ms: u64,
+    #[serde(default)]
+    pub checkpoint: Option<Value>,
+}
+
+fn default_job_cancellation_grace_ms() -> u64 {
+    1_000
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -1497,6 +1509,7 @@ impl RuntimeProcess for NoopRuntimeProcess {
                     kind: "progress".into(),
                     progress: Some(100),
                     message: Some("Completed".into()),
+                    checkpoint: None,
                 }],
             });
         }
@@ -5222,6 +5235,7 @@ mod tests {
                         kind: "progress".into(),
                         progress: Some(50),
                         message: Some("Halfway".into()),
+                        checkpoint: None,
                     }],
                 });
             }
@@ -5520,12 +5534,39 @@ mod tests {
                 attempt: 1,
                 input: serde_json::json!({ "assetId": "asset-1" }),
                 provenance: serde_json::json!({ "inputFingerprint": "sha256:asset-1" }),
+                deadline_ms: None,
+                cancellation_grace_ms: default_job_cancellation_grace_ms(),
+                checkpoint: None,
             })
             .expect("Job invocation should reach the runtime");
         assert_eq!(execution.result.content_type, "application/json");
         assert_eq!(execution.result.payload["jobKind"], "job.example.analyze");
         assert_eq!(execution.events[0].progress, Some(100));
         assert!(host.drain_diagnostics().is_empty());
+    }
+
+    #[test]
+    fn plugin_job_invocation_and_checkpoint_event_are_bounded_wire_shapes() {
+        let invocation: PluginJobInvocation = serde_json::from_value(serde_json::json!({
+            "jobId": "job-1",
+            "jobKind": "job.example.analyze",
+            "attempt": 2,
+            "input": { "assetId": "asset-1" },
+            "provenance": { "inputFingerprint": "sha256:asset-1" },
+            "deadlineMs": 5000,
+            "cancellationGraceMs": 250,
+            "checkpoint": { "cursor": 4 }
+        }))
+        .expect("job invocation should decode");
+        assert_eq!(invocation.attempt, 2);
+        assert_eq!(invocation.checkpoint.unwrap()["cursor"], 4);
+
+        let event: PluginInvocationEvent = serde_json::from_value(serde_json::json!({
+            "kind": "checkpoint",
+            "checkpoint": { "cursor": 5 }
+        }))
+        .expect("checkpoint event should decode");
+        assert_eq!(event.checkpoint.unwrap()["cursor"], 5);
     }
 
     #[test]
@@ -7016,6 +7057,9 @@ mod tests {
                 attempt: 1,
                 input: serde_json::json!({ "scope": "metadata" }),
                 provenance: serde_json::json!({ "inputFingerprint": "sha256:echo" }),
+                deadline_ms: None,
+                cancellation_grace_ms: default_job_cancellation_grace_ms(),
+                checkpoint: None,
             })
             .expect("the sidecar Job should reach the runtime");
         assert_eq!(job.events[0].progress, Some(50));

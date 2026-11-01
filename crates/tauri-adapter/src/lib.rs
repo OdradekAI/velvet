@@ -450,6 +450,7 @@ mod tests {
                     duration_ms: 200,
                     will_fail: false,
                     input: serde_json::Value::Null,
+                    policy: velvet_job_system::JobExecutionPolicy::default(),
                 }),
             )
             .expect("job should be accepted");
@@ -469,5 +470,53 @@ mod tests {
             }
         }
         panic!("job never emitted a completed event: {:?}", sink.events());
+    }
+
+    #[test]
+    fn job_environment_command_pauses_policy_blocked_work_and_emits_projection() {
+        let sink = InMemoryEventSink::default();
+        let transport = TauriTransport::with_event_sink(ApplicationCore::default(), sink.clone());
+        let response = transport
+            .dispatch(
+                RequestId(21),
+                Request::Command(Command::CreateJob {
+                    kind: "networked".into(),
+                    duration_ms: 30_000,
+                    will_fail: false,
+                    input: serde_json::Value::Null,
+                    policy: velvet_job_system::JobExecutionPolicy {
+                        network: velvet_job_system::JobNetworkPolicy::Unmetered,
+                        ..velvet_job_system::JobExecutionPolicy::default()
+                    },
+                }),
+            )
+            .expect("networked Job should be accepted");
+        let job_id = match response {
+            Response::Job(snapshot) => snapshot.id,
+            other => panic!("expected job response, got {other:?}"),
+        };
+        let response = transport
+            .dispatch(
+                RequestId(22),
+                Request::Command(Command::SetJobExecutionEnvironment {
+                    environment: velvet_job_system::JobExecutionEnvironment {
+                        suspended: false,
+                        network: velvet_job_system::JobNetworkState::Offline,
+                    },
+                }),
+            )
+            .expect("offline environment should be accepted");
+        assert!(matches!(
+            response,
+            Response::Jobs(ref jobs)
+                if jobs.iter().any(|snapshot| snapshot.id == job_id
+                    && snapshot.status == velvet_job_system::JobStatus::Paused)
+        ));
+        assert!(sink.events().iter().any(|event| matches!(
+            event,
+            Event::JobChanged { snapshot }
+                if snapshot.id == job_id
+                    && snapshot.status == velvet_job_system::JobStatus::Paused
+        )));
     }
 }

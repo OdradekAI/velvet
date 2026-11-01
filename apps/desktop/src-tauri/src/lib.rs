@@ -20,7 +20,10 @@ use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_global_shortcut::{Builder as ShortcutBuilder, ShortcutState};
 use velvet_application_core::{ApplicationCore, ApplicationRecoveryStores, CrashCaptureAdapter};
-use velvet_job_system::{JobId, JobProvenance, JobResult, JobSnapshot, JobStatus};
+use velvet_job_system::{
+    JobExecutionEnvironment, JobExecutionPolicy, JobId, JobProvenance, JobResult, JobSnapshot,
+    JobStatus,
+};
 use velvet_layout_model::{
     LayoutCommand, LayoutState, ViewContainerState, ViewState, WorkbenchAppId, WorkbenchPart,
 };
@@ -796,6 +799,8 @@ pub enum WireRequest {
         will_fail: bool,
         #[serde(default)]
         input: Option<serde_json::Value>,
+        #[serde(default)]
+        policy: Option<JobExecutionPolicy>,
     },
     CancelJob {
         #[serde(rename = "protocolVersion")]
@@ -808,6 +813,11 @@ pub enum WireRequest {
         protocol_version: u16,
         #[serde(rename = "jobId")]
         job_id: String,
+    },
+    SetJobExecutionEnvironment {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        environment: JobExecutionEnvironment,
     },
     SetLocale {
         #[serde(rename = "protocolVersion")]
@@ -1165,6 +1175,7 @@ impl WireRequest {
                 duration_ms,
                 will_fail,
                 input,
+                policy,
             } => {
                 validate_inner_protocol(outer_protocol_version, protocol_version)?;
                 Ok(Request::Command(Command::CreateJob {
@@ -1172,6 +1183,7 @@ impl WireRequest {
                     duration_ms,
                     will_fail,
                     input: input.unwrap_or(serde_json::Value::Null),
+                    policy: policy.unwrap_or_default(),
                 }))
             }
             Self::CancelJob {
@@ -1191,6 +1203,13 @@ impl WireRequest {
                 Ok(Request::Command(Command::RetryJob {
                     job_id: JobId(job_id),
                 }))
+            }
+            Self::SetJobExecutionEnvironment {
+                protocol_version,
+                environment,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Command(Command::SetJobExecutionEnvironment { environment }))
             }
             Self::SetLocale {
                 protocol_version,
@@ -1872,6 +1891,8 @@ struct WireJobSnapshot {
     retryable: bool,
     duration_ms: u64,
     will_fail: bool,
+    policy: JobExecutionPolicy,
+    checkpoint: Option<velvet_job_system::JobCheckpoint>,
     input: serde_json::Value,
     provenance: WireJobProvenance,
     result: Option<WireJobResult>,
@@ -1931,6 +1952,9 @@ impl From<JobSnapshot> for WireJobSnapshot {
             status: match value.status {
                 JobStatus::Queued => "queued",
                 JobStatus::Running => "running",
+                JobStatus::Retrying => "retrying",
+                JobStatus::Cancelling => "cancelling",
+                JobStatus::Paused => "paused",
                 JobStatus::Interrupted => "interrupted",
                 JobStatus::Cancelled => "cancelled",
                 JobStatus::Failed => "failed",
@@ -1943,6 +1967,8 @@ impl From<JobSnapshot> for WireJobSnapshot {
             retryable: value.retryable,
             duration_ms: value.duration_ms,
             will_fail: value.will_fail,
+            policy: value.policy,
+            checkpoint: value.checkpoint,
             input: value.input,
             provenance: value.provenance.into(),
             result: value.result.map(Into::into),
@@ -4155,11 +4181,12 @@ mod tests {
         .expect("job request should deserialize");
         assert!(matches!(
             envelope.request.into_core(1).expect("job request should map"),
-            Request::Command(Command::CreateJob { kind, duration_ms, will_fail, input })
+            Request::Command(Command::CreateJob { kind, duration_ms, will_fail, input, policy })
                 if kind == "sample"
                     && duration_ms == 2400
                     && will_fail
                     && input["assetId"] == "asset-1"
+                    && policy == JobExecutionPolicy::default()
         ));
 
         let cancel: WireRequestEnvelope = serde_json::from_value(serde_json::json!({
@@ -4192,6 +4219,23 @@ mod tests {
             Request::Command(Command::RetryJob { job_id }) if job_id.0 == "job-000001"
         ));
 
+        let environment: WireRequestEnvelope = serde_json::from_value(serde_json::json!({
+            "protocolVersion": 1,
+            "requestId": 16,
+            "request": {
+                "kind": "set-job-execution-environment",
+                "protocolVersion": 1,
+                "environment": { "suspended": true, "network": "metered" }
+            }
+        }))
+        .expect("environment request should deserialize");
+        assert!(matches!(
+            environment.request.into_core(1).expect("environment request should map"),
+            Request::Command(Command::SetJobExecutionEnvironment { environment })
+                if environment.suspended
+                    && environment.network == velvet_job_system::JobNetworkState::Metered
+        ));
+
         let response = WireResponseEnvelope::from_core(velvet_workbench_protocol::ResponseEnvelope {
             protocol_version: PROTOCOL_VERSION,
             request_id: RequestId(12),
@@ -4205,6 +4249,14 @@ mod tests {
                 retryable: true,
                 duration_ms: 2400,
                 will_fail: true,
+                policy: JobExecutionPolicy {
+                    deadline_ms: Some(5_000),
+                    ..JobExecutionPolicy::default()
+                },
+                checkpoint: Some(velvet_job_system::JobCheckpoint {
+                    schema_version: velvet_job_system::JOB_CHECKPOINT_SCHEMA_VERSION,
+                    payload: serde_json::json!({ "cursor": 3 }),
+                }),
                 input: serde_json::Value::Null,
                 provenance: velvet_job_system::JobProvenance::for_owner("test"),
                 result: None,
@@ -4214,6 +4266,8 @@ mod tests {
         assert_eq!(value["response"]["kind"], "job");
         assert_eq!(value["response"]["job"]["status"], "failed");
         assert_eq!(value["response"]["job"]["attempt"], 2);
+        assert_eq!(value["response"]["job"]["policy"]["deadlineMs"], 5_000);
+        assert_eq!(value["response"]["job"]["checkpoint"]["payload"]["cursor"], 3);
         assert_eq!(value["response"]["job"]["provenance"]["ownerId"], "test");
         assert!(value["response"]["job"]["result"].is_null());
 
@@ -4231,6 +4285,8 @@ mod tests {
                     retryable: false,
                     duration_ms: 200,
                     will_fail: false,
+                    policy: velvet_job_system::JobExecutionPolicy::default(),
+                    checkpoint: None,
                     input: serde_json::Value::Null,
                     provenance: velvet_job_system::JobProvenance {
                         owner_id: "sample.extension".into(),

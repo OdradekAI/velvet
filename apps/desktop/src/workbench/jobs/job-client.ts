@@ -1,4 +1,6 @@
 import type {
+  CoreJobExecutionEnvironment,
+  CoreJobExecutionPolicy,
   CoreJobSnapshot,
   CoreResponse,
   CoreTransport,
@@ -9,6 +11,7 @@ export interface CreateJobOptions {
   readonly durationMs: number;
   readonly willFail?: boolean;
   readonly input?: unknown;
+  readonly policy?: CoreJobExecutionPolicy;
 }
 
 /** Renderer adapter for the Rust-owned JobSystem projection. */
@@ -70,6 +73,7 @@ export class JobClient {
       durationMs: options.durationMs,
       willFail: options.willFail ?? false,
       input: options.input,
+      policy: options.policy,
     });
     return this.acceptJobResponse(response);
   }
@@ -90,6 +94,24 @@ export class JobClient {
       jobId: id,
     });
     return this.acceptJobResponse(response);
+  }
+
+  public async setExecutionEnvironment(
+    environment: CoreJobExecutionEnvironment,
+  ): Promise<readonly CoreJobSnapshot[]> {
+    const response = await this.core.request({
+      protocolVersion: 1,
+      kind: 'set-job-execution-environment',
+      environment,
+    });
+    if (response.kind !== 'jobs') {
+      throw new Error(`Expected jobs response, received ${response.kind}`);
+    }
+    for (const job of response.jobs) {
+      this.jobs.set(job.id, job);
+    }
+    this.emit();
+    return response.jobs;
   }
 
   public dispose(): void {
