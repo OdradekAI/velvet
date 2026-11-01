@@ -451,6 +451,75 @@ button {
   gap: 14px;
 }
 
+.velvet-source-roots {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.velvet-source-roots__toolbar,
+.velvet-source-roots__input-row,
+.velvet-source-roots__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.velvet-source-roots__toolbar {
+  justify-content: space-between;
+}
+
+.velvet-source-roots__form {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.velvet-source-roots__form label {
+  color: var(--velvet-text-secondary);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.velvet-source-roots__input-row .velvet-input {
+  min-width: 0;
+}
+
+.velvet-source-roots__help {
+  margin: 0;
+  color: var(--velvet-text-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.velvet-source-roots__list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 230px;
+  overflow: auto;
+}
+
+.velvet-source-roots__item {
+  justify-content: space-between;
+  min-height: 38px;
+  padding: 7px 9px;
+  border: 1px solid var(--velvet-border-subtle);
+  border-radius: var(--velvet-radius-sm);
+  background: var(--velvet-surface-panel);
+}
+
+.velvet-source-roots__item code {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--velvet-text-primary);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .velvet-plugin-manager__toolbar,
 .velvet-plugin-manager__install-row,
 .velvet-plugin-manager__item {

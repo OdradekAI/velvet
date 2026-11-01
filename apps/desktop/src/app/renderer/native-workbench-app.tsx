@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ask } from '@tauri-apps/plugin-dialog';
 import { createNativeTauriDesktopApp, type DesktopApp } from '../desktop-app.js';
+import { createNativeSourceRootPicker } from '../../platform/tauri-source-root-picker.js';
 import type {
   CoreTransportStatus,
   LayoutCommand,
@@ -19,6 +20,7 @@ import { createNativePluginPackagePicker } from '../../platform/tauri-plugin-pac
 import { createNativeFileExporter } from '../../platform/tauri-file-exporter.js';
 import { PreviewOverlay } from './preview-overlay.js';
 import { RecoveryBoundary, RecoverySurface } from './recovery-surface.js';
+import { SourceRootDialog } from './source-root-dialog.js';
 import type { CoreRecoveryProjection } from '../../platform/protocol.js';
 import type { WorkspaceRoutingIntent } from '../../workbench/activation-routing.js';
 
@@ -36,11 +38,13 @@ export function NativeWorkbenchApp() {
   const [startupAttempt, setStartupAttempt] = useState(0);
   const [commandError, setCommandError] = useState<unknown>();
   const [pluginManagerOpen, setPluginManagerOpen] = useState(false);
+  const [sourceRootDialogOpen, setSourceRootDialogOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [appRevision, setAppRevision] = useState(0);
   const [viewRenderers] = useState(() => new ViewRendererRegistry());
   const [packagePicker] = useState(() => createNativePluginPackagePicker());
   const [fileExporter] = useState(() => createNativeFileExporter());
+  const [sourceRootPicker] = useState(() => createNativeSourceRootPicker());
 
   useEffect(() => {
     let app: DesktopApp;
@@ -345,14 +349,24 @@ export function NativeWorkbenchApp() {
           </div>
         )}
         titleActions={
-          <button
-            aria-label="Open Extensions"
-            className="velvet-title__action"
-            onClick={() => setPluginManagerOpen(true)}
-            type="button"
-          >
-            Extensions
-          </button>
+          <>
+            <button
+              aria-label="Open Source Folders"
+              className="velvet-title__action"
+              onClick={() => setSourceRootDialogOpen(true)}
+              type="button"
+            >
+              Source folders
+            </button>
+            <button
+              aria-label="Open Extensions"
+              className="velvet-title__action"
+              onClick={() => setPluginManagerOpen(true)}
+              type="button"
+            >
+              Extensions
+            </button>
+          </>
         }
         viewRegistry={currentState.app.workbench.views}
         viewRenderers={viewRenderers}
@@ -379,6 +393,17 @@ export function NativeWorkbenchApp() {
           open={pluginManagerOpen}
           pickPackage={(selection) => packagePicker.pick(selection)}
           plugins={currentState.app.workbench.plugins}
+        />
+        <SourceRootDialog
+          confirmRevoke={(root) => ask(`Revoke ${root}? Existing Asset identity will be kept, but reads will pause.`, {
+            title: 'Revoke source folder',
+            kind: 'warning',
+          })}
+          onOpenChange={setSourceRootDialogOpen}
+          open={sourceRootDialogOpen}
+          pickDirectory={() => sourceRootPicker.pick()}
+          readOnly={readOnly}
+          sourceRoots={currentState.app.workbench.sourceRoots}
         />
         <PreviewOverlay
           context={{

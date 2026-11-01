@@ -243,6 +243,9 @@ identity/process-group test. Both scripts accept operator-supplied
 removable and network mount paths, but report `not-configured` unless a real
 mount is supplied. A writable marker only proves reachability; the operator
 must record the filesystem/mount identity and a disconnected/reconnected run.
+The current foundation slice deliberately defers those real-mount runs, so
+`not-configured` is retained as an explicit deferred state rather than a
+release pass.
 Windows remains explicitly `deferred` while no Windows environment is
 available. Cross-target compilation is retained as build evidence and cannot
 replace the Windows runtime gate. If Docker or its daemon is unavailable, the
@@ -739,6 +742,16 @@ arbitrary filesystem capability. If the combined source-location state is
 corrupt or unavailable, root mutations fail closed and do not replace the
 unreadable file with an empty allow-list; recovery must restore or quarantine
 that state before the settings action can write again.
+
+The native Workbench exposes this policy through a host-owned Source Folders
+dialog. It can refresh the Rust projection, choose a directory through the
+platform picker or accept an explicit path, approve it, and revoke it after a
+user confirmation. The dialog disables mutations while the transport is
+read-only, keeps action errors local to the dialog, and does not call plugin or
+workspace code. The current foundation release defers real removable and
+network-volume qualification; the dialog therefore reports policy and source
+errors without claiming that mount/disconnect behavior has passed release
+qualification.
 
 OS file-watcher notifications are hints, not authoritative mutations. The
 Asset/source owner revalidates path, volume identity and `ContentFingerprint`,
