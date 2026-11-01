@@ -12,6 +12,10 @@
 
 素材的内容类别，例如图片、RAW、视频、音频、文档或 3D 模型。它描述素材能使用哪些解析和预览能力。
 
+## ApprovedSourceRoot
+
+用户明确批准的素材来源目录边界。它约束来源路径的连续性和目录范围；撤销批准会让相关来源进入需要修复或重新批准的状态，但不会删除 Asset 身份。
+
 ## Workspace
 
 用户正在使用的一套工作环境，包含当前数据范围、打开的素材、活动的 WorkbenchApp、视图可见性和布局状态。Workspace 是用户上下文，不等同于 WorkbenchApp。
@@ -163,9 +167,9 @@ deep link 继续传递。Tauri transport 重复 runtime shape 校验，并在核
 链接保留为 unrouted；intent 不直接执行命令或打开文件，workspace 必须显式消费。
 `open-asset` 会更新 host-owned selection；`open-file` 通过 typed
 `register-preview-asset` 注册为 activation-scoped AssetId，路径不会进入共享
-context 或插件。approved root、能力边界和 workspace consumption 仍属于后续
-path/volume slice；source owner 的 canonical path 与 volume identity 重验证已经在
-Rust 内部执行。
+context 或插件。`ApprovedSourceRoot` 由 Rust source owner 管理，并可由宿主设置层
+查询、添加或撤销；单文件导入可以不绑定根目录，但不会因此获得递归目录访问。
+source owner 的 canonical path、root 和 volume identity 重验证在 Rust 内部执行。
 
 ## Profile lock
 

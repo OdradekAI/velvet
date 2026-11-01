@@ -23,6 +23,7 @@ import { ContextKeyService } from './commands/context-key-service.js';
 import { KeybindingRegistry } from './commands/keybinding-registry.js';
 import { MenuRegistry } from './commands/menu-registry.js';
 import { InMemoryWorkspaceContext } from './services/workspace-context.js';
+import { SourceRootService } from './services/source-root-service.js';
 import { OverlayRegistry } from './overlays/overlay-registry.js';
 import { PluginUiRegistry } from './plugins/ui-bridge.js';
 import { ViewRegistry } from './views/view-registry.js';
@@ -49,6 +50,7 @@ export class Workbench {
   public readonly activityBar = new ActivityBarContributionRegistry();
   public readonly contributions = new ContributionRegistry();
   public readonly context = new InMemoryWorkspaceContext();
+  public readonly sourceRoots: SourceRootService;
   public readonly localization = new LocalizationService();
   public readonly recovery: RecoveryClient;
   public readonly focus = new FocusService();
@@ -74,9 +76,11 @@ export class Workbench {
     (intent: WorkspaceRoutingIntent) => void
   >();
   private readonly workspaceRoutingKeys = new Set<string>();
+  private transportWasRecovering = false;
 
   public constructor(private readonly core: CoreTransport) {
     this.recovery = new RecoveryClient(core);
+    this.sourceRoots = new SourceRootService(core);
     this.localization.bindCore(core);
     this.layout = new LayoutService(core);
     this.preview = new PreviewHost(core);
@@ -271,6 +275,7 @@ export class Workbench {
     }
 
     if (status.state === 'resyncing' || status.state === 'degraded' || status.state === 'disconnected') {
+      this.transportWasRecovering = true;
       this.transportRecoveryLifecycle = this.transportRecoveryLifecycle
         .then(async () => {
           await this.pluginUi.suspendForTransportRecovery();
@@ -281,12 +286,17 @@ export class Workbench {
     }
 
     if (status.state === 'connected') {
+      const wasRecovering = this.transportWasRecovering;
+      this.transportWasRecovering = false;
       this.transportRecoveryLifecycle = this.transportRecoveryLifecycle
         .then(async () => {
           const summaries = this.pendingCoreExtensionSummaries;
           this.pendingCoreExtensionSummaries = undefined;
           if (summaries) {
             await this.plugins.reconcileCoreExtensions(summaries);
+          }
+          if (wasRecovering) {
+            await this.sourceRoots.load().catch(() => undefined);
           }
           this.pluginUi.resumeAfterTransportRecovery();
           this.preview.resumeAfterTransportRecovery();

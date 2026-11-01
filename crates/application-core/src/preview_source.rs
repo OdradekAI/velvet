@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
@@ -50,6 +50,7 @@ pub struct PreviewAssetRegistration {
     pub approved_root: Option<PathBuf>,
 }
 
+#[derive(Clone)]
 struct StoredAssetSourceLocation {
     source_path: PathBuf,
     content_kind: ContentKindId,
@@ -58,28 +59,49 @@ struct StoredAssetSourceLocation {
     approved_root: Option<PathBuf>,
 }
 
+struct AssetSourceLocationState {
+    locations: BTreeMap<AssetId, StoredAssetSourceLocation>,
+    approved_roots: BTreeSet<PathBuf>,
+}
+
 /// Rust-owned persistent mapping from opaque Asset identities to local files.
 ///
 /// The registry owns registration and persistence; `FilePreviewAssetSource`
 /// consumes its resolved path only inside the application core. The path is
 /// never returned by the protocol or passed to a provider or plugin runtime.
 pub struct PersistentAssetSourceLocationResolver {
-    locations: RwLock<BTreeMap<AssetId, StoredAssetSourceLocation>>,
+    state: RwLock<AssetSourceLocationState>,
     store: Arc<dyn AssetSourceLocationStore>,
     load_error: Option<PreviewSourceError>,
 }
 
 impl PersistentAssetSourceLocationResolver {
     pub fn new(store: Arc<dyn AssetSourceLocationStore>) -> Self {
-        let (locations, load_error) = match store.load() {
+        let (locations, mut load_error) = match store.load() {
             Ok(records) => (
                 records.into_iter().filter_map(record_to_location).collect(),
                 None,
             ),
             Err(error) => (BTreeMap::new(), Some(map_persistence_error(error))),
         };
+        let approved_roots = match store.load_approved_roots() {
+            Ok(roots) => roots
+                .into_iter()
+                .map(PathBuf::from)
+                .filter(|root| root.is_absolute())
+                .collect(),
+            Err(error) => {
+                if load_error.is_none() {
+                    load_error = Some(map_persistence_error(error));
+                }
+                BTreeSet::new()
+            }
+        };
         Self {
-            locations: RwLock::new(locations),
+            state: RwLock::new(AssetSourceLocationState {
+                locations,
+                approved_roots,
+            }),
             store,
             load_error,
         }
@@ -87,6 +109,55 @@ impl PersistentAssetSourceLocationResolver {
 
     pub fn load_error(&self) -> Option<&PreviewSourceError> {
         self.load_error.as_ref()
+    }
+
+    pub fn approved_roots(&self) -> Result<Vec<PathBuf>, PreviewSourceError> {
+        self.ensure_state_writable()?;
+        self.state
+            .read()
+            .map(|state| state.approved_roots.iter().cloned().collect())
+            .map_err(|_| PreviewSourceError::Failed("asset source state lock poisoned".into()))
+    }
+
+    pub fn add_approved_root(&self, root: impl AsRef<Path>) -> Result<PathBuf, PreviewSourceError> {
+        self.ensure_state_writable()?;
+        let root = canonical_approved_root(root.as_ref())?;
+        let mut state = self
+            .state
+            .write()
+            .map_err(|_| PreviewSourceError::Failed("asset source state lock poisoned".into()))?;
+        if state.approved_roots.contains(&root) {
+            return Ok(root);
+        }
+        state.approved_roots.insert(root.clone());
+        if let Err(error) = self.store.save_state(
+            &location_records(&state.locations),
+            &root_strings(&state.approved_roots),
+        ) {
+            state.approved_roots.remove(&root);
+            return Err(map_persistence_error(error));
+        }
+        Ok(root)
+    }
+
+    pub fn remove_approved_root(&self, root: impl AsRef<Path>) -> Result<bool, PreviewSourceError> {
+        self.ensure_state_writable()?;
+        let root = canonical_root_for_removal(root.as_ref())?;
+        let mut state = self
+            .state
+            .write()
+            .map_err(|_| PreviewSourceError::Failed("asset source state lock poisoned".into()))?;
+        if !state.approved_roots.remove(&root) {
+            return Ok(false);
+        }
+        if let Err(error) = self.store.save_state(
+            &location_records(&state.locations),
+            &root_strings(&state.approved_roots),
+        ) {
+            state.approved_roots.insert(root);
+            return Err(map_persistence_error(error));
+        }
+        Ok(true)
     }
 
     pub fn register(
@@ -107,6 +178,7 @@ impl PersistentAssetSourceLocationResolver {
         fingerprint: Option<ContentFingerprint>,
         approved_root: Option<&Path>,
     ) -> Result<(), PreviewSourceError> {
+        self.ensure_state_writable()?;
         validate_asset_id(&asset_id)?;
         validate_content_kind(&content_kind)?;
         validate_fingerprint(&fingerprint)?;
@@ -117,7 +189,14 @@ impl PersistentAssetSourceLocationResolver {
             return Err(PreviewSourceError::NotFound);
         }
         let approved_root = approved_root.map(canonical_approved_root).transpose()?;
+        let mut state = self
+            .state
+            .write()
+            .map_err(|_| PreviewSourceError::Failed("asset source state lock poisoned".into()))?;
         if let Some(root) = approved_root.as_deref() {
+            if !state.approved_roots.contains(root) {
+                return Err(PreviewSourceError::PermissionDenied);
+            }
             ensure_path_is_within_root(&source_path, root)?;
         }
         let volume_identity = source_volume_identity(&metadata);
@@ -130,16 +209,15 @@ impl PersistentAssetSourceLocationResolver {
             approved_root,
         };
         let key = asset_id.clone();
-        let mut locations = self
-            .locations
-            .write()
-            .map_err(|_| PreviewSourceError::Failed("asset source lock poisoned".into()))?;
-        let previous = locations.insert(key.clone(), registration);
-        if let Err(error) = self.store.save(&location_records(&locations)) {
+        let previous = state.locations.insert(key.clone(), registration);
+        if let Err(error) = self.store.save_state(
+            &location_records(&state.locations),
+            &root_strings(&state.approved_roots),
+        ) {
             if let Some(previous) = previous {
-                locations.insert(key, previous);
+                state.locations.insert(key, previous);
             } else {
-                locations.remove(&key);
+                state.locations.remove(&key);
             }
             return Err(map_persistence_error(error));
         }
@@ -147,16 +225,20 @@ impl PersistentAssetSourceLocationResolver {
     }
 
     pub fn remove(&self, asset_id: &AssetId) -> Result<bool, PreviewSourceError> {
+        self.ensure_state_writable()?;
         validate_asset_id(asset_id)?;
-        let mut locations = self
-            .locations
+        let mut state = self
+            .state
             .write()
-            .map_err(|_| PreviewSourceError::Failed("asset source lock poisoned".into()))?;
-        let Some(previous) = locations.remove(asset_id) else {
+            .map_err(|_| PreviewSourceError::Failed("asset source state lock poisoned".into()))?;
+        let Some(previous) = state.locations.remove(asset_id) else {
             return Ok(false);
         };
-        if let Err(error) = self.store.save(&location_records(&locations)) {
-            locations.insert(asset_id.clone(), previous);
+        if let Err(error) = self.store.save_state(
+            &location_records(&state.locations),
+            &root_strings(&state.approved_roots),
+        ) {
+            state.locations.insert(asset_id.clone(), previous);
             return Err(map_persistence_error(error));
         }
         Ok(true)
@@ -167,11 +249,11 @@ impl PersistentAssetSourceLocationResolver {
         asset_id: &AssetId,
     ) -> Result<PreviewAssetRegistration, PreviewSourceError> {
         validate_asset_id(asset_id)?;
-        let locations = self
-            .locations
+        let state = self
+            .state
             .read()
-            .map_err(|_| PreviewSourceError::Failed("asset source lock poisoned".into()))?;
-        let Some(location) = locations.get(asset_id) else {
+            .map_err(|_| PreviewSourceError::Failed("asset source state lock poisoned".into()))?;
+        let Some(location) = state.locations.get(asset_id) else {
             return Err(PreviewSourceError::NotFound);
         };
         Ok(PreviewAssetRegistration {
@@ -183,18 +265,23 @@ impl PersistentAssetSourceLocationResolver {
             approved_root: location.approved_root.clone(),
         })
     }
+
+    fn ensure_state_writable(&self) -> Result<(), PreviewSourceError> {
+        self.load_error.clone().map_or(Ok(()), Err)
+    }
 }
 
 impl AssetSourceLocationResolver for PersistentAssetSourceLocationResolver {
     fn resolve(&self, asset_id: &AssetId) -> Result<PathBuf, PreviewSourceError> {
         validate_asset_id(asset_id)?;
-        let locations = self
-            .locations
+        let location = self
+            .state
             .read()
-            .map_err(|_| PreviewSourceError::Failed("asset source lock poisoned".into()))?;
-        let Some(location) = locations.get(asset_id) else {
-            return Err(PreviewSourceError::NotFound);
-        };
+            .map_err(|_| PreviewSourceError::Failed("asset source state lock poisoned".into()))?
+            .locations
+            .get(asset_id)
+            .cloned()
+            .ok_or(PreviewSourceError::NotFound)?;
         let canonical = fs::canonicalize(&location.source_path).map_err(map_revalidation_error)?;
         if (location.volume_identity.is_some() || location.approved_root.is_some())
             && canonical != location.source_path
@@ -205,6 +292,12 @@ impl AssetSourceLocationResolver for PersistentAssetSourceLocationResolver {
             let root = fs::canonicalize(expected_root).map_err(map_revalidation_error)?;
             if root != expected_root {
                 return Err(PreviewSourceError::Unavailable);
+            }
+            let state = self.state.read().map_err(|_| {
+                PreviewSourceError::Failed("asset source state lock poisoned".into())
+            })?;
+            if !state.approved_roots.contains(&root) {
+                return Err(PreviewSourceError::PermissionDenied);
             }
             ensure_path_is_within_root(&canonical, &root)?;
         }
@@ -331,6 +424,26 @@ fn canonical_approved_root(path: &Path) -> Result<PathBuf, PreviewSourceError> {
         ));
     }
     Ok(root)
+}
+
+fn canonical_root_for_removal(path: &Path) -> Result<PathBuf, PreviewSourceError> {
+    if path.exists() {
+        return canonical_approved_root(path);
+    }
+    if path.is_absolute() {
+        Ok(path.to_path_buf())
+    } else {
+        std::env::current_dir()
+            .map(|current| current.join(path))
+            .map_err(|_| PreviewSourceError::Unavailable)
+    }
+}
+
+fn root_strings(roots: &BTreeSet<PathBuf>) -> Vec<String> {
+    roots
+        .iter()
+        .map(|root| root.to_string_lossy().into_owned())
+        .collect()
 }
 
 fn ensure_path_is_within_root(path: &Path, root: &Path) -> Result<(), PreviewSourceError> {
@@ -915,6 +1028,9 @@ mod tests {
             InMemoryAssetSourceLocationStore::default(),
         ));
         resolver
+            .add_approved_root(&approved)
+            .expect("approved root should be registered");
+        resolver
             .register_with_approved_root(
                 AssetId("asset-approved".into()),
                 &inside_file,
@@ -947,6 +1063,62 @@ mod tests {
             resolver.resolve(&AssetId("asset-approved".into())),
             Err(PreviewSourceError::Unavailable)
         );
+        let _ = fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn approved_root_registry_revocation_preserves_source_identity() {
+        let base = std::env::temp_dir().join(format!(
+            "velvet-persistent-preview-approved-registry-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time should be valid")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&base).expect("source root should be writable");
+        let source = base.join("asset.txt");
+        fs::write(&source, "registry").expect("source should be writable");
+
+        let store = Arc::new(InMemoryAssetSourceLocationStore::default());
+        let resolver = PersistentAssetSourceLocationResolver::new(store.clone());
+        let canonical_root = resolver
+            .add_approved_root(&base)
+            .expect("root should be approved");
+        resolver
+            .register_with_approved_root(
+                AssetId("asset-registry".into()),
+                &source,
+                ContentKindId("text/plain".into()),
+                None,
+                Some(&base),
+            )
+            .expect("source should use the approved root");
+        assert_eq!(
+            resolver.approved_roots().expect("roots should load"),
+            vec![canonical_root]
+        );
+        assert!(resolver
+            .remove_approved_root(&base)
+            .expect("root should be removable"));
+        assert_eq!(
+            resolver.resolve(&AssetId("asset-registry".into())),
+            Err(PreviewSourceError::PermissionDenied)
+        );
+        assert!(resolver
+            .add_approved_root(&base)
+            .expect("root should be re-approvable")
+            .is_absolute());
+        assert!(resolver.resolve(&AssetId("asset-registry".into())).is_ok());
+        let restored = PersistentAssetSourceLocationResolver::new(store);
+        assert_eq!(
+            restored
+                .approved_roots()
+                .expect("roots should survive restart")
+                .len(),
+            1
+        );
+
         let _ = fs::remove_dir_all(base);
     }
 }

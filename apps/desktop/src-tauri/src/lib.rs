@@ -562,6 +562,13 @@ impl From<CoreError> for WireError {
                 expected_revision: None,
                 actual_revision: None,
             },
+            CoreError::AssetSourceRoot { message, retryable } => Self {
+                code: "asset-source-root-error".into(),
+                message,
+                retryable,
+                expected_revision: None,
+                actual_revision: None,
+            },
             CoreError::PluginRuntimeFailed {
                 extension_id,
                 message,
@@ -716,6 +723,10 @@ pub enum WireRequest {
         #[serde(rename = "protocolVersion")]
         protocol_version: u16,
     },
+    QueryApprovedSourceRoots {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+    },
     RegisterPlugin {
         #[serde(rename = "protocolVersion")]
         protocol_version: u16,
@@ -796,6 +807,16 @@ pub enum WireRequest {
         content_kind: String,
         #[serde(rename = "approvedRoot", default)]
         approved_root: Option<String>,
+    },
+    AddApprovedSourceRoot {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        root: String,
+    },
+    RemoveApprovedSourceRoot {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        root: String,
     },
     RemovePreviewAsset {
         #[serde(rename = "protocolVersion")]
@@ -1036,6 +1057,12 @@ impl WireRequest {
                     velvet_workbench_protocol::Query::PluginRuntimeRecovery,
                 ))
             }
+            Self::QueryApprovedSourceRoots { protocol_version } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Query(
+                    velvet_workbench_protocol::Query::ApprovedSourceRoots,
+                ))
+            }
             Self::RegisterPlugin {
                 protocol_version,
                 manifest,
@@ -1162,6 +1189,20 @@ impl WireRequest {
                     content_kind,
                     approved_root,
                 }))
+            }
+            Self::AddApprovedSourceRoot {
+                protocol_version,
+                root,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Command(Command::AddApprovedSourceRoot { root }))
+            }
+            Self::RemoveApprovedSourceRoot {
+                protocol_version,
+                root,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Command(Command::RemoveApprovedSourceRoot { root }))
             }
             Self::RemovePreviewAsset {
                 protocol_version,
@@ -1616,6 +1657,9 @@ enum WireResponse {
     Preview {
         preview: WireResolvedPreview,
     },
+    ApprovedSourceRoots {
+        roots: Vec<String>,
+    },
     Accepted,
 }
 
@@ -1679,6 +1723,7 @@ impl WireResponseEnvelope {
             Response::Preview(preview) => WireResponse::Preview {
                 preview: WireResolvedPreview::from(preview),
             },
+            Response::ApprovedSourceRoots(roots) => WireResponse::ApprovedSourceRoots { roots },
             Response::Accepted => WireResponse::Accepted,
         };
 
@@ -4084,6 +4129,78 @@ mod tests {
             Request::Command(Command::RemovePreviewAsset { asset_id })
                 if asset_id.0 == "asset-1"
         ));
+
+        let query_roots: WireRequestEnvelope = serde_json::from_value(serde_json::json!({
+            "protocolVersion": 1,
+            "requestId": 47,
+            "request": {
+                "kind": "query-approved-source-roots",
+                "protocolVersion": 1
+            }
+        }))
+        .expect("approved root query should deserialize");
+        assert!(matches!(
+            query_roots
+                .request
+                .into_core(1)
+                .expect("approved root query should map"),
+            Request::Query(velvet_workbench_protocol::Query::ApprovedSourceRoots)
+        ));
+
+        let add_root: WireRequestEnvelope = serde_json::from_value(serde_json::json!({
+            "protocolVersion": 1,
+            "requestId": 48,
+            "request": {
+                "kind": "add-approved-source-root",
+                "protocolVersion": 1,
+                "root": "/tmp/assets"
+            }
+        }))
+        .expect("approved root add should deserialize");
+        assert!(matches!(
+            add_root
+                .request
+                .into_core(1)
+                .expect("approved root add should map"),
+            Request::Command(Command::AddApprovedSourceRoot { root }) if root == "/tmp/assets"
+        ));
+
+        let remove_root: WireRequestEnvelope = serde_json::from_value(serde_json::json!({
+            "protocolVersion": 1,
+            "requestId": 49,
+            "request": {
+                "kind": "remove-approved-source-root",
+                "protocolVersion": 1,
+                "root": "/tmp/assets"
+            }
+        }))
+        .expect("approved root removal should deserialize");
+        assert!(matches!(
+            remove_root
+                .request
+                .into_core(1)
+                .expect("approved root removal should map"),
+            Request::Command(Command::RemoveApprovedSourceRoot { root }) if root == "/tmp/assets"
+        ));
+
+        let response = WireResponseEnvelope::from_core(
+            velvet_workbench_protocol::ResponseEnvelope {
+                protocol_version: 1,
+                request_id: velvet_workbench_protocol::RequestId(50),
+                response: Response::ApprovedSourceRoots(vec!["/tmp/assets".into()]),
+            },
+        );
+        assert_eq!(
+            serde_json::to_value(response).expect("approved root response should serialize"),
+            serde_json::json!({
+                "protocolVersion": 1,
+                "requestId": 50,
+                "response": {
+                    "kind": "approved-source-roots",
+                    "roots": ["/tmp/assets"]
+                }
+            })
+        );
     }
 
     #[test]
@@ -4222,6 +4339,18 @@ mod tests {
         assert_eq!(error.code, "asset-source-error");
         assert!(!error.retryable);
         assert!(error.message.contains("asset-1"));
+        assert!(!error.message.contains("/tmp"));
+    }
+
+    #[test]
+    fn wire_asset_source_root_errors_are_typed_and_path_free() {
+        let error = WireError::from(CoreError::AssetSourceRoot {
+            message: "approved source root access was denied".into(),
+            retryable: false,
+        });
+
+        assert_eq!(error.code, "asset-source-root-error");
+        assert!(!error.retryable);
         assert!(!error.message.contains("/tmp"));
     }
 

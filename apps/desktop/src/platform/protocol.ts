@@ -192,6 +192,7 @@ export type CoreRequest =
       readonly extensionId: string;
     }
   | { readonly protocolVersion: ProtocolVersion; readonly kind: 'query-plugin-runtime-recovery' }
+  | { readonly protocolVersion: ProtocolVersion; readonly kind: 'query-approved-source-roots' }
   | {
       readonly protocolVersion: ProtocolVersion;
       readonly kind: 'register-plugin';
@@ -293,6 +294,16 @@ export type CoreRequest =
       readonly contentKind: string;
       /** Canonical directory boundary enforced by the Rust source owner. */
       readonly approvedRoot?: string;
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'add-approved-source-root';
+      readonly root: string;
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'remove-approved-source-root';
+      readonly root: string;
     }
   | {
       readonly protocolVersion: ProtocolVersion;
@@ -399,6 +410,7 @@ export type CoreResponse =
       readonly kind: 'plugin-runtime-recovery';
       readonly recoveries: readonly CorePluginRuntimeRecovery[];
     }
+  | { readonly kind: 'approved-source-roots'; readonly roots: readonly string[] }
   | { readonly kind: 'job'; readonly job: CoreJobSnapshot }
   | { readonly kind: 'jobs'; readonly jobs: readonly CoreJobSnapshot[] }
   | { readonly kind: 'snapshot'; readonly snapshot: CoreAuthoritativeSnapshot }

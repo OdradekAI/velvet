@@ -747,6 +747,12 @@ pub enum Command {
         content_kind: String,
         approved_root: Option<String>,
     },
+    AddApprovedSourceRoot {
+        root: String,
+    },
+    RemoveApprovedSourceRoot {
+        root: String,
+    },
     RemovePreviewAsset {
         asset_id: AssetId,
     },
@@ -819,6 +825,7 @@ pub enum Query {
         intent: PreviewIntent,
         surface: PreviewSurface,
     },
+    ApprovedSourceRoots,
     PluginInstallRecoveries,
     PluginInstallRecoveryLog,
     PluginStorageRecovery {
@@ -855,6 +862,7 @@ pub enum Response {
     Job(JobSnapshot),
     Jobs(Vec<JobSnapshot>),
     Preview(ResolvedPreview),
+    ApprovedSourceRoots(Vec<String>),
     Snapshot(AuthoritativeSnapshot),
     RequestOutcome(RequestOutcome),
     Accepted,
@@ -959,6 +967,10 @@ pub enum CoreError {
     },
     AssetSource {
         asset_id: String,
+        message: String,
+        retryable: bool,
+    },
+    AssetSourceRoot {
         message: String,
         retryable: bool,
     },

@@ -36,6 +36,10 @@ export function createDesktopApp(core: CoreTransport): DesktopApp {
       await workbench.recovery.load();
       const layout = await workbench.layout.load();
       await workbench.localization.loadFromCore(core);
+      // Source-root policy is optional startup state. A corrupt or unavailable
+      // allow-list must leave the Workbench usable so the recovery/settings UI
+      // can offer a retry instead of turning policy storage into a boot gate.
+      await workbench.sourceRoots.load().catch(() => undefined);
       return layout;
     },
     async dispose() {

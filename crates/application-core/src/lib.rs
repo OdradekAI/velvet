@@ -842,6 +842,26 @@ impl ApplicationCore {
         self.preview_locations.remove(asset_id)
     }
 
+    pub fn approved_source_roots(
+        &self,
+    ) -> Result<Vec<std::path::PathBuf>, velvet_preview_core::PreviewSourceError> {
+        self.preview_locations.approved_roots()
+    }
+
+    pub fn add_approved_source_root(
+        &self,
+        root: impl AsRef<std::path::Path>,
+    ) -> Result<std::path::PathBuf, velvet_preview_core::PreviewSourceError> {
+        self.preview_locations.add_approved_root(root)
+    }
+
+    pub fn remove_approved_source_root(
+        &self,
+        root: impl AsRef<std::path::Path>,
+    ) -> Result<bool, velvet_preview_core::PreviewSourceError> {
+        self.preview_locations.remove_approved_root(root)
+    }
+
     pub fn preview_asset_registration(
         &self,
         asset_id: &AssetId,
@@ -1714,6 +1734,14 @@ impl ApplicationCore {
                 .remove_preview_asset(&asset_id)
                 .map(|_| Response::Accepted)
                 .map_err(|error| preview_source_error(&asset_id, error)),
+            Request::Command(Command::AddApprovedSourceRoot { root }) => self
+                .add_approved_source_root(&root)
+                .map(|_| Response::Accepted)
+                .map_err(approved_source_root_error),
+            Request::Command(Command::RemoveApprovedSourceRoot { root }) => self
+                .remove_approved_source_root(&root)
+                .map(|_| Response::Accepted)
+                .map_err(approved_source_root_error),
             Request::Command(Command::InvokePluginCommand {
                 extension_id,
                 command_id,
@@ -1868,6 +1896,17 @@ impl ApplicationCore {
                 .map(Response::Preview)
                 .map_err(|error| CoreError::InvalidCommand(format!("{error:?}")))
             }
+            Request::Query(Query::ApprovedSourceRoots) => self
+                .approved_source_roots()
+                .map(|roots| {
+                    Response::ApprovedSourceRoots(
+                        roots
+                            .into_iter()
+                            .map(|root| root.to_string_lossy().into_owned())
+                            .collect(),
+                    )
+                })
+                .map_err(approved_source_root_error),
         }
     }
 
@@ -2434,6 +2473,19 @@ fn preview_source_error(asset_id: &AssetId, error: PreviewSourceError) -> CoreEr
         message,
         retryable,
     }
+}
+
+fn approved_source_root_error(error: PreviewSourceError) -> CoreError {
+    let retryable = matches!(error, PreviewSourceError::Unavailable);
+    let message = match error {
+        PreviewSourceError::Unavailable => "approved source root is unavailable".into(),
+        PreviewSourceError::NotFound => "approved source root was not found".into(),
+        PreviewSourceError::PermissionDenied => "approved source root access was denied".into(),
+        PreviewSourceError::InvalidRequest(message) | PreviewSourceError::Failed(message) => {
+            message
+        }
+    };
+    CoreError::AssetSourceRoot { message, retryable }
 }
 
 fn plugin_resource_error(
@@ -3382,6 +3434,9 @@ mod tests {
         };
 
         let mut first = build_core();
+        first
+            .add_approved_source_root(source_path.parent().expect("source should have a parent"))
+            .expect("the source root should be approved");
         assert_eq!(
             first
                 .dispatch(Request::Command(Command::RegisterPreviewAsset {
@@ -3417,6 +3472,18 @@ mod tests {
         drop(first);
 
         let mut restarted = build_core();
+        let expected_root =
+            fs::canonicalize(source_path.parent().expect("source should have a parent"))
+                .expect("source root should canonicalize")
+                .to_string_lossy()
+                .into_owned();
+        assert!(matches!(
+            restarted
+                .dispatch(Request::Query(Query::ApprovedSourceRoots))
+                .expect("the approved root query should succeed"),
+            Response::ApprovedSourceRoots(roots)
+                if roots.iter().any(|root| root == &expected_root)
+        ));
         assert!(matches!(
             restarted
                 .dispatch(Request::Query(Query::ResolvePreviewAsset {
@@ -3427,6 +3494,18 @@ mod tests {
                 .expect("the persisted asset should resolve after restart"),
             Response::Preview(_)
         ));
+        restarted
+            .remove_approved_source_root(source_path.parent().expect("source should have a parent"))
+            .expect("the source root should be removable");
+        assert!(matches!(
+            restarted
+                .dispatch(Request::Query(Query::ApprovedSourceRoots))
+                .expect("the approved root query should succeed after revocation"),
+            Response::ApprovedSourceRoots(roots) if roots.is_empty()
+        ));
+        restarted
+            .add_approved_source_root(source_path.parent().expect("source should have a parent"))
+            .expect("the source root should be restorable");
         restarted
             .dispatch(Request::Command(Command::RemovePreviewAsset {
                 asset_id: AssetId("asset-restart".into()),

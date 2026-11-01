@@ -270,16 +270,36 @@ pub struct AssetSourceLocationRecord {
 struct AssetSourceLocationState {
     schema_version: u16,
     locations: Vec<AssetSourceLocationRecord>,
+    #[serde(default)]
+    approved_roots: Vec<String>,
 }
 
 pub trait AssetSourceLocationStore: Send + Sync {
     fn load(&self) -> Result<Vec<AssetSourceLocationRecord>, PersistenceError>;
     fn save(&self, locations: &[AssetSourceLocationRecord]) -> Result<(), PersistenceError>;
+
+    fn load_approved_roots(&self) -> Result<Vec<String>, PersistenceError> {
+        Ok(Vec::new())
+    }
+
+    fn save_approved_roots(&self, _roots: &[String]) -> Result<(), PersistenceError> {
+        Ok(())
+    }
+
+    fn save_state(
+        &self,
+        locations: &[AssetSourceLocationRecord],
+        roots: &[String],
+    ) -> Result<(), PersistenceError> {
+        self.save(locations)?;
+        self.save_approved_roots(roots)
+    }
 }
 
 #[derive(Default)]
 pub struct InMemoryAssetSourceLocationStore {
     locations: std::sync::Mutex<Vec<AssetSourceLocationRecord>>,
+    approved_roots: std::sync::Mutex<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -311,13 +331,92 @@ impl AssetSourceLocationStore for InMemoryAssetSourceLocationStore {
             .map(|mut current| *current = locations.to_vec())
             .map_err(|_| PersistenceError::Unavailable)
     }
+
+    fn load_approved_roots(&self) -> Result<Vec<String>, PersistenceError> {
+        self.approved_roots
+            .lock()
+            .map(|roots| roots.clone())
+            .map_err(|_| PersistenceError::Unavailable)
+    }
+
+    fn save_approved_roots(&self, roots: &[String]) -> Result<(), PersistenceError> {
+        self.approved_roots
+            .lock()
+            .map(|mut current| *current = roots.to_vec())
+            .map_err(|_| PersistenceError::Unavailable)
+    }
+
+    fn save_state(
+        &self,
+        locations: &[AssetSourceLocationRecord],
+        roots: &[String],
+    ) -> Result<(), PersistenceError> {
+        let mut locations_guard = self
+            .locations
+            .lock()
+            .map_err(|_| PersistenceError::Unavailable)?;
+        let mut roots_guard = self
+            .approved_roots
+            .lock()
+            .map_err(|_| PersistenceError::Unavailable)?;
+        *locations_guard = locations.to_vec();
+        *roots_guard = roots.to_vec();
+        Ok(())
+    }
 }
 
 impl AssetSourceLocationStore for JsonFileAssetSourceLocationStore {
     fn load(&self) -> Result<Vec<AssetSourceLocationRecord>, PersistenceError> {
+        Ok(self.load_state()?.locations)
+    }
+
+    fn load_approved_roots(&self) -> Result<Vec<String>, PersistenceError> {
+        Ok(self.load_state()?.approved_roots)
+    }
+
+    fn save(&self, locations: &[AssetSourceLocationRecord]) -> Result<(), PersistenceError> {
+        let roots = self.load_approved_roots()?;
+        self.save_state(locations, &roots)
+    }
+
+    fn save_approved_roots(&self, roots: &[String]) -> Result<(), PersistenceError> {
+        let locations = self.load()?;
+        self.save_state(&locations, roots)
+    }
+
+    fn save_state(
+        &self,
+        locations: &[AssetSourceLocationRecord],
+        roots: &[String],
+    ) -> Result<(), PersistenceError> {
+        if let Some(parent) = self.path.parent() {
+            fs::create_dir_all(parent).map_err(|_| PersistenceError::Unavailable)?;
+        }
+
+        let state = AssetSourceLocationState {
+            schema_version: ASSET_SOURCE_LOCATION_SCHEMA_VERSION,
+            locations: locations.to_vec(),
+            approved_roots: roots.to_vec(),
+        };
+        let bytes =
+            serde_json::to_vec_pretty(&state).map_err(|_| PersistenceError::CorruptState)?;
+        let temporary_path = self.path.with_extension("json.tmp");
+        fs::write(&temporary_path, bytes).map_err(|_| PersistenceError::Unavailable)?;
+        fs::rename(temporary_path, &self.path).map_err(|_| PersistenceError::Unavailable)
+    }
+}
+
+impl JsonFileAssetSourceLocationStore {
+    fn load_state(&self) -> Result<AssetSourceLocationState, PersistenceError> {
         let bytes = match fs::read(&self.path) {
             Ok(bytes) => bytes,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(AssetSourceLocationState {
+                    schema_version: ASSET_SOURCE_LOCATION_SCHEMA_VERSION,
+                    locations: Vec::new(),
+                    approved_roots: Vec::new(),
+                })
+            }
             Err(_) => return Err(PersistenceError::Unavailable),
         };
 
@@ -326,23 +425,7 @@ impl AssetSourceLocationStore for JsonFileAssetSourceLocationStore {
         if state.schema_version != ASSET_SOURCE_LOCATION_SCHEMA_VERSION {
             return Err(PersistenceError::CorruptState);
         }
-        Ok(state.locations)
-    }
-
-    fn save(&self, locations: &[AssetSourceLocationRecord]) -> Result<(), PersistenceError> {
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent).map_err(|_| PersistenceError::Unavailable)?;
-        }
-
-        let state = AssetSourceLocationState {
-            schema_version: ASSET_SOURCE_LOCATION_SCHEMA_VERSION,
-            locations: locations.to_vec(),
-        };
-        let bytes =
-            serde_json::to_vec_pretty(&state).map_err(|_| PersistenceError::CorruptState)?;
-        let temporary_path = self.path.with_extension("json.tmp");
-        fs::write(&temporary_path, bytes).map_err(|_| PersistenceError::Unavailable)?;
-        fs::rename(temporary_path, &self.path).map_err(|_| PersistenceError::Unavailable)
+        Ok(state)
     }
 }
 
@@ -620,6 +703,25 @@ mod tests {
     }
 
     #[test]
+    fn file_store_round_trips_approved_source_roots() {
+        let path = temporary_path("asset-source-roots");
+        let store = JsonFileAssetSourceLocationStore::new(&path);
+        let roots = vec!["/tmp/velvet-approved".into()];
+
+        store
+            .save_state(&[], &roots)
+            .expect("approved roots should be written");
+        assert_eq!(
+            store
+                .load_approved_roots()
+                .expect("approved roots should be readable"),
+            roots
+        );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     fn asset_source_store_loads_legacy_records_without_volume_identity() {
         let path = temporary_path("asset-source-legacy");
         fs::write(
@@ -636,6 +738,10 @@ mod tests {
         assert_eq!(locations[0].asset_id, "asset-legacy");
         assert_eq!(locations[0].volume_identity, None);
         assert_eq!(locations[0].approved_root, None);
+        assert!(store
+            .load_approved_roots()
+            .expect("legacy roots should remain readable")
+            .is_empty());
 
         let _ = fs::remove_file(path);
     }
@@ -648,6 +754,25 @@ mod tests {
         let store = JsonFileAssetSourceLocationStore::new(&path);
 
         assert_eq!(store.load(), Err(PersistenceError::CorruptState));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn asset_source_store_does_not_overwrite_corrupt_state_when_updating_roots() {
+        let path = temporary_path("asset-source-corrupt-roots");
+        let original = br#"{"broken":true}"#;
+        fs::write(&path, original).expect("the corrupt state should be writable");
+        let store = JsonFileAssetSourceLocationStore::new(&path);
+
+        assert_eq!(
+            store.save_approved_roots(&["/tmp/assets".into()]),
+            Err(PersistenceError::CorruptState)
+        );
+        assert_eq!(
+            fs::read(&path).expect("the state should remain readable"),
+            original
+        );
+
         let _ = fs::remove_file(path);
     }
 

@@ -716,23 +716,29 @@ with repair, move-data or export actions; new durable writes are rejected until
 the owner can prove a committed destination.
 
 Rust canonicalizes source paths before registration and records the available
-platform volume identity beside the Asset source location. A registration may
-also carry an `approvedRoot`; Rust canonicalizes it, requires a directory and
-checks that the source remains inside it. The root is persisted with the
-source-owner record so the policy survives restart. Every source read
-revalidates the regular file, canonical path, approved root (when present) and
-volume identity; a missing path, canonical-path replacement or changed volume
-returns retryable `source-unavailable`, while an access denial or root escape
-remains the typed `PermissionDenied` result so the user can repair the policy
-or permissions before retrying. Neither result deletes or rebinds the Asset.
-Replacing a newly registered file with a symlink cannot silently rebind it.
-Registrations without `approvedRoot` are explicit single-file imports and do
-not grant recursive directory access. Archive extraction still rejects
-symlink entries; Windows volume identity and release mount qualification
-remain gates. Removable and network volumes preserve Asset identity when
-disconnected and resume only after volume and path revalidation. Legacy source
-records without a volume identity or approved root remain readable under
-compatibility mode but do not claim strong continuity.
+platform volume identity beside the Asset source location. `ApprovedSourceRoot`
+is a separate user-owned policy set: the host settings seam can list, add or
+revoke canonical directories, and the Rust source owner persists that set with
+the source-location state. A registration may carry an `approvedRoot` only when
+that directory is already in the approved set; Rust checks containment before
+persisting the source. Every source read revalidates the regular file, canonical
+path, approved root (when present) and volume identity; a missing path,
+canonical-path replacement or changed volume returns retryable
+`source-unavailable`, while access denial or root revocation remains typed
+`PermissionDenied`. Neither result deletes or rebinds the Asset. Replacing a
+newly registered file with a symlink cannot silently rebind it. Registrations
+without `approvedRoot` are explicit single-file imports and do not grant
+recursive directory access. Archive extraction still rejects symlink entries;
+Windows volume identity and release mount qualification remain gates. Removable
+and network volumes preserve Asset identity when disconnected and resume only
+after volume and path revalidation. Legacy source records without a volume
+identity or approved root remain readable under compatibility mode but do not
+claim strong continuity. The approved-root list is projected only to the
+host-owned settings surface; it is never exposed to plugins or used as an
+arbitrary filesystem capability. If the combined source-location state is
+corrupt or unavailable, root mutations fail closed and do not replace the
+unreadable file with an empty allow-list; recovery must restore or quarantine
+that state before the settings action can write again.
 
 OS file-watcher notifications are hints, not authoritative mutations. The
 Asset/source owner revalidates path, volume identity and `ContentFingerprint`,
@@ -753,8 +759,9 @@ diagnostics. The router has no filesystem, plugin or command capability and
 does not mutate layout; a workspace must explicitly consume an intent.
 The host consumes an intent only after a layout snapshot exists, activates the
 target workspace, and leaves the intent pending if the workspace handler fails.
-`approvedRoot` is the only recursive path boundary; omitting it never grants
-directory traversal. Native Workbench consumes `open-asset` intents by
+`ApprovedSourceRoot` is the only recursive path boundary; omitting
+`approvedRoot` never grants directory traversal. Native Workbench consumes
+`open-asset` intents by
 selecting the AssetId in the host-owned workspace context. It consumes
 `open-file` intents through the existing typed `register-preview-asset`
 command, generating an activation-scoped AssetId and using a bounded extension
