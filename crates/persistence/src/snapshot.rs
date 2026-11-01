@@ -57,6 +57,13 @@ pub trait StateSnapshotStore: Send + Sync {
         scope: &str,
         generation: u64,
     ) -> Result<Option<StateSnapshot>, SnapshotError>;
+    /// Lists committed generation ids without decoding payloads. Recovery
+    /// uses this to quarantine corrupt or future-schema bytes safely.
+    fn list_committed_generations(
+        &self,
+        owner_id: &str,
+        scope: &str,
+    ) -> Result<Vec<u64>, SnapshotError>;
     fn quarantine(&self, owner_id: &str, scope: &str, generation: u64)
         -> Result<(), SnapshotError>;
 }
@@ -263,6 +270,48 @@ impl StateSnapshotStore for JsonFileStateSnapshotStore {
         Ok(Some(snapshot))
     }
 
+    fn list_committed_generations(
+        &self,
+        owner_id: &str,
+        scope: &str,
+    ) -> Result<Vec<u64>, SnapshotError> {
+        let directory = self.scope_dir(owner_id, scope)?;
+        let entries = match fs::read_dir(&directory) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => {
+                return Err(SnapshotError::Unavailable(format!(
+                    "snapshot directory could not be read: {error}"
+                )))
+            }
+        };
+        let mut generations = Vec::new();
+        for entry in entries {
+            let entry = entry.map_err(|error| {
+                SnapshotError::Unavailable(format!("snapshot entry could not be read: {error}"))
+            })?;
+            let Some(file_name) = entry.file_name().to_str().map(str::to_owned) else {
+                continue;
+            };
+            let Some(generation_text) = file_name.strip_suffix(".snapshot.json") else {
+                continue;
+            };
+            let generation = generation_text.parse::<u64>().map_err(|_| {
+                SnapshotError::Corrupt(format!(
+                    "snapshot filename has an invalid generation: {file_name}"
+                ))
+            })?;
+            if generation == 0 {
+                return Err(SnapshotError::Corrupt(
+                    "snapshot filename contains a zero generation".into(),
+                ));
+            }
+            generations.push(generation);
+        }
+        generations.sort_unstable();
+        Ok(generations)
+    }
+
     fn quarantine(
         &self,
         owner_id: &str,
@@ -390,6 +439,28 @@ impl StateSnapshotStore for InMemoryStateSnapshotStore {
             validate_snapshot(&snapshot, true)?;
             Ok(Some(snapshot))
         })
+    }
+
+    fn list_committed_generations(
+        &self,
+        owner_id: &str,
+        scope: &str,
+    ) -> Result<Vec<u64>, SnapshotError> {
+        let snapshots = self
+            .snapshots
+            .lock()
+            .map_err(|_| SnapshotError::Unavailable("snapshot lock poisoned".into()))?;
+        let mut generations = snapshots
+            .values()
+            .filter(|snapshot| {
+                snapshot.metadata.owner_id == owner_id
+                    && snapshot.metadata.scope == scope
+                    && snapshot.metadata.committed
+            })
+            .map(|snapshot| snapshot.metadata.generation)
+            .collect::<Vec<_>>();
+        generations.sort_unstable();
+        Ok(generations)
     }
 
     fn quarantine(
@@ -548,6 +619,12 @@ mod tests {
         assert_eq!(
             store.load_previous("layout", "workspace").unwrap(),
             Some(snapshot(1, true))
+        );
+        assert_eq!(
+            store
+                .list_committed_generations("layout", "workspace")
+                .unwrap(),
+            vec![1, 2]
         );
         let _ = fs::remove_dir_all(root);
     }

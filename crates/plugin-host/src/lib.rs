@@ -2256,14 +2256,18 @@ impl InMemoryPluginHost {
             }
             Ok(current) => current,
             Err(error) => {
+                let quarantine_generation = storage
+                    .candidate_generations()
+                    .ok()
+                    .and_then(|generations| generations.last().copied());
                 return Ok(ExtensionStorageRecovery {
                     extension_id: id.clone(),
                     status: ExtensionStorageRecoveryStatus::Corrupt,
-                    current_generation: None,
+                    current_generation: quarantine_generation,
                     previous_generation: None,
                     schema_version: Some(storage.schema_version()),
                     previous_schema_version: None,
-                    quarantine_generation: None,
+                    quarantine_generation,
                     reason: Some(storage_recovery_reason(error)),
                 });
             }
@@ -2350,16 +2354,19 @@ impl InMemoryPluginHost {
         generation: u64,
     ) -> Result<(), PluginError> {
         let storage = self.extension_storage(id)?;
-        let current = storage
-            .load()
-            .map_err(|error| self.storage_error(id, "storage-quarantine-failed", error))?;
-        if current.generation != generation {
+        let current_generation = storage
+            .candidate_generations()
+            .map_err(|error| self.storage_error(id, "storage-quarantine-failed", error))?
+            .last()
+            .copied()
+            .unwrap_or(0);
+        if current_generation != generation {
             return Err(self.storage_error(
                 id,
                 "storage-quarantine-failed",
                 ExtensionStorageError::Conflict {
                     expected: generation,
-                    actual: current.generation,
+                    actual: current_generation,
                 },
             ));
         }
@@ -2594,6 +2601,19 @@ impl InMemoryPluginHost {
         })?;
         let mut reports = Vec::with_capacity(leases.len());
         for lease in leases {
+            if matches!(lease.state, RuntimeLeaseState::Quarantined) {
+                if let Some(state) = self.states.get_mut(&lease.extension_id) {
+                    *state = ExtensionState::Failed;
+                }
+                reports.push(RuntimeOrphanReport {
+                    extension_id: lease.extension_id,
+                    runtime_nonce: lease.runtime_nonce,
+                    observation: RuntimeOrphanObservation::IdentityUncertain,
+                    lease_closed: false,
+                    quarantined: true,
+                });
+                continue;
+            }
             let observation = reconciler.observe(&lease);
             let mut lease_closed = false;
             let mut quarantined = false;
@@ -2634,7 +2654,12 @@ impl InMemoryPluginHost {
                         });
                     }
                     Err(error) => {
-                        quarantined = true;
+                        quarantined = store
+                            .quarantine(&lease.extension_id, &lease.runtime_nonce)
+                            .is_ok();
+                        if let Some(state) = self.states.get_mut(&lease.extension_id) {
+                            *state = ExtensionState::Failed;
+                        }
                         self.record_diagnostic(PluginDiagnosticInput {
                             extension_id: lease.extension_id.clone(),
                             kind: PluginDiagnosticKind::Runtime,
@@ -2647,7 +2672,12 @@ impl InMemoryPluginHost {
                     }
                 },
                 RuntimeOrphanObservation::IdentityUncertain => {
-                    quarantined = true;
+                    quarantined = store
+                        .quarantine(&lease.extension_id, &lease.runtime_nonce)
+                        .is_ok();
+                    if let Some(state) = self.states.get_mut(&lease.extension_id) {
+                        *state = ExtensionState::Failed;
+                    }
                     self.record_diagnostic(PluginDiagnosticInput {
                         extension_id: lease.extension_id.clone(),
                         kind: PluginDiagnosticKind::Runtime,
@@ -4667,7 +4697,9 @@ mod tests {
 
     use super::*;
     use velvet_layout_model::WorkbenchZone;
-    use velvet_persistence::{InMemoryStateSnapshotStore, StateSnapshotStore};
+    use velvet_persistence::{
+        InMemoryStateSnapshotStore, JsonFileStateSnapshotStore, StateSnapshotStore,
+    };
     use velvet_plugin_api::{
         ContextAnchor, ContributionDescriptor, ExtensionId, ExtensionStorageDeclaration,
         LocalizationManifest, Permission, PreviewAugmentationSlot, PreviewContributionDescriptor,
@@ -5671,6 +5703,40 @@ mod tests {
             None
         );
         assert_eq!(host.discover()[0].state, ExtensionState::Disabled);
+    }
+
+    #[test]
+    fn corrupt_unknown_storage_generation_can_be_quarantined_by_filename_metadata() {
+        let root = temporary_manifest_dir();
+        let snapshot_dir = root.join("extension.storage.corrupt/storage");
+        fs::create_dir_all(&snapshot_dir).unwrap();
+        fs::write(snapshot_dir.join("7.snapshot.json"), b"future bytes").unwrap();
+
+        let mut host = InMemoryPluginHost::default();
+        host.set_extension_storage_store(Arc::new(JsonFileStateSnapshotStore::new(&root)));
+        let id = ExtensionId("storage.corrupt".into());
+        host.register(ExtensionManifest {
+            id: id.clone(),
+            storage: Some(ExtensionStorageDeclaration {
+                schema_version: 1,
+                quota_bytes: 1024,
+            }),
+            ..ExtensionManifest::default()
+        })
+        .unwrap();
+
+        let projection = host.extension_storage_recovery(&id).unwrap();
+        assert_eq!(projection.status, ExtensionStorageRecoveryStatus::Corrupt);
+        assert_eq!(projection.current_generation, Some(7));
+        assert_eq!(projection.quarantine_generation, Some(7));
+
+        host.quarantine_extension_state(&id, 7).unwrap();
+        assert_eq!(
+            host.extension_storage_recovery(&id).unwrap().status,
+            ExtensionStorageRecoveryStatus::Empty
+        );
+        assert!(snapshot_dir.join("7.quarantine.json").exists());
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -7156,7 +7222,7 @@ mod tests {
     }
 
     #[test]
-    fn uncertain_orphan_never_terminates_or_closes_its_lease() {
+    fn uncertain_orphan_is_quarantined_without_termination() {
         let id = ExtensionId("uncertain.plugin".into());
         let store = Arc::new(InMemoryRuntimeLeaseStore::default());
         store
@@ -7187,6 +7253,14 @@ mod tests {
                 .len(),
             1
         );
+        assert_eq!(
+            store.leases().unwrap()[0].state,
+            RuntimeLeaseState::Quarantined
+        );
+        let second_reports = host
+            .reconcile_runtime_orphans()
+            .expect("a quarantined orphan should remain inert");
+        assert!(second_reports[0].quarantined);
         assert!(host
             .drain_diagnostics()
             .iter()

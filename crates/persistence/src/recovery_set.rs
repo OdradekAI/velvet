@@ -750,6 +750,14 @@ mod tests {
             self.inner.load_generation(owner_id, scope, generation)
         }
 
+        fn list_committed_generations(
+            &self,
+            owner_id: &str,
+            scope: &str,
+        ) -> Result<Vec<u64>, SnapshotError> {
+            self.inner.list_committed_generations(owner_id, scope)
+        }
+
         fn quarantine(
             &self,
             owner_id: &str,

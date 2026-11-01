@@ -131,8 +131,14 @@ user-initiated export of a bounded `RecoveryDiagnosticBundle` are enabled
 through typed host commands; optional-state reset still waits for a separate
 owner contract. The export contains only the recovery projection, a schema and
 timestamp, truncates failure text to a bounded length, and never uploads data.
-A platform-native no-WebView surface and host locale integration remain
-separate gates.
+The Tauri composition also provides a minimal host-native recovery surface
+through the native dialog plugin. Once Tauri host setup has completed, it is
+shown for Safe Mode, orphan runtime evidence and repairable extension storage
+damage, uses no renderer or plugin code, and offers only typed
+restore/quarantine/continue actions. This covers renderer mount failure without
+making a stronger claim about a platform failure that prevents Tauri setup or
+native dialog initialization; host locale integration, platform WebView-init
+probes and a richer native repair window remain separate gates.
 
 The persistence crate now provides a framework-independent `StateSnapshotStore`
 primitive. It validates owner and scope segments, bounds payloads, records a
@@ -172,9 +178,9 @@ Runtime failure in an activated optional plugin also records a degraded
 component failure and clears that owner's projections and Jobs; it does not
 increment the core pre-ready Safe Mode counter.
 
-This slice is deliberately narrower than the full decision: native no-WebView
-recovery and crash-capture correlation in the `DiagnosticBundle` are still
-implementation gates. The
+This slice is deliberately narrower than the full decision: crash-capture
+correlation in the `DiagnosticBundle`, host locale integration and a richer
+native repair window are still implementation gates. The
 bundle already carries the bounded persisted plugin/Job history. A successful
 renderer `RecoverySet` restore or quarantine action requests a fresh startup so
 the selected set becomes live; extension-store actions leave only that
@@ -202,7 +208,12 @@ uses an exact-generation compare-and-swap. Both actions stop an active runtime
 first and leave the extension disabled until explicit user activation. Raw
 payloads, paths and core `RecoverySet` members stay inside Rust. Unknown or
 corrupt current generations remain diagnostic evidence rather than being
-silently deleted. Automatic orphan policy remains a separate gate. When an
+silently deleted. Unknown/corrupt extension generations are repaired by
+quarantining the exact generation discovered from the snapshot filename
+metadata; a later restore can use the previous validated generation. Automatic
+orphan policy now persists uncertain identities as `Quarantined` leases so a
+future launch will not repeatedly inspect or kill them; an explicit lifecycle
+action may close the lease after the user has reviewed the evidence. When an
 external extension is activated after an installed upgrade and its committed
 store has an older schema, activation runs `storage.migrate` before exposing
 the extension as ready; a failed migration leaves the extension failed and
@@ -444,7 +455,11 @@ plugin payload or credentials. `PluginHost::reconcile_runtime_orphans`
 consumes a replaceable platform reconciler and applies conservative outcomes:
 confirmed matching identity can be terminated, a missing/different process is
 merely closed, and an uncertain identity is quarantined with no kill. Native
-composition wires the local lease store and the Linux platform reconciler;
+composition wires the local lease store and the Linux platform reconciler. A
+quarantined lease is persisted with `RuntimeLeaseState::Quarantined`, is marked
+failed for the affected extension and is inert on later launches until an
+explicit lifecycle action closes it; this prevents repeated startup probes and
+preserves the evidence without making the process a repeated kill target.
 macOS/Windows identity and termination primitives remain future implementation
 work and degrade to quarantine when unavailable.
 

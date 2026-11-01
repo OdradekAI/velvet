@@ -1,9 +1,11 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_global_shortcut::{Builder as ShortcutBuilder, ShortcutState};
 use velvet_application_core::{ApplicationCore, ApplicationRecoveryStores};
 use velvet_job_system::{JobId, JobProvenance, JobResult, JobSnapshot, JobStatus};
@@ -37,6 +39,21 @@ const KEYBINDING_EVENT_NAME: &str = "velvet_keybinding";
 pub struct AppState {
     pub transport: Mutex<TauriTransport>,
 }
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct NativeRecoveryState {
+    safe_mode: bool,
+    orphan_count: usize,
+    corrupt_extension_states: Vec<(String, u64)>,
+}
+
+impl NativeRecoveryState {
+    fn requires_surface(&self) -> bool {
+        self.safe_mode || self.orphan_count > 0 || !self.corrupt_extension_states.is_empty()
+    }
+}
+
+static NATIVE_RECOVERY_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone)]
 struct TauriEventSink<R: Runtime> {
@@ -1677,20 +1694,27 @@ pub fn run() {
                 ))),
             );
             core.mark_workbench_ready();
-            match core.reconcile_plugin_runtime_orphans() {
-                Ok(reports) if !reports.is_empty() => {
-                    eprintln!(
-                        "Velvet reconciled {} persisted plugin runtime lease(s)",
-                        reports.len()
-                    );
+            let orphan_count = match core.reconcile_plugin_runtime_orphans() {
+                Ok(reports) => {
+                    if !reports.is_empty() {
+                        eprintln!(
+                            "Velvet reconciled {} persisted plugin runtime lease(s)",
+                            reports.len()
+                        );
+                    }
+                    // Only bounded counts cross into the native recovery surface.
+                    reports.len()
                 }
-                Ok(_) => {}
                 Err(error) => {
                     eprintln!("Velvet could not reconcile plugin runtime leases: {error:?}");
+                    0
                 }
-            }
+            };
             if core.in_safe_mode() {
                 eprintln!("Velvet entered Safe Mode; optional plugins remain inactive");
+                if let Err(error) = core.load_plugins_from_directory(&plugin_directory) {
+                    eprintln!("Velvet could not inspect plugin manifests for Safe Mode repair: {error:?}");
+                }
             } else if !core.begin_optional_activation() {
                 eprintln!("Velvet could not enter the optional activation phase");
             } else {
@@ -1715,6 +1739,11 @@ pub fn run() {
                     eprintln!("Velvet could not start a discovered plugin: {error:?}");
                 }
             }
+            let native_recovery = NativeRecoveryState {
+                safe_mode: core.in_safe_mode(),
+                orphan_count,
+                corrupt_extension_states: collect_corrupt_extension_states(&core),
+            };
             core.mark_ready();
             app.manage(AppState {
                 transport: Mutex::new(TauriTransport::with_event_sink(
@@ -1722,6 +1751,7 @@ pub fn run() {
                     sink,
                 )),
             });
+            show_native_recovery_surface(app.handle(), native_recovery);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![velvet_core_request])
@@ -1748,6 +1778,155 @@ pub fn run() {
             }
             _ => {}
         });
+}
+
+fn collect_corrupt_extension_states(core: &ApplicationCore) -> Vec<(String, u64)> {
+    core.discover_plugins()
+        .into_iter()
+        .filter_map(|summary| {
+            let recovery = core
+                .query_plugin_storage_recovery(&summary.id)
+                .ok()?;
+            if recovery.status == velvet_workbench_protocol::PluginStorageRecoveryStatus::Corrupt {
+                recovery
+                    .quarantine_generation
+                    .map(|generation| (summary.id.0, generation))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn dispatch_native_recovery_command<R: Runtime>(
+    app: &AppHandle<R>,
+    command: Command,
+) -> Result<(), String> {
+    let state = app
+        .try_state::<AppState>()
+        .ok_or_else(|| "native recovery state is unavailable".to_owned())?;
+    let transport = state
+        .transport
+        .lock()
+        .map_err(|_| "native recovery core lock is poisoned".to_owned())?;
+    transport
+        .dispatch(
+            RequestId(NATIVE_RECOVERY_REQUEST_ID.fetch_add(1, Ordering::Relaxed)),
+            Request::Command(command),
+        )
+        .map(|_| ())
+        .map_err(|error| format!("{error:?}"))
+}
+
+/// Shows a minimal host-native recovery action surface. It only uses the
+/// platform dialog plugin and typed Core commands, so it remains available
+/// when the normal WebView/renderer cannot mount.
+fn show_native_recovery_surface<R: Runtime>(
+    app: &AppHandle<R>,
+    recovery: NativeRecoveryState,
+) {
+    if !recovery.requires_surface() {
+        return;
+    }
+    let mut details = Vec::new();
+    if recovery.safe_mode {
+        details.push("Velvet started in Safe Mode; core data was left unchanged.".to_owned());
+    }
+    if recovery.orphan_count > 0 {
+        details.push(format!(
+            "{} orphaned plugin runtime lease(s) were processed; uncertain identities were not killed.",
+            recovery.orphan_count
+        ));
+    }
+    if !recovery.corrupt_extension_states.is_empty() {
+        details.push(format!(
+            "{} extension storage generation(s) are corrupt or from an unknown schema.",
+            recovery.corrupt_extension_states.len()
+        ));
+    }
+    let message = details.join("\n\n");
+
+    if recovery.safe_mode {
+        let handle = app.clone();
+        app.dialog()
+            .message(message)
+            .title("Velvet recovery")
+            .kind(MessageDialogKind::Warning)
+            .buttons(MessageDialogButtons::OkCancelCustom(
+                "Restore validated state".into(),
+                "Continue Safe Mode".into(),
+            ))
+            .show(move |restore| {
+                if !restore {
+                    return;
+                }
+                match dispatch_native_recovery_command(&handle, Command::RestoreRecoverySet) {
+                    Ok(()) => handle
+                        .dialog()
+                        .message("The last validated recovery set is selected. Restart Velvet to apply it.")
+                        .title("Recovery staged")
+                        .buttons(MessageDialogButtons::Ok)
+                        .show(|_| {}),
+                    Err(error) => handle
+                        .dialog()
+                        .message(format!("Velvet could not restore the validated state: {error}"))
+                        .title("Recovery unavailable")
+                        .kind(MessageDialogKind::Error)
+                        .buttons(MessageDialogButtons::Ok)
+                        .show(|_| {}),
+                }
+            });
+        return;
+    }
+
+    if !recovery.corrupt_extension_states.is_empty() {
+        let handle = app.clone();
+        let targets = recovery.corrupt_extension_states;
+        app.dialog()
+            .message(message)
+            .title("Extension storage repair")
+            .kind(MessageDialogKind::Warning)
+            .buttons(MessageDialogButtons::OkCancelCustom(
+                "Quarantine damaged state".into(),
+                "Continue".into(),
+            ))
+            .show(move |quarantine| {
+                if !quarantine {
+                    return;
+                }
+                let mut failures = Vec::new();
+                for (extension_id, generation) in targets {
+                    if let Err(error) = dispatch_native_recovery_command(
+                        &handle,
+                        Command::QuarantinePluginState {
+                            extension_id: ExtensionId(extension_id.clone()),
+                            generation,
+                        },
+                    ) {
+                        failures.push(format!("{extension_id}: {error}"));
+                    }
+                }
+                let result = if failures.is_empty() {
+                    "Damaged extension state was quarantined. Restart or explicitly re-enable the extension after inspection.".to_owned()
+                } else {
+                    format!("Some extension state could not be quarantined:\n{}", failures.join("\n"))
+                };
+                handle
+                    .dialog()
+                    .message(result)
+                    .title("Extension storage repair")
+                    .buttons(MessageDialogButtons::Ok)
+                    .show(|_| {});
+            });
+        return;
+    }
+
+    app.dialog()
+        .message(message)
+        .title("Velvet recovery")
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::Ok)
+        .show(|_| {});
 }
 
 fn validate_inner_protocol(outer: u16, inner: u16) -> Result<(), WireError> {
@@ -1868,6 +2047,21 @@ fn extension_state_name(state: &velvet_plugin_api::ExtensionState) -> &'static s
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_recovery_state_requires_a_surface_only_for_repairable_host_failures() {
+        assert!(!NativeRecoveryState::default().requires_surface());
+        assert!(NativeRecoveryState {
+            safe_mode: true,
+            ..NativeRecoveryState::default()
+        }
+        .requires_surface());
+        assert!(NativeRecoveryState {
+            corrupt_extension_states: vec![("sample.reader".into(), 7)],
+            ..NativeRecoveryState::default()
+        }
+        .requires_surface());
+    }
 
     #[test]
     fn wire_plugin_manifest_preserves_extension_storage_declaration() {

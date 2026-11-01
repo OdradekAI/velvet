@@ -18,6 +18,7 @@ pub const MAX_RUNTIME_LEASE_STORE_BYTES: u64 = 256 * 1024;
 pub enum RuntimeLeaseState {
     Starting,
     Running,
+    Quarantined,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -88,6 +89,11 @@ pub trait RuntimeLeaseStore: Send + Sync {
         extension_id: &ExtensionId,
         runtime_nonce: &str,
     ) -> Result<(), RuntimeLeaseError>;
+    fn quarantine(
+        &self,
+        extension_id: &ExtensionId,
+        runtime_nonce: &str,
+    ) -> Result<(), RuntimeLeaseError>;
 }
 
 #[derive(Default)]
@@ -136,6 +142,24 @@ impl RuntimeLeaseStore for InMemoryRuntimeLeaseStore {
                 leases.remove(&(extension_id.clone(), runtime_nonce.to_owned()));
             })
             .map_err(|_| RuntimeLeaseError::Unavailable("lease store lock poisoned".into()))
+    }
+
+    fn quarantine(
+        &self,
+        extension_id: &ExtensionId,
+        runtime_nonce: &str,
+    ) -> Result<(), RuntimeLeaseError> {
+        let mut leases = self
+            .leases
+            .lock()
+            .map_err(|_| RuntimeLeaseError::Unavailable("lease store lock poisoned".into()))?;
+        let Some(lease) = leases.get_mut(&(extension_id.clone(), runtime_nonce.to_owned())) else {
+            return Err(RuntimeLeaseError::Invalid(
+                "runtime lease was not found".into(),
+            ));
+        };
+        lease.state = RuntimeLeaseState::Quarantined;
+        Ok(())
     }
 }
 
@@ -268,6 +292,23 @@ impl RuntimeLeaseStore for JsonFileRuntimeLeaseStore {
         state.leases.retain(|candidate| {
             &candidate.extension_id != extension_id || candidate.runtime_nonce != runtime_nonce
         });
+        self.write_state(&state)
+    }
+
+    fn quarantine(
+        &self,
+        extension_id: &ExtensionId,
+        runtime_nonce: &str,
+    ) -> Result<(), RuntimeLeaseError> {
+        let mut state = self.read_state()?;
+        let Some(lease) = state.leases.iter_mut().find(|candidate| {
+            &candidate.extension_id == extension_id && candidate.runtime_nonce == runtime_nonce
+        }) else {
+            return Err(RuntimeLeaseError::Invalid(
+                "runtime lease was not found".into(),
+            ));
+        };
+        lease.state = RuntimeLeaseState::Quarantined;
         self.write_state(&state)
     }
 }
@@ -498,6 +539,19 @@ mod tests {
             .load()
             .expect("the empty store should load")
             .is_empty());
+
+        let quarantined =
+            RuntimeLease::starting(id.clone(), "1.2.3".into(), None, "nonce-quarantined".into());
+        store
+            .publish(quarantined)
+            .expect("the second lease should be persisted");
+        store
+            .quarantine(&id, "nonce-quarantined")
+            .expect("the lease should be quarantined");
+        assert_eq!(
+            store.load().unwrap()[0].state,
+            RuntimeLeaseState::Quarantined
+        );
         let _ = fs::remove_file(path);
     }
 

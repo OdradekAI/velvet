@@ -156,6 +156,15 @@ impl ExtensionStorage {
             .transpose()
     }
 
+    /// Returns committed generation ids without decoding payloads. This is
+    /// intentionally metadata-only so recovery can quarantine an unknown or
+    /// corrupt current generation before attempting a restore.
+    pub fn candidate_generations(&self) -> Result<Vec<u64>, ExtensionStorageError> {
+        self.snapshots
+            .list_committed_generations(&self.owner_id(), EXTENSION_STORAGE_SCOPE)
+            .map_err(Into::into)
+    }
+
     /// Copies the previous committed generation into a new current generation.
     /// This leaves the old generation intact, so a failed restore cannot erase
     /// the only known-good extension state.
@@ -177,11 +186,14 @@ impl ExtensionStorage {
     }
 
     pub fn quarantine_generation(&self, generation: u64) -> Result<(), ExtensionStorageError> {
-        let current = self.load()?;
-        if current.generation != generation {
+        let generations = self
+            .snapshots
+            .list_committed_generations(&self.owner_id(), EXTENSION_STORAGE_SCOPE)?;
+        let current_generation = generations.last().copied().unwrap_or(0);
+        if current_generation != generation {
             return Err(ExtensionStorageError::Conflict {
                 expected: generation,
-                actual: current.generation,
+                actual: current_generation,
             });
         }
         self.snapshots
