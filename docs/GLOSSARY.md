@@ -163,12 +163,14 @@ path/volume slice；请求本身不直接执行命令或打开文件。
 ## Profile lock
 
 Profile 的单写者记录。当前 alpha 在 Tauri/Core 启动前以原子创建并同步
-`profile.lock`，记录 schema、PID、启动时间、instance nonce 和 Unix socket
-路径。macOS/Linux 的第二实例只通过已验证的 `ActivationRequest` socket 帧向
-主实例转发并等待确认；主实例将请求放入有界 native pending queue，并以事件
-唤醒 renderer，再通过 typed drain command 交付，因此 listener 尚未注册时也不会
-丢失。锁损坏、socket 不可用或确认失败都 fail-closed，不会自动删除锁。Windows
-转发和经过身份验证的 stale-lock 恢复仍是后续平台门槛。
+`profile.lock`，记录 schema、PID、启动时间、instance nonce、平台 process
+start token 和 Unix socket 路径。macOS/Linux 的第二实例只通过已验证的
+`ActivationRequest` socket 帧向主实例转发并等待确认；若 `/proc/<pid>/stat` 或
+`proc_pidinfo` 证明 PID 已消失或已复用，宿主才会 compare-and-remove 后接管。
+主实例将请求放入有界 native pending queue，并以事件唤醒 renderer，再通过 typed
+drain command 交付，因此 listener 尚未注册时也不会丢失。锁损坏、身份检查被拒绝、
+socket 不可用或确认失败都 fail-closed，不会仅凭 PID 删除锁。Windows 转发和
+身份验证仍是后续平台门槛。
 
 ## SourceAvailability
 

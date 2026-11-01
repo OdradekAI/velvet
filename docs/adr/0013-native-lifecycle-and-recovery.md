@@ -699,14 +699,15 @@ the typed `velvet_activation_pending` command after subscription and keeps a
 bounded Workbench queue until a workspace claims the request; this also covers
 an event emitted before the renderer listener exists.
 
-An existing lock with an invalid record, an unavailable socket or an
-unacknowledged frame is fail-closed: the second process reports the owner
-identity when available and exits without deleting the lock or attempting a
-concurrent write. The timestamp and nonce are recorded evidence for the next
-identity-verification slice; this alpha path does not yet perform automatic
-stale-lock takeover. Windows forwarding, verified stale-process recovery,
-canonical path/volume checks and workspace-specific activation routing remain
-release gates. A stale lock is never removed based on PID alone.
+An existing lock is reclaimed only after platform identity verification. Linux
+compares `/proc/<pid>/stat` start time; macOS compares `proc_pidinfo` process
+start time. A matching live identity still forwards the request; an absent or
+reused PID is removed only after the lock record is re-read and its nonce/token
+still match. An invalid record, denied identity inspection, unavailable socket
+or unacknowledged frame is fail-closed: the second process reports the owner
+identity when available and exits without concurrent writes. Windows identity
+verification and forwarding remain release gates. A stale lock is never
+removed based on PID alone.
 
 If the Profile/state volume is read-only or unavailable, the core does not
 silently switch to a fresh writable default. It enters read-only degraded mode

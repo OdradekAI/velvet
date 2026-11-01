@@ -22,7 +22,16 @@ pub struct ProfileLockRecord {
     pub pid: u32,
     pub started_at_ms: u64,
     pub instance_nonce: String,
+    #[serde(default)]
+    pub process_start_token: Option<String>,
     pub socket_path: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LockOwnerState {
+    Alive,
+    Stale,
+    Unknown,
 }
 
 #[derive(Debug)]
@@ -57,6 +66,7 @@ impl ProfileInstanceCoordinator {
             pid: std::process::id(),
             started_at_ms: now_ms(),
             instance_nonce: format!("{}-{}", std::process::id(), now_ms()),
+            process_start_token: process_start_token(std::process::id()),
             socket_path: Some(socket_path.to_string_lossy().into_owned()),
         };
 
@@ -74,10 +84,20 @@ impl ProfileInstanceCoordinator {
             }
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                 let existing = read_record(&lock_path)?;
-                if forward_to_primary(&existing, request).unwrap_or(false) {
-                    Ok(AcquireOutcome::Forwarded)
-                } else {
-                    Ok(AcquireOutcome::Locked(existing))
+                match lock_owner_state(&existing) {
+                    LockOwnerState::Stale => {
+                        if remove_lock_if_same(&lock_path, &existing)? {
+                            return Self::acquire(root, request);
+                        }
+                        Ok(AcquireOutcome::Locked(read_record(&lock_path)?))
+                    }
+                    LockOwnerState::Alive | LockOwnerState::Unknown => {
+                        if forward_to_primary(&existing, request).unwrap_or(false) {
+                            Ok(AcquireOutcome::Forwarded)
+                        } else {
+                            Ok(AcquireOutcome::Locked(existing))
+                        }
+                    }
                 }
             }
             Err(error) => Err(error),
@@ -184,6 +204,109 @@ fn forward_to_primary(record: &ProfileLockRecord, request: &ActivationRequest) -
         }
         Ok(false)
     }
+}
+
+fn lock_owner_state(record: &ProfileLockRecord) -> LockOwnerState {
+    let Some(expected) = record.process_start_token.as_deref() else {
+        return LockOwnerState::Unknown;
+    };
+    match inspect_process_start_token(record.pid) {
+        ProcessObservation::Absent => LockOwnerState::Stale,
+        ProcessObservation::Unknown => LockOwnerState::Unknown,
+        ProcessObservation::Present(actual) if actual == expected => LockOwnerState::Alive,
+        ProcessObservation::Present(_) => LockOwnerState::Stale,
+    }
+}
+
+fn remove_lock_if_same(path: &Path, expected: &ProfileLockRecord) -> io::Result<bool> {
+    match read_record(path) {
+        Ok(actual) if actual == *expected => match fs::remove_file(path) {
+            Ok(()) => Ok(true),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(true),
+            Err(error) => Err(error),
+        },
+        Ok(_) => Ok(false),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(true),
+        Err(error) => Err(error),
+    }
+}
+
+enum ProcessObservation {
+    Absent,
+    Present(String),
+    Unknown,
+}
+
+#[cfg(target_os = "linux")]
+fn inspect_process_start_token(pid: u32) -> ProcessObservation {
+    let path = format!("/proc/{pid}/stat");
+    let contents = match fs::read_to_string(path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return ProcessObservation::Absent;
+        }
+        Err(_) => return ProcessObservation::Unknown,
+    };
+    let Some((_, fields)) = contents.rsplit_once(") ") else {
+        return ProcessObservation::Unknown;
+    };
+    let Some(start_token) = fields.split_whitespace().nth(19) else {
+        return ProcessObservation::Unknown;
+    };
+    ProcessObservation::Present(start_token.to_owned())
+}
+
+#[cfg(target_os = "macos")]
+fn inspect_process_start_token(pid: u32) -> ProcessObservation {
+    let info_size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
+    let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::zeroed();
+    let result = unsafe {
+        libc::proc_pidinfo(
+            pid as libc::c_int,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            info.as_mut_ptr().cast(),
+            info_size,
+        )
+    };
+    if result <= 0 {
+        return if io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
+            ProcessObservation::Absent
+        } else {
+            ProcessObservation::Unknown
+        };
+    }
+    if result < info_size {
+        return ProcessObservation::Unknown;
+    }
+    let info = unsafe { info.assume_init() };
+    ProcessObservation::Present(format!("{}:{}", info.pbi_start_tvsec, info.pbi_start_tvusec))
+}
+
+#[cfg(all(not(target_os = "linux"), not(target_os = "macos")))]
+fn inspect_process_start_token(_pid: u32) -> ProcessObservation {
+    ProcessObservation::Unknown
+}
+
+#[cfg(target_os = "linux")]
+fn process_start_token(pid: u32) -> Option<String> {
+    match inspect_process_start_token(pid) {
+        ProcessObservation::Present(token) => Some(token),
+        ProcessObservation::Absent | ProcessObservation::Unknown => None,
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn process_start_token(pid: u32) -> Option<String> {
+    match inspect_process_start_token(pid) {
+        ProcessObservation::Present(token) => Some(token),
+        ProcessObservation::Absent | ProcessObservation::Unknown => None,
+    }
+}
+
+#[cfg(all(not(target_os = "linux"), not(target_os = "macos")))]
+fn process_start_token(_pid: u32) -> Option<String> {
+    None
 }
 
 fn read_record(path: &Path) -> io::Result<ProfileLockRecord> {
@@ -332,6 +455,61 @@ mod tests {
         let error = ProfileInstanceCoordinator::acquire(&root, &request("velvet://asset/1"))
             .expect_err("malformed lock must fail closed");
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(root.join(LOCK_FILE_NAME).exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn verified_absent_owner_is_recovered_before_acquiring_the_lock() {
+        let root = std::env::temp_dir().join(format!("velvet-profile-lock-stale-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("profile root");
+        let stale = ProfileLockRecord {
+            schema_version: LOCK_SCHEMA_VERSION,
+            pid: u32::MAX,
+            started_at_ms: 1,
+            instance_nonce: "stale-instance".into(),
+            process_start_token: Some("stale-token".into()),
+            socket_path: None,
+        };
+        fs::write(
+            root.join(LOCK_FILE_NAME),
+            serde_json::to_vec(&stale).expect("stale lock json"),
+        )
+        .expect("stale lock");
+        let primary = match ProfileInstanceCoordinator::acquire(&root, &request("velvet://asset/1"))
+            .expect("stale lock recovery")
+        {
+            AcquireOutcome::Primary(primary) => primary,
+            other => panic!("unexpected stale-lock outcome: {other:?}"),
+        };
+        assert_ne!(primary.record().instance_nonce, stale.instance_nonce);
+        drop(primary);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn lock_without_identity_token_remains_fail_closed() {
+        let root = std::env::temp_dir().join(format!("velvet-profile-lock-uncertain-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("profile root");
+        let uncertain = ProfileLockRecord {
+            schema_version: LOCK_SCHEMA_VERSION,
+            pid: u32::MAX,
+            started_at_ms: 1,
+            instance_nonce: "uncertain-instance".into(),
+            process_start_token: None,
+            socket_path: None,
+        };
+        fs::write(
+            root.join(LOCK_FILE_NAME),
+            serde_json::to_vec(&uncertain).expect("uncertain lock json"),
+        )
+        .expect("uncertain lock");
+        let outcome = ProfileInstanceCoordinator::acquire(&root, &request("velvet://asset/1"))
+            .expect("uncertain lock classification");
+        assert!(matches!(outcome, AcquireOutcome::Locked(_)));
         assert!(root.join(LOCK_FILE_NAME).exists());
         let _ = fs::remove_dir_all(root);
     }
