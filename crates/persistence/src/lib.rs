@@ -249,9 +249,9 @@ pub const ASSET_SOURCE_LOCATION_SCHEMA_VERSION: u16 = 1;
 
 /// Storage-facing representation of an application-owned Asset source.
 ///
-/// The persistence adapter stores the path because the application core owns
-/// the source-location policy. It never projects this record to the renderer
-/// or an extension runtime.
+/// The persistence adapter stores the canonical path and optional volume
+/// identity because the application core owns source-location policy. It
+/// never projects this record to the renderer or an extension runtime.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AssetSourceLocationRecord {
@@ -259,6 +259,8 @@ pub struct AssetSourceLocationRecord {
     pub source_path: String,
     pub content_kind: String,
     pub fingerprint: Option<String>,
+    #[serde(default)]
+    pub volume_identity: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -598,6 +600,7 @@ mod tests {
             source_path: "/tmp/asset-1.txt".into(),
             content_kind: "text/plain".into(),
             fingerprint: Some("sha256:asset-1".into()),
+            volume_identity: Some("test-volume".into()),
         }];
 
         store
@@ -609,6 +612,26 @@ mod tests {
                 .expect("asset source locations should be readable"),
             locations
         );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn asset_source_store_loads_legacy_records_without_volume_identity() {
+        let path = temporary_path("asset-source-legacy");
+        fs::write(
+            &path,
+            br#"{"schemaVersion":1,"locations":[{"assetId":"asset-legacy","sourcePath":"/tmp/asset-legacy.txt","contentKind":"text/plain","fingerprint":null}]}"#,
+        )
+        .expect("the legacy asset source state should be writable");
+        let store = JsonFileAssetSourceLocationStore::new(&path);
+
+        let locations = store
+            .load()
+            .expect("legacy asset source records should remain readable");
+        assert_eq!(locations.len(), 1);
+        assert_eq!(locations[0].asset_id, "asset-legacy");
+        assert_eq!(locations[0].volume_identity, None);
 
         let _ = fs::remove_file(path);
     }

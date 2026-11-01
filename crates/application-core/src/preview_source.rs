@@ -4,6 +4,9 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
+
 use velvet_asset_core::{AssetId, ContentFingerprint, ContentKindId};
 use velvet_persistence::{AssetSourceLocationRecord, AssetSourceLocationStore, PersistenceError};
 use velvet_preview_core::{
@@ -43,12 +46,14 @@ pub struct PreviewAssetRegistration {
     pub source_path: PathBuf,
     pub content_kind: ContentKindId,
     pub fingerprint: Option<ContentFingerprint>,
+    pub volume_identity: Option<String>,
 }
 
 struct StoredAssetSourceLocation {
     source_path: PathBuf,
     content_kind: ContentKindId,
     fingerprint: Option<ContentFingerprint>,
+    volume_identity: Option<String>,
 }
 
 /// Rust-owned persistent mapping from opaque Asset identities to local files.
@@ -98,11 +103,13 @@ impl PersistentAssetSourceLocationResolver {
         if !metadata.is_file() {
             return Err(PreviewSourceError::NotFound);
         }
+        let volume_identity = source_volume_identity(&metadata);
 
         let registration = StoredAssetSourceLocation {
             source_path,
             content_kind,
             fingerprint,
+            volume_identity,
         };
         let key = asset_id.clone();
         let mut locations = self
@@ -154,13 +161,31 @@ impl PersistentAssetSourceLocationResolver {
             source_path: location.source_path.clone(),
             content_kind: location.content_kind.clone(),
             fingerprint: location.fingerprint.clone(),
+            volume_identity: location.volume_identity.clone(),
         })
     }
 }
 
 impl AssetSourceLocationResolver for PersistentAssetSourceLocationResolver {
     fn resolve(&self, asset_id: &AssetId) -> Result<PathBuf, PreviewSourceError> {
-        Ok(self.registration(asset_id)?.source_path)
+        validate_asset_id(asset_id)?;
+        let locations = self
+            .locations
+            .read()
+            .map_err(|_| PreviewSourceError::Failed("asset source lock poisoned".into()))?;
+        let Some(location) = locations.get(asset_id) else {
+            return Err(PreviewSourceError::NotFound);
+        };
+        let metadata = fs::metadata(&location.source_path).map_err(map_revalidation_error)?;
+        if !metadata.is_file() {
+            return Err(PreviewSourceError::Unavailable);
+        }
+        if let Some(expected) = location.volume_identity.as_deref() {
+            if source_volume_identity(&metadata).as_deref() != Some(expected) {
+                return Err(PreviewSourceError::Unavailable);
+            }
+        }
+        Ok(location.source_path.clone())
     }
 
     fn content_kind(
@@ -198,6 +223,7 @@ fn record_to_location(
             source_path,
             content_kind,
             fingerprint,
+            volume_identity: record.volume_identity,
         },
     ))
 }
@@ -215,6 +241,7 @@ fn location_records(
                 .fingerprint
                 .as_ref()
                 .map(|fingerprint| fingerprint.0.clone()),
+            volume_identity: location.volume_identity.clone(),
         })
         .collect()
 }
@@ -251,6 +278,31 @@ fn validate_fingerprint(
         ))
     } else {
         Ok(())
+    }
+}
+
+fn source_volume_identity(metadata: &fs::Metadata) -> Option<String> {
+    #[cfg(unix)]
+    {
+        Some(format!("unix-dev:{}", metadata.dev()))
+    }
+    #[cfg(windows)]
+    {
+        let _ = metadata;
+        None
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = metadata;
+        None
+    }
+}
+
+fn map_revalidation_error(error: io::Error) -> PreviewSourceError {
+    match error.kind() {
+        io::ErrorKind::NotFound => PreviewSourceError::Unavailable,
+        io::ErrorKind::PermissionDenied => PreviewSourceError::PermissionDenied,
+        _ => PreviewSourceError::Failed("asset source could not be revalidated".into()),
     }
 }
 
@@ -672,5 +724,71 @@ mod tests {
             resolver.resolve(&AssetId("missing".into())),
             Err(PreviewSourceError::NotFound)
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn disconnected_registered_source_is_unavailable_and_retryable() {
+        let path = std::env::temp_dir().join(format!(
+            "velvet-persistent-preview-disconnect-{}-{}.txt",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time should be valid")
+                .as_nanos()
+        ));
+        fs::write(&path, "persistent preview").expect("test source should be writable");
+
+        let resolver = PersistentAssetSourceLocationResolver::new(Arc::new(
+            InMemoryAssetSourceLocationStore::default(),
+        ));
+        resolver
+            .register(
+                AssetId("asset-disconnected".into()),
+                &path,
+                ContentKindId("text/plain".into()),
+                None,
+            )
+            .expect("the source location should be registered");
+        fs::remove_file(&path).expect("source should be disconnected");
+
+        assert_eq!(
+            resolver.resolve(&AssetId("asset-disconnected".into())),
+            Err(PreviewSourceError::Unavailable)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn volume_identity_mismatch_does_not_rebind_an_asset() {
+        let path = std::env::temp_dir().join(format!(
+            "velvet-persistent-preview-volume-{}-{}.txt",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time should be valid")
+                .as_nanos()
+        ));
+        fs::write(&path, "persistent preview").expect("test source should be writable");
+        let store = Arc::new(InMemoryAssetSourceLocationStore::default());
+        store
+            .save(&[AssetSourceLocationRecord {
+                asset_id: "asset-volume".into(),
+                source_path: fs::canonicalize(&path)
+                    .expect("source path should canonicalize")
+                    .to_string_lossy()
+                    .into_owned(),
+                content_kind: "text/plain".into(),
+                fingerprint: None,
+                volume_identity: Some("unix-dev:other-volume".into()),
+            }])
+            .expect("volume fixture should persist");
+        let resolver = PersistentAssetSourceLocationResolver::new(store);
+
+        assert_eq!(
+            resolver.resolve(&AssetId("asset-volume".into())),
+            Err(PreviewSourceError::Unavailable)
+        );
+        let _ = fs::remove_file(path);
     }
 }

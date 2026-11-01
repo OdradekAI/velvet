@@ -175,7 +175,12 @@ socket 不可用或确认失败都 fail-closed，不会仅凭 PID 删除锁。Wi
 
 ## SourceAvailability
 
-Asset source 当前是否可访问的 Rust 投影。移动硬盘或网络盘断开时，AssetId、元数据和 source registration 保留，SourceAvailability 进入 degraded；路径和卷身份重新校验后才恢复 Preview 或 Job。
+Asset source 当前是否可访问的 Rust 投影。注册时 source owner 在支持的平台记录
+volume identity；移动硬盘或网络盘断开、卷身份变化时，AssetId、元数据和 source
+registration 保留，SourceAvailability 进入 degraded，并返回 retryable
+`source-unavailable`；访问权限不足则保留 typed `PermissionDenied`，便于用户先
+修复权限再重试。路径和卷身份重新校验后才恢复 Preview 或 Job。旧记录没有 volume
+identity 时只提供兼容性读取，不宣称卷连续性。
 
 ## DiagnosticBundle
 

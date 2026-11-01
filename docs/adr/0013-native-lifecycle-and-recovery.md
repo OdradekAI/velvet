@@ -715,12 +715,19 @@ when the last validated state is available, otherwise opens `RecoverySurface`
 with repair, move-data or export actions; new durable writes are rejected until
 the owner can prove a committed destination.
 
-Rust canonicalizes source paths before registration. Symlinks are allowed only
-inside approved roots with loop/escape detection, and archive extraction
-rejects symlink entries. Removable and network volumes preserve Asset identity
-when disconnected; source operations return typed `source-unavailable` and
-resume only after volume and path revalidation. Temporary absence never
-deletes a source registration.
+Rust canonicalizes source paths before registration and records the available
+platform volume identity beside the Asset source location. Every source read
+revalidates the regular file and, when recorded, the volume identity; a
+missing path or changed volume returns retryable `source-unavailable`, while
+an access denial remains the typed `PermissionDenied` result so the user can
+repair permissions before retrying. Neither result deletes or rebinds the
+Asset. Symlinks are
+allowed only inside approved roots with loop/escape detection, and archive
+extraction rejects symlink entries; approved-root policy and Windows volume
+identity remain release gates. Removable and network volumes preserve Asset
+identity when disconnected and resume only after volume and path
+revalidation. Legacy source records without a volume identity remain readable
+under compatibility mode but do not claim strong volume continuity.
 
 OS file-watcher notifications are hints, not authoritative mutations. The
 Asset/source owner revalidates path, volume identity and `ContentFingerprint`,
