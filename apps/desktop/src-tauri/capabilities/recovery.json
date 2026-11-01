@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "recovery-capability",
+  "description": "Host-only capability set reserved for a future in-process recovery window",
+  "windows": ["recovery"],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten"
+  ]
+}

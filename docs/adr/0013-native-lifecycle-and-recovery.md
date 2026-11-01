@@ -518,15 +518,21 @@ The native platform boundary is an adapter. It decodes OS events and invokes
 typed `CoreTransport` requests; Rust owns source identity, Profile locking,
 activation validation and durable Session/Window consequences.
 
-Tauri capabilities are deny-by-default and scoped per window/webview. Native
-commands are an allow-listed typed surface; there is no generic filesystem,
-shell, URL opener or process-execution command. `tauri-plugin-fs`, shell and
-opener capabilities may be used only through the smallest declared scope, and
-Rust repeats path, scheme and argument validation because ACL configuration is
-not a substitute for safe domain code. `RecoverySurface` runs with an even
-narrower capability set and cannot activate a plugin or execute an arbitrary
-command. External-link actions use an explicit scheme/domain policy and user
-confirmation; deep-link payloads still pass through `ActivationRequest`.
+Tauri capabilities are deny-by-default and scoped per window/webview. The main
+window no longer receives `core:default`; its manifest lists only event
+subscription, the explicitly required child-WebView operations, dialogs and
+registered shortcuts. There is no generic filesystem, shell, URL opener or
+process-execution command. `tauri-plugin-fs`, shell and opener capabilities may
+be used only through the smallest declared scope, and Rust repeats path, scheme
+and argument validation because ACL configuration is not a substitute for safe
+domain code. The standalone `RecoverySurface` helper does not create a Tauri
+window or request any capability. A reserved `recovery-capability` manifest is
+host-only and grants only event subscription for a future in-process recovery
+window; the current no-WebView helper does not need it. The in-process surface
+can only dispatch the same typed Core commands as the main window and cannot
+activate a plugin or execute an arbitrary command. External-link actions use an explicit
+scheme/domain policy and user confirmation; deep-link payloads still pass
+through `ActivationRequest`.
 
 Velvet uses a versioned Tier A/B support matrix. Tier A includes startup and
 recovery, Rust persistence, WebView rendering, keyboard/IME, accessibility,

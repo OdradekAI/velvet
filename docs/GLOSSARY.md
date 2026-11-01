@@ -96,6 +96,12 @@ WorkbenchApp 在 WorkspaceArea 中呈现的主界面。AppSurface 可以拥有�
 
 由宿主拥有的最小恢复界面。它只在 Workbench 无法安全挂载时出现，用于重试启动、禁用最近失败的可选组件、恢复备份、重置可选状态和导出诊断；它不拥有 Asset、Workspace、Profile 或 Job 的权威数据。WebView 可用时由渲染器呈现；WebView 不可用时由平台宿主提供等价的最小恢复动作。
 
+## Recovery capability
+
+绑定到 `recovery` 窗口的最小 Tauri capability 集合。目前 standalone Native recovery
+helper 不创建 Tauri 窗口，因此不请求该集合；若未来恢复界面在进程内挂载，只允许事件订阅，
+不能获得文件系统、shell、URL、插件或任意进程能力。
+
 ## RecoverySupervisor
 
 宿主拥有的生命周期恢复边界。它负责记录有限的启动、就绪和退出证据，识别异常退出，并把恢复决定交给 `ApplicationCore` 的 Safe Mode 策略；它不拥有 Asset、Workspace、Profile 或 Job 的权威数据，也不执行网络上传或声称从进程内部监督活进程。P0 使用进程内实现；只有在自动重启成为已验证需求时，才增加外部实现。崩溃证据由独立的 CrashCaptureAdapter 负责。

@@ -9,6 +9,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 mod crash_capture;
 #[allow(dead_code)]
+mod capability_policy;
+#[allow(dead_code)]
 mod launcher_failure;
 mod native_recovery_window;
 mod platform_probe;
