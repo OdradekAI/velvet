@@ -757,8 +757,9 @@ target workspace, and leaves the intent pending if the workspace handler fails.
 directory traversal. Native Workbench consumes `open-asset` intents by
 selecting the AssetId in the host-owned workspace context. It consumes
 `open-file` intents through the existing typed `register-preview-asset`
-command, generating an activation-scoped AssetId and using conservative
-`application/octet-stream` content classification; Rust revalidates the path
+command, generating an activation-scoped AssetId and using a bounded extension
+content hint with `application/octet-stream` fallback; the hint only selects a
+preview path and is not a permission decision. Rust revalidates the path
 before persistence, then only the AssetId enters workspace context. Windows
 capability checks remain path/volume gates.
 Clipboard, notification, tray and shortcut integrations are capability-scoped

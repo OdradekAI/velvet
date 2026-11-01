@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {
+  contentKindHintForPath,
   routeActivationRequest,
   workspaceRoutingIntentKey,
 } from '/tmp/velvet-plugin-tests/workbench/activation-routing.js';
@@ -48,6 +49,8 @@ assert.equal(
   workspaceRoutingIntentKey(intents[1]),
   'activation-1:1:open-asset:asset-manager:asset/one',
 );
+assert.equal(contentKindHintForPath('/tmp/readme.md'), 'text/markdown');
+assert.equal(contentKindHintForPath('/tmp/unknown.bin'), 'application/octet-stream');
 
 assert.equal(
   routeActivationRequest({
@@ -172,7 +175,7 @@ assert.deepEqual(registerCalls, [{
   kind: 'register-preview-asset',
   assetId: 'activation-request-1-0',
   sourcePath: '/tmp/asset.png',
-  contentKind: 'application/octet-stream',
+  contentKind: 'image/png',
 }]);
 assert.deepEqual(workbench.context.snapshot().selection, [
   { kind: 'asset', id: 'activation-request-1-0' },

@@ -54,6 +54,43 @@ export function workspaceRoutingIntentKey(intent: WorkspaceRoutingIntent): strin
   }
 }
 
+/** Returns a bounded preview hint; Rust remains the source and permission authority. */
+export function contentKindHintForPath(path: string): string {
+  const extension = path.toLowerCase().split('.').pop() ?? '';
+  switch (extension) {
+    case 'json':
+      return 'application/json';
+    case 'xml':
+      return 'application/xml';
+    case 'yaml':
+    case 'yml':
+      return 'application/yaml';
+    case 'toml':
+      return 'application/toml';
+    case 'md':
+      return 'text/markdown';
+    case 'txt':
+    case 'log':
+    case 'csv':
+      return 'text/plain';
+    case 'png':
+      return 'image/png';
+    case 'jpg':
+    case 'jpeg':
+      return 'image/jpeg';
+    case 'gif':
+      return 'image/gif';
+    case 'webp':
+      return 'image/webp';
+    case 'svg':
+      return 'image/svg+xml';
+    case 'pdf':
+      return 'application/pdf';
+    default:
+      return 'application/octet-stream';
+  }
+}
+
 function routeActivationTarget(
   requestId: string,
   target: CoreActivationTarget,

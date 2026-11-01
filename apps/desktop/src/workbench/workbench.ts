@@ -31,6 +31,7 @@ import { BUILTIN_WORKBENCH_APPS } from '../workspaces/index.js';
 import { LocalizationService } from './localization/localization-service.js';
 import { RecoveryClient } from './recovery/recovery-client.js';
 import {
+  contentKindHintForPath,
   routeActivationRequest,
   workspaceRoutingIntentKey,
   type WorkspaceRoutingIntent,
@@ -229,7 +230,7 @@ export class Workbench {
       kind: 'register-preview-asset',
       assetId,
       sourcePath: intent.path,
-      contentKind: 'application/octet-stream',
+      contentKind: contentKindHintForPath(intent.path),
     });
     if (response.kind !== 'accepted') {
       throw new Error(`Asset import returned ${response.kind}`);
