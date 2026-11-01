@@ -7,7 +7,8 @@ mod preview_source;
 mod recovery;
 
 pub use recovery::{
-    RecoveryClock, RecoveryError, RecoverySupervisor, StartupDeadlinePolicy, SystemRecoveryClock,
+    CrashCaptureAdapter, RecoveryClock, RecoveryError, RecoverySupervisor, StartupDeadlinePolicy,
+    SystemRecoveryClock,
 };
 
 pub use preview_source::{
@@ -85,7 +86,7 @@ use velvet_plugin_host::{
     ExtensionStorageRecoveryStatus, InMemoryPluginHost, JsonManifestDiscovery,
     ManifestDiscoveryError, ManifestLoadReport, PluginDiagnosticKind, PluginDiagnosticRecord,
     PluginError, PluginHost, PluginJobHandle, PluginJobInvocation, PluginResourceLoader,
-    PluginRuntime,
+    PluginRuntime, RuntimeCrashEvidence,
 };
 use velvet_preview_core::{
     BuiltinImagePreviewProvider, BuiltinTextPreviewProvider, GenericFallbackProvider,
@@ -94,12 +95,13 @@ use velvet_preview_core::{
     ResolvedPreviewAugmentation,
 };
 use velvet_workbench_protocol::{
-    Command, CoreError, CoreTransport, PluginDiagnosticEvent,
-    PluginDiagnosticKind as WirePluginDiagnosticKind, PluginDisableReason, PluginInstallPreviewDto,
-    PluginProjectionDto, PluginResourceDto, PluginRuntimeRecoveryDto, PluginRuntimeRecoveryState,
-    PluginStorageRecoveryDto, PluginStorageRecoveryStatus, ProfileState, Query, Request,
-    RequestEnvelope, RequestId, Response, ResponseEnvelope, PLUGIN_DIAGNOSTIC_SCHEMA_VERSION,
-    PLUGIN_RESOURCE_SCHEMA_VERSION, PROFILE_SCHEMA_VERSION, PROTOCOL_VERSION,
+    Command, CoreError, CoreTransport, CrashCaptureEvidence, PlatformPreflightEvidence,
+    PluginDiagnosticEvent, PluginDiagnosticKind as WirePluginDiagnosticKind, PluginDisableReason,
+    PluginInstallPreviewDto, PluginProjectionDto, PluginResourceDto, PluginRuntimeRecoveryDto,
+    PluginRuntimeRecoveryState, PluginStorageRecoveryDto, PluginStorageRecoveryStatus,
+    ProfileState, Query, Request, RequestEnvelope, RequestId, Response, ResponseEnvelope,
+    PLUGIN_DIAGNOSTIC_SCHEMA_VERSION, PLUGIN_RESOURCE_SCHEMA_VERSION, PROFILE_SCHEMA_VERSION,
+    PROTOCOL_VERSION,
 };
 
 pub struct ApplicationCore {
@@ -538,6 +540,20 @@ impl ApplicationCore {
         self.recovery.projection()
     }
 
+    pub fn recovery_launch_identity(&self) -> Option<(String, u64)> {
+        self.recovery.launch_identity()
+    }
+
+    pub fn configure_runtime_correlation(
+        &mut self,
+        instance_id: String,
+        attempt_id: u64,
+        crash_receipt_path: Option<std::path::PathBuf>,
+    ) {
+        self.plugins
+            .set_runtime_context(instance_id, attempt_id, crash_receipt_path);
+    }
+
     pub fn restore_recovery_set(&self) -> Result<(), CoreError> {
         let Some(snapshot_store) = self.recovery_snapshots.as_deref() else {
             return Err(CoreError::Recovery(
@@ -672,6 +688,14 @@ impl ApplicationCore {
         message: impl Into<String>,
     ) {
         let _ = self.recovery.record_failure(class, message);
+    }
+
+    pub fn record_platform_preflight(&self, evidence: Vec<PlatformPreflightEvidence>) {
+        let _ = self.recovery.record_platform_preflight(evidence);
+    }
+
+    pub fn record_crash_evidence(&self, evidence: CrashCaptureEvidence) {
+        let _ = self.recovery.record_crash_evidence(evidence);
     }
 
     pub fn record_recovery_failure_for_owner(
@@ -1337,11 +1361,36 @@ impl ApplicationCore {
     }
 
     pub fn drain_plugin_diagnostics(&mut self) -> Vec<PluginDiagnosticEvent> {
+        let runtime_crashes = self.plugins.drain_crash_evidence();
+        for crash in runtime_crashes {
+            self.record_runtime_crash_evidence(crash);
+        }
         let host_records = self.plugins.drain_diagnostics();
         for record in host_records {
             self.enqueue_plugin_diagnostic(plugin_diagnostic_from_record(record));
         }
         self.plugin_diagnostics.drain(..).collect()
+    }
+
+    fn record_runtime_crash_evidence(&mut self, crash: RuntimeCrashEvidence) {
+        let (fallback_correlation_id, fallback_attempt_id) = self
+            .recovery
+            .launch_identity()
+            .unwrap_or_else(|| ("unknown-launch".into(), 0));
+        let _ = self.recovery.record_crash_evidence(CrashCaptureEvidence {
+            schema_version: velvet_workbench_protocol::CRASH_CAPTURE_SCHEMA_VERSION,
+            correlation_id: crash.host_instance_id.unwrap_or(fallback_correlation_id),
+            process_id: crash.process_id.unwrap_or_else(std::process::id),
+            parent_process_id: Some(std::process::id()),
+            attempt_id: crash.launch_attempt_id.unwrap_or(fallback_attempt_id),
+            component: crash.extension_id.0,
+            kind: velvet_workbench_protocol::CrashCaptureKind::Runtime,
+            code: "runtime-crashed".into(),
+            message: crash.message.clone(),
+            runtime_nonce: crash.runtime_nonce,
+            log_tail: Some(crash.message),
+            occurred_at_ms: crash.occurred_at_ms,
+        });
     }
 
     fn enqueue_plugin_diagnostic(&mut self, mut event: PluginDiagnosticEvent) {

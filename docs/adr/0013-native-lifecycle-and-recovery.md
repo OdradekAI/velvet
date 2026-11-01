@@ -87,12 +87,14 @@ defaults merely because its own evidence store is damaged.
 
 Crash evidence is a separate `CrashCaptureAdapter`. It may record a platform
 exception code, signal, minidump reference or OOM classification when the
-platform provides it, but it never uploads data or decides Safe Mode. An
-out-of-process `RecoverySupervisor` implementation may be added later when a
-supported platform or product requirement proves that automatic relaunch is
-necessary. A future helper may host one or both adapters, owns no business
-state, and falls back to the in-process journal if unavailable. Neither helper
-is a P0 packaged component.
+platform provides it, but it never uploads data or decides Safe Mode. The
+adapter correlates evidence with a launch `instanceId`, `attemptId`, process
+identity and optional runtime nonce. Native composition consumes bounded local
+receipts once and stores them in the lifecycle journal; an external launcher or
+platform crash handler may append the same typed receipt file without gaining
+access to business state. An out-of-process `RecoverySupervisor` implementation
+may be added later when a supported platform or product requirement proves that
+automatic relaunch is necessary.
 
 ### Alpha implementation slice
 
@@ -133,18 +135,25 @@ owner contract. The export contains only the recovery projection, a schema and
 timestamp, truncates failure text to a bounded length, and never uploads data.
 The Tauri composition also provides a minimal host-native recovery surface
 through the native dialog plugin. Once Tauri host setup has completed, it is
-shown for Safe Mode, orphan runtime evidence and repairable extension storage
-damage, uses no renderer or plugin code, and offers only typed
+shown for Safe Mode, orphan runtime evidence, platform evidence and repairable
+extension storage damage, uses no renderer or plugin code, and offers only typed
 restore/quarantine/close-evidence/continue actions. Its copy follows the
 Rust-owned Profile locale with a bounded English fallback. The repair flow is
 sequenced so a user can quarantine damaged extension state, then explicitly
 forget a quarantined runtime lease; forgetting evidence never terminates a
-process. Tauri build/setup failures and panics from the run loop are caught by
-the host, written as a bounded startup-failure marker and consumed into the
-next launch's typed recovery projection. A platform failure before Tauri can
-run any code still depends on the OS launcher or release wrapper; platform
-specific WebView/GPU probes and a richer standalone native repair window remain
-separate gates.
+process.
+
+Before constructing the Tauri builder, the host runs a platform preflight probe
+for WebView and GPU prerequisites. WebView unavailability starts the same
+installed executable in `--velvet-recovery-window` helper mode. That mode is a
+separate process, does not construct Tauri or a WebView, presents only fixed
+typed recovery actions through the OS-native dialog facility, and writes a
+bounded intent file consumed by the next Core startup. GPU degradation is
+recorded and permits software fallback; an unverified capability is not treated
+as a fatal failure. Tauri build/setup failures and panics from the run loop are
+caught by the host, written as a bounded startup-failure marker and consumed
+into the next launch's typed recovery projection. A failure before the binary
+can execute still depends on the OS launcher or release wrapper.
 
 The persistence crate now provides a framework-independent `StateSnapshotStore`
 primitive. It validates owner and scope segments, bounds payloads, records a
@@ -184,10 +193,10 @@ Runtime failure in an activated optional plugin also records a degraded
 component failure and clears that owner's projections and Jobs; it does not
 increment the core pre-ready Safe Mode counter.
 
-This slice is deliberately narrower than the full decision: crash-capture
-correlation in the `DiagnosticBundle`, platform-specific WebView/GPU probes
-and a richer standalone native repair window are still implementation gates. The
-bundle already carries the bounded persisted plugin/Job history. A successful
+This slice is deliberately narrower than the full decision: platform-specific
+crash dump/minidump attachment and richer multi-page native repair UX remain
+release qualification work. The bundle now carries bounded crash evidence,
+cross-process correlation and persisted plugin/Job history. A successful
 renderer `RecoverySet` restore or quarantine action requests a fresh startup so
 the selected set becomes live; extension-store actions leave only that
 extension disabled and do not restart the core.
@@ -236,8 +245,9 @@ user-initiated diagnostic bundle; `tauri-adapter` forwards
 `PluginDiagnosticEvent` without owning retention. A corrupt or unavailable
 diagnostic store marks observability degraded but never blocks Core startup.
 This makes one extension's failure observable and recoverable while leaving
-other extensions and Core available. Native crash capture and cross-process
-correlation remain separate gates.
+other extensions and Core available. Native crash capture is consumed through
+the separate local receipt adapter; missing platform dump support degrades to
+exit/signal, phase, process and bounded log evidence.
 Optional plugin activation is recorded as a degraded component failure and does
 not block the core-ready checkpoint. The file journal is an evidence
 store, not yet a replacement for owner snapshots or a proof that writes are
@@ -517,10 +527,10 @@ The Tauri composition catches builder/setup errors and run-loop panics instead
 of allowing an initialization `expect` to become an unclassified process
 failure. It stores a bounded marker beside the recovery journal and consumes it
 on the next successful setup as `platform-initialization`; the marker contains
-phase and bounded error text, never arbitrary command or plugin input. This
-detects failures observable by the Tauri process. A WebView/GPU failure that
-occurs before Tauri executes application code still requires a platform probe or
-launcher wrapper, and remains a release qualification seam.
+phase, bounded error text and preflight evidence, never arbitrary command or
+plugin input. The preflight probe runs before the Tauri builder and routes a
+fatal WebView result to the standalone native recovery helper. A failure before
+the binary can execute still requires a platform launcher or release wrapper.
 
 A Profile has one active writer. Multiple windows share one `ApplicationCore`
 and keep separate Session/Window restoration hints. A second process forwards
@@ -705,7 +715,8 @@ Positive:
   creating a global backup database.
 - Migration failures preserve the previous state and avoid silent data loss.
 - Derived data can be discarded and recomputed without blocking core recovery.
-- An external helper is not part of the default process or packaging topology.
+- A standalone recovery process reuses the signed application binary and does
+  not add a second packaged supervisor or business-state owner.
 - The recovery contract does not depend on a WebView being healthy, because the
   host can fall back to a minimal native recovery action.
 - Signed release metadata and paired application/data generations make update
@@ -721,8 +732,9 @@ Costs:
   writes and failed validation.
 - Release engineering must maintain signing keys, channel manifests, old
   package retention and platform-specific installer rollback paths.
-- Automatic relaunch and native crash capture remain platform-specific work,
-  and crash evidence needs its own privacy and retention policy.
+- Automatic relaunch and platform dump/minidump attachment remain
+  platform-specific work, and crash evidence needs its own privacy and
+  retention policy.
 
 ## Alternatives considered
 

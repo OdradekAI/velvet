@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 #[cfg(unix)]
@@ -151,6 +151,9 @@ pub enum RuntimeLaunchPolicy {
 pub struct RuntimeLaunchContext {
     pub policy: RuntimeLaunchPolicy,
     pub runtime_nonce: Option<String>,
+    pub host_instance_id: Option<String>,
+    pub launch_attempt_id: Option<u64>,
+    pub crash_receipt_path: Option<PathBuf>,
 }
 
 impl RuntimeLaunchContext {
@@ -168,11 +171,29 @@ impl RuntimeLaunchContext {
                 allowed_programs: allowed_programs.into_iter().map(Into::into).collect(),
             },
             runtime_nonce: None,
+            host_instance_id: None,
+            launch_attempt_id: None,
+            crash_receipt_path: None,
         }
     }
 
     pub fn with_runtime_nonce(mut self, runtime_nonce: impl Into<String>) -> Self {
         self.runtime_nonce = Some(runtime_nonce.into());
+        self
+    }
+
+    pub fn with_host_context(
+        mut self,
+        host_instance_id: impl Into<String>,
+        launch_attempt_id: u64,
+    ) -> Self {
+        self.host_instance_id = Some(host_instance_id.into());
+        self.launch_attempt_id = Some(launch_attempt_id);
+        self
+    }
+
+    pub fn with_crash_receipt_path(mut self, path: impl Into<PathBuf>) -> Self {
+        self.crash_receipt_path = Some(path.into());
         self
     }
 }
@@ -261,6 +282,17 @@ pub struct PluginDiagnosticInput {
     pub job_id: Option<String>,
     pub attempt: Option<u32>,
     pub retryable: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RuntimeCrashEvidence {
+    pub extension_id: ExtensionId,
+    pub runtime_nonce: Option<String>,
+    pub process_id: Option<u32>,
+    pub host_instance_id: Option<String>,
+    pub launch_attempt_id: Option<u64>,
+    pub message: String,
+    pub occurred_at_ms: u64,
 }
 
 impl Default for PluginDiagnosticSink {
@@ -1055,6 +1087,15 @@ impl PluginRuntime for ProcessPluginRuntime {
             .stderr(Stdio::piped());
         if let Some(runtime_nonce) = &context.runtime_nonce {
             command.env("VELVET_RUNTIME_LEASE_ID", runtime_nonce);
+        }
+        if let Some(host_instance_id) = &context.host_instance_id {
+            command.env("VELVET_HOST_INSTANCE_ID", host_instance_id);
+        }
+        if let Some(launch_attempt_id) = context.launch_attempt_id {
+            command.env("VELVET_LAUNCH_ATTEMPT_ID", launch_attempt_id.to_string());
+        }
+        if let Some(crash_receipt_path) = &context.crash_receipt_path {
+            command.env("VELVET_CRASH_RECEIPT_PATH", crash_receipt_path);
         }
         if let Some(package_root) = package_root {
             command.current_dir(package_root);
@@ -1966,10 +2007,21 @@ pub trait PluginHost {
         extension_id: &ExtensionId,
         runtime_nonce: &str,
     ) -> Result<(), PluginError>;
+    fn set_runtime_context(
+        &mut self,
+        host_instance_id: String,
+        launch_attempt_id: u64,
+        crash_receipt_path: Option<PathBuf>,
+    ) {
+        let _ = (host_instance_id, launch_attempt_id, crash_receipt_path);
+    }
     fn reconcile_runtime_orphans(&mut self) -> Result<Vec<RuntimeOrphanReport>, PluginError> {
         Ok(Vec::new())
     }
     fn drain_diagnostics(&mut self) -> Vec<PluginDiagnosticRecord>;
+    fn drain_crash_evidence(&mut self) -> Vec<RuntimeCrashEvidence> {
+        Vec::new()
+    }
 }
 
 pub struct InMemoryPluginHost {
@@ -1980,6 +2032,9 @@ pub struct InMemoryPluginHost {
     processes: BTreeMap<ExtensionId, Arc<Mutex<Box<dyn RuntimeProcess>>>>,
     runtime_nonces: BTreeMap<ExtensionId, String>,
     runtime: Box<dyn PluginRuntime>,
+    host_instance_id: Option<String>,
+    launch_attempt_id: Option<u64>,
+    crash_receipt_path: Option<PathBuf>,
     host_api: VersionRange,
     apps: BTreeMap<String, VersionRange>,
     pending_installs: BTreeMap<ExtensionId, InstallBackup>,
@@ -1987,6 +2042,7 @@ pub struct InMemoryPluginHost {
     runtime_leases: Option<Arc<dyn RuntimeLeaseStore>>,
     orphan_reconciler: Option<Arc<dyn RuntimeOrphanReconciler>>,
     diagnostics: Arc<Mutex<PluginDiagnosticSink>>,
+    crash_evidence: VecDeque<RuntimeCrashEvidence>,
 }
 
 struct InstallBackup {
@@ -2015,6 +2071,9 @@ impl Default for InMemoryPluginHost {
             processes: BTreeMap::new(),
             runtime_nonces: BTreeMap::new(),
             runtime: Box::new(ProcessPluginRuntime),
+            host_instance_id: None,
+            launch_attempt_id: None,
+            crash_receipt_path: None,
             host_api: VersionRange("1".into()),
             apps,
             pending_installs: BTreeMap::new(),
@@ -2022,6 +2081,7 @@ impl Default for InMemoryPluginHost {
             runtime_leases: None,
             orphan_reconciler: None,
             diagnostics: Arc::new(Mutex::new(PluginDiagnosticSink::default())),
+            crash_evidence: VecDeque::new(),
         }
     }
 }
@@ -2052,6 +2112,17 @@ impl InMemoryPluginHost {
         self.runtime_leases = Some(leases);
     }
 
+    pub fn set_runtime_context(
+        &mut self,
+        host_instance_id: String,
+        launch_attempt_id: u64,
+        crash_receipt_path: Option<PathBuf>,
+    ) {
+        self.host_instance_id = Some(host_instance_id);
+        self.launch_attempt_id = Some(launch_attempt_id);
+        self.crash_receipt_path = crash_receipt_path;
+    }
+
     pub fn set_runtime_orphan_reconciler(&mut self, reconciler: Arc<dyn RuntimeOrphanReconciler>) {
         self.orphan_reconciler = Some(reconciler);
     }
@@ -2067,6 +2138,42 @@ impl InMemoryPluginHost {
         if let Ok(mut sink) = self.diagnostics.lock() {
             sink.record(input);
         }
+    }
+
+    fn record_runtime_crash_evidence(&mut self, id: &ExtensionId, message: String) {
+        let lease = self
+            .runtime_leases
+            .as_ref()
+            .and_then(|store| store.load().ok())
+            .and_then(|leases| {
+                leases.into_iter().find(|lease| {
+                    &lease.extension_id == id
+                        && self
+                            .runtime_nonces
+                            .get(id)
+                            .is_some_and(|nonce| nonce == &lease.runtime_nonce)
+                })
+            });
+        if self.crash_evidence.len() == MAX_PLUGIN_DIAGNOSTICS {
+            self.crash_evidence.pop_front();
+        }
+        self.crash_evidence.push_back(RuntimeCrashEvidence {
+            extension_id: id.clone(),
+            runtime_nonce: lease.as_ref().map(|lease| lease.runtime_nonce.clone()),
+            process_id: lease
+                .as_ref()
+                .and_then(|lease| lease.process.as_ref().map(|process| process.pid)),
+            host_instance_id: lease
+                .as_ref()
+                .and_then(|lease| lease.host_instance_id.clone()),
+            launch_attempt_id: lease.as_ref().and_then(|lease| lease.launch_attempt_id),
+            message: sanitize_plugin_diagnostic_message(&message),
+            occurred_at_ms: diagnostic_timestamp_ms(),
+        });
+    }
+
+    pub fn drain_crash_evidence(&mut self) -> Vec<RuntimeCrashEvidence> {
+        self.crash_evidence.drain(..).collect()
     }
 
     pub fn extension_storage(&self, id: &ExtensionId) -> Result<ExtensionStorage, PluginError> {
@@ -3480,6 +3587,13 @@ impl PluginHost for InMemoryPluginHost {
                 package_root.clone(),
                 runtime_nonce.clone(),
             );
+            let lease = if let (Some(instance_id), Some(attempt_id)) =
+                (self.host_instance_id.clone(), self.launch_attempt_id)
+            {
+                lease.with_host_context(instance_id, attempt_id)
+            } else {
+                lease
+            };
             let store = self
                 .runtime_leases
                 .as_ref()
@@ -3518,6 +3632,19 @@ impl PluginHost for InMemoryPluginHost {
                     .with_runtime_nonce(lease.runtime_nonce.clone())
             })
             .unwrap_or(launch_context);
+        let launch_context = if let (Some(instance_id), Some(attempt_id)) =
+            (self.host_instance_id.clone(), self.launch_attempt_id)
+        {
+            launch_context
+                .with_host_context(instance_id, attempt_id)
+                .with_crash_receipt_path(
+                    self.crash_receipt_path
+                        .clone()
+                        .unwrap_or_else(|| PathBuf::from("crash-receipts.json")),
+                )
+        } else {
+            launch_context
+        };
         match self
             .runtime
             .start_with_context(&manifest, &permissions, &launch_context)
@@ -3751,6 +3878,7 @@ impl PluginHost for InMemoryPluginHost {
         match health {
             RuntimeHealth::Running => Ok(ExtensionState::Active),
             RuntimeHealth::Crashed(message) => {
+                self.record_runtime_crash_evidence(id, message.clone());
                 if let Some(process) = self.processes.remove(id) {
                     if let Ok(mut process) = process.lock() {
                         let _ = process.shutdown();
@@ -4656,12 +4784,30 @@ impl PluginHost for InMemoryPluginHost {
         InMemoryPluginHost::close_quarantined_runtime_lease(self, extension_id, runtime_nonce)
     }
 
+    fn set_runtime_context(
+        &mut self,
+        host_instance_id: String,
+        launch_attempt_id: u64,
+        crash_receipt_path: Option<PathBuf>,
+    ) {
+        InMemoryPluginHost::set_runtime_context(
+            self,
+            host_instance_id,
+            launch_attempt_id,
+            crash_receipt_path,
+        );
+    }
+
     fn reconcile_runtime_orphans(&mut self) -> Result<Vec<RuntimeOrphanReport>, PluginError> {
         InMemoryPluginHost::reconcile_runtime_orphans(self)
     }
 
     fn drain_diagnostics(&mut self) -> Vec<PluginDiagnosticRecord> {
         InMemoryPluginHost::drain_diagnostics(self)
+    }
+
+    fn drain_crash_evidence(&mut self) -> Vec<RuntimeCrashEvidence> {
+        InMemoryPluginHost::drain_crash_evidence(self)
     }
 }
 
@@ -6349,6 +6495,10 @@ mod tests {
         assert_eq!(host.discover()[0].state, ExtensionState::Failed);
         assert!(host.active_contributions(&id).unwrap().is_empty());
         assert_eq!(host.active_contributions(&stable_id).unwrap().len(), 1);
+        let crash_evidence = host.drain_crash_evidence();
+        assert_eq!(crash_evidence.len(), 1);
+        assert_eq!(crash_evidence[0].extension_id, id);
+        assert_eq!(crash_evidence[0].message, "panic");
 
         host.recover(&id).unwrap();
         assert_eq!(host.discover()[0].state, ExtensionState::Active);

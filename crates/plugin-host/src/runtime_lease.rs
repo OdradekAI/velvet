@@ -45,6 +45,10 @@ pub struct RuntimeLease {
     pub state: RuntimeLeaseState,
     #[serde(default)]
     pub process: Option<RuntimeProcessIdentity>,
+    #[serde(default)]
+    pub host_instance_id: Option<String>,
+    #[serde(default)]
+    pub launch_attempt_id: Option<u64>,
     pub started_at_ms: u64,
 }
 
@@ -73,8 +77,20 @@ impl RuntimeLease {
             runtime_nonce,
             state: RuntimeLeaseState::Starting,
             process: None,
+            host_instance_id: None,
+            launch_attempt_id: None,
             started_at_ms: runtime_timestamp_ms(),
         }
+    }
+
+    pub fn with_host_context(
+        mut self,
+        host_instance_id: impl Into<String>,
+        launch_attempt_id: u64,
+    ) -> Self {
+        self.host_instance_id = Some(host_instance_id.into());
+        self.launch_attempt_id = Some(launch_attempt_id);
+        self
     }
 
     pub fn running(mut self, process: RuntimeProcessIdentity) -> Self {
@@ -576,6 +592,8 @@ mod tests {
             runtime_nonce: "nonce-1".into(),
             state: RuntimeLeaseState::Running,
             process: None,
+            host_instance_id: None,
+            launch_attempt_id: None,
             started_at_ms: 1,
         };
         assert!(matches!(

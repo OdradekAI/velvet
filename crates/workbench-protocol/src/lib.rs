@@ -20,6 +20,7 @@ pub const PLUGIN_RESOURCE_SCHEMA_VERSION: u16 = 1;
 pub const RECOVERY_SCHEMA_VERSION: u16 = 1;
 pub const RECOVERY_DIAGNOSTIC_SCHEMA_VERSION: u16 = 1;
 pub const PLUGIN_DIAGNOSTIC_SCHEMA_VERSION: u16 = 1;
+pub const CRASH_CAPTURE_SCHEMA_VERSION: u16 = 1;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -282,6 +283,8 @@ pub struct RecoveryProjection {
     pub last_failure: Option<RecoveryFailure>,
     pub last_good: Option<RecoveryCheckpoint>,
     pub actions: Vec<RecoveryAction>,
+    #[serde(default)]
+    pub platform_preflight: Vec<PlatformPreflightEvidence>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -294,12 +297,70 @@ pub struct RecoveryDiagnosticBundle {
     pub plugin_diagnostics: Vec<PluginDiagnosticEvent>,
     #[serde(default)]
     pub diagnostics_degraded: bool,
+    #[serde(default)]
+    pub crash_evidence: Vec<CrashCaptureEvidence>,
 }
 
 /// Combined lifecycle and extension diagnostic export. The legacy name is
 /// retained in the wire contract while the bundle now carries bounded plugin
 /// and Job evidence as well as the recovery projection.
 pub type DiagnosticBundle = RecoveryDiagnosticBundle;
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PlatformCapability {
+    Webview,
+    Gpu,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PlatformCapabilityStatus {
+    Available,
+    Degraded,
+    Unavailable,
+    Unknown,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PlatformPreflightEvidence {
+    pub capability: PlatformCapability,
+    pub status: PlatformCapabilityStatus,
+    pub detail: String,
+    pub checked_at_ms: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CrashCaptureKind {
+    ProcessExit,
+    Panic,
+    Signal,
+    Exception,
+    Oom,
+    Runtime,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CrashCaptureEvidence {
+    pub schema_version: u16,
+    pub correlation_id: String,
+    pub process_id: u32,
+    #[serde(default)]
+    pub parent_process_id: Option<u32>,
+    pub attempt_id: u64,
+    pub component: String,
+    pub kind: CrashCaptureKind,
+    pub code: String,
+    pub message: String,
+    #[serde(default)]
+    pub runtime_nonce: Option<String>,
+    #[serde(default)]
+    pub log_tail: Option<String>,
+    pub occurred_at_ms: u64,
+}
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -338,6 +399,10 @@ pub struct RecoveryLaunchReceipt {
     pub phase: StartupPhase,
     pub started_at_ms: u64,
     #[serde(default)]
+    pub instance_id: Option<String>,
+    #[serde(default)]
+    pub process_id: Option<u32>,
+    #[serde(default)]
     pub phase_started_at_ms: Option<u64>,
     #[serde(default)]
     pub deadline_at_ms: Option<u64>,
@@ -355,6 +420,10 @@ pub struct RecoveryJournalState {
     pub last_good: Option<RecoveryCheckpoint>,
     pub shutdown_intent_at_ms: Option<u64>,
     pub shutdown_complete_at_ms: Option<u64>,
+    #[serde(default)]
+    pub platform_preflight: Vec<PlatformPreflightEvidence>,
+    #[serde(default)]
+    pub crash_evidence: Vec<CrashCaptureEvidence>,
 }
 
 impl Default for RecoveryJournalState {
@@ -369,6 +438,8 @@ impl Default for RecoveryJournalState {
             last_good: None,
             shutdown_intent_at_ms: None,
             shutdown_complete_at_ms: None,
+            platform_preflight: Vec::new(),
+            crash_evidence: Vec::new(),
         }
     }
 }
@@ -754,6 +825,7 @@ mod tests {
             }),
             last_good: None,
             actions: vec![RecoveryAction::Retry, RecoveryAction::RestoreSnapshot],
+            platform_preflight: Vec::new(),
         };
         let json = serde_json::to_value(&projection).expect("recovery should serialize");
         assert_eq!(json["schemaVersion"], RECOVERY_SCHEMA_VERSION);
@@ -780,9 +852,11 @@ mod tests {
                 last_failure: None,
                 last_good: None,
                 actions: vec![RecoveryAction::Retry, RecoveryAction::ExportDiagnostics],
+                platform_preflight: Vec::new(),
             },
             plugin_diagnostics: Vec::new(),
             diagnostics_degraded: false,
+            crash_evidence: Vec::new(),
         };
         let json = serde_json::to_value(&bundle).expect("diagnostic bundle should serialize");
         assert_eq!(json["schemaVersion"], RECOVERY_DIAGNOSTIC_SCHEMA_VERSION);
@@ -791,6 +865,7 @@ mod tests {
         assert_eq!(json["projection"]["actions"][1], "export-diagnostics");
         assert_eq!(json["pluginDiagnostics"], serde_json::json!([]));
         assert_eq!(json["diagnosticsDegraded"], false);
+        assert_eq!(json["crashEvidence"], serde_json::json!([]));
 
         let legacy = serde_json::json!({
             "schemaVersion": RECOVERY_DIAGNOSTIC_SCHEMA_VERSION,

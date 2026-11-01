@@ -656,6 +656,8 @@ mod tests {
                 app_version: "0.0.4".into(),
                 phase: StartupPhase::OptionalActivation,
                 started_at_ms: 10,
+                instance_id: Some("test-instance".into()),
+                process_id: Some(7),
                 phase_started_at_ms: Some(20),
                 deadline_at_ms: Some(30),
             }),

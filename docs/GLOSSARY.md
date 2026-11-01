@@ -54,7 +54,15 @@ FeedItem 关联的内容快照、附件或解析结果。Capture 可以在保留
 
 ## Platform initialization failure
 
-Tauri builder、setup 或 run loop 在 Workbench 就绪前报告的宿主初始化失败。宿主把阶段和有界错误文本写入本地 marker，下一次成功启动将其转换为 typed recovery evidence；它不代表平台一定能在 Tauri 代码执行前捕获 WebView/GPU 创建失败。
+Tauri builder、setup 或 run loop 在 Workbench 就绪前报告的宿主初始化失败。宿主把阶段、有界错误文本和可用的启动前探测证据写入本地 marker，下一次成功启动将其转换为 typed recovery evidence；二进制无法执行前的 OS/loader 故障仍由发布包装器负责。
+
+## Platform preflight evidence
+
+在 Tauri builder 之前由宿主探测 WebView 和 GPU 前置能力得到的有界记录。WebView 不可用会转入独立原生恢复进程；GPU 降级进入软件 fallback；未知能力只记录诊断，不被误判为启动失败。
+
+## Native recovery window
+
+由同一安装包以独立 helper mode 启动的原生修复进程。它不创建 Tauri 应用或 WebView，只显示固定的系统原生恢复动作，并通过一次性 typed intent 文件把恢复选择交给下一次 ApplicationCore 启动。
 
 ## Contribution scope
 
@@ -100,6 +108,10 @@ WorkbenchApp 在 WorkspaceArea 中呈现的主界面。AppSurface 可以拥有�
 
 负责把平台提供的本地崩溃证据转换为有界、脱敏的诊断记录的宿主适配器。它不决定 Safe Mode、不拥有业务状态、不自动上传数据，也不等同于 RecoverySupervisor；某个平台没有可靠的 native crash capture 时可以只记录退出码、信号和启动 journal。
 
+## Crash correlation
+
+把跨进程崩溃 receipt 关联到 Velvet launch instance、attempt、进程身份和可选 runtime nonce 的证据关系。关联只用于诊断和恢复投影，不能成为任意进程控制或重试副作用命令的授权。
+
 ## ReleaseManifest
 
 描述一个 Velvet 应用发布产物的签名元数据。它绑定发布 channel、版本、目标 OS/architecture、产物哈希、updater schema、支持的数据 schema 范围、最低客户端版本、单调递增的 release sequence、新鲜度信息和 signing key id；客户端在安装前校验签名、目标、版本、新鲜度和兼容性。
@@ -134,7 +146,7 @@ Asset source 当前是否可访问的 Rust 投影。移动硬盘或网络盘断�
 
 ## RecoveryDiagnosticBundle
 
-兼容保留的有界诊断 wire 名称。它包含 recovery projection、导出时间以及应用持久化的插件/Job 事件；通过宿主 typed command 写入用户选择的本地路径，失败文本被截断，不上传数据。CrashCaptureAdapter 和跨进程关联仍是后续扩展。
+兼容保留的有界诊断 wire 名称。它包含 recovery projection、导出时间、应用持久化的插件/Job 事件和经过关联的 CrashCapture evidence；通过宿主 typed command 写入用户选择的本地路径，失败文本被截断，不上传数据。
 
 ## WorkspaceContext
 

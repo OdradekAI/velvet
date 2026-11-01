@@ -3,12 +3,16 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use velvet_persistence::{InMemoryRecoveryJournalStore, RecoveryJournalStore};
 use velvet_workbench_protocol::{
-    RecoveryAction, RecoveryCheckpoint, RecoveryDiagnosticBundle, RecoveryFailure,
-    RecoveryFailureClass, RecoveryJournalState, RecoveryLaunchReceipt, RecoveryMode,
-    RecoveryProjection, RecoveryTarget, StartupPhase, RECOVERY_DIAGNOSTIC_SCHEMA_VERSION,
+    CrashCaptureEvidence, PlatformPreflightEvidence, RecoveryAction, RecoveryCheckpoint,
+    RecoveryDiagnosticBundle, RecoveryFailure, RecoveryFailureClass, RecoveryJournalState,
+    RecoveryLaunchReceipt, RecoveryMode, RecoveryProjection, RecoveryTarget, StartupPhase,
+    CRASH_CAPTURE_SCHEMA_VERSION, RECOVERY_DIAGNOSTIC_SCHEMA_VERSION,
 };
 
 const SAFE_MODE_FAILURE_THRESHOLD: u32 = 2;
+const MAX_PLATFORM_PREFLIGHT_EVIDENCE: usize = 8;
+const MAX_CRASH_CAPTURE_EVIDENCE: usize = 32;
+const MAX_CRASH_EVIDENCE_TEXT: usize = 512;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct StartupDeadlinePolicy {
@@ -65,6 +69,12 @@ impl RecoveryClock for SystemRecoveryClock {
 pub enum RecoveryError {
     Store(String),
     InvalidState(String),
+}
+
+/// Platform adapter seam for crash evidence. The adapter only reads bounded,
+/// already-local evidence; it never decides Safe Mode or owns domain state.
+pub trait CrashCaptureAdapter: Send + Sync {
+    fn consume(&self) -> Result<Vec<CrashCaptureEvidence>, RecoveryError>;
 }
 
 struct RecoveryInner {
@@ -158,6 +168,8 @@ impl RecoverySupervisor {
                 app_version: app_version.into(),
                 phase: StartupPhase::Preflight,
                 started_at_ms: now,
+                instance_id: Some(format!("pid-{}-{}", std::process::id(), now)),
+                process_id: Some(std::process::id()),
                 phase_started_at_ms: Some(now),
                 deadline_at_ms: policy.deadline_at_ms(&StartupPhase::Preflight, now),
             });
@@ -276,6 +288,49 @@ impl RecoverySupervisor {
         })
     }
 
+    pub fn record_platform_preflight(
+        &self,
+        evidence: Vec<PlatformPreflightEvidence>,
+    ) -> Result<RecoveryProjection, RecoveryError> {
+        self.update_without_deadline(|inner, _| {
+            inner.state.platform_preflight = evidence
+                .into_iter()
+                .take(MAX_PLATFORM_PREFLIGHT_EVIDENCE)
+                .map(normalize_platform_preflight)
+                .collect();
+        })
+    }
+
+    pub fn record_crash_evidence(
+        &self,
+        evidence: CrashCaptureEvidence,
+    ) -> Result<RecoveryProjection, RecoveryError> {
+        self.update_without_deadline(|inner, _| {
+            if evidence.schema_version != CRASH_CAPTURE_SCHEMA_VERSION {
+                return;
+            }
+            inner
+                .state
+                .crash_evidence
+                .push(normalize_crash_evidence(evidence));
+            if inner.state.crash_evidence.len() > MAX_CRASH_CAPTURE_EVIDENCE {
+                let remove = inner.state.crash_evidence.len() - MAX_CRASH_CAPTURE_EVIDENCE;
+                inner.state.crash_evidence.drain(0..remove);
+            }
+        })
+    }
+
+    pub fn launch_identity(&self) -> Option<(String, u64)> {
+        self.inner.lock().ok().and_then(|inner| {
+            inner.state.active_launch.as_ref().and_then(|launch| {
+                launch
+                    .instance_id
+                    .clone()
+                    .map(|instance_id| (instance_id, launch.attempt_id))
+            })
+        })
+    }
+
     pub fn observe_deadline(&self) -> Result<RecoveryProjection, RecoveryError> {
         self.update_with_deadline(|_, _| {})
     }
@@ -291,6 +346,11 @@ impl RecoverySupervisor {
             projection,
             plugin_diagnostics: Vec::new(),
             diagnostics_degraded: false,
+            crash_evidence: self
+                .inner
+                .lock()
+                .map(|inner| inner.state.crash_evidence.clone())
+                .unwrap_or_default(),
         }
     }
 
@@ -326,6 +386,7 @@ impl RecoverySupervisor {
                 }),
                 last_good: None,
                 actions: vec![RecoveryAction::Retry, RecoveryAction::ExportDiagnostics],
+                platform_preflight: Vec::new(),
             })
     }
 
@@ -485,7 +546,33 @@ fn projection(inner: &RecoveryInner) -> RecoveryProjection {
         last_failure: state.last_failure.clone(),
         last_good: state.last_good.clone(),
         actions,
+        platform_preflight: state.platform_preflight.clone(),
     }
+}
+
+fn normalize_platform_preflight(
+    mut evidence: PlatformPreflightEvidence,
+) -> PlatformPreflightEvidence {
+    evidence.detail = bounded_text(&evidence.detail, MAX_CRASH_EVIDENCE_TEXT);
+    evidence
+}
+
+fn normalize_crash_evidence(mut evidence: CrashCaptureEvidence) -> CrashCaptureEvidence {
+    evidence.correlation_id = bounded_text(&evidence.correlation_id, 128);
+    evidence.component = bounded_text(&evidence.component, 128);
+    evidence.code = bounded_text(&evidence.code, 128);
+    evidence.message = bounded_text(&evidence.message, MAX_CRASH_EVIDENCE_TEXT);
+    evidence.runtime_nonce = evidence
+        .runtime_nonce
+        .map(|value| bounded_text(&value, 128));
+    evidence.log_tail = evidence
+        .log_tail
+        .map(|value| bounded_text(&value, MAX_CRASH_EVIDENCE_TEXT));
+    evidence
+}
+
+fn bounded_text(value: &str, limit: usize) -> String {
+    value.chars().take(limit).collect()
 }
 
 #[cfg(test)]
@@ -692,5 +779,43 @@ mod tests {
             projection.last_failure.map(|failure| failure.class),
             Some(RecoveryFailureClass::PlatformInitialization)
         );
+    }
+
+    #[test]
+    fn platform_and_crash_evidence_are_bounded_and_exported_with_correlation() {
+        let journal = Arc::new(InMemoryRecoveryJournalStore::default());
+        let clock = Arc::new(TestClock(AtomicU64::new(1)));
+        let supervisor = RecoverySupervisor::new(journal, clock);
+        supervisor
+            .begin_launch("test")
+            .expect("launch should start");
+        let projection = supervisor
+            .record_platform_preflight(vec![PlatformPreflightEvidence {
+                capability: velvet_workbench_protocol::PlatformCapability::Webview,
+                status: velvet_workbench_protocol::PlatformCapabilityStatus::Unavailable,
+                detail: "x".repeat(1_000),
+                checked_at_ms: 2,
+            }])
+            .expect("platform evidence should persist");
+        assert_eq!(projection.platform_preflight[0].detail.chars().count(), 512);
+        supervisor
+            .record_crash_evidence(CrashCaptureEvidence {
+                schema_version: CRASH_CAPTURE_SCHEMA_VERSION,
+                correlation_id: "instance-1".into(),
+                process_id: 42,
+                parent_process_id: None,
+                attempt_id: 1,
+                component: "core".into(),
+                kind: velvet_workbench_protocol::CrashCaptureKind::ProcessExit,
+                code: "signal".into(),
+                message: "forced termination".into(),
+                runtime_nonce: None,
+                log_tail: Some("tail".into()),
+                occurred_at_ms: 3,
+            })
+            .expect("crash evidence should persist");
+        let bundle = supervisor.diagnostic_bundle();
+        assert_eq!(bundle.crash_evidence.len(), 1);
+        assert_eq!(bundle.crash_evidence[0].correlation_id, "instance-1");
     }
 }

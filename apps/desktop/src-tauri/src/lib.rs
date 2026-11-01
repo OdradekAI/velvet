@@ -7,11 +7,15 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+mod crash_capture;
+mod native_recovery_window;
+mod platform_probe;
+
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_global_shortcut::{Builder as ShortcutBuilder, ShortcutState};
-use velvet_application_core::{ApplicationCore, ApplicationRecoveryStores};
+use velvet_application_core::{ApplicationCore, ApplicationRecoveryStores, CrashCaptureAdapter};
 use velvet_job_system::{JobId, JobProvenance, JobResult, JobSnapshot, JobStatus};
 use velvet_layout_model::{
     LayoutCommand, LayoutState, ViewContainerState, ViewState, WorkbenchAppId, WorkbenchPart,
@@ -33,9 +37,20 @@ use velvet_persistence::{
 use velvet_preview_core::{PreviewIntent, PreviewRenderer, PreviewSurface, ResolvedPreview};
 use velvet_tauri_adapter::{CoreEventSink, TauriTransport};
 use velvet_workbench_protocol::{
-    Command, CoreError, CoreTransport, Event, PluginDisableReason, RecoveryFailureClass, Request,
-    RequestEnvelope, RequestId, Response, PROTOCOL_VERSION,
+    Command, CoreError, CoreTransport, Event, PlatformCapabilityStatus,
+    PlatformPreflightEvidence, PluginDisableReason, RecoveryFailureClass, Request, RequestEnvelope,
+    RequestId, Response, StartupPhase, PROTOCOL_VERSION,
 };
+
+use crash_capture::{
+    arm_process_receipt, complete_process_receipt, update_process_receipt,
+    FileCrashCaptureAdapter,
+};
+use native_recovery_window::{
+    consume_native_recovery_intent, launch_native_recovery_window, NativeRecoveryAction,
+    NativeRecoveryRequest, NATIVE_RECOVERY_SCHEMA_VERSION,
+};
+use platform_probe::{HostPlatformPreflightProbe, PlatformPreflightProbe};
 
 const CORE_EVENT_NAME: &str = "velvet_core_event";
 const KEYBINDING_EVENT_NAME: &str = "velvet_keybinding";
@@ -54,6 +69,8 @@ struct NativeRecoveryState {
     orphan_count: usize,
     corrupt_extension_states: Vec<(String, u64)>,
     quarantined_runtime_leases: Vec<(String, String)>,
+    platform_preflight: Vec<PlatformPreflightEvidence>,
+    crash_evidence_count: usize,
 }
 
 impl NativeRecoveryState {
@@ -62,6 +79,13 @@ impl NativeRecoveryState {
             || self.orphan_count > 0
             || !self.corrupt_extension_states.is_empty()
             || !self.quarantined_runtime_leases.is_empty()
+            || self
+                .platform_preflight
+                .iter()
+                .any(|evidence| {
+                    evidence.capability == velvet_workbench_protocol::PlatformCapability::Webview
+                        && evidence.status == PlatformCapabilityStatus::Unavailable
+                })
     }
 }
 
@@ -140,6 +164,30 @@ impl NativeHostLocale {
         }
     }
 
+    fn platform_message(self, evidence: &[PlatformPreflightEvidence]) -> String {
+        let unavailable = evidence
+            .iter()
+            .filter(|item| item.status == PlatformCapabilityStatus::Unavailable)
+            .map(|item| format!("{:?}", item.capability))
+            .collect::<Vec<_>>()
+            .join(", ");
+        match self {
+            Self::English => format!(
+                "Platform preflight reported an unavailable capability: {unavailable}. The standalone recovery process can retry without loading the WebView."
+            ),
+            Self::SimplifiedChinese => format!(
+                "平台启动前探测报告能力不可用：{unavailable}。独立恢复进程可以在不加载 WebView 的情况下重试。"
+            ),
+        }
+    }
+
+    fn crash_evidence_message(self, count: usize) -> String {
+        match self {
+            Self::English => format!("{count} bounded crash receipt(s) were correlated to prior launch or runtime identities."),
+            Self::SimplifiedChinese => format!("已将 {count} 条有界崩溃 receipt 关联到之前的启动或运行时身份。"),
+        }
+    }
+
     fn restore_button(self) -> &'static str {
         match self {
             Self::English => "Restore validated state",
@@ -211,6 +259,8 @@ struct TauriStartupFailureRecord {
     phase: String,
     message: String,
     occurred_at_ms: u64,
+    #[serde(default)]
+    platform_preflight: Vec<PlatformPreflightEvidence>,
 }
 
 fn preflight_app_data_dir() -> Option<PathBuf> {
@@ -254,6 +304,14 @@ fn bounded_startup_failure_message(error: impl std::fmt::Display) -> String {
 }
 
 fn record_tauri_startup_failure(phase: &str, error: impl std::fmt::Display) {
+    record_tauri_startup_failure_with_evidence(phase, error, Vec::new());
+}
+
+fn record_tauri_startup_failure_with_evidence(
+    phase: &str,
+    error: impl std::fmt::Display,
+    platform_preflight: Vec<PlatformPreflightEvidence>,
+) {
     let message = bounded_startup_failure_message(error);
     eprintln!("Velvet Tauri initialization failed during {phase}: {message}");
     let Some(root) = preflight_app_data_dir() else {
@@ -270,6 +328,7 @@ fn record_tauri_startup_failure(phase: &str, error: impl std::fmt::Display) {
             .duration_since(UNIX_EPOCH)
             .map(|duration| duration.as_millis() as u64)
             .unwrap_or_default(),
+        platform_preflight,
     };
     let Ok(bytes) = serde_json::to_vec_pretty(&record) else {
         return;
@@ -1892,6 +1951,42 @@ fn velvet_core_request(
 }
 
 pub fn run() {
+    let app_data_root = preflight_app_data_dir();
+    if let Some(root) = app_data_root.as_deref() {
+        let _ = arm_process_receipt(root);
+    }
+    let preflight = HostPlatformPreflightProbe.probe();
+    if preflight.webview_unavailable() {
+        let message = preflight
+            .evidence
+            .iter()
+            .map(|evidence| format!("{:?}: {}", evidence.capability, evidence.detail))
+            .collect::<Vec<_>>()
+            .join("\n");
+        record_tauri_startup_failure_with_evidence(
+            "platform-preflight-webview",
+            message,
+            preflight.evidence.clone(),
+        );
+        if let Some(root) = app_data_root.as_deref() {
+            let request = NativeRecoveryRequest {
+                schema_version: NATIVE_RECOVERY_SCHEMA_VERSION,
+                title: "Velvet recovery".into(),
+                message: "Velvet could not verify a usable WebView before starting. Retry after repairing the platform, restore the last validated state, or continue in Safe Mode.".into(),
+                actions: vec![
+                    NativeRecoveryAction::Retry,
+                    NativeRecoveryAction::RestoreRecoverySet,
+                    NativeRecoveryAction::ContinueSafeMode,
+                ],
+            };
+            if let Err(error) = launch_native_recovery_window(root, request) {
+                eprintln!("Velvet could not launch its standalone recovery window: {error}");
+            }
+            let _ = complete_process_receipt(root);
+        }
+        return;
+    }
+
     let shortcuts = match ShortcutBuilder::new()
         .with_shortcuts(["CommandOrControl+B", "CommandOrControl+J"])
     {
@@ -1917,7 +2012,7 @@ pub fn run() {
     let result = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(shortcuts)
-        .setup(|app| {
+        .setup(move |app| {
             let sink = TauriEventSink {
                 app: app.handle().clone(),
             };
@@ -1938,6 +2033,7 @@ pub fn run() {
             let snapshot_root = app_data_dir.join("snapshots");
             let recovery_set_root = app_data_dir.join("recovery-sets");
             let runtime_leases_path = app_data_dir.join("runtime-leases.json");
+            let crash_receipts_path = app_data_dir.join(crash_capture::CRASH_RECEIPTS_FILE);
             let plugin_directory = app_data_dir.join("plugins");
             let durability = if cfg!(unix) {
                 DurabilityMode::RequireFsync
@@ -1984,7 +2080,28 @@ pub fn run() {
                     durability,
                 ))),
             );
+            if let Some((instance_id, attempt_id)) = core.recovery_launch_identity() {
+                core.configure_runtime_correlation(
+                    instance_id.clone(),
+                    attempt_id,
+                    Some(crash_receipts_path),
+                );
+                let _ = update_process_receipt(
+                    &app_data_dir,
+                    &instance_id,
+                    attempt_id,
+                    StartupPhase::RecoveringState,
+                );
+            }
+            core.record_platform_preflight(HostPlatformPreflightProbe.probe().evidence);
+            let crash_capture = FileCrashCaptureAdapter::new(&app_data_dir);
+            if let Ok(evidence) = crash_capture.consume() {
+                for evidence in evidence {
+                    core.record_crash_evidence(evidence);
+                }
+            }
             if let Some(failure) = consume_tauri_startup_failure(&app_data_dir) {
+                core.record_platform_preflight(failure.platform_preflight);
                 core.record_recovery_failure(
                     RecoveryFailureClass::PlatformInitialization,
                     format!(
@@ -1992,6 +2109,13 @@ pub fn run() {
                         failure.phase, failure.message
                     ),
                 );
+            }
+            if let Some(intent) = consume_native_recovery_intent(&app_data_dir) {
+                if matches!(intent.action, NativeRecoveryAction::RestoreRecoverySet) {
+                    if let Err(error) = core.restore_recovery_set() {
+                        eprintln!("Velvet could not apply the standalone recovery intent: {error:?}");
+                    }
+                }
             }
             core.mark_workbench_ready();
             let orphan_count = match core.reconcile_plugin_runtime_orphans() {
@@ -2045,6 +2169,8 @@ pub fn run() {
                 orphan_count,
                 corrupt_extension_states: collect_corrupt_extension_states(&core),
                 quarantined_runtime_leases: collect_quarantined_runtime_leases(&core),
+                platform_preflight: core.recovery_projection().platform_preflight.clone(),
+                crash_evidence_count: core.diagnostic_bundle().crash_evidence.len(),
             };
             core.mark_ready();
             app.manage(AppState {
@@ -2079,6 +2205,9 @@ pub fn run() {
                                 }
                             }
                         }
+                        if let Some(root) = preflight_app_data_dir() {
+                            let _ = complete_process_receipt(&root);
+                        }
                     }
                     _ => {}
                 });
@@ -2092,6 +2221,15 @@ pub fn run() {
             record_tauri_startup_failure("tauri-build", error);
             std::process::exit(1);
         }
+    }
+}
+
+/// Runs the standalone platform-native repair process. It intentionally does
+/// not construct a Tauri application or a WebView.
+pub fn run_native_recovery_window(root: PathBuf) {
+    if let Err(error) = native_recovery_window::run_native_recovery_window(&root) {
+        eprintln!("Velvet standalone recovery window failed: {error}");
+        let _ = native_recovery_window::consume_native_recovery_intent(&root);
     }
 }
 
@@ -2174,6 +2312,19 @@ fn show_native_recovery_surface<R: Runtime>(
     }
     if !recovery.quarantined_runtime_leases.is_empty() {
         details.push(locale.quarantined_message(recovery.quarantined_runtime_leases.len()));
+    }
+    if recovery
+        .platform_preflight
+        .iter()
+        .any(|evidence| {
+            evidence.capability == velvet_workbench_protocol::PlatformCapability::Webview
+                && evidence.status == PlatformCapabilityStatus::Unavailable
+        })
+    {
+        details.push(locale.platform_message(&recovery.platform_preflight));
+    }
+    if recovery.crash_evidence_count > 0 {
+        details.push(locale.crash_evidence_message(recovery.crash_evidence_count));
     }
     let message = details.join("\n\n");
 
@@ -2442,6 +2593,17 @@ mod tests {
             ..NativeRecoveryState::default()
         }
         .requires_surface());
+        assert!(NativeRecoveryState {
+            locale: "en".into(),
+            platform_preflight: vec![PlatformPreflightEvidence {
+                capability: velvet_workbench_protocol::PlatformCapability::Webview,
+                status: PlatformCapabilityStatus::Unavailable,
+                detail: "missing".into(),
+                checked_at_ms: 1,
+            }],
+            ..NativeRecoveryState::default()
+        }
+        .requires_surface());
     }
 
     #[test]
@@ -2470,10 +2632,20 @@ mod tests {
         ));
         let _ = fs::remove_dir_all(&root);
         std::env::set_var("VELVET_APP_DATA_DIR", &root);
-        record_tauri_startup_failure("tauri-build", "a\nplatform failure");
+        record_tauri_startup_failure_with_evidence(
+            "tauri-build",
+            "a\nplatform failure",
+            vec![PlatformPreflightEvidence {
+                capability: velvet_workbench_protocol::PlatformCapability::Webview,
+                status: PlatformCapabilityStatus::Unavailable,
+                detail: "missing WebKit".into(),
+                checked_at_ms: 1,
+            }],
+        );
         let record = consume_tauri_startup_failure(&root).expect("the marker should be readable");
         assert_eq!(record.phase, "tauri-build");
         assert_eq!(record.message, "a platform failure");
+        assert_eq!(record.platform_preflight.len(), 1);
         assert!(consume_tauri_startup_failure(&root).is_none());
         std::env::remove_var("VELVET_APP_DATA_DIR");
         let _ = fs::remove_dir_all(root);
@@ -2787,6 +2959,7 @@ mod tests {
                     last_failure: None,
                     last_good: None,
                     actions: vec![velvet_workbench_protocol::RecoveryAction::Retry],
+                    platform_preflight: Vec::new(),
                 }),
             },
         );

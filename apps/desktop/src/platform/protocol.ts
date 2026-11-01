@@ -506,6 +506,7 @@ export interface CoreRecoveryProjection {
   readonly lastFailure: CoreRecoveryFailure | null;
   readonly lastGood: CoreRecoveryCheckpoint | null;
   readonly actions: readonly CoreRecoveryAction[];
+  readonly platformPreflight?: readonly CorePlatformPreflightEvidence[];
 }
 
 export interface CoreRecoveryDiagnosticBundle {
@@ -514,6 +515,7 @@ export interface CoreRecoveryDiagnosticBundle {
   readonly projection: CoreRecoveryProjection;
   readonly pluginDiagnostics: readonly CorePluginDiagnosticEvent[];
   readonly diagnosticsDegraded: boolean;
+  readonly crashEvidence?: readonly CoreCrashCaptureEvidence[];
 }
 
 /** Compatibility alias for the combined lifecycle/plugin diagnostic export. */
@@ -527,6 +529,39 @@ export type CorePluginDiagnosticKind =
   | 'storage'
   | 'migration'
   | 'shutdown';
+
+export type CorePlatformCapability = 'webview' | 'gpu';
+export type CorePlatformCapabilityStatus = 'available' | 'degraded' | 'unavailable' | 'unknown';
+
+export interface CorePlatformPreflightEvidence {
+  readonly capability: CorePlatformCapability;
+  readonly status: CorePlatformCapabilityStatus;
+  readonly detail: string;
+  readonly checkedAtMs: number;
+}
+
+export type CoreCrashCaptureKind =
+  | 'process-exit'
+  | 'panic'
+  | 'signal'
+  | 'exception'
+  | 'oom'
+  | 'runtime';
+
+export interface CoreCrashCaptureEvidence {
+  readonly schemaVersion: number;
+  readonly correlationId: string;
+  readonly processId: number;
+  readonly parentProcessId: number | null;
+  readonly attemptId: number;
+  readonly component: string;
+  readonly kind: CoreCrashCaptureKind;
+  readonly code: string;
+  readonly message: string;
+  readonly runtimeNonce: string | null;
+  readonly logTail: string | null;
+  readonly occurredAtMs: number;
+}
 
 export interface CorePluginDiagnosticEvent {
   readonly schemaVersion: PluginDiagnosticSchemaVersion;
