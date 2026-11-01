@@ -1465,6 +1465,7 @@ impl ApplicationCore {
 
     pub fn diagnostic_bundle(&self) -> velvet_workbench_protocol::DiagnosticBundle {
         let mut bundle = self.recovery.diagnostic_bundle();
+        bundle.projection.durability_report = self.durability_report.clone();
         bundle.plugin_diagnostics = self.diagnostic_history.iter().cloned().collect();
         bundle.diagnostics_degraded = self.diagnostics_degraded;
         bundle
@@ -4525,6 +4526,42 @@ mod tests {
         assert_eq!(
             restored.layout_snapshot().active_app,
             WorkbenchAppId::AssetManager
+        );
+        let _ = fs::remove_dir_all(plugin_root);
+    }
+
+    #[test]
+    fn durability_report_is_present_in_recovery_projection_and_diagnostics() {
+        let plugin_root = temporary_layout_path().with_extension("plugins");
+        let report = velvet_workbench_protocol::DurabilityReport {
+            schema_version: 1,
+            mode: velvet_workbench_protocol::DurabilityMode::RequireFsync,
+            atomic_replace: true,
+            file_sync: true,
+            directory_sync: true,
+            crash_durable: true,
+            detail: "release fixture".into(),
+        };
+        let core = ApplicationCore::with_store_and_plugin_directory_and_job_store_and_profile_store_and_asset_source_store_and_recovery_stores(
+            Arc::new(InMemoryLayoutStateStore::default()),
+            &plugin_root,
+            Arc::new(velvet_job_system::InMemoryJobStateStore::default()),
+            Arc::new(InMemoryProfileStateStore::default()),
+            Arc::new(InMemoryAssetSourceLocationStore::default()),
+            ApplicationRecoveryStores::new(
+                Arc::new(InMemoryRecoveryJournalStore::default()),
+                None,
+                None,
+            )
+            .with_durability_report(report.clone()),
+        );
+        assert_eq!(
+            core.recovery_projection().durability_report,
+            Some(report.clone())
+        );
+        assert_eq!(
+            core.diagnostic_bundle().projection.durability_report,
+            Some(report)
         );
         let _ = fs::remove_dir_all(plugin_root);
     }

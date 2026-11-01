@@ -218,6 +218,20 @@ included in the recovery projection and diagnostic export. A failed required
 sync does not publish a committed file. This is a crash-durability seam, not a
 claim that power-loss survival has been proven on every filesystem.
 
+The persistence release-qualification suite models the two crash boundaries
+that can be tested deterministically in CI: a process stopping after staged
+bytes are written but before owner commit, and a process stopping after owner
+commit but before the `RecoverySet` pointer is published. Reopening the stores
+must keep the previous committed generation authoritative and leave staged
+evidence for repair. The same suite uses a cross-platform path-collision
+fixture to represent an unreadable snapshot directory; reads and writes return
+typed unavailability and preserve the existing evidence instead of creating
+defaults. It also verifies the durability-report capability matrix and rejects
+unknown report schemas. These tests are release gates for every target build;
+they do not claim to reproduce physical power loss. Each supported OS/filesystem
+still needs an abrupt-process and, where practical, power-interruption run that
+checks the same invariants before release.
+
 Runtime failure in an activated optional plugin also records a degraded
 component failure and clears that owner's projections and Jobs; it does not
 increment the core pre-ready Safe Mode counter.
