@@ -30,6 +30,11 @@ import { FocusService } from './focus/focus-service.js';
 import { BUILTIN_WORKBENCH_APPS } from '../workspaces/index.js';
 import { LocalizationService } from './localization/localization-service.js';
 import { RecoveryClient } from './recovery/recovery-client.js';
+import {
+  routeActivationRequest,
+  workspaceRoutingIntentKey,
+  type WorkspaceRoutingIntent,
+} from './activation-routing.js';
 
 export class Workbench {
   public readonly layout: LayoutService;
@@ -63,6 +68,11 @@ export class Workbench {
   private pendingCoreExtensionSummaries: readonly CorePluginSummary[] | undefined;
   private readonly activationRequestsValue: CoreActivationRequest[] = [];
   private readonly activationListeners = new Set<(request: CoreActivationRequest) => void>();
+  private readonly workspaceRoutingIntentsValue: WorkspaceRoutingIntent[] = [];
+  private readonly workspaceRoutingListeners = new Set<
+    (intent: WorkspaceRoutingIntent) => void
+  >();
+  private readonly workspaceRoutingKeys = new Set<string>();
 
   public constructor(core: CoreTransport) {
     this.recovery = new RecoveryClient(core);
@@ -134,11 +144,44 @@ export class Workbench {
         // One activation consumer must not block other workspaces.
       }
     }
+    for (const intent of routeActivationRequest(request)) {
+      const key = workspaceRoutingIntentKey(intent);
+      if (this.workspaceRoutingKeys.has(key)) {
+        continue;
+      }
+      this.workspaceRoutingKeys.add(key);
+      this.workspaceRoutingIntentsValue.push(intent);
+      while (this.workspaceRoutingIntentsValue.length > 32) {
+        const removed = this.workspaceRoutingIntentsValue.shift();
+        if (removed) {
+          this.workspaceRoutingKeys.delete(workspaceRoutingIntentKey(removed));
+        }
+      }
+      for (const listener of this.workspaceRoutingListeners) {
+        try {
+          listener(intent);
+        } catch {
+          // One workspace must not block other routing consumers.
+        }
+      }
+    }
   }
 
   public subscribeActivation(listener: (request: CoreActivationRequest) => void): () => void {
     this.activationListeners.add(listener);
     return () => this.activationListeners.delete(listener);
+  }
+
+  /** Returns host-owned routing intents that have not been consumed by a workspace. */
+  public workspaceRoutingIntents(): readonly WorkspaceRoutingIntent[] {
+    return [...this.workspaceRoutingIntentsValue];
+  }
+
+  public subscribeWorkspaceRouting(
+    listener: (intent: WorkspaceRoutingIntent) => void,
+  ): () => void {
+    this.workspaceRoutingListeners.add(listener);
+    return () => this.workspaceRoutingListeners.delete(listener);
   }
 
   /** Applies one Rust-owned snapshot without replaying renderer mutations. */
@@ -155,6 +198,7 @@ export class Workbench {
     this.unsubscribeTransportStatus?.();
     this.transportStatusListeners.clear();
     this.activationListeners.clear();
+    this.workspaceRoutingListeners.clear();
     this.preview.dispose();
   }
 

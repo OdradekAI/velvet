@@ -12,6 +12,7 @@ export * from './app/renderer/plugin-overlay-host.js';
 export * from './app/renderer/workbench-app-surface-host.js';
 export * from './platform/index.js';
 export * from './workbench/workbench.js';
+export * from './workbench/activation-routing.js';
 export * from './workbench/apps/workbench-app.js';
 export * from './workbench/contributions/contribution-registry.js';
 export * from './workbench/plugins/plugin-client.js';

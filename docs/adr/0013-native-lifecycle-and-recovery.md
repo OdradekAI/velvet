@@ -743,9 +743,12 @@ request-id bounds, target count/size and NUL exclusion in Rust, canonicalizes
 existing regular-file targets (including percent-decoded `file://` URIs), and
 permits only the `velvet://` deep-link scheme after normalization. The Tauri
 transport repeats the runtime shape check before queuing the result until
-startup reaches `ready`. Approved-root policy, volume identity, capability
-checks, request deduplication and workspace routing are the remaining
-path/volume slice; a queued activation does not yet open a file by itself.
+startup reaches `ready`. The Workbench then creates a bounded,
+deduplicated `WorkspaceRoutingIntent`: file targets and `velvet://asset/<id>`
+are offered to Asset Manager, while unknown Velvet links remain unrouted for
+diagnostics. The router has no filesystem, plugin or command capability and
+does not mutate layout; a workspace must explicitly consume an intent.
+Approved-root policy and Windows capability checks remain path/volume gates.
 Clipboard, notification, tray and shortcut integrations are capability-scoped
 adapters with in-app or no-op fallbacks.
 They do not resolve commands or mutate layout directly.
