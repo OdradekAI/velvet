@@ -1,6 +1,38 @@
 # DeepSeek Super-agent 与 Velvet 多插件生态适配研究
 
-日期：2026-11-01
+日期：2026-11-02（补充核对 DeepSeek Harness 当前公开架构）
+
+## 2026-11-02 的更新：不能只看 superagent 原型
+
+这次核对把 DeepSeek 的公开材料分成两层：`dsh-superagent-prototype` 是面向 GitHub 单仓库的主动工作研究原型；当前的 DeepSeek Harness 是更底层、可组合的 Agent Harness。两者不能互相替代。原型 README 明确说它不是官方产品，公开实现也不等同于文章或内部版本；Harness 官方仓库则把自己定位为 DeepSeek AI 的开源 agent harness，当前仍是 developer preview，允许不兼容变化。
+
+Harness 的官方架构文档给出了比原型更稳定的系统边界：
+
+- **Everything is a Plugin**：模型适配器、工具注册、Session log 和 Agent loop 都是插件；插件向共享上下文提供 service、typed event 和可回滚 effect。卸载插件时，其注册和 effect 要能撤销。
+- **Profile/Bundle/patch composition**：运行时由有序 bundle 和 patch 层组成，profile 是持久化组合；配置层可以替换或插入组件，而不需要改一个特权核心。
+- **Durable SessionEvent log + live Agent events**：模型可见事实进入 append-only SessionEvent；`agent/*`、`tools/*` 等事件用于拦截和观察运行中的工作。Session log 是模型上下文的来源，UI 增量来自独立的 live stream。
+- **Capability seams**：Service Definition、Provider、Consumer 三者组成可替换能力 seam；工具、文件系统、子进程、sandbox、subagent、webhook、UI 都通过 seam 接入。
+- **Agent loop 的恢复语义**：一个 step 是一次模型请求及其工具调用，一个 turn 由多个 step 组成；取消、工具结果缺失、失败 attempt、fork/resume 和持久化都围绕已提交事件处理，而不是把运行中的进程状态当作权威。
+- **Experimental coordination**：官方文档列出 `ctx.agentTeams` 的持久 roster/task state 与可继续 subagent；官方站点和 release note 也把 Agent teams、subagent delegation、scheduled tasks、developer tools 标成 experimental，不能把它们当成稳定协议。
+
+官方 Cordis 论文把 Harness 的插件基础抽象成两种可组合性：每个 context transformation 都带可逆 effect（卸载时撤销），组件声明 coeffect 并对上下文变化做 reactive activation/deactivation；运行时通过统一 context 处理中间交互。这说明 DeepSeek 的“插件化”重点不只是把功能拆成包，还包括**注册副作用可回滚**和**依赖变化可重算**。
+
+一手资料：
+
+- [DeepSeek Harness README](https://github.com/deepseek-ai/deepseek-harness)（官方仓库，developer preview、Everything is a Plugin、Cordis 依赖）
+- [DeepSeek Harness Architecture](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/architecture.md)（官方架构文档，profile/bundle、事件、Agent loop、session log、capability seam）
+- [DeepSeek Harness 官方站点](https://www.deepseek.com/en/harness/)（public preview、Creator mode、插件/自动化/Agent teams 等产品面）
+- [A Programming Paradigm for Spatiotemporal Composability](https://arxiv.org/abs/2608.25512)（DeepSeek-AI 参与的一手 Cordis 论文，revertible effects 与 reactive coeffects）
+- [dsh-superagent-prototype README](https://github.com/deepseek-ai/dsh-superagent-prototype)（研究原型边界、Router/Worker 方向的公开实现）
+
+### 对 Velvet 研究结论的增量影响
+
+原有建议“在 `ApplicationCore` 上增加宿主拥有的 Agent 编排平面”仍然成立，但应把它拆成两条明确的 seam：
+
+1. **Agent orchestration seam**：负责 Trigger/Eval/Mandate/Ticket/Assignment、事件去重、授权重验证、Watchdog 与注意力投影。它对应 superagent 原型的 Router/Worker 领域，不应被某个插件替换。
+2. **Reversible plugin capability seam**：负责插件注册、typed events、service provider、worker/source/channel 能力和卸载回滚。它吸收 Harness/Cordis 的可回滚 effect 与 reactive activation 思想，但仍服从 Velvet 的 `PluginHost`、`CapabilityGrant`、`StateSnapshot`、`RecoverySet` 和宿主失败隔离。
+
+因此，Velvet 不需要改成“没有核心的全插件系统”。当前 ADR 已要求 Rust `ApplicationCore`、`PluginHost`、`CoreTransport` 和宿主拥有的状态/恢复边界；这些边界是可靠性和安全 owner。可吸收的是**插件注册与 Agent 能力的可逆生命周期**，而不是放弃 owner。只有在未来出现第二客户端或远程运行时，才把 orchestration/capability seam 映射到独立 transport/adapter；不应为了追随 Harness 的 profile/bundle 形态而提前拆 daemon 或把持久化状态交给插件。
 
 ## 结论
 
