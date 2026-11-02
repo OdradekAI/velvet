@@ -150,9 +150,10 @@ keeps untrusted, corrupt or newer extension sections out of the selected core
 import. `PortableBundleImporter` now gives owner participants a decode/migrate
 seam, stages core snapshots through `RecoverySetTransaction`, and publishes an
 `ImportReceipt`; a participant failure leaves the current core pointer intact,
-while extension failures become partial/quarantined receipt entries. Concrete
-owner payload schemas and extension quarantine storage remain separate owner
-work.
+while extension failures become partial/quarantined receipt entries. Profile
+and Workbench layout participants now reuse their domain validators and keep
+monotonic revisions. Asset/source payloads and durable extension quarantine
+storage remain separate owner work.
 
 ## Consequences
 

@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 mod bundle;
+mod bundle_participants;
 mod operation;
 mod preview_source;
 mod recovery;
@@ -18,6 +19,11 @@ pub use bundle::{
     BundleImportError, BundleImportParticipant, BundleImportParticipantError,
     BundleInspectionContext, BundleInspectionError, PortableBundleImporter,
     PortableBundleInspector,
+};
+
+pub use bundle_participants::{
+    LayoutBundleParticipant, ProfileBundleParticipant, LAYOUT_BUNDLE_OWNER,
+    LAYOUT_BUNDLE_SCHEMA_VERSION, LAYOUT_BUNDLE_SCOPE, PROFILE_BUNDLE_OWNER, PROFILE_BUNDLE_SCOPE,
 };
 
 pub use release::{
