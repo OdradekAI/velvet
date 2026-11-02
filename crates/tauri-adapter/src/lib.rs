@@ -698,6 +698,7 @@ mod tests {
                         environment: velvet_job_system::JobExecutionEnvironment {
                             suspended: false,
                             network: velvet_job_system::JobNetworkState::Offline,
+                            ..velvet_job_system::JobExecutionEnvironment::default()
                         },
                     }),
                 )

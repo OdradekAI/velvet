@@ -436,6 +436,38 @@ process-group adapter; macOS and Windows remain conservative until their
 native instance-token/Job Object adapters are wired. Stale leases therefore
 remain recoverable evidence rather than an excuse to kill by PID.
 
+## Hardening amendment (2026-11-02)
+
+The accepted ownership and runtime boundaries remain unchanged. Extension
+package trust is explicitly separate from application release trust and is
+recorded in a host-owned `PluginTrustRecord`; the cross-cutting offline
+release/incident policy is proposed in [ADR-0015](0015-package-trust-and-release-response.md).
+
+Before an installed extension is copied or activated, `PluginHost` must verify
+a bounded signature envelope over the package digest, `ExtensionId`, publisher
+key, version, target/runtime, manifest schema, host API range and declared
+capabilities. Manifest validation, package-root containment and capability
+policy remain independent checks. A revoked, expired, unknown or lower
+generation package stays inactive. An unsigned local package is accepted only
+through explicit, visible, Profile-scoped developer mode.
+
+Publisher key rotation requires an overlap-signed successor set. Cached
+revocation and anti-downgrade state win over an otherwise valid old signature;
+an unavailable network cannot turn unknown trust into activation. SLSA/in-toto
+provenance and SPDX SBOM references are release evidence and diagnostics, not
+substitutes for signatures, capability grants or sandbox enforcement.
+
+Install/update remains inspect → verify → stage → lazy activate → health check
+→ commit. The previous package and extension-data generation stay available
+until the health checkpoint. A failed activation or migration rolls back only
+that extension. Uninstall stops the runtime and removes the package while
+retaining namespaced data and trust/recovery records until explicit deletion.
+
+This amendment is an architecture decision, not a claim that the current
+source tree has the signature envelope or trust store. The foundation plan
+keeps those fixtures as a P1 implementation and release gate. A sidecar still
+provides availability isolation only; it is not a security sandbox.
+
 ## Alternatives considered
 
 1. Load arbitrary third-party Rust dynamic libraries into the Tauri process. Rejected because ABI, memory safety and crash isolation cannot be controlled by the host.

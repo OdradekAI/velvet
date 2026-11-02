@@ -24,6 +24,10 @@ export const ACTIVATION_SCHEMA_VERSION = 1 as const;
 export type ActivationSchemaVersion = typeof ACTIVATION_SCHEMA_VERSION;
 export const RELEASE_MANIFEST_SCHEMA_VERSION = 1 as const;
 export const RELEASE_TRANSACTION_SCHEMA_VERSION = 1 as const;
+export const JOB_EXECUTION_ENVIRONMENT_SCHEMA_VERSION = 1 as const;
+export type JobExecutionEnvironmentSchemaVersion =
+  typeof JOB_EXECUTION_ENVIRONMENT_SCHEMA_VERSION;
+export const OPERATION_SCHEMA_VERSION = 1 as const;
 export const NATIVE_UPDATE_SCHEMA_VERSION = 1 as const;
 export type WorkbenchAppId = string;
 
@@ -518,6 +522,13 @@ export type CoreJobStatus =
 
 export type CoreJobNetworkPolicy = 'local-only' | 'unmetered' | 'any-network';
 export type CoreJobNetworkState = 'online' | 'metered' | 'offline' | 'unknown';
+export type CoreStorageAvailability =
+  | 'writable'
+  | 'read-only'
+  | 'full'
+  | 'unavailable'
+  | 'unknown';
+export type CorePowerPressure = 'normal' | 'battery' | 'thermal' | 'critical' | 'unknown';
 
 export interface CoreJobBudgetRequest {
   readonly memoryBytes: number;
@@ -543,8 +554,11 @@ export interface CoreJobExecutionPolicy {
 }
 
 export interface CoreJobExecutionEnvironment {
+  readonly schemaVersion: JobExecutionEnvironmentSchemaVersion;
   readonly suspended: boolean;
   readonly network: CoreJobNetworkState;
+  readonly storage: CoreStorageAvailability;
+  readonly power: CorePowerPressure;
 }
 
 export interface CoreJobCheckpoint {
@@ -697,6 +711,56 @@ export interface CoreReleaseStatus {
   readonly committedPackageGeneration: string;
   readonly pending: CoreReleaseTransaction | null;
   readonly lastTransaction: CoreReleaseTransaction | null;
+}
+
+export type CoreOperationKind = 'delete' | 'overwrite' | 'move' | 'batch-job' | 'remote';
+export type CoreOperationRetryPolicy =
+  | 'provider-declared-idempotent'
+  | 'reconcile-before-retry'
+  | 'never';
+export type CoreOperationUndoCapability = 'none' | 'provider-token' | 'bounded-backup';
+export type CoreOperationReceiptStatus =
+  | 'started'
+  | 'committed'
+  | 'partial'
+  | 'rolled-back'
+  | 'cancelled'
+  | 'unknown';
+
+export interface CoreOperationTarget {
+  readonly targetId: string;
+  readonly expectedRevision?: number;
+  readonly expectedFingerprint?: string;
+}
+
+export interface CoreOperationPlan {
+  readonly schemaVersion: number;
+  readonly planId: string;
+  readonly operationId: string;
+  readonly ownerId: string;
+  readonly kind: CoreOperationKind;
+  readonly targets: readonly CoreOperationTarget[];
+  readonly createdAtMs: number;
+  readonly expiresAtMs: number;
+  readonly retryPolicy: CoreOperationRetryPolicy;
+  readonly undo: CoreOperationUndoCapability;
+}
+
+export interface CoreOperationItemReceipt {
+  readonly targetId: string;
+  readonly status: CoreOperationReceiptStatus;
+  readonly message?: string | null;
+}
+
+export interface CoreOperationReceipt {
+  readonly schemaVersion: number;
+  readonly planId: string;
+  readonly operationId: string;
+  readonly status: CoreOperationReceiptStatus;
+  readonly reconciled: boolean;
+  readonly recordedAtMs: number;
+  readonly items: readonly CoreOperationItemReceipt[];
+  readonly undoToken?: string | null;
 }
 
 export type CoreNativeUpdateState =

@@ -314,3 +314,32 @@ Costs:
 - JSON, MessagePack or another serialization format after performance measurement?
 - Which protocol types are public in the first SDK release?
 - How are incompatible events downgraded or ignored?
+
+## Proposed hardening clarification (2026-11-02)
+
+This ADR remains `Proposed`; the clarification is not an implicit promotion to
+`Accepted`. The host envelope is typed, while plugin command/action arguments,
+Job input and reserved extension metadata remain schema-owned JSON payloads.
+Each such payload must carry a bounded owner schema id/version and be validated
+by `PluginHost` or `JobSystem` before activation or execution. The transport
+must not present these fields as arbitrary native capability entry points.
+
+`clientId` is a stable local correlation identity and `sessionId` is a fresh
+session authority for the current Core process. Reconnect retires the old
+session, rejects old handles and mutations, and resynchronizes an authoritative
+snapshot. These values are not authentication or remote write grants. A future
+CLI, daemon or remote adapter requires a separate authenticated handshake with
+profile scope, capability grants, authority epoch and key rotation; v1 does not
+share projections across remote clients.
+
+The transport may carry narrow versioned environment facts needed by an owner,
+including storage availability and power pressure as optional extensions to the
+Job environment schema. Wall-clock trust and proxy credentials do not belong in
+that payload: Job deadlines and migration ordering use monotonic time, while
+endpoint/proxy failures remain owner-specific typed retryable errors.
+
+The acceptance gate is a Rust/Tauri/TypeScript fixture for schema ids and
+bounded payloads, stale sessions, sequence gaps, unknown outcomes and the
+negative case where an untyped path/URL/process command is rejected. Until
+those fixtures and non-Tauri adoption exist, the proposed protocol remains a
+host contract rather than a public SDK compatibility promise.

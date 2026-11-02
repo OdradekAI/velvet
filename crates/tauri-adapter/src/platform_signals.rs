@@ -109,6 +109,7 @@ fn run_worker(
         JobExecutionEnvironment {
             suspended: false,
             network: source.network_state(),
+            ..JobExecutionEnvironment::default()
         },
         false,
     );
@@ -123,6 +124,7 @@ fn run_worker(
                     JobExecutionEnvironment {
                         suspended: true,
                         network: source.network_state(),
+                        ..JobExecutionEnvironment::default()
                     },
                     true,
                 );
@@ -134,6 +136,7 @@ fn run_worker(
                     JobExecutionEnvironment {
                         suspended: false,
                         network: source.network_state(),
+                        ..JobExecutionEnvironment::default()
                     },
                     true,
                 );
@@ -151,6 +154,7 @@ fn run_worker(
                         JobExecutionEnvironment {
                             suspended: true,
                             network: source.network_state(),
+                            ..JobExecutionEnvironment::default()
                         },
                         true,
                     );
@@ -163,6 +167,7 @@ fn run_worker(
                     JobExecutionEnvironment {
                         suspended: false,
                         network: source.network_state(),
+                        ..JobExecutionEnvironment::default()
                     },
                     woke_from_gap,
                 );

@@ -5,6 +5,7 @@ use serde_json::Value;
 use velvet_asset_core::AssetId;
 use velvet_job_system::{
     JobBudgetRequest, JobExecutionEnvironment, JobExecutionPolicy, JobId, JobSnapshot,
+    JOB_EXECUTION_ENVIRONMENT_SCHEMA_VERSION,
 };
 use velvet_layout_model::{LayoutCommand, LayoutState};
 use velvet_plugin_api::{
@@ -35,6 +36,7 @@ pub const CORE_SNAPSHOT_SCHEMA_VERSION: u16 = 1;
 pub const ACTIVATION_SCHEMA_VERSION: u16 = 1;
 pub const RELEASE_MANIFEST_SCHEMA_VERSION: u16 = 1;
 pub const RELEASE_TRANSACTION_SCHEMA_VERSION: u16 = 1;
+pub const OPERATION_SCHEMA_VERSION: u16 = 1;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -140,6 +142,11 @@ pub fn supported_schema_versions() -> BTreeMap<String, u16> {
             "release-transaction".into(),
             RELEASE_TRANSACTION_SCHEMA_VERSION,
         ),
+        (
+            "job-execution-environment".into(),
+            JOB_EXECUTION_ENVIRONMENT_SCHEMA_VERSION,
+        ),
+        ("operation".into(), OPERATION_SCHEMA_VERSION),
     ])
 }
 
@@ -726,6 +733,201 @@ pub struct ReleaseStatusDto {
     pub last_transaction: Option<ReleaseTransactionDto>,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum OperationKind {
+    Delete,
+    Overwrite,
+    Move,
+    BatchJob,
+    Remote,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum OperationRetryPolicy {
+    ProviderDeclaredIdempotent,
+    ReconcileBeforeRetry,
+    Never,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum OperationUndoCapability {
+    None,
+    ProviderToken,
+    BoundedBackup,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OperationTarget {
+    pub target_id: String,
+    #[serde(default)]
+    pub expected_revision: Option<u64>,
+    #[serde(default)]
+    pub expected_fingerprint: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OperationPlan {
+    pub schema_version: u16,
+    pub plan_id: String,
+    pub operation_id: String,
+    pub owner_id: String,
+    pub kind: OperationKind,
+    pub targets: Vec<OperationTarget>,
+    pub created_at_ms: u64,
+    pub expires_at_ms: u64,
+    pub retry_policy: OperationRetryPolicy,
+    pub undo: OperationUndoCapability,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum OperationPlanError {
+    UnsupportedSchema { schema_version: u16 },
+    InvalidField(&'static str),
+    EmptyTargets,
+    TooManyTargets,
+    DuplicateTarget(String),
+    MissingTargetEvidence(String),
+    Expired,
+    StaleTarget(String),
+}
+
+impl OperationPlan {
+    pub const MAX_TARGETS: usize = 512;
+    pub const MAX_ID_BYTES: usize = 128;
+    pub const MAX_FINGERPRINT_BYTES: usize = 256;
+
+    pub fn validate(&self, now_ms: u64) -> Result<(), OperationPlanError> {
+        if self.schema_version != OPERATION_SCHEMA_VERSION {
+            return Err(OperationPlanError::UnsupportedSchema {
+                schema_version: self.schema_version,
+            });
+        }
+        for (name, value) in [
+            ("planId", self.plan_id.as_str()),
+            ("operationId", self.operation_id.as_str()),
+            ("ownerId", self.owner_id.as_str()),
+        ] {
+            if value.is_empty() || value.len() > Self::MAX_ID_BYTES || value.contains('\0') {
+                return Err(OperationPlanError::InvalidField(name));
+            }
+        }
+        if self.targets.is_empty() {
+            return Err(OperationPlanError::EmptyTargets);
+        }
+        if self.targets.len() > Self::MAX_TARGETS {
+            return Err(OperationPlanError::TooManyTargets);
+        }
+        if self.expires_at_ms <= self.created_at_ms || now_ms >= self.expires_at_ms {
+            return Err(OperationPlanError::Expired);
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        for target in &self.targets {
+            if target.target_id.is_empty()
+                || target.target_id.len() > Self::MAX_ID_BYTES
+                || target.target_id.contains('\0')
+            {
+                return Err(OperationPlanError::InvalidField("targetId"));
+            }
+            if !seen.insert(target.target_id.clone()) {
+                return Err(OperationPlanError::DuplicateTarget(
+                    target.target_id.clone(),
+                ));
+            }
+            if target.expected_revision.is_none() && target.expected_fingerprint.is_none() {
+                return Err(OperationPlanError::MissingTargetEvidence(
+                    target.target_id.clone(),
+                ));
+            }
+            if target
+                .expected_fingerprint
+                .as_ref()
+                .is_some_and(|fingerprint| {
+                    fingerprint.is_empty()
+                        || fingerprint.len() > Self::MAX_FINGERPRINT_BYTES
+                        || fingerprint.contains('\0')
+                })
+            {
+                return Err(OperationPlanError::InvalidField("expectedFingerprint"));
+            }
+        }
+        Ok(())
+    }
+
+    pub fn revalidate(
+        &self,
+        now_ms: u64,
+        observed_targets: &[OperationTarget],
+    ) -> Result<(), OperationPlanError> {
+        self.validate(now_ms)?;
+        if observed_targets.len() != self.targets.len() {
+            return Err(OperationPlanError::StaleTarget("target-set".into()));
+        }
+        let observed = observed_targets
+            .iter()
+            .map(|target| (target.target_id.as_str(), target))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        for expected in &self.targets {
+            let Some(actual) = observed.get(expected.target_id.as_str()) else {
+                return Err(OperationPlanError::StaleTarget(expected.target_id.clone()));
+            };
+            if actual.expected_revision != expected.expected_revision
+                || actual.expected_fingerprint != expected.expected_fingerprint
+            {
+                return Err(OperationPlanError::StaleTarget(expected.target_id.clone()));
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum OperationReceiptStatus {
+    Started,
+    Committed,
+    Partial,
+    RolledBack,
+    Cancelled,
+    Unknown,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OperationItemReceipt {
+    pub target_id: String,
+    pub status: OperationReceiptStatus,
+    #[serde(default)]
+    pub message: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OperationReceipt {
+    pub schema_version: u16,
+    pub plan_id: String,
+    pub operation_id: String,
+    pub status: OperationReceiptStatus,
+    pub reconciled: bool,
+    pub recorded_at_ms: u64,
+    pub items: Vec<OperationItemReceipt>,
+    #[serde(default)]
+    pub undo_token: Option<String>,
+}
+
+impl OperationReceipt {
+    pub fn retry_requires_reconciliation(&self) -> bool {
+        matches!(
+            self.status,
+            OperationReceiptStatus::Started | OperationReceiptStatus::Unknown
+        ) && !self.reconciled
+    }
+}
+
 impl Default for RecoveryJournalState {
     fn default() -> Self {
         Self {
@@ -1055,6 +1257,9 @@ pub enum CoreError {
         message: String,
     },
     Job(String),
+    JobEnvironment {
+        schema_version: u16,
+    },
     StaleRevision {
         expected: u64,
         actual: u64,
@@ -1391,9 +1596,26 @@ mod tests {
         let environment = JobExecutionEnvironment {
             suspended: true,
             network: velvet_job_system::JobNetworkState::Unknown,
+            storage: velvet_job_system::StorageAvailability::ReadOnly,
+            power: velvet_job_system::PowerPressure::Critical,
+            ..velvet_job_system::JobExecutionEnvironment::default()
         };
         let command = Command::SetJobExecutionEnvironment { environment };
         assert_eq!(command, Command::SetJobExecutionEnvironment { environment });
+        let environment_json = serde_json::to_value(environment)
+            .expect("job environment should serialize with its schema");
+        assert_eq!(
+            environment_json["schemaVersion"],
+            velvet_job_system::JOB_EXECUTION_ENVIRONMENT_SCHEMA_VERSION
+        );
+        assert_eq!(environment_json["storage"], "read-only");
+        assert_eq!(environment_json["power"], "critical");
+        let legacy: JobExecutionEnvironment = serde_json::from_value(serde_json::json!({
+            "suspended": false,
+            "network": "online"
+        }))
+        .expect("legacy environment should use conservative compatibility defaults");
+        assert_eq!(legacy, JobExecutionEnvironment::default());
         let checkpoint = velvet_job_system::JobCheckpoint {
             schema_version: velvet_job_system::JOB_CHECKPOINT_SCHEMA_VERSION,
             payload: serde_json::json!({ "cursor": 4 }),
@@ -1401,6 +1623,60 @@ mod tests {
         let json = serde_json::to_value(&checkpoint).expect("checkpoint should serialize");
         assert_eq!(json["schemaVersion"], 1);
         assert_eq!(json["payload"]["cursor"], 4);
+    }
+
+    #[test]
+    fn operation_plan_rejects_stale_targets_and_unknown_retries() {
+        let plan = OperationPlan {
+            schema_version: OPERATION_SCHEMA_VERSION,
+            plan_id: "plan-1".into(),
+            operation_id: "operation-1".into(),
+            owner_id: "asset-core".into(),
+            kind: OperationKind::Delete,
+            targets: vec![OperationTarget {
+                target_id: "asset-1".into(),
+                expected_revision: Some(7),
+                expected_fingerprint: Some("sha256:before".into()),
+            }],
+            created_at_ms: 100,
+            expires_at_ms: 500,
+            retry_policy: OperationRetryPolicy::ReconcileBeforeRetry,
+            undo: OperationUndoCapability::BoundedBackup,
+        };
+        plan.validate(200)
+            .expect("fresh operation plan should validate");
+        assert_eq!(
+            plan.revalidate(
+                200,
+                &[OperationTarget {
+                    target_id: "asset-1".into(),
+                    expected_revision: Some(8),
+                    expected_fingerprint: Some("sha256:after".into()),
+                }]
+            ),
+            Err(OperationPlanError::StaleTarget("asset-1".into()))
+        );
+        assert_eq!(plan.validate(500), Err(OperationPlanError::Expired));
+
+        let receipt = OperationReceipt {
+            schema_version: OPERATION_SCHEMA_VERSION,
+            plan_id: plan.plan_id.clone(),
+            operation_id: plan.operation_id.clone(),
+            status: OperationReceiptStatus::Unknown,
+            reconciled: false,
+            recorded_at_ms: 250,
+            items: vec![OperationItemReceipt {
+                target_id: "asset-1".into(),
+                status: OperationReceiptStatus::Unknown,
+                message: None,
+            }],
+            undo_token: None,
+        };
+        assert!(receipt.retry_requires_reconciliation());
+        let json = serde_json::to_value(&plan).expect("operation plan should serialize");
+        assert_eq!(json["schemaVersion"], OPERATION_SCHEMA_VERSION);
+        assert_eq!(json["kind"], "delete");
+        assert_eq!(json["targets"][0]["expectedRevision"], 7);
     }
 
     #[test]
@@ -1413,6 +1689,11 @@ mod tests {
                 features: vec![TRANSPORT_FEATURE_SESSION_V1.into(), "future-feature".into()],
                 schema_versions: BTreeMap::from([
                     ("profile".into(), PROFILE_SCHEMA_VERSION + 1),
+                    (
+                        "job-execution-environment".into(),
+                        JOB_EXECUTION_ENVIRONMENT_SCHEMA_VERSION,
+                    ),
+                    ("operation".into(), OPERATION_SCHEMA_VERSION),
                     ("future".into(), 1),
                 ]),
             },
@@ -1427,6 +1708,14 @@ mod tests {
             vec![TRANSPORT_FEATURE_SESSION_V1]
         );
         assert_eq!(response.schema_versions["profile"], PROFILE_SCHEMA_VERSION);
+        assert_eq!(
+            response.schema_versions["job-execution-environment"],
+            JOB_EXECUTION_ENVIRONMENT_SCHEMA_VERSION
+        );
+        assert_eq!(
+            response.schema_versions["operation"],
+            OPERATION_SCHEMA_VERSION
+        );
         assert!(!response.schema_versions.contains_key("future"));
         assert_eq!(response.session_id, "session-test");
     }

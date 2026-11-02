@@ -582,6 +582,15 @@ impl From<CoreError> for WireError {
                 expected_revision: None,
                 actual_revision: None,
             },
+            CoreError::JobEnvironment { schema_version } => Self {
+                code: "job-environment-schema-unsupported".into(),
+                message: format!(
+                    "Job execution environment schema {schema_version} is unsupported"
+                ),
+                retryable: false,
+                expected_revision: None,
+                actual_revision: None,
+            },
             CoreError::PluginRuntimeFailed {
                 extension_id,
                 message,

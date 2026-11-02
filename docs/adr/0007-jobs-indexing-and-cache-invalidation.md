@@ -171,3 +171,40 @@ Costs:
 - Which jobs may run concurrently per asset and per device?
 - How are partial results exposed to inspectors?
 - How long are failed artifacts retained for diagnosis?
+
+## Proposed hardening clarification (2026-11-02)
+
+This ADR remains `Proposed`. `JobSystem` continues to be the sole owner of Job
+state, checkpoints, budgets, provenance, retry/cancel transitions and derived
+result reuse. The renderer, Tauri adapter and extension runtime cannot create a
+second Job record or scheduler.
+
+The existing `JobExecutionEnvironment` is extended only through bounded,
+versioned optional facts. Storage availability may be writable, read-only,
+full, unavailable or unknown; power/thermal pressure is advisory. Suspend and
+network state keep their current typed values. Unknown storage or pressure is
+conservative for background work, while foreground and recovery actions remain
+available. A missing removable/network source stays an Asset/source
+`SourceAvailability::degraded` condition rather than becoming a global Job
+failure.
+
+Deadlines, retry backoff, cancellation grace and wake-gap handling use a
+monotonic clock. Wall-clock changes affect only release/freshness diagnostics.
+An endpoint or proxy failure is a typed retryable owner result, not evidence
+that a default route is usable. Long suspend first pauses admission and writes a
+bounded checkpoint when the runner supports it; after wake a new attempt must
+revalidate storage, source identity, network policy and owner/runtime
+availability. An unsupported checkpoint never makes an `Interrupted` Job
+silently resumable.
+
+Job-side destructive effects use ADR-0014's `OperationPlan` and
+`OperationReceipt`; `requestId` is not universal external idempotency, and an
+unknown side effect is queried/reconciled before retry. Derived results and
+caches remain recomputable and are excluded from portable user-data bundles.
+
+The first implementation slice now carries the versioned storage and power
+facts through Rust `JobSystem`, `CoreTransport`, Tauri wire errors and desktop
+types. Background admission pauses conservatively for non-writable/unknown
+storage and critical/unknown power pressure; the native adapter still emits
+only the qualified network/suspend observations, so real storage/battery/
+thermal probing remains a platform qualification task.

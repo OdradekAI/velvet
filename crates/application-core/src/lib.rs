@@ -2703,7 +2703,12 @@ fn plugin_resource_error(
 }
 
 fn job_error(error: JobError) -> CoreError {
-    CoreError::Job(format!("{error:?}"))
+    match error {
+        JobError::InvalidEnvironment { schema_version } => {
+            CoreError::JobEnvironment { schema_version }
+        }
+        other => CoreError::Job(format!("{other:?}")),
+    }
 }
 
 fn valid_profile_state(state: &ProfileState) -> bool {

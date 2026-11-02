@@ -12,6 +12,7 @@ use velvet_workbench_protocol::{
 use crate::durability::write_atomic;
 
 mod durability;
+mod operation;
 mod owner_snapshots;
 mod recovery_set;
 mod release;
@@ -22,6 +23,10 @@ pub use durability::{
     JsonFileDurabilityReportStore, DURABILITY_REPORT_SCHEMA_VERSION,
 };
 
+pub use operation::{
+    InMemoryOperationReceiptStore, JsonFileOperationReceiptStore, OperationReceiptStore,
+    MAX_OPERATION_RECEIPTS, MAX_OPERATION_RECEIPT_ITEMS, MAX_OPERATION_RECEIPT_STORE_BYTES,
+};
 pub use owner_snapshots::{
     migrate_legacy_owner_snapshots, LegacyJobMigrationParticipant,
     LegacyLayoutMigrationParticipant, LegacyProfileMigrationParticipant, OwnerMigrationParticipant,

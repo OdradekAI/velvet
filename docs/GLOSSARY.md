@@ -162,6 +162,10 @@ helper 不创建 Tauri 窗口，因此不请求该集合；若未来恢复界面
 
 应用安装实例选择的发布通道，例如 `stable` 或 `preview`。通道选择参与更新 manifest 校验，更新不能静默跨通道或降级；alpha 构建使用 `preview`。
 
+## SafetyNotice
+
+由受信任 release/publisher key 签名的、有界安全响应元数据。它可以针对应用 release、扩展 publisher/package 或最低版本声明撤销、阻断、quarantine 或更新要求；它缓存后可离线生效，但不能自动删除用户数据或让启动依赖网络。
+
 ## TransportSession
 
 由协议 handshake 建立的前端到 Rust 核心的逻辑会话。当前 Tauri handshake 携带稳定的 `clientId`，协商 major/minor、feature 和 schema，并由核心签发 `sessionId`；同一 client 重连会撤销旧 session，Tauri 请求会携带并校验该 id。事件 sequence gap 会触发新 session 和 Layout/Profile/Recovery/Job/Extension 权威快照重同步；旧 handle 的插件重建仍由上层消费者完成，重连不得盲目重放 mutation。
@@ -260,6 +264,26 @@ typed `PermissionDenied`，便于用户先修复权限再重试。未声明 `app
 ## RecoverySetTransaction
 
 持久化层提供的跨 owner 写入 seam。它先 stage 所有变更 owner 的 StateSnapshot，再逐个提交 payload，最后发布新的 RecoverySet 指针；指针提交前，读取者继续使用上一组，首次启动则必须先完成组合根迁移。
+
+## PortableBundle
+
+由宿主生成的、有版本和完整性元数据的逻辑用户数据包。它按 owner 分段保存 Profile、Workspace、Asset/source metadata 和可选的扩展备份表示，不默认包含素材字节、缓存、派生结果、凭据、密钥或未脱敏环境数据；它不是可执行插件包。
+
+## ImportPlan
+
+对 PortableBundle 的只读导入预览。它列出选定 scope、schema migration、冲突、不可用 source、跳过或隔离的扩展 section、影响估计和过期/revision 条件；用户确认前不能发布任何 owner generation。
+
+## ImportReceipt
+
+一次已确认导入的有界结果记录。它按 owner 记录迁移、提交、跳过、quarantine 和恢复 generation；它通过现有持久化适配器保存，不取代任何领域 owner。
+
+## OperationPlan
+
+宿主对删除、覆盖、移动、批量 Job 或 remote side effect 的不可变预览。它包含 target identity、预期 revision/fingerprint、风险、冲突策略、幂等能力、undo/compensation 能力和过期条件；预览本身不是授权。
+
+## OperationReceipt
+
+一次 OperationPlan commit 或 reconciliation 的有界审计记录。它记录 started、committed、partial、rolled-back、cancelled 或 unknown 状态、逐项结果和可选 compensation handle；它不把 transport requestId 当成外部副作用的通用幂等保证。
 
 ## QuarantinedState
 
@@ -390,7 +414,19 @@ Job 的宿主执行边界，包括单调 deadline、取消宽限、有限指数�
 
 ## JobExecutionEnvironment
 
-宿主观察到的 suspend 与网络状态。它通过一个 typed command 进入 JobSystem，使 `Queued`/`Running` Job 进入 `Paused`，条件恢复后重新排队；它不是第二个调度器，也不由渲染器自行推断。
+宿主观察到的 suspend、网络、Profile 存储和电源压力状态。它通过一个
+versioned typed command 进入 JobSystem，使后台 `Queued`/`Running` Job 在
+不可写/未知存储或 critical/unknown 电源压力下进入 `Paused`，条件恢复后
+重新排队；前台恢复工作不被这条后台 admission 策略阻塞。它不是第二个
+调度器，也不由渲染器自行推断。
+
+## StorageAvailability
+
+Profile/Core 持久化区域对 owner 的有界状态：`writable`、`read-only`、`full`、`unavailable` 或 `unknown`。它决定 mutation 和需要 checkpoint 的 Job 是否可以继续，不允许通过默认值覆盖不可写或损坏的权威状态。
+
+## PowerPressure
+
+平台对后台资源使用的有界提示：`normal`、`battery`、`thermal`、`critical` 或 `unknown`。它只收紧 Job admission/backpressure，不创建第二调度器，也不单独杀死 Core。
 
 ## PlatformSignalController
 

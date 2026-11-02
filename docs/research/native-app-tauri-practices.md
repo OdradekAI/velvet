@@ -1,6 +1,6 @@
 # Native desktop application and Tauri v2 research
 
-Date: 2026-10-31
+Date: 2026-11-02
 
 This note records first-party guidance relevant to Velvet’s native desktop boundary. It separates framework capabilities from application policy: Tauri supplies IPC, windowing, packaging and capability controls, while Velvet still owns durable state, recovery policy, plugin trust, jobs and user-facing diagnostics.
 
@@ -12,6 +12,7 @@ This note records first-party guidance relevant to Velvet’s native desktop bou
 - **Treat crash capture and restart supervision as separate reliability components.** Dropbox describes using an out-of-process Crashpad helper plus a watchdog that records whether termination was expected and detects crashes. ([Crash reporting in desktop Python applications](https://dropbox.tech/application/crash-reporting-in-desktop-python-applications)) A native host should be able to start in safe mode after repeated failures, quarantine the last failing optional component and preserve a usable shell.
 - **Gate optional components by health, timeout and resource policy.** A production plugin host should validate manifests before activation, use bounded startup deadlines, supervise child processes, apply exponential backoff, quarantine restart loops, stage upgrades, and retain a last-known-good version. This is consistent with the failure-isolation requirements already recorded in Velvet’s plugin ADR. ([ADR-0005](../adr/0005-plugin-host-runtime-and-permissions.md))
 - **Make lifecycle and recovery testable.** Recovery paths must be exercised with forced termination, corrupt state, interrupted migration, unavailable volumes, disconnected network drives, plugin timeouts and process crashes. A successful graceful shutdown test is insufficient for a desktop app.
+- **Treat the desktop boundary as a security product.** OWASP’s desktop checklist adds injection, authentication/session handling, sensitive-data exposure, cryptography, authorization, security misconfiguration, insecure communication, vulnerable dependencies and logging/monitoring to the usual code-signing discussion. These risks cross the renderer, Rust core, plugins, update path and local IPC, so they need one threat model and negative tests. ([OWASP Desktop App Security Top 10](https://owasp.org/projects/desktop-app-security-top-10))
 
 ## Tauri v2 capability map
 
@@ -76,20 +77,23 @@ recovery and release freshness explicit.
 11. **Native interaction contract:** specify file associations, drag/drop, clipboard formats, notifications, shortcuts, deep links, tray behavior, IME, accessibility tree, RTL and reduced-motion behavior per OS. These are product contracts, not just plugin checkboxes.
 12. **Time and power semantics:** use monotonic clocks for deadlines/retries, handle wall-clock changes, sleep/wake and battery/thermal throttling, and define whether background jobs may continue on metered or battery-powered devices.
 
-## Suggested next decisions for Velvet
+## Decisions carried into the ADRs and foundation plan
 
 - Use the accepted native lifecycle/recovery ADR and its P0/P1 acceptance
   matrix as the release-qualification gate for preflight, Safe Mode,
-  recovery-supervision ownership and startup UX.
+  recovery-supervision ownership and startup UX. The portability and
+  destructive-operation rules now live in [ADR-0014](../adr/0014-portable-data-and-operation-safety.md),
+  while release and extension trust live in [ADR-0015](../adr/0015-package-trust-and-release-response.md).
 - Keep `RecoverySupervisor` as the lifecycle journal/policy boundary and treat
   `CrashCaptureAdapter` as a separate optional diagnostic seam; do not reintroduce
   a mandatory watchdog/helper before measurements prove the need.
 - Keep extension trust in the `PluginHost` contract; ADR-0013 now records
-  application signing, key rotation, channels, staged rollout and update/data
-  recovery without treating the updater as a migration coordinator.
-- Extend the persistence acceptance scenarios with backup/restore, interrupted migration, corrupt-file quarantine and user initiated data deletion.
-- Extend JobSystem acceptance with per-owner resource budgets, persisted queue recovery and sleep/network policy.
-- Add a platform matrix and a failure-injection test matrix to the foundation completion checklist.
+  application lifecycle ownership, while ADR-0015 records publisher signing,
+  key rotation, channels, staged rollout and update/data recovery without
+  treating the updater as a migration coordinator.
+- The foundation plan now carries the portability, operation, storage, identity,
+  trust, platform and performance acceptance rows with explicit user recovery
+  actions.
 - Add a versioned resource policy, coordinated `RecoverySet` fault tests,
   Tauri capability-negative tests, crash-evidence fixtures and cold-start/idle
   lifecycle baselines before production qualification.
@@ -97,3 +101,114 @@ recovery and release freshness explicit.
   keep sidecars as availability isolation only, add host-orchestrated
   extension storage/backup/migration participants, and keep package trust
   separate from paid entitlement.
+
+## 2026-11-02 update: Spacedrive practice and additional boundaries
+
+### What Spacedrive actually does
+
+Spacedrive is a useful architecture reference, but its public repository is
+still an alpha/beta project rather than evidence that every production edge is
+solved. The README says that 2.0 Beta is planned for November 2026 and that
+nightly `sd`/`sd-daemon` binaries are unsigned, can break, and should only be
+used with backups. Treat its design choices as concrete patterns to evaluate,
+not as a reliability certification. ([README](https://github.com/spacedriveapp/spacedrive))
+
+The main pattern is a daemon/client split. A Rust `sd-daemon` owns filesystem
+identity, indexing, operations, policy, and durable work. The Tauri desktop,
+CLI, server and other clients connect through a local IPC transport (the
+architecture guide says Unix sockets and WebSockets for web) using JSON-RPC
+and a typed operation registry. Specta generates TypeScript and Swift client
+types from Rust definitions; actions (writes) and queries (reads) are separated
+by a CQRS/DDD layout. ([Spacedrive `AGENTS.md`](https://github.com/spacedriveapp/spacedrive/blob/main/AGENTS.md))
+
+There is an implementation detail worth preserving as a warning: the current
+Tauri `main.rs` uses a loopback TCP address (`127.0.0.1:6969`) and a persistent
+connection pool, even though the architecture document describes Unix sockets.
+The transport choice is therefore a versioned deployment decision, not a fact
+to infer from a README. ([current Tauri `main.rs`](https://raw.githubusercontent.com/spacedriveapp/spacedrive/main/apps/tauri/src-tauri/src/main.rs))
+
+The desktop bundle starts the daemon during development and embeds
+`sd-daemon` as an external binary in the release bundle. Its Tauri manifest also
+declares a CSP, an asset-protocol scope covering `$HOME/**` and `/Volumes/**`,
+file association for `.memory`, platform-specific WebView/installer settings,
+and a signed updater endpoint. These are real integration points, but the
+asset scope is broad and the project enables several privileged plugins, so it
+should not be copied as a least-privilege template without a threat review.
+([Tauri manifest](https://raw.githubusercontent.com/spacedriveapp/spacedrive/main/apps/tauri/src-tauri/tauri.conf.json),
+ [Tauri security model](https://v2.tauri.app/security/))
+
+The data model treats each source as a portable store with rebuildable index
+generations and durable assertions. Disconnected sources remain searchable;
+stable content identities survive moves; destructive operations use
+validate → preview → execute; and long-running work is a durable Job with
+progress, cancellation, restart recovery and logs. Capabilities are explicit,
+scoped and revocable. This is a strong match for Velvet's separation of Asset,
+Source, derived data and `JobSystem`, while the daemon split itself remains a
+future option because Velvet has one client in v1. ([Spacedrive README](https://github.com/spacedriveapp/spacedrive))
+
+The same source also shows why architecture diagrams are not enough. The
+Tauri bridge still contains a generic `serde_json::Value` daemon proxy and
+string errors, and the selected library id is persisted in a plain text file
+with warning-only write failure handling. Those are workable alpha seams, but
+they are weaker than Velvet's typed transport, atomic snapshot and typed-error
+contracts. ([current Tauri `main.rs`](https://raw.githubusercontent.com/spacedriveapp/spacedrive/main/apps/tauri/src-tauri/src/main.rs))
+
+### Additional boundaries beyond the eleven listed
+
+The eleven categories cover runtime reliability well. The following boundaries
+should be named separately because they cut across several of those categories
+and otherwise tend to disappear in implementation checklists:
+
+13. **Supply-chain and build provenance.** Pin and audit dependencies, produce
+    an SBOM/provenance record, make release artifacts reproducible where
+    practical, rotate signing keys, and define what happens when a dependency
+    or publisher is revoked. App signing proves an artifact was signed; it does
+    not prove that its dependencies or plugins are trustworthy. The update
+    manifest also needs freshness and safe extraction rules; a valid old
+    signature alone must not permit replay or downgrade. ([OWASP Software Supply Chain Security](https://cheatsheetseries.owasp.org/cheatsheets/Software_Supply_Chain_Security_Cheat_Sheet.html), [The Update Framework](https://theupdateframework.github.io/specification/v1.0.31/index.html))
+14. **Portability, ownership and exit.** Define a logical export/import format
+    for user-authored state, extension data and metadata, including version
+    negotiation, partial restore and deletion. A backup that cannot be restored
+    on a clean machine is not a recovery guarantee. Spacedrive makes this
+    explicit with portable source stores and provider-exit goals.
+15. **Destructive-operation safety and auditability.** Every mutation that can
+    delete, overwrite, move or disclose data needs a host-owned plan, preview,
+    conflict check, idempotency key, commit record and undo/rollback story.
+    This is stronger than a confirmation dialog and also applies to jobs,
+    plugins and remote clients.
+16. **Identity and trust across profiles or remote clients.** If a second
+    profile, daemon, CLI or remote node appears, define profile isolation,
+    session binding, authorization grants, key rotation, revocation and the
+    rules for sharing projections without sharing authority. Single-instance
+    locking only solves one local writer; it does not solve identity.
+17. **Operational response and fleet control.** Production needs a security
+    disclosure path, incident playbook, feature kill switch, staged rollout,
+    minimum supported version and a way to stop a broken update or extension
+    without making startup depend on the network. These are release operations,
+    but they determine whether recovery works at scale.
+18. **Resource exhaustion and environmental degradation.** Define behavior for
+    full disks, corrupt or read-only volumes, file-descriptor exhaustion,
+    thermal/battery limits, sleep/wake, clock changes, proxy failures and
+    prolonged offline operation. The result should be a typed degraded state,
+    bounded retry and an actionable repair path, not an unbounded loop.
+
+### Tauri boundary clarified by the sources
+
+Tauri provides mature primitives for IPC, capabilities/scopes, windowing,
+official OS plugins, bundling, deep links/single instance and signed updates.
+Its security documentation is explicit that Rust application/plugin code has
+the process's available system access; capabilities constrain WebView calls
+and reduce frontend blast radius, but do not sandbox insecure Rust code,
+over-broad scopes or a compromised supply chain. The OS-provided WebView is
+also a deliberate patch-latency tradeoff, so the supported WebView/OS matrix
+belongs in Velvet's release contract. ([Security](https://v2.tauri.app/security/),
+ [Capabilities](https://v2.tauri.app/security/capabilities/))
+
+Therefore the Tauri updater, store, SQL, filesystem, shell, logging and window
+state plugins should remain adapters. Velvet still owns schema migration,
+backup/recovery generations, plugin trust and isolation, durable jobs,
+redaction/diagnostics, source identity, and the policy that decides whether a
+native operation is allowed. Spacedrive demonstrates this same split at a
+larger scale: a typed daemon owns state and operations while the Tauri shell
+packages and presents them. ([Tauri updater](https://v2.tauri.app/plugin/updater/),
+ [Tauri plugin catalog](https://v2.tauri.app/plugin/))

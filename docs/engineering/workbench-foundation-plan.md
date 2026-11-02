@@ -3,7 +3,13 @@
 Status: In progress; topology and desktop renderer decisions accepted, first React shell slice implemented; business-independent Workbench foundation is the active first-stage scope
 Date: 2026-10-28
 
-This plan is intentionally a skeleton. It establishes seams and ownership without pretending that the unresolved domain decisions are already accepted. The broad architecture decisions are tracked under `.scratch/workbench-foundation/`; the active first-stage shell decisions are tracked under `.scratch/workbench-shell-foundation/`.
+This plan establishes seams and ownership for the accepted foundation and the
+proposed native-hardening records. It distinguishes deterministic kernel
+evidence from platform and release qualification; a code seam is not a user
+facing guarantee until the corresponding evidence level passes. The broad
+architecture decisions are tracked under `.scratch/workbench-foundation/`; the
+active first-stage shell decisions are tracked under
+`.scratch/workbench-shell-foundation/`.
 
 ## Active first-stage scope
 
@@ -182,14 +188,34 @@ host's trust and recovery boundary:
    selected, add a read-only host-verified `EntitlementHandle` with bounded
    offline grace. Package signatures never become payment proofs.
 
+### Native hardening evidence levels
+
+The acceptance matrix uses three evidence levels:
+
+1. **Kernel pass** — deterministic Rust/Tauri/TypeScript contract tests and
+   fault-injection fakes prove the owner, schema, typed error and recovery
+   action.
+2. **Platform-qualified pass** — the supported OS/architecture matrix exercises
+   native process, filesystem, volume, WebView and power behavior. A
+   cross-target compile or `not-configured` result is not a runtime pass.
+3. **Release-qualified pass** — protected keys, signed artifacts, installer/
+   updater channels, proxy/offline behavior, rollback and package wiring pass
+   for the exact target and channel being claimed.
+
+An existing `Partial` row becomes complete only when its required evidence
+level passes for every declared target/channel, the user recovery action works
+without the failed optional component, and the negative tests for duplicate
+owners, broad Tauri capabilities, untyped commands, replayed updates, partial
+restores and unbounded retries remain green.
+
 ### Current skeleton versus target contract
 
 The two lifecycle reviews changed the implementation route, not the ownership
-model. The current repository is a contract-bearing skeleton: several seams,
-projections and narrow failure tests exist, while the durable recovery kernel
-and plugin trust/data boundaries are still absent. The following matrix is the
-baseline for sequencing work. “Partial” means that a useful seam exists but it
-must not be advertised as the target guarantee.
+model. The current repository has a tested recovery/storage/runtime kernel and
+several native adapters; extension package trust, logical portability,
+operation safety and platform/release qualification are still incomplete. The
+following matrix is the baseline for sequencing work. “Partial” means that a
+useful seam exists but it must not be advertised as the target guarantee.
 
 | Target contract | Current skeleton evidence | Remaining gap | Priority |
 | --- | --- | --- | --- |
@@ -204,7 +230,7 @@ must not be advertised as the target guarantee.
 | Signed release staging and startup rollback | `ReleaseManifest` verification, private package staging, `RecoverySet` anchoring, health-check commit, typed rollback and launcher/Tauri pre-ready marker handling are implemented; a pending transaction is rolled back once on the next Core launch and the resulting `release-rollback` failure keeps the app in Safe Mode | Binary rollback before the application image can execute, platform installer signing/notarization, production key rotation and device qualification remain | P1 (kernel pass; updater host seam pass) |
 | Tauri updater adapter and GitHub Release distribution | Host-owned `UpdateCoordinator` calls the official Tauri updater Rust API, matches the selected `latest.json` download/platform entry and reads its `velvetManifests[tauriPlatform]` (with base target fallback), validates the manifest before staging bytes, installs only after the Velvet journal is pending, and the next native launch commits `workbench-ready`; release config generation enables `createUpdaterArtifacts`, pinned public key, channel-specific HTTPS GitHub endpoint and signed version checks | The alpha CI lane now generates and signs one manifest per standard updater platform entry, injects the map after Tauri Action matrix publication, and publishes a fixed `preview` channel metadata tag; the same isolated path is reserved for a protected `stable` lane. Protected Tauri/Velvet keys, real signed package installation, proxy/offline and installer rollback qualification remain release gates; renderer updater permissions remain intentionally absent | P1 (implementation pass; publication qualification open) |
 | Extension package trust and release recovery | Manifest/schema/host API checks and application release signing are separate seams | No extension signature envelope, publisher trust record, revocation/freshness/anti-downgrade or visible unsigned developer mode | P1 |
-| Platform lifecycle and single-writer profile | `ProfileInstanceCoordinator` acquires a `create_new`/`sync_all` profile lock before WebView/Tauri/Core startup; the record carries PID, launch time, nonce and a platform start token; macOS/Linux verify `/proc`/`proc_pidinfo` identity before reclaiming an absent or reused owner, forward bounded schema-validated `ActivationRequest` frames over a Unix socket, store them in a bounded native queue and emit a typed wake event, and the desktop drains that queue through a typed command before handing requests to the Workbench; native activation normalizes existing regular files and `file://` URIs before forwarding; the Asset source owner owns canonical paths, Unix volume identity and a persisted `ApprovedSourceRoot` registry exposed through typed query/add/remove commands; the host Source Folders dialog provides refresh, native directory selection, explicit path approval and confirmed revocation; Workbench derives bounded, deduplicated `WorkspaceRoutingIntent` values without opening files or mutating layout and can activate a ready workspace before delegating an intent, retaining failed work for retry; `PlatformSignalController` maps macOS/Linux network probes and Tauri resume/wake-gap signals into the typed Job environment | Real removable/network mount qualification is deferred for this foundation slice; Windows forwarding/identity verification and Tier A/B runtime qualification remain; denied or ambiguous identity inspection stays fail-closed | P1 (partial) |
+| Platform lifecycle and single-writer profile | `ProfileInstanceCoordinator` acquires a `create_new`/`sync_all` profile lock before WebView/Tauri/Core startup; the record carries PID, launch time, nonce and a platform start token; macOS/Linux verify `/proc`/`proc_pidinfo` identity before reclaiming an absent or reused owner, forward bounded schema-validated `ActivationRequest` frames over a Unix socket, store them in a bounded native queue and emit a typed wake event, and the desktop drains that queue through a typed command before handing requests to the Workbench; native activation normalizes existing regular files and `file://` URIs before forwarding; the Asset source owner owns canonical paths, Unix volume identity and a persisted `ApprovedSourceRoot` registry exposed through typed query/add/remove commands; the host Source Folders dialog provides refresh, native directory selection, explicit path approval and confirmed revocation; Workbench derives bounded, deduplicated `WorkspaceRoutingIntent` values without opening files or mutating layout and can activate a ready workspace before delegating an intent, retaining failed work for retry; `PlatformSignalController` maps macOS/Linux network probes and Tauri resume/wake-gap signals into the typed Job environment; `JobSystem` now owns versioned `StorageAvailability`/`PowerPressure` facts and pauses background work conservatively on non-writable/unknown storage or critical/unknown power | Real storage/power probes, removable/network mount qualification, Windows forwarding/identity verification and Tier A/B runtime qualification remain; denied or ambiguous identity inspection stays fail-closed | P1 (partial) |
 
 This matrix also prevents a common false completion signal: an install
 transaction rollback protects package bytes, but it does not protect extension
@@ -215,7 +241,7 @@ failures, but it does not grant a security sandbox. The in-process
 WASM component runtime, marketplace entitlement service and remote connector
 are later adapters with separate evidence, not prerequisites for this kernel.
 
-### Next implementation route
+### Initial foundation build route (historical baseline)
 
 The next work should follow dependency order and land as vertical slices with
 fault-injection tests:
@@ -297,10 +323,43 @@ fault-injection tests:
    implement a production WASM/component adapter, and evaluate an optional
    out-of-process supervisor from measured crash/relaunch requirements.
 
-Every step must add the corresponding acceptance row before moving to the next
-boundary. Until steps 1–5 pass, Velvet should treat the plugin SDK and package
-marketplace as alpha/internal surfaces rather than promise the full recovery or
-security behavior described by the ADRs.
+The initial route above records how the current kernel was built. The remaining
+native-hardening route below supersedes it for new work; passed slices should be
+referenced rather than reimplemented.
+
+### Remaining native-hardening route (2026-11-02)
+
+1. **Contract and vocabulary (planning slice complete):** keep ADR-0014/0015,
+   the ADR-0006/0007/0013 amendments and the glossary terms for logical
+   bundles, operation receipts, safety notices and typed environment facts as
+   the gates for implementation. Label kernel, platform and release evidence
+   separately; do not promote a Proposed ADR from prose alone.
+2. **P0 data and operation safety:** add typed read-only/full-storage policy,
+   logical bundle inspect/plan/restore, selected-core `RecoverySet` import,
+   extension quarantine, `OperationPlan`/`OperationReceipt` and unknown-outcome
+   reconciliation. Add the duplicate-owner, partial-restore, stale-preview,
+   untyped-command and unbounded-retry negatives.
+3. **P0 identity and Job environment:** finish fail-closed lock/source actions,
+   versioned storage/power environment facts and monotonic suspend/wake policy;
+   preserve one Job scheduler and keep missing volumes owner-scoped.
+4. **P0 boundary audit:** make capability/CSP/path/package/retry negative tests
+   mandatory in CI. Keep sidecar availability isolation distinct from security
+   sandboxing and keep Tauri commands path-free.
+5. **P1 protocol and extension trust:** adopt the handshake/session contract
+   across every transport, attach schema ids to open payloads, implement
+   publisher signatures/trust records/revocation/developer mode and retain the
+   old extension package/data pair until health commit.
+6. **P1 platform and release qualification:** run Windows/macOS/Linux identity
+   and runtime gates, real mount/power/proxy/offline tests, protected signing
+   keys, installer retention, updater rollback and performance baselines for
+   each claimed package/channel.
+7. **P2 ecosystem adapters:** only after the local route is green, add
+   authenticated remote authority, shared projections, marketplace
+   entitlements, richer WASM sandboxing or an external supervisor.
+
+Each step needs its acceptance row and user recovery action before the next
+boundary is claimed. P0 is the alpha safety gate; P1 is per-target/channel
+production qualification; P2 is deferred ecosystem scope.
 
 The current React shell is a renderer slice, not the completed foundation. The
 Part/mode, three-scope layout state, WorkbenchApp/AppSurface/shared context,
@@ -1027,6 +1086,40 @@ user recovery action visible beside the existing Workbench scenarios.
 | P1 | Staged extension upgrade keeps old package/data generations until the new runtime reaches a health checkpoint; failed activation or migration restores the previous pair without touching core data. | `plugin-host`, `persistence`, `application-core` | Upgrade transaction, crash/power-loss and schema-range fixtures | Resume, commit, rollback or discard the staged extension transaction |
 | P1 (marketplace) | A paid extension receives only host-verified entitlement status with bounded offline grace; package signature and publisher trust remain separate, and no payment credential crosses the plugin boundary. | `plugin-host`, `workbench-protocol`, `tauri-adapter` | Fake entitlement issuer with expiry, revocation, clock-skew, sign-out and offline fixtures | Continue in grace, renew/sign in, disable paid feature or keep data and uninstall |
 
+### Native hardening additions (2026-11-02)
+
+These rows extend the existing lifecycle matrix with the decisions from
+ADR-0014/0015 and the identity/environment review. They are intentionally
+separate from the existing shell and plugin rows so a host seam cannot be
+mistaken for a release qualification.
+
+The first implementation slice now provides the Rust/protocol/desktop
+`JobExecutionEnvironment` schema and conservative background admission for
+storage and power pressure. The native signal adapter still supplies only the
+network/suspend observations; real storage, battery and thermal probes remain
+platform qualification work. The protocol now also defines the bounded
+`OperationPlan`/`OperationReceipt` shape and stale-target/reconciliation
+validation. `persistence` now provides a bounded atomic
+`OperationReceiptStore` for restart/reconciliation evidence; provider
+execution, per-item journaling policy and undo tokens remain the next P0 slice.
+
+| Priority | Scenario that must pass | Owner crate(s) | Test seam | User recovery action |
+| --- | --- | --- | --- | --- |
+| P0 | A versioned `PortableBundle` is inspected and staged without exposing paths or commands; selected Profile/Workspace/Asset core sections commit atomically through one `RecoverySet`; a required section failure publishes no partial core state; an absent/untrusted extension section is quarantined and diagnostics remain export-only. | `application-core`, `persistence`, `plugin-host`, `workbench-protocol` | Bundle manifest/schema/size/integrity fixtures, participant failure and migration fakes, recovery-set commit barrier and extension-quarantine fixtures | Review `ImportPlan`, retry migration, restore the pre-import set, install the extension before retrying or discard quarantined data |
+| P0 | Delete/overwrite/move/batch Job/remote actions use typed `OperationPlan` and `OperationReceipt`; stale revisions/fingerprints return `plan-stale`; `started`/`unknown` outcomes require reconciliation; only provider-declared idempotency and undo tokens permit retry/compensation. | `application-core`, `persistence`, `job-system`, `workbench-protocol` | Fake local/remote owners, stale-preview, unknown-IPC, per-item partial, non-idempotent retry and irreversible-delete fixtures | Re-preview, query authoritative outcome, reconcile, use a valid undo token or explicitly discard |
+| P0 | Full/read-only/unavailable Profile storage keeps the last authoritative projection readable when possible, blocks persistence-dependent mutation/Jobs with typed errors and never overwrites state with defaults; missing source volumes remain `SourceAvailability::degraded`. | `application-core`, `persistence`, `job-system`, `apps/desktop/src-tauri` | Read-only/full/permission-denied volume fixtures, source disconnect/reconnect and volume-identity fixtures | Move/repair storage, continue read-only, reconnect/re-approve the source or export diagnostics |
+| P0 | Negative boundary suite rejects a second owner/scheduler, broad Tauri capability, arbitrary path/URL/process command, replayed/lower release manifest, partial required restore and uncapped retry/late completion. | `persistence`, `application-core`, `tauri-adapter`, `workbench-protocol`, `job-system` | CI policy diff, protocol command negatives, release replay matrix, recovery fault injection and retry-attempt fixtures | Use the typed host action, keep the committed generation, restore/retry with bounds or enter Safe Mode |
+| P0 | Profile lock and transport session never grant authority by PID or `clientId` alone; stale/reused/ambiguous locks fail closed, old sessions reject mutations and source roots/volumes are revalidated before access. | `apps/desktop/src-tauri`, `tauri-adapter`, `workbench-protocol`, `application-core` | Lock identity/reuse/permission fixtures, session replacement and stale-envelope tests, approved-root/volume fixtures | Focus the existing instance, retry, continue read-only or repair/re-approve the source |
+| P1 | Extension packages verify publisher signature, digest, target, capabilities, freshness, revocation and anti-downgrade offline; unsigned packages require visible Profile-scoped developer mode; old package/data remains until extension health commit. | `plugin-api`, `plugin-host`, `application-core`, `tauri-adapter` | Signed-envelope fake, key-rotation/revocation/offline/developer-mode and upgrade crash fixtures | Keep previous package, inspect trust, install a valid offline package or disable/quarantine the extension |
+| P1 | Application release staging passes protected-key, target artifact, installer retention, proxy/offline, staged rollout and package/data rollback qualification; signed `SafetyNotice` can block a known-bad release without network-dependent startup. | `application-core`, `persistence`, `apps/desktop/src-tauri`, release pipeline | Real signed package per target/channel, key rotation/replay/freshness, installer/uninstall and pending-transaction fixtures | Keep current package, retry/offline install, roll back pending staging or use native recovery |
+| P1 | Storage/power/thermal/suspend/wake/network/endpoint facts reach the typed Job environment seam with bounded backpressure; monotonic timing survives wall-clock changes; Windows identity/Job Objects and real removable/network mounts pass on claimed targets. | `job-system`, `tauri-adapter`, `apps/desktop/src-tauri`, `application-core` | Fake and real platform signal sources, long-suspend/checkpoint, storage/power/proxy and per-target native qualification | Pause/defer background work, retry with backoff, continue foreground/recovery or show typed degradation |
+| P1 | Cold-start, idle/hidden WebView, memory/disk/CPU and diagnostic bundle baselines are recorded per target/channel; regressions leave the core usable and expose a recovery action. | `application-core`, `tauri-adapter`, `apps/desktop` | Monotonic startup/resource harness, WebView lifecycle fake and package diagnostics | Suspend/close nonessential surfaces, update runtime, retry or export diagnostics |
+| P2 | Authenticated CLI/daemon/remote clients use profile scope, authority epoch, capability grants and key rotation; shared projections and merge/conflict semantics are explicit before any remote mutation. | future `CoreTransport` adapter and domain owners | Authenticated multi-client/authority fixtures | Revoke the client, resync or keep the local Profile authoritative |
+
+The P0 negative tests are mandatory CI gates, not optional examples. P1 rows
+cannot be promoted by cross-compilation or `not-configured` probes alone. P2
+rows are deferred and must not weaken the P0/P1 ownership or fail-closed rules.
+
 The first lifecycle implementation slice has these acceptance results:
 
 | Slice | Result | Evidence |
@@ -1079,13 +1172,16 @@ The first lifecycle implementation slice has these acceptance results:
 | Resource claims and soft CPU/network pressure stay consistent across Rust, plugin runtime, Tauri and TypeScript | Pass | `JobSnapshot.budget`, bounded `JobBudgetPressure`, `PluginJobInvocation.budget`, Tauri wire fixture and desktop `CoreJobBudgetRequest` typecheck |
 | Native recovery, orphan policy, host locale and extension restore/quarantine confirmation | Partial | Localized Tauri/native multi-page repair flow, pre-builder WebView/GPU probe, explicit quarantined-lease close action, startup marker, `LauncherAttempt`/launcher failure markers, stale-attempt correlation, bounded macOS `.crash`/`.ips` metadata parsing, wrapper integration test, crash receipt correlation, bounded system artifact metadata, explicit CSP/capability policy, target-specific package wiring and filename-metadata generation repair are implemented and tested; OS failure before the wrapper image loads, native minidump decoding, package signing/notarization and installer rollback qualification remain |
 
-All P0 rows must pass before the native foundation is considered safe for alpha
-users. P1 rows must pass for each supported platform and package/channel before
-that combination is production-ready; Tier B failures remain diagnosable
-degradation. The optional out-of-process `RecoverySupervisor` is measured
-separately and is not a release prerequisite. Crash evidence is tested through
-the separate `CrashCaptureAdapter` seam and is not used to justify a mandatory
-helper process.
+All P0 rows, including the native-hardening additions, must pass at kernel
+evidence level before the native foundation is considered safe for alpha users.
+P1 rows must pass at platform and release evidence levels for each supported
+platform and package/channel before that combination is production-ready; Tier B
+failures remain diagnosable degradation. The optional out-of-process
+`RecoverySupervisor` is measured separately and is not a release prerequisite.
+Crash evidence is tested through the separate `CrashCaptureAdapter` seam and
+is not used to justify a mandatory helper process. A row remains `Partial` when
+its target/device/release gate is not configured or when a user recovery action
+cannot run without the failed optional component.
 
 - The built-in `WorkbenchApp` entries are always discoverable and do not move.
 - A trusted or isolated extension can contribute an ActivityBar `WorkbenchApp`, a central `AppSurface`, a ViewContainer-only tool, or the compatible combination without owning global layout.

@@ -15,6 +15,7 @@ pub use budget::{
 };
 
 pub const JOB_SCHEMA_VERSION: u16 = 1;
+pub const JOB_EXECUTION_ENVIRONMENT_SCHEMA_VERSION: u16 = 1;
 pub const MAX_JOB_INPUT_BYTES: usize = 256 * 1024;
 pub const MAX_JOB_RESULT_BYTES: usize = 1024 * 1024;
 
@@ -147,10 +148,65 @@ pub enum JobNetworkState {
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum StorageAvailability {
+    #[default]
+    Writable,
+    ReadOnly,
+    Full,
+    Unavailable,
+    Unknown,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PowerPressure {
+    #[default]
+    Normal,
+    Battery,
+    Thermal,
+    Critical,
+    Unknown,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JobExecutionEnvironment {
+    #[serde(default = "default_job_execution_environment_schema_version")]
+    pub schema_version: u16,
     pub suspended: bool,
     pub network: JobNetworkState,
+    #[serde(default)]
+    pub storage: StorageAvailability,
+    #[serde(default)]
+    pub power: PowerPressure,
+}
+
+impl Default for JobExecutionEnvironment {
+    fn default() -> Self {
+        Self {
+            schema_version: JOB_EXECUTION_ENVIRONMENT_SCHEMA_VERSION,
+            suspended: false,
+            network: JobNetworkState::default(),
+            storage: StorageAvailability::default(),
+            power: PowerPressure::default(),
+        }
+    }
+}
+
+fn default_job_execution_environment_schema_version() -> u16 {
+    JOB_EXECUTION_ENVIRONMENT_SCHEMA_VERSION
+}
+
+impl JobExecutionEnvironment {
+    pub fn validate(&self) -> Result<(), JobError> {
+        if self.schema_version != JOB_EXECUTION_ENVIRONMENT_SCHEMA_VERSION {
+            return Err(JobError::InvalidEnvironment {
+                schema_version: self.schema_version,
+            });
+        }
+        Ok(())
+    }
 }
 
 fn default_cancel_grace_ms() -> u64 {
@@ -316,6 +372,9 @@ pub enum JobError {
     Store(String),
     NotFound(JobId),
     NotRetryable(JobId),
+    InvalidEnvironment {
+        schema_version: u16,
+    },
     RunnerAlreadyRegistered(String),
     BudgetExceeded {
         owner_id: String,
@@ -866,6 +925,7 @@ impl JobSystem {
         &self,
         environment: JobExecutionEnvironment,
     ) -> Result<Vec<JobSnapshot>, JobError> {
+        environment.validate()?;
         {
             let mut current = self
                 .inner
@@ -985,6 +1045,17 @@ impl JobSystem {
         if environment.suspended && policy.background {
             return true;
         }
+        if policy.background && !matches!(environment.storage, StorageAvailability::Writable) {
+            return true;
+        }
+        if policy.background
+            && matches!(
+                environment.power,
+                PowerPressure::Critical | PowerPressure::Unknown
+            )
+        {
+            return true;
+        }
         match policy.network {
             JobNetworkPolicy::LocalOnly => false,
             JobNetworkPolicy::Unmetered => environment.network != JobNetworkState::Online,
@@ -996,6 +1067,32 @@ impl JobSystem {
         let environment = self.execution_environment();
         if environment.suspended && policy.background {
             return "Paused while the device is suspended".into();
+        }
+        if policy.background {
+            match environment.storage {
+                StorageAvailability::ReadOnly => {
+                    return "Paused while Profile storage is read-only".into();
+                }
+                StorageAvailability::Full => {
+                    return "Paused while Profile storage is full".into();
+                }
+                StorageAvailability::Unavailable => {
+                    return "Paused while Profile storage is unavailable".into();
+                }
+                StorageAvailability::Unknown => {
+                    return "Paused while Profile storage state is unknown".into();
+                }
+                StorageAvailability::Writable => {}
+            }
+            match environment.power {
+                PowerPressure::Critical => {
+                    return "Paused under critical power pressure".into();
+                }
+                PowerPressure::Unknown => {
+                    return "Paused while power pressure is unknown".into();
+                }
+                PowerPressure::Normal | PowerPressure::Battery | PowerPressure::Thermal => {}
+            }
         }
         match environment.network {
             JobNetworkState::Offline => "Paused while the network is offline".into(),
@@ -1938,6 +2035,7 @@ mod tests {
         jobs.set_execution_environment(JobExecutionEnvironment {
             suspended: false,
             network: JobNetworkState::Offline,
+            ..JobExecutionEnvironment::default()
         })
         .expect("offline environment should apply");
         let paused = jobs.snapshot(&created.id).expect("paused job");
@@ -1986,6 +2084,7 @@ mod tests {
             .set_execution_environment(JobExecutionEnvironment {
                 suspended: false,
                 network: JobNetworkState::Unknown,
+                ..JobExecutionEnvironment::default()
             })
             .expect("unknown network environment should apply");
         let unknown = unknown_jobs
@@ -2024,6 +2123,77 @@ mod tests {
             "resumed job did not complete: {:?}",
             jobs.snapshot(&created.id)
         );
+    }
+
+    #[test]
+    fn background_jobs_pause_for_storage_or_power_pressure() {
+        let jobs = JobSystem::default();
+        jobs.set_execution_environment(JobExecutionEnvironment {
+            storage: StorageAvailability::ReadOnly,
+            ..JobExecutionEnvironment::default()
+        })
+        .expect("read-only storage should be accepted");
+        let storage_blocked = jobs
+            .submit(JobSpec {
+                kind: "storage-dependent".into(),
+                duration_ms: 200,
+                will_fail: false,
+                input: Value::Null,
+                provenance: JobProvenance::for_owner("core"),
+            })
+            .expect("background Job should be admitted as paused");
+        assert_eq!(storage_blocked.status, JobStatus::Paused);
+        assert_eq!(
+            storage_blocked.message.as_deref(),
+            Some("Paused while Profile storage is read-only")
+        );
+
+        jobs.set_execution_environment(JobExecutionEnvironment {
+            power: PowerPressure::Critical,
+            ..JobExecutionEnvironment::default()
+        })
+        .expect("critical power pressure should be accepted");
+        let power_blocked = jobs
+            .submit(JobSpec {
+                kind: "power-sensitive".into(),
+                duration_ms: 200,
+                will_fail: false,
+                input: Value::Null,
+                provenance: JobProvenance::for_owner("core"),
+            })
+            .expect("background Job should be admitted as paused");
+        assert_eq!(power_blocked.status, JobStatus::Paused);
+        assert_eq!(
+            power_blocked.message.as_deref(),
+            Some("Paused under critical power pressure")
+        );
+
+        let foreground = jobs
+            .submit_with_policy(
+                JobSpec {
+                    kind: "foreground-recovery".into(),
+                    duration_ms: 200,
+                    will_fail: false,
+                    input: Value::Null,
+                    provenance: JobProvenance::for_owner("core"),
+                },
+                JobExecutionPolicy {
+                    background: false,
+                    ..JobExecutionPolicy::default()
+                },
+            )
+            .expect("foreground recovery Job should not be blocked by background pressure");
+        assert_ne!(foreground.status, JobStatus::Paused);
+
+        let invalid = jobs.set_execution_environment(JobExecutionEnvironment {
+            schema_version: JOB_EXECUTION_ENVIRONMENT_SCHEMA_VERSION + 1,
+            ..JobExecutionEnvironment::default()
+        });
+        assert!(matches!(
+            invalid,
+            Err(JobError::InvalidEnvironment { schema_version })
+                if schema_version == JOB_EXECUTION_ENVIRONMENT_SCHEMA_VERSION + 1
+        ));
     }
 
     #[test]
@@ -2598,6 +2768,7 @@ mod tests {
         jobs.set_execution_environment(JobExecutionEnvironment {
             suspended: false,
             network: JobNetworkState::Offline,
+            ..JobExecutionEnvironment::default()
         })
         .expect("offline environment should apply");
         let job = jobs

@@ -1069,6 +1069,38 @@ format before that combination is production-ready. The matrix requires owner
 crate seams and failure-injection tests; a renderer smoke test cannot replace
 the Rust owner test.
 
+## Qualification amendment (2026-11-02)
+
+The accepted lifecycle, Safe Mode, `RecoverySurface`, `RecoverySet` and
+ownership decisions remain unchanged. The foundation plan now distinguishes a
+kernel pass from platform-qualified and release-qualified evidence:
+
+- P0 deterministic tests must prove lifecycle, durable generations, failure
+  isolation, Job governance, deny-by-default native boundaries, portable
+  restore/operation guardrails, Profile/source identity, storage/network
+  degradation and fail-closed release verification.
+- P1 must pass per supported OS/architecture/channel for Windows identity and
+  Job Objects, real removable/network mounts, power/proxy/offline behavior,
+  signing/notarization, installer retention, protected keys and performance
+  baselines.
+- An OS failure before the launcher image executes, native minidump decoding,
+  remote notice distribution and an external supervisor remain explicit
+  qualification or deferred adapter work. They are not silently counted as
+  in-process recovery guarantees.
+
+Application release trust follows the signed `ReleaseManifest` and
+`UpdateTransaction` rules already recorded here; extension publisher trust,
+revocation and developer mode are separate and are proposed in ADR-0015.
+Package rollback does not restore extension data, an `Interrupted` Job is not
+automatically resumable, and a sidecar is not a security sandbox.
+
+Read-only/full Profile storage enters a typed degraded or Safe Mode path when
+the authoritative state remains readable; it never overwrites state with
+defaults. Missing source volumes preserve Asset identity and become
+`SourceAvailability::degraded`. Local startup and recovery do not require
+network access, and cached signed safety notices may disable a known-bad
+release or extension without deleting user data.
+
 ## Consequences
 
 Positive:
@@ -1150,6 +1182,8 @@ the ownership, state-machine or recovery guarantees in this ADR:
 - [ADR-0005: Plugin host runtime, permissions and lifecycle](0005-plugin-host-runtime-and-permissions.md)
 - [ADR-0006: Host protocol and framework-independent UI SDK](0006-host-protocol-and-ui-sdk.md)
 - [ADR-0007: Jobs, indexing and cache invalidation](0007-jobs-indexing-and-cache-invalidation.md)
+- [ADR-0014: Portable data and operation safety](0014-portable-data-and-operation-safety.md)
+- [ADR-0015: Package trust and release response](0015-package-trust-and-release-response.md)
 - [Native app and Tauri practices research](../research/native-app-tauri-practices.md)
 - [Native lifecycle and recovery decision review](../research/native-lifecycle-recovery-review.md)
 - [Native lifecycle/recovery Wayfinder map](../../.scratch/native-lifecycle-recovery/map.md)
