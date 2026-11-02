@@ -792,6 +792,26 @@ impl ApplicationCore {
             .map_err(|error| CoreError::Release(error.to_string()))
     }
 
+    /// Roll back the one staged release after a pre-ready launcher or Tauri
+    /// initialization failure. The release journal is the authority for the
+    /// decision; a committed release is never changed and repeated launches
+    /// are therefore idempotent.
+    pub fn rollback_pending_release_after_startup_failure(
+        &self,
+        reason: impl Into<String>,
+    ) -> Result<bool, CoreError> {
+        let status = self.release_status()?;
+        let Some(transaction_id) = status
+            .pending
+            .as_ref()
+            .map(|transaction| transaction.transaction_id.clone())
+        else {
+            return Ok(false);
+        };
+        self.rollback_release(&transaction_id, reason.into())?;
+        Ok(true)
+    }
+
     pub fn in_safe_mode(&self) -> bool {
         self.recovery.is_safe_mode()
     }
@@ -2738,6 +2758,7 @@ impl CoreTransport for InProcessCoreTransport {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ed25519_dalek::SigningKey;
     use std::fs;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -2749,10 +2770,10 @@ mod tests {
     use velvet_persistence::{
         InMemoryAssetSourceLocationStore, InMemoryDiagnosticEventStore, InMemoryLayoutStateStore,
         InMemoryProfileStateStore, InMemoryRecoveryJournalStore, InMemoryRecoverySetStore,
-        InMemoryStateSnapshotStore, JsonFileAssetSourceLocationStore, JsonFileDiagnosticEventStore,
-        JsonFileJobStateStore, JsonFileLayoutStateStore, LayoutStateStore, SnapshotError,
-        SnapshotJobStateStore, SnapshotLayoutStateStore, SnapshotProfileStateStore, StateSnapshot,
-        StateSnapshotStore,
+        InMemoryReleaseUpdateStore, InMemoryStateSnapshotStore, JsonFileAssetSourceLocationStore,
+        JsonFileDiagnosticEventStore, JsonFileJobStateStore, JsonFileLayoutStateStore,
+        LayoutStateStore, ReleaseUpdateStore, SnapshotError, SnapshotJobStateStore,
+        SnapshotLayoutStateStore, SnapshotProfileStateStore, StateSnapshot, StateSnapshotStore,
     };
     use velvet_plugin_api::{
         ContributionDescriptor, ContributionKind, ContributionScope, ExtensionId,
@@ -3835,6 +3856,86 @@ mod tests {
             512
         );
         let _ = fs::remove_file(destination);
+    }
+
+    #[test]
+    fn startup_failure_rolls_back_a_pending_release_once() {
+        let release_store = Arc::new(InMemoryReleaseUpdateStore::new());
+        release_store
+            .save(&velvet_workbench_protocol::ReleaseStatusDto {
+                schema_version: velvet_workbench_protocol::RELEASE_TRANSACTION_SCHEMA_VERSION,
+                committed_sequence: 4,
+                committed_package_generation: "pkg-4".into(),
+                pending: Some(velvet_workbench_protocol::ReleaseTransactionDto {
+                    schema_version: velvet_workbench_protocol::RELEASE_TRANSACTION_SCHEMA_VERSION,
+                    transaction_id: "txn-5".into(),
+                    manifest: velvet_workbench_protocol::ReleaseManifestDto {
+                        schema_version: velvet_workbench_protocol::RELEASE_MANIFEST_SCHEMA_VERSION,
+                        channel: velvet_workbench_protocol::ReleaseChannel::Preview,
+                        version: "0.0.5".into(),
+                        target: "test-target".into(),
+                        artifact_sha256: "0".repeat(64),
+                        updater_schema: 1,
+                        min_data_schema: 1,
+                        max_data_schema: 1,
+                        min_client_version: "0.0.1".into(),
+                        release_sequence: 5,
+                        issued_at_ms: 1,
+                        expires_at_ms: 10,
+                        signing_key_id: "root-1".into(),
+                        signature: "00".into(),
+                    },
+                    staged_package_id: "stage-5".into(),
+                    package_generation: "pkg-5".into(),
+                    base_data_generation: None,
+                    committed_data_generation: None,
+                    state: velvet_workbench_protocol::ReleaseTransactionState::Staged,
+                    health_checkpoint: None,
+                    failure_reason: None,
+                    created_at_ms: 1,
+                }),
+                last_transaction: None,
+            })
+            .expect("pending release fixture should be valid");
+        let signing_key = SigningKey::from_bytes(&[7; 32]);
+        let recovery_stores = ApplicationRecoveryStores::new(
+            Arc::new(InMemoryRecoveryJournalStore::default()),
+            None,
+            None,
+        )
+        .with_release_updates(
+            release_store.clone(),
+            ReleaseTrustPolicy::new(
+                "root-1",
+                signing_key.verifying_key(),
+                velvet_workbench_protocol::ReleaseChannel::Preview,
+            ),
+        );
+        let core = ApplicationCore::with_store_and_runtime_and_plugin_directory_and_jobs_and_profile_and_recovery(
+            Arc::new(InMemoryLayoutStateStore::default()),
+            Box::new(velvet_plugin_host::ProcessPluginRuntime),
+            None,
+            JobSystem::default(),
+            Arc::new(InMemoryProfileStateStore::default()),
+            Arc::new(InMemoryAssetSourceLocationStore::default()),
+            recovery_stores,
+        );
+
+        assert!(core
+            .rollback_pending_release_after_startup_failure("launcher failed")
+            .expect("pending release should roll back"));
+        let status = core.release_status().expect("release status should load");
+        assert!(status.pending.is_none());
+        assert_eq!(
+            status
+                .last_transaction
+                .as_ref()
+                .and_then(|transaction| transaction.failure_reason.as_deref()),
+            Some("launcher failed")
+        );
+        assert!(!core
+            .rollback_pending_release_after_startup_failure("repeated launcher failure")
+            .expect("a completed rollback should be idempotent"));
     }
 
     #[test]

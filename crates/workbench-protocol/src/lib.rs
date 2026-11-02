@@ -419,6 +419,7 @@ pub enum RecoveryFailureClass {
     JournalUnavailable,
     OptionalComponent,
     PlatformInitialization,
+    ReleaseRollback,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

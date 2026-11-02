@@ -601,7 +601,8 @@ export type CoreRecoveryFailureClass =
   | 'state-corrupt'
   | 'journal-unavailable'
   | 'optional-component'
-  | 'platform-initialization';
+  | 'platform-initialization'
+  | 'release-rollback';
 export type CoreRecoveryAction =
   | 'retry'
   | 'disable-recent-component'

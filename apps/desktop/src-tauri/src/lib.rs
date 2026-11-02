@@ -2623,17 +2623,29 @@ pub fn run() {
                     core.record_crash_evidence(evidence);
                 }
             }
+            let mut startup_failure_reason = None;
             if let Some(failure) = consume_tauri_startup_failure(&app_data_dir) {
+                startup_failure_reason = Some(format!(
+                    "Tauri initialization failed during {}: {}",
+                    failure.phase, failure.message
+                ));
                 core.record_platform_preflight(failure.platform_preflight);
                 core.record_recovery_failure(
                     RecoveryFailureClass::PlatformInitialization,
-                    format!(
-                        "Tauri initialization failed during {}: {}",
-                        failure.phase, failure.message
-                    ),
+                    startup_failure_reason
+                        .as_deref()
+                        .unwrap_or("Tauri initialization failed"),
                 );
             }
             if let Some(failure) = consume_launcher_failure(&app_data_dir) {
+                let reason = format!(
+                    "launcher reported a pre-ready application failure during {}: {}",
+                    failure.phase, failure.message
+                );
+                startup_failure_reason = Some(match startup_failure_reason {
+                    Some(previous) => format!("{previous}; {reason}"),
+                    None => reason,
+                });
                 core.record_crash_evidence(CrashCaptureEvidence {
                     schema_version: velvet_workbench_protocol::CRASH_CAPTURE_SCHEMA_VERSION,
                     correlation_id: "launcher".into(),
@@ -2653,6 +2665,21 @@ pub fn run() {
                     RecoveryFailureClass::PlatformInitialization,
                     "launcher reported a pre-ready application failure",
                 );
+            }
+            if let Some(reason) = startup_failure_reason {
+                match core.rollback_pending_release_after_startup_failure(reason.clone()) {
+                    Ok(true) => core.record_recovery_failure(
+                        RecoveryFailureClass::ReleaseRollback,
+                        format!(
+                            "the staged release was rolled back after startup failure: {reason}"
+                        ),
+                    ),
+                    Ok(false) => {}
+                    Err(error) => core.record_recovery_failure(
+                        RecoveryFailureClass::ReleaseRollback,
+                        format!("automatic release rollback failed after startup failure: {error:?}"),
+                    ),
+                }
             }
             if let Some(intent) = consume_native_recovery_intent(&app_data_dir) {
                 if matches!(intent.action, NativeRecoveryAction::RestoreRecoverySet) {
@@ -3717,6 +3744,37 @@ mod tests {
         assert_eq!(value["response"]["kind"], "recovery");
         assert_eq!(value["response"]["projection"]["mode"], "safe");
         assert_eq!(value["response"]["projection"]["actions"][0], "retry");
+    }
+
+    #[test]
+    fn wire_recovery_projection_preserves_release_rollback_failure_class() {
+        let response = WireResponseEnvelope::from_core(ResponseEnvelope {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: RequestId(43),
+            response: Response::Recovery(velvet_workbench_protocol::RecoveryProjection {
+                schema_version: velvet_workbench_protocol::RECOVERY_SCHEMA_VERSION,
+                mode: velvet_workbench_protocol::RecoveryMode::Safe,
+                phase: velvet_workbench_protocol::StartupPhase::Preflight,
+                attempt_id: 1,
+                consecutive_failures: 1,
+                last_failure: Some(velvet_workbench_protocol::RecoveryFailure {
+                    class: RecoveryFailureClass::ReleaseRollback,
+                    phase: velvet_workbench_protocol::StartupPhase::Preflight,
+                    message: "staged release rolled back".into(),
+                    at_ms: 2,
+                    target: None,
+                }),
+                last_good: None,
+                actions: vec![velvet_workbench_protocol::RecoveryAction::Retry],
+                platform_preflight: Vec::new(),
+                durability_report: None,
+            }),
+        });
+        let value = serde_json::to_value(response).expect("recovery response should serialize");
+        assert_eq!(
+            value["response"]["projection"]["lastFailure"]["class"],
+            "release-rollback"
+        );
     }
 
     #[test]

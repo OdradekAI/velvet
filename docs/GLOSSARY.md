@@ -146,6 +146,14 @@ helper 不创建 Tauri 窗口，因此不请求该集合；若未来恢复界面
 
 由宿主记录的一次应用更新事务，包含 manifest 校验、私有 package staging、当前 `RecoverySet` 数据锚点、待迁移状态、旧 package/data generation 保留和健康 checkpoint。事务在新版本进入 `ready` 前可以成对回退到旧 package 与旧 `StateSnapshot` generation；提交后不允许旧 binary 直接打开新 schema。事务状态和最近一次回滚原因可供诊断查询，staging 不接受 renderer 提供的任意路径。
 
+## TauriUpdaterAdapter
+
+对 Tauri 官方 updater plugin 的宿主适配器。它负责 endpoint discovery、签名产物下载、安装和平台重启语义；它不拥有 `ReleaseManifest`、`UpdateTransaction`、`RecoverySet`、迁移兼容性或 Safe Mode。启用前必须同时具备 CI 签名密钥、每个 channel 的 endpoint、最小 updater capability 和可验证的健康提交/回滚联调。
+
+## ReleaseRollback
+
+启动阶段消费到 launcher 或 Tauri pre-ready 失败证据后，对唯一 `pending` `UpdateTransaction` 执行的恢复动作。它只清理私有 staging、把事务记为 `rolled-back` 并保持已提交 package/data generation；回滚失败会保留 pending 供后续恢复重试并进入 Safe Mode。它不能替代 OS/installer 在应用镜像无法启动时选择旧 binary 的能力。
+
 ## ReleaseChannel
 
 应用安装实例选择的发布通道，例如 `stable` 或 `preview`。通道选择参与更新 manifest 校验，更新不能静默跨通道或降级；alpha 构建使用 `preview`。

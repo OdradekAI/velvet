@@ -952,6 +952,55 @@ staging on explicit rollback while the journal keeps bounded transaction
 metadata for diagnostics; a future updater may retain a separately bounded
 artifact evidence copy.
 
+When a launcher or Tauri initialization marker is consumed before
+`workbench-ready`, the composition root gives the pending transaction one
+automatic rollback transition through `ApplicationCore`. The release journal is
+the authority: a committed transaction is untouched, a staged transaction is
+marked `rolled-back`, and its private package staging is removed. The same
+launch records the typed `release-rollback` recovery failure and stays in Safe
+Mode so the user can inspect diagnostics, retry, restore a recovery set or
+install a compatible package. A successful transition leaves no pending
+transaction, so a second launch cannot repeat the side effect; if cleanup is
+itself unavailable, the journal deliberately remains pending for a later
+recovery retry. This protects Velvet's data and
+staging generations; it cannot switch the already-running binary back when
+failure occurs before the application image can execute. OS/installer rollback
+and launcher-level package selection remain platform release gates.
+
+#### Tauri updater and GitHub Releases
+
+Tauri's official updater is an allowed distribution adapter, not a second
+release state machine. The future `tauri-plugin-updater` integration will own
+endpoint discovery, signed updater-artifact verification, bounded download and
+platform install/relaunch behavior. A host-owned update coordinator will call
+that adapter; the renderer will not receive unrestricted updater permissions or
+choose an arbitrary endpoint. Before installation it must stage a Velvet
+`ReleaseManifest` transaction and its data-generation anchor. After restart,
+`ApplicationCore` performs the startup checks above and only the typed
+`workbench-ready` checkpoint commits the package/data pair. Tauri updater does
+not decide migration compatibility, release sequence, `RecoverySet` restore,
+Safe Mode or user-visible rollback actions, and its install operation is not a
+binary rollback guarantee. Velvet must retain a previous package or invoke a
+platform installer rollback adapter when a failed binary must be replaced.
+
+GitHub Releases are a viable transport for stable and preview channels when
+the release pipeline publishes Tauri's signed per-target artifacts and a
+signed `latest.json` (the Tauri Action can generate the static endpoint). The
+stable and preview channels must use separate endpoint/asset selection; the
+generic GitHub `latest` release must not be allowed to silently select a
+preview build. Enabling the adapter requires Tauri's updater public key and
+HTTPS endpoint in `tauri.conf.json`, `bundle.createUpdaterArtifacts`, the
+minimal updater capability permissions and a CI-held private signer key.
+Tauri updater signing key and the Velvet `ReleaseManifest` root key are
+separate trust roots with separate rotation and revocation policies. The
+static updater record is therefore only discovery/install metadata; Velvet's
+signed manifest remains the authority for channel, target, data schema,
+anti-rollback and health commit. The initial foundation slice keeps the
+updater plugin disabled until CI has provisioned a non-development Tauri
+signing key, artifact generation, endpoint ownership, permissions and a
+rollback-capable staging adapter. Enabling the plugin without those inputs
+would create a false trust boundary.
+
 Update checks and downloads use bounded timeouts, the configured proxy and
 diagnosable offline behavior. A failed check does not block startup. A partial
 download is never executable and is discarded or resumed only through the

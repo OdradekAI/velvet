@@ -268,13 +268,17 @@ impl RecoverySupervisor {
                     | RecoveryFailureClass::CoreMigration
                     | RecoveryFailureClass::StateCorrupt
                     | RecoveryFailureClass::PlatformInitialization
+                    | RecoveryFailureClass::ReleaseRollback
             ) && phase != StartupPhase::WorkbenchReady
                 && phase != StartupPhase::Ready
             {
                 inner.state.consecutive_failures =
                     inner.state.consecutive_failures.saturating_add(1);
             }
-            if class == RecoveryFailureClass::CoreMigration {
+            if matches!(
+                class,
+                RecoveryFailureClass::CoreMigration | RecoveryFailureClass::ReleaseRollback
+            ) {
                 inner.state.safe_mode_forced = true;
             }
             inner.state.last_failure = Some(RecoveryFailure {
@@ -795,6 +799,28 @@ mod tests {
         assert_eq!(
             projection.last_failure.map(|failure| failure.class),
             Some(RecoveryFailureClass::PlatformInitialization)
+        );
+    }
+
+    #[test]
+    fn release_rollback_failure_forces_safe_mode_on_the_same_launch() {
+        let journal = Arc::new(InMemoryRecoveryJournalStore::default());
+        let clock = Arc::new(TestClock(AtomicU64::new(1)));
+        let supervisor = RecoverySupervisor::new(journal, clock);
+        supervisor
+            .begin_launch("test")
+            .expect("launch should start");
+        let projection = supervisor
+            .record_failure(
+                RecoveryFailureClass::ReleaseRollback,
+                "the staged package could not be rolled back",
+            )
+            .expect("rollback failure should persist");
+        assert_eq!(projection.mode, RecoveryMode::Safe);
+        assert_eq!(projection.consecutive_failures, 1);
+        assert_eq!(
+            projection.last_failure.map(|failure| failure.class),
+            Some(RecoveryFailureClass::ReleaseRollback)
         );
     }
 
