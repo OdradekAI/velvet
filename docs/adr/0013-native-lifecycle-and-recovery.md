@@ -155,7 +155,7 @@ caught by the host, written as a bounded startup-failure marker and consumed
 into the next launch's typed recovery projection. A failure before the binary
 can execute still depends on the OS launcher or release wrapper.
 
-The release artifact also contains an optional `velvet-launcher` wrapper. It
+The release artifact contains a fixed-path `velvet-launcher` wrapper. It
 uses a fixed sibling application path (or an explicit test-only override),
 passes through the original arguments, and writes a `LauncherAttempt` marker
 before spawning the child. The marker contains only a correlation id, launcher
@@ -168,6 +168,21 @@ crash evidence. The launcher has no access to business state and never
 executes a shell command. A failure while the wrapper binary itself is being
 loaded cannot be observed by code inside that binary; the release wrapper and
 OS crash stores are the boundary for that case.
+
+Release package wiring is explicit and target-specific. Tauri runs
+`beforeBuildCommand: npm run build:tauri`; that command builds the launcher for
+the host or requested Rust target and places it at
+`src-tauri/binaries/velvet-launcher-<target>[.exe]`. `bundle.externalBin` then
+embeds the matching sidecar beside the main executable, while
+`default-run = "velvet-desktop"` keeps ordinary Cargo invocations on the Tauri
+application when the package also contains the launcher binary. The launcher
+build uses a compile-only Tauri config override to avoid recursive sidecar
+validation; normal Tauri packaging always uses the full CSP, capability and
+`externalBin` configuration. The package qualification script checks the
+targeted sidecar, policy and bundle configuration before Tauri packaging, and a
+macOS debug bundle is inspected for both executables. This proves package
+wiring, not release signing, notarization or installer rollback; those remain
+separate per-platform release gates.
 
 When an unclean Core receipt or stale `LauncherAttempt` is present, the
 platform crash adapter scans only known OS crash stores and recent files whose
@@ -679,6 +694,20 @@ can only dispatch the same typed Core commands as the main window and cannot
 activate a plugin or execute an arbitrary command. External-link actions use an explicit
 scheme/domain policy and user confirmation; deep-link payloads still pass
 through `ActivationRequest`.
+
+The release renderer also uses an explicit CSP in `tauri.conf.json`.
+`default-src` and `script-src` are self-only; IPC is limited to Tauri's `ipc:`
+origins; objects and form submissions are disabled; images, fonts and preview
+blobs are limited to the declared local/data sources; and `frame-src` allows
+only the host-controlled Tauri frame plus declared HTTPS plugin surfaces. The
+current React shell emits inline style attributes, so `style-src-attr 'unsafe-inline'`
+is a deliberate, narrow compatibility concession; the
+stylesheet `style-src` remains self-only. It does
+not permit inline scripts, `eval` or broad network connections. Tauri's asset
+CSP modification remains enabled so generated asset hashes are still added at
+build time. Plugin iframe URLs remain manifest/permission checked and
+sandboxed by the host; CSP is an additional browser boundary, not a replacement
+for Rust capability checks.
 
 Velvet uses a versioned Tier A/B support matrix. Tier A includes startup and
 recovery, Rust persistence, WebView rendering, keyboard/IME, accessibility,

@@ -18,6 +18,7 @@ chmod 700 "$failure_child"
 
 failure_data="$tmp_root/failure-data"
 set +e
+TAURI_CONFIG='{"bundle":{"externalBin":null}}' \
 VELVET_APP_DATA_DIR="$failure_data" \
 VELVET_APP_BINARY="$failure_child" \
 cargo run --quiet --manifest-path "$launcher_manifest" --bin velvet-launcher -- \
@@ -33,6 +34,7 @@ test -f "$failure_data/launcher-attempt.json"
 
 missing_data="$tmp_root/missing-data"
 set +e
+TAURI_CONFIG='{"bundle":{"externalBin":null}}' \
 VELVET_APP_DATA_DIR="$missing_data" \
 VELVET_APP_BINARY="$tmp_root/does-not-exist" \
 cargo run --quiet --manifest-path "$launcher_manifest" --bin velvet-launcher -- \
@@ -53,6 +55,7 @@ exit 0
 EOF
 chmod 700 "$success_child"
 success_data="$tmp_root/success-data"
+TAURI_CONFIG='{"bundle":{"externalBin":null}}' \
 VELVET_APP_DATA_DIR="$success_data" \
 VELVET_APP_BINARY="$success_child" \
 cargo run --quiet --manifest-path "$launcher_manifest" --bin velvet-launcher -- \

@@ -14,6 +14,8 @@ without simulating a physical power cut:
 - the fixed-path `velvet-launcher` writes a pre-spawn attempt marker, preserves
   it across loader/exit failure, bounds child stderr and removes it after a
   successful child exit;
+- the Tauri release CSP and deny-by-default package policy are explicit, and a
+  target-specific launcher sidecar is built and wired through `externalBin`;
 - an operator-supplied removable or network mount can be checked for
   reachability and write policy.
 
@@ -37,6 +39,28 @@ fixtures, and does not start Tauri or access application data:
 ./tools/release-qualification/test-launcher-wrapper.sh
 ```
 
+Check release CSP and package wiring independently from the full bundle:
+
+```sh
+./tools/release-qualification/test-package-wiring.sh
+```
+
+The check builds `velvet-launcher` for `VELVET_TARGET_TRIPLE` (or the host
+triple), verifies the executable and target suffix under
+`apps/desktop/src-tauri/binaries/`, and checks `tauri.conf.json` for the
+explicit CSP and `bundle.externalBin`. `npm run tauri build -- --debug` runs the
+same build through Tauri's `beforeBuildCommand`; on macOS the resulting
+`Velvet.app/Contents/MacOS/` directory must contain both `velvet-desktop` and
+`velvet-launcher`. The sidecar is package wiring evidence, not a substitute for
+platform signing, notarization, installer permissions or rollback qualification.
+
+The CSP keeps scripts self-only and IPC on Tauri origins. `frame-src https:` is
+reserved for host-validated, sandboxed plugin surfaces. `style-src-attr 'unsafe-inline'`
+is retained only because the current React shell uses inline
+style attributes; the stylesheet `style-src` remains self-only. It does not
+enable inline script or `eval`. New network,
+frame or capability sources require a policy fixture and a release review.
+
 Optional mount probes can be supplied as paths. The paths must be actual
 mounted test volumes, and the test operator is responsible for testing the
 disconnected state in a second run:
@@ -47,7 +71,7 @@ VELVET_NETWORK_VOLUME=/Volumes/VelvetNetworkQualification \
 ./tools/release-qualification/run-macos.sh
 ```
 
-Run the Linux gate in the versioned `rust:1.88-bookworm` image. The container
+Run the Linux gate in the versioned `rust:1.90-bookworm` image. The container
 runs the test process as the invoking user so Unix mode bits are enforced:
 
 ```sh

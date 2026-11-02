@@ -5,6 +5,7 @@
   "identifier": "com.velvet.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build:tauri",
     "devUrl": "http://localhost:5173",
     "frontendDist": "../dist"
   },
@@ -21,7 +22,20 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": {
+        "default-src": ["'self'"],
+        "connect-src": ["ipc:", "http://ipc.localhost"],
+        "img-src": ["'self'", "blob:", "data:"],
+        "style-src": ["'self'"],
+        "style-src-attr": ["'unsafe-inline'"],
+        "script-src": ["'self'"],
+        "font-src": ["'self'", "data:"],
+        "frame-src": ["'self'", "https:", "tauri-webview:"],
+        "object-src": ["'none'"],
+        "base-uri": ["'self'"],
+        "form-action": ["'self'"]
+      },
+      "dangerousDisableAssetCspModification": false
     }
   },
   "bundle": {
@@ -33,6 +47,7 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "externalBin": ["binaries/velvet-launcher"]
   }
 }

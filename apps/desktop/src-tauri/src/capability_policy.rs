@@ -2,6 +2,7 @@ use serde_json::Value;
 
 const MAIN_CAPABILITY: &str = include_str!("../capabilities/default.json");
 const RECOVERY_CAPABILITY: &str = include_str!("../capabilities/recovery.json");
+const TAURI_CONFIG: &str = include_str!("../tauri.conf.json");
 
 pub fn main_capability_is_minimal() -> bool {
     let Ok(value) = serde_json::from_str::<Value>(MAIN_CAPABILITY) else {
@@ -44,6 +45,28 @@ pub fn recovery_capability_is_host_only() -> bool {
         ])
 }
 
+pub fn release_security_and_package_policy_is_explicit() -> bool {
+    let Ok(value) = serde_json::from_str::<Value>(TAURI_CONFIG) else {
+        return false;
+    };
+    let expected_csp = serde_json::json!({
+        "default-src": ["'self'"],
+        "connect-src": ["ipc:", "http://ipc.localhost"],
+        "img-src": ["'self'", "blob:", "data:"],
+        "style-src": ["'self'"],
+        "style-src-attr": ["'unsafe-inline'"],
+        "script-src": ["'self'"],
+        "font-src": ["'self'", "data:"],
+        "frame-src": ["'self'", "https:", "tauri-webview:"],
+        "object-src": ["'none'"],
+        "base-uri": ["'self'"],
+        "form-action": ["'self'"]
+    });
+    value["app"]["security"]["csp"] == expected_csp
+        && value["app"]["security"]["dangerousDisableAssetCspModification"] == false
+        && value["bundle"]["externalBin"] == serde_json::json!(["binaries/velvet-launcher"])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -52,6 +75,7 @@ mod tests {
     fn main_capability_has_no_broad_core_defaults_or_unrelated_plugins() {
         assert!(main_capability_is_minimal());
         assert!(recovery_capability_is_host_only());
+        assert!(release_security_and_package_policy_is_explicit());
         let value: Value = serde_json::from_str(MAIN_CAPABILITY).expect("capability should parse");
         let permissions = value["permissions"]
             .as_array()

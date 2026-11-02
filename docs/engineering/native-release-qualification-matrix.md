@@ -1,13 +1,14 @@
 # Native release qualification matrix
 
-Status: active release gate; observed on 2026-11-01
+Status: active release gate; observed on 2026-11-02
 
 Current host result: macOS core persistence/ACL/read-only/runtime supervision
-checks are `pass`. Linux Docker persistence/ACL/read-only checks are also
-`pass`, including runtime supervision. Real removable and network mounts are
-explicitly `deferred` for the current foundation slice, so neither platform
-claims release qualification for mount disconnect/reconnect continuity;
-Windows is `deferred`.
+and a real debug Tauri bundle with the launcher sidecar are `pass`. Linux Docker
+persistence/ACL/read-only/runtime supervision and target-sidecar package wiring
+checks are also `pass`; a full Linux desktop bundle remains a separate
+environment check. Real removable and network mounts are explicitly `deferred`
+for the current foundation slice, so neither platform claims release
+qualification for mount disconnect/reconnect continuity; Windows is `deferred`.
 
 The persistence suite is a deterministic cross-target gate. This matrix adds
 host evidence for process interruption and filesystem permissions. A result is
@@ -21,7 +22,9 @@ compilation is evidence that code builds; it does not qualify runtime behavior.
 | ACL denied snapshot directory | `pass` | `pass` | `deferred` | Both runs passed with OS-enforced mode bits; Linux Docker ran as the invoking non-root UID. |
 | Read-only snapshot directory | `pass` | `pass` | `deferred` | Both runs passed; a failed stage does not create defaults or replace a committed generation. |
 | Durability report and unsupported capability | `pass` | `pass` | `deferred` | Both runs passed; the report records effective atomic/file/directory sync behavior and never overstates crash durability. |
-| Release wrapper loader/exit evidence | `pass (fixture)` | `pass (fixture)` | `deferred` | `test-launcher-wrapper.sh` runs the actual Rust launcher against missing, failing and successful children; platform package wiring and failure before the wrapper image loads remain release gates. |
+| Release wrapper loader/exit evidence | `pass (fixture)` | `pass (fixture)` | `deferred` | `test-launcher-wrapper.sh` runs the actual Rust launcher against missing, failing and successful children; failure before the wrapper image loads remains an OS/package evidence gate. |
+| Explicit Tauri CSP and capability policy | `pass (policy + bundled debug)` | `pass (policy fixture)` | `deferred` | `capability_policy` asserts the exact CSP, asset-CSP mutation setting and deny-by-default capability manifests; `test-package-wiring.sh` and the macOS debug bundle verify the policy is included in the packaged app. |
+| Release package launcher wiring | `pass` | `pass (Docker package wiring)` | `deferred` | `beforeBuildCommand` builds `velvet-launcher-<target>`, `bundle.externalBin` embeds it beside the main executable, and `default-run` selects `velvet-desktop`; macOS `Velvet.app` contains both binaries and Linux Docker builds the target sidecar. Signing/notarization and installer rollback remain separate gates. |
 | OS crash artifact metadata | `pass (parser fixture)` | `pass (metadata fallback)` | `deferred` | macOS `.crash`/`.ips` header fixtures project bounded process/exception/signal/reason fields; Linux core/minidump files retain path-free hash metadata when no safe parser is available. |
 | Confirmed orphan sidecar identity and process-group termination | `pass` | `pass` | `deferred` | Native release scripts run the platform runtime lease test: start-token identity must match before the isolated process group is terminated. Windows Job Object runtime remains deferred. |
 | Supplied removable-volume reachability | `deferred` | `deferred` | `deferred` | Deferred by the current foundation decision. Before a release claims removable-volume continuity, run the probe with a real mount, record filesystem identity, disconnect/reconnect it and verify typed unavailable/recovery behavior. |

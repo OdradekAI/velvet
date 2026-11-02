@@ -14,6 +14,7 @@ mkdir -p "$output_dir"
 log_path="$output_dir/persistence.log"
 runtime_log_path="$output_dir/runtime-supervision.log"
 launcher_log_path="$output_dir/launcher-wrapper.log"
+package_log_path="$output_dir/package-wiring.log"
 
 set +e
 (
@@ -46,6 +47,16 @@ set -e
 launcher_status="pass"
 [[ "$launcher_exit" -eq 0 ]] || launcher_status="fail"
 
+set +e
+(
+  cd "$repo_root"
+  bash tools/release-qualification/test-package-wiring.sh
+) >"$package_log_path" 2>&1
+package_exit=$?
+set -e
+package_status="pass"
+[[ "$package_exit" -eq 0 ]] || package_status="fail"
+
 acl_status="pass"
 if grep -q 'ACL probe skipped' "$log_path"; then
   acl_status="not-enforced"
@@ -68,7 +79,7 @@ removable_status="$(probe_volume "${VELVET_REMOVABLE_VOLUME:-}" removable)"
 network_status="$(probe_volume "${VELVET_NETWORK_VOLUME:-}" network)"
 
 overall_status="pass"
-if [[ "$persistence_status" != "pass" || "$runtime_status" != "pass" || "$launcher_status" != "pass" || "$acl_status" == "not-enforced" || "$readonly_status" == "not-enforced" ]]; then
+if [[ "$persistence_status" != "pass" || "$runtime_status" != "pass" || "$launcher_status" != "pass" || "$package_status" != "pass" || "$acl_status" == "not-enforced" || "$readonly_status" == "not-enforced" ]]; then
   overall_status="incomplete"
 fi
 if [[ "$removable_status" != "pass" || "$network_status" != "pass" ]]; then
@@ -83,6 +94,9 @@ fi
 if [[ "$launcher_status" == "fail" ]]; then
   overall_status="fail"
 fi
+if [[ "$package_status" == "fail" ]]; then
+  overall_status="fail"
+fi
 
 cat >"$output_dir/result.json" <<EOF
 {
@@ -91,6 +105,7 @@ cat >"$output_dir/result.json" <<EOF
   "persistence": "$persistence_status",
   "runtimeSupervision": "$runtime_status",
   "launcherWrapper": "$launcher_status",
+  "packageWiring": "$package_status",
   "acl": "$acl_status",
   "readonly": "$readonly_status",
   "removableVolume": "$removable_status",
