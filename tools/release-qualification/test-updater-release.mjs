@@ -44,11 +44,16 @@ const privateKey = crypto.createPrivateKey({
 });
 const publicKey = crypto.createPublicKey(privateKey);
 assert.equal(publicKey.asymmetricKeyType, 'ed25519');
+const publicKeyHex = publicKey.export({ format: 'der', type: 'spki' }).subarray(-32).toString('hex');
 assert.equal(
   crypto.verify(null, Buffer.from(JSON.stringify(unsigned)), publicKey, Buffer.from(manifest.signature, 'hex')),
   true,
   'manifest signature must verify against the canonical unsigned payload',
 );
+run('verify-release-manifest.mjs', [
+  '--manifest', manifestPath,
+  '--channel', 'preview',
+], { VELVET_RELEASE_MANIFEST_PUBLIC_KEY: publicKeyHex });
 
 fs.copyFileSync(path.join(scriptDirectory, 'fixtures/tauri-latest-preview.json'), latestPath);
 run('inject-velvet-manifests.mjs', [latestPath, temporaryDirectory, mergedPath, 'preview']);

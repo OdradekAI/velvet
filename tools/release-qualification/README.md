@@ -56,8 +56,10 @@ node ./tools/release-qualification/test-updater-release.mjs
 
 The fixture does not stand in for production trust. The release workflow must
 provide `VELVET_RELEASE_MANIFEST_PRIVATE_KEY`,
-`VELVET_TAURI_SIGNING_PRIVATE_KEY` and the pinned public key as protected CI
-secrets. Offline and proxy checks use the same endpoint configuration; an
+`VELVET_RELEASE_MANIFEST_PUBLIC_KEY`,
+`VELVET_TAURI_SIGNING_PRIVATE_KEY` as protected CI secrets. The public key
+secret must equal the key pinned in `apps/desktop/src-tauri/src/release_policy.rs`.
+Offline and proxy checks use the same endpoint configuration; an
 unreachable endpoint produces a diagnosable check failure and never blocks
 startup. Install failure and post-restart rollback are covered by the Rust
 `UpdateCoordinator`/`ApplicationCore` tests and must be exercised once with a

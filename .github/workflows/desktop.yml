@@ -336,6 +336,7 @@ jobs:
         env:
           VELVET_UPDATER_ARTIFACT_PATHS: ${{ steps.tauri_release.outputs.artifactPaths }}
           VELVET_RELEASE_MANIFEST_PRIVATE_KEY: ${{ secrets.VELVET_RELEASE_MANIFEST_PRIVATE_KEY }}
+          VELVET_RELEASE_MANIFEST_PUBLIC_KEY: ${{ secrets.VELVET_RELEASE_MANIFEST_PUBLIC_KEY }}
         run: |
           mkdir -p artifacts/release-manifests
           node tools/release-qualification/generate-release-manifest.mjs \
@@ -347,6 +348,9 @@ jobs:
             --signing-key-id '${{ matrix.signingKeyId }}' \
             --release-sequence '${{ github.run_number }}' \
             --output 'artifacts/release-manifests/velvet-manifest-${{ matrix.updaterTarget }}.json'
+          node tools/release-qualification/verify-release-manifest.mjs \
+            --manifest 'artifacts/release-manifests/velvet-manifest-${{ matrix.updaterTarget }}.json' \
+            --channel '${{ matrix.channel }}'
           gh release upload '${{ github.ref_name }}' \
             'artifacts/release-manifests/velvet-manifest-${{ matrix.updaterTarget }}.json#velvet-manifest-${{ matrix.updaterTarget }}.json' \
             --clobber
@@ -389,7 +393,13 @@ jobs:
           done < <(jq -r '.assets[] | select(.name | startswith("velvet-manifest-")) | .name' artifacts/release.json)
 
       - name: Inject signed Velvet manifests
+        env:
+          VELVET_RELEASE_MANIFEST_PUBLIC_KEY: ${{ secrets.VELVET_RELEASE_MANIFEST_PUBLIC_KEY }}
         run: |
+          for manifest in artifacts/release-manifests/velvet-manifest-*.json; do
+            node tools/release-qualification/verify-release-manifest.mjs \
+              --manifest "$manifest" --channel preview
+          done
           node tools/release-qualification/inject-velvet-manifests.mjs \
             artifacts/latest/latest.json \
             artifacts/release-manifests \
