@@ -1008,6 +1008,13 @@ updater adapter. An interrupted install is reconciled from the journal on the
 next launch; it never deletes user data or silently replaces a committed
 generation.
 
+The host may check for updates after the core reaches `ready`, but installation
+is a user/policy action. The coordinator does not install while a non-cancellable
+core migration or critical Job is active, never changes the selected channel,
+and records the pending transaction before invoking the platform installer.
+Enterprise policy may make that action automatic only through the same typed
+gate; a renderer command cannot bypass it.
+
 Uninstall removes application binaries and package-local staging data by
 default but retains Profile, Workspace, Asset metadata, snapshots and
 diagnostics. A separate, explicit user action deletes selected data after a
