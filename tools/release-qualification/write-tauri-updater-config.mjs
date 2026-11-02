@@ -15,6 +15,12 @@ if (!publicKey) {
   process.exit(2);
 }
 
+const channel = process.env.TAURI_RELEASE_CHANNEL?.trim();
+if (!channel || !['stable', 'preview'].includes(channel)) {
+  console.error('TAURI_RELEASE_CHANNEL must be stable or preview');
+  process.exit(2);
+}
+
 const endpoint = process.env.TAURI_UPDATER_ENDPOINT?.trim();
 if (!endpoint || !endpoint.startsWith('https://')) {
   console.error(

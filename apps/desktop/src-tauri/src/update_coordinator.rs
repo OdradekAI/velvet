@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Runtime};
@@ -192,7 +192,9 @@ impl UpdateCoordinator {
     ) -> Result<Option<(tauri_plugin_updater::Update, ReleaseManifestDto)>, UpdateCoordinatorError>
     {
         let updater = app
-            .updater()
+            .updater_builder()
+            .timeout(Duration::from_secs(30))
+            .build()
             .map_err(|error| UpdateCoordinatorError::Disabled(error.to_string()))?;
         let Some(update) = updater
             .check()
@@ -206,7 +208,7 @@ impl UpdateCoordinator {
         else {
             return Ok(None);
         };
-        let manifest = parse_release_manifest(&update.raw_json)?;
+        let manifest = parse_release_manifest(&update.raw_json, &update.target)?;
         if normalize_version(&update.version) != normalize_version(&manifest.version) {
             return Err(UpdateCoordinatorError::Manifest(
                 "Tauri update version and Velvet manifest version differ".into(),
@@ -265,10 +267,16 @@ impl UpdateCoordinator {
 
 pub fn parse_release_manifest(
     raw_json: &serde_json::Value,
+    updater_target: &str,
 ) -> Result<ReleaseManifestDto, UpdateCoordinatorError> {
     let value = raw_json
-        .get("velvetManifest")
-        .ok_or_else(|| UpdateCoordinatorError::Manifest("latest.json has no velvetManifest".into()))?;
+        .get("velvetManifests")
+        .and_then(|manifests| manifests.get(updater_target))
+        .ok_or_else(|| {
+            UpdateCoordinatorError::Manifest(format!(
+                "latest.json has no velvetManifests entry for {updater_target}"
+            ))
+        })?;
     serde_json::from_value(value.clone())
         .map_err(|error| UpdateCoordinatorError::Manifest(error.to_string()))
 }
@@ -318,7 +326,8 @@ mod tests {
         let raw = serde_json::json!({
             "version": "0.0.5",
             "platforms": {},
-            "velvetManifest": {
+            "velvetManifests": {
+              "test-x86_64": {
                 "schemaVersion": 1,
                 "channel": "preview",
                 "version": "0.0.5",
@@ -333,18 +342,45 @@ mod tests {
                 "expiresAtMs": 2,
                 "signingKeyId": "preview",
                 "signature": "b".repeat(128)
+              }
             }
         });
-        let manifest = parse_release_manifest(&raw).expect("manifest");
+        let manifest = parse_release_manifest(&raw, "test-x86_64").expect("manifest");
         assert_eq!(manifest.version, "0.0.5");
         assert_eq!(manifest.release_sequence, 2);
     }
 
     #[test]
     fn missing_manifest_fails_closed() {
-        let error = parse_release_manifest(&serde_json::json!({"version": "0.0.5"}))
+        let error = parse_release_manifest(&serde_json::json!({"version": "0.0.5"}), "darwin-aarch64")
             .expect_err("missing manifest should fail");
-        assert!(error.to_string().contains("no velvetManifest"));
+        assert!(error.to_string().contains("no velvetManifests entry"));
+    }
+
+    #[test]
+    fn wrong_target_does_not_fall_back_to_another_platform_manifest() {
+        let raw = serde_json::json!({
+            "velvetManifests": {
+                "darwin-aarch64": {
+                    "schemaVersion": 1,
+                    "channel": "preview",
+                    "version": "0.0.5",
+                    "target": "macos-aarch64",
+                    "artifactSha256": "a".repeat(64),
+                    "updaterSchema": 1,
+                    "minDataSchema": 1,
+                    "maxDataSchema": 1,
+                    "minClientVersion": "0.0.1",
+                    "releaseSequence": 2,
+                    "issuedAtMs": 1,
+                    "expiresAtMs": 2,
+                    "signingKeyId": "preview",
+                    "signature": "b".repeat(128)
+                }
+            }
+        });
+        let error = parse_release_manifest(&raw, "linux-x86_64").expect_err("target must be bound");
+        assert!(error.to_string().contains("linux-x86_64"));
     }
 
     #[test]

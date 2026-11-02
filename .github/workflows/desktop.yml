@@ -179,6 +179,9 @@ jobs:
       - name: Verify updater endpoint fixture
         run: node tools/release-qualification/validate-updater-json.mjs tools/release-qualification/fixtures/tauri-latest-preview.json preview
 
+      - name: Verify release manifest signing and injection fixture
+        run: node tools/release-qualification/test-updater-release.mjs
+
       - name: Build and upload Tauri bundles
         uses: tauri-apps/tauri-action@v1
         env:
@@ -206,18 +209,38 @@ jobs:
             arch: x64
             target: ""
             args: ""
+            channel: preview
+            updaterTarget: linux-x86_64
+            velvetTarget: linux-x86_64
+            updaterArtifactSuffix: .AppImage.tar.gz
+            signingKeyId: velvet-preview-root-1
           - os: macos-latest
             arch: arm64
             target: aarch64-apple-darwin
             args: --target aarch64-apple-darwin
+            channel: preview
+            updaterTarget: darwin-aarch64
+            velvetTarget: macos-aarch64
+            updaterArtifactSuffix: .app.tar.gz
+            signingKeyId: velvet-preview-root-1
           - os: macos-latest
             arch: x64
             target: x86_64-apple-darwin
             args: --target x86_64-apple-darwin
+            channel: preview
+            updaterTarget: darwin-x86_64
+            velvetTarget: macos-x86_64
+            updaterArtifactSuffix: .app.tar.gz
+            signingKeyId: velvet-preview-root-1
           - os: windows-latest
             arch: x64
             target: ""
             args: ""
+            channel: preview
+            updaterTarget: windows-x86_64
+            velvetTarget: windows-x86_64
+            updaterArtifactSuffix: .msi.zip
+            signingKeyId: velvet-preview-root-1
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -278,10 +301,19 @@ jobs:
       - name: Prepare signed updater configuration
         env:
           TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.VELVET_TAURI_UPDATER_PUBLIC_KEY }}
-          TAURI_UPDATER_ENDPOINT: ${{ secrets.VELVET_TAURI_UPDATER_ENDPOINT }}
-        run: node tools/release-qualification/write-tauri-updater-config.mjs apps/desktop/src-tauri/tauri.release.generated.json
+          TAURI_UPDATER_ENDPOINT_PREVIEW: ${{ secrets.VELVET_TAURI_UPDATER_ENDPOINT_PREVIEW }}
+          TAURI_UPDATER_ENDPOINT_STABLE: ${{ secrets.VELVET_TAURI_UPDATER_ENDPOINT_STABLE }}
+          TAURI_RELEASE_CHANNEL: ${{ matrix.channel }}
+        run: |
+          if [ "$TAURI_RELEASE_CHANNEL" = "preview" ]; then
+            export TAURI_UPDATER_ENDPOINT="$TAURI_UPDATER_ENDPOINT_PREVIEW"
+          else
+            export TAURI_UPDATER_ENDPOINT="$TAURI_UPDATER_ENDPOINT_STABLE"
+          fi
+          node tools/release-qualification/write-tauri-updater-config.mjs apps/desktop/src-tauri/tauri.release.generated.json
 
       - name: Build and upload release bundles
+        id: tauri_release
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -295,6 +327,104 @@ jobs:
           releaseName: Velvet ${{ github.ref_name }}
           releaseBody: Download the installer for your operating system from the assets below.
           releaseDraft: true
-          prerelease: false
+          prerelease: true
           uploadUpdaterJson: true
           uploadUpdaterSignatures: true
+          updaterJsonPreferNsis: false
+
+      - name: Generate target ReleaseManifest
+        env:
+          VELVET_UPDATER_ARTIFACT_PATHS: ${{ steps.tauri_release.outputs.artifactPaths }}
+          VELVET_RELEASE_MANIFEST_PRIVATE_KEY: ${{ secrets.VELVET_RELEASE_MANIFEST_PRIVATE_KEY }}
+        run: |
+          mkdir -p artifacts/release-manifests
+          node tools/release-qualification/generate-release-manifest.mjs \
+            --artifact-paths "$VELVET_UPDATER_ARTIFACT_PATHS" \
+            --artifact-suffix '${{ matrix.updaterArtifactSuffix }}' \
+            --version '${{ steps.tauri_release.outputs.appVersion }}' \
+            --channel '${{ matrix.channel }}' \
+            --target '${{ matrix.velvetTarget }}' \
+            --signing-key-id '${{ matrix.signingKeyId }}' \
+            --release-sequence '${{ github.run_number }}' \
+            --output 'artifacts/release-manifests/velvet-manifest-${{ matrix.updaterTarget }}.json'
+          gh release upload '${{ github.ref_name }}' \
+            'artifacts/release-manifests/velvet-manifest-${{ matrix.updaterTarget }}.json#velvet-manifest-${{ matrix.updaterTarget }}.json' \
+            --clobber
+
+  finalize-updater-manifest:
+    name: Finalize channel latest.json
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: release
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Download standard Tauri updater metadata
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p artifacts/latest artifacts/release-manifests
+          release_api="/repos/${GITHUB_REPOSITORY}/releases/tags/${{ github.ref_name }}"
+          gh api "$release_api" > artifacts/release.json
+          download_asset() {
+            local asset_name="$1"
+            local output_path="$2"
+            local asset_id
+            asset_id="$(jq -r --arg name "$asset_name" '.assets[] | select(.name == $name) | .id' artifacts/release.json | head -n 1)"
+            test -n "$asset_id" -a "$asset_id" != "null"
+            gh api -H 'Accept: application/octet-stream' \
+              "/repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" > "$output_path"
+          }
+          download_asset latest.json artifacts/latest/latest.json
+          while IFS= read -r asset_name; do
+            download_asset "$asset_name" "artifacts/release-manifests/$asset_name"
+          done < <(jq -r '.assets[] | select(.name | startswith("velvet-manifest-")) | .name' artifacts/release.json)
+
+      - name: Inject signed Velvet manifests
+        run: |
+          node tools/release-qualification/inject-velvet-manifests.mjs \
+            artifacts/latest/latest.json \
+            artifacts/release-manifests \
+            artifacts/latest/latest.velvet.json \
+            preview
+          node tools/release-qualification/validate-updater-json.mjs \
+            artifacts/latest/latest.velvet.json preview
+
+      - name: Replace latest.json with channel-enriched metadata
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload '${{ github.ref_name }}' 'artifacts/latest/latest.velvet.json#latest.json' --clobber
+
+      - name: Publish the versioned release after metadata validation
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit '${{ github.ref_name }}' --draft=false --prerelease=true
+
+      - name: Publish channel endpoint metadata
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CHANNEL_TAG: preview
+        run: |
+          if gh release view "$CHANNEL_TAG" >/dev/null 2>&1; then
+            gh release edit "$CHANNEL_TAG" \
+              --title "Velvet $CHANNEL_TAG channel" \
+              --notes "Machine-readable updater metadata for the $CHANNEL_TAG channel." \
+              --prerelease
+          else
+            gh release create "$CHANNEL_TAG" \
+              --target '${{ github.sha }}' \
+              --title "Velvet $CHANNEL_TAG channel" \
+              --notes "Machine-readable updater metadata for the $CHANNEL_TAG channel." \
+              --prerelease
+          fi
+          gh release upload "$CHANNEL_TAG" \
+            'artifacts/latest/latest.velvet.json#latest.json' \
+            --clobber

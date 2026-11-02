@@ -45,6 +45,31 @@ Check release CSP and package wiring independently from the full bundle:
 ./tools/release-qualification/test-package-wiring.sh
 ```
 
+Run the updater metadata fixture before publishing a release. It creates a
+real Ed25519 signature from a deterministic test seed, verifies the canonical
+payload, injects one target manifest into Tauri's `latest.json`, checks the
+negative signature path, and verifies an explicit channel endpoint:
+
+```sh
+node ./tools/release-qualification/test-updater-release.mjs
+```
+
+The fixture does not stand in for production trust. The release workflow must
+provide `VELVET_RELEASE_MANIFEST_PRIVATE_KEY`,
+`VELVET_TAURI_SIGNING_PRIVATE_KEY` and the pinned public key as protected CI
+secrets. Offline and proxy checks use the same endpoint configuration; an
+unreachable endpoint produces a diagnosable check failure and never blocks
+startup. Install failure and post-restart rollback are covered by the Rust
+`UpdateCoordinator`/`ApplicationCore` tests and must be exercised once with a
+real signed package on each release runner.
+
+The alpha workflow points `VELVET_TAURI_UPDATER_ENDPOINT_PREVIEW` at the
+fixed channel asset, for example
+`https://github.com/OdradekAI/velvet/releases/download/preview/latest.json`.
+The stable secret must point to the separate `stable` channel asset. Do not
+use `releases/latest/download/latest.json` for the preview channel: GitHub's
+global latest selection has no preview isolation.
+
 The check builds `velvet-launcher` for `VELVET_TARGET_TRIPLE` (or the host
 triple), verifies the executable and target suffix under
 `apps/desktop/src-tauri/binaries/`, and checks `tauri.conf.json` for the
