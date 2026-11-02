@@ -989,7 +989,7 @@ platform installer rollback adapter when a failed binary must be replaced.
 GitHub Releases are a viable transport for stable and preview channels when
 the release pipeline publishes Tauri's signed per-target artifacts and a
 signed `latest.json` (the Tauri Action generates the standard static endpoint;
-the release pipeline must add the signed `velvetManifests[tauriTarget]` map
+the release pipeline must add the signed `velvetManifests[tauriPlatform]` map
 before the file is published). Each target manifest binds its Velvet target,
 artifact digest and signing key to the corresponding Tauri platform entry.
 The channel metadata is also uploaded to a fixed `stable` or `preview` channel
