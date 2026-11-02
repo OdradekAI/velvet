@@ -65,6 +65,11 @@ startup. Install failure and post-restart rollback are covered by the Rust
 `UpdateCoordinator`/`ApplicationCore` tests and must be exercised once with a
 real signed package on each release runner.
 
+The release manifest map is keyed by the exact Tauri updater platform entry,
+such as `windows-x86_64-msi` or `windows-x86_64-nsis`, rather than only by OS
+and architecture. This prevents the digest for one installer format from
+being reused when Tauri selects another format for an existing installation.
+
 The alpha workflow points `VELVET_TAURI_UPDATER_ENDPOINT_PREVIEW` at the
 fixed channel asset, for example
 `https://github.com/OdradekAI/velvet/releases/download/preview/latest.json`.
