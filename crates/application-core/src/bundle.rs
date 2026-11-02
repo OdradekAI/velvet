@@ -1,9 +1,15 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use sha2::{Digest, Sha256};
+use velvet_persistence::{
+    RecoverySetError, RecoverySetStore, RecoverySetTransaction, SnapshotError, StateSnapshot,
+    StateSnapshotStore, CORE_RECOVERY_SET_ID, MAX_STATE_SNAPSHOT_BYTES,
+};
 use velvet_workbench_protocol::{
-    ImportConflict, ImportMigration, ImportPlan, PortableBundle, PortableBundleError,
-    PortableBundleScope, IMPORT_PLAN_SCHEMA_VERSION,
+    ImportConflict, ImportMigration, ImportOwnerReceipt, ImportOwnerStatus, ImportPlan,
+    ImportPlanError, ImportReceipt, ImportReceiptStatus, PortableBundle, PortableBundleError,
+    PortableBundleScope, PortableBundleSection, IMPORT_PLAN_SCHEMA_VERSION,
+    IMPORT_RECEIPT_SCHEMA_VERSION,
 };
 
 const DEFAULT_IMPORT_PLAN_TTL_MS: u64 = 5 * 60 * 1000;
@@ -176,6 +182,432 @@ impl PortableBundleInspector {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum BundleImportParticipantError {
+    Invalid(String),
+    Conflict(String),
+    Unavailable(String),
+}
+
+/// Owner-specific import seam. A participant decodes and migrates its own
+/// payload, while the host supplies the current snapshot and controls the
+/// snapshot metadata, staging and RecoverySet publication.
+pub trait BundleImportParticipant: Send + Sync {
+    fn owner_id(&self) -> &str;
+    fn snapshot_scope(&self) -> &str;
+    fn bundle_scope(&self) -> PortableBundleScope;
+    fn schema_version(&self) -> u16;
+    fn import_payload(
+        &self,
+        section: &PortableBundleSection,
+        existing: Option<&StateSnapshot>,
+        migration: Option<&ImportMigration>,
+    ) -> Result<Vec<u8>, BundleImportParticipantError>;
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum BundleImportError {
+    Bundle(PortableBundleError),
+    Plan(ImportPlanError),
+    BundleIdMismatch,
+    UnknownSelection {
+        section_id: String,
+    },
+    DigestMismatch {
+        section_id: String,
+    },
+    DuplicateOwner {
+        owner_id: String,
+        scope: String,
+    },
+    MissingParticipant {
+        owner_id: String,
+        scope: String,
+    },
+    UnsupportedCoreSchema {
+        owner_id: String,
+        received: u16,
+        supported: u16,
+    },
+    Snapshot(SnapshotError),
+    RecoverySet(RecoverySetError),
+    Participant {
+        owner_id: String,
+        scope: String,
+        error: BundleImportParticipantError,
+    },
+    PayloadTooLarge {
+        owner_id: String,
+        scope: String,
+    },
+}
+
+struct PreparedSnapshot {
+    owner_id: String,
+    scope: String,
+    snapshot: StateSnapshot,
+}
+
+/// Publishes selected core owner sections through the existing snapshot and
+/// RecoverySet seams. Extensions are independent: their participant output is
+/// committed after the core pointer and a failure becomes a quarantined
+/// receipt entry instead of invalidating the selected core import.
+pub struct PortableBundleImporter<'a> {
+    snapshots: &'a dyn StateSnapshotStore,
+    recovery_sets: &'a dyn RecoverySetStore,
+}
+
+impl<'a> PortableBundleImporter<'a> {
+    pub fn new(
+        snapshots: &'a dyn StateSnapshotStore,
+        recovery_sets: &'a dyn RecoverySetStore,
+    ) -> Self {
+        Self {
+            snapshots,
+            recovery_sets,
+        }
+    }
+
+    pub fn import(
+        &self,
+        bundle: &PortableBundle,
+        plan: &ImportPlan,
+        participants: &[&dyn BundleImportParticipant],
+        now_ms: u64,
+    ) -> Result<ImportReceipt, BundleImportError> {
+        bundle.validate().map_err(BundleImportError::Bundle)?;
+        plan.validate(now_ms).map_err(BundleImportError::Plan)?;
+        if plan.bundle_id != bundle.bundle_id {
+            return Err(BundleImportError::BundleIdMismatch);
+        }
+        let sections = bundle
+            .sections
+            .iter()
+            .map(|section| (section.section_id.as_str(), section))
+            .collect::<BTreeMap<_, _>>();
+        let migrations = plan
+            .migrations
+            .iter()
+            .map(|migration| (migration.section_id.as_str(), migration))
+            .collect::<BTreeMap<_, _>>();
+        let mut seen_owners = BTreeSet::new();
+        let mut core_snapshots = Vec::new();
+        let mut extension_snapshots = Vec::new();
+        let mut owner_receipts = Vec::new();
+
+        for section_id in &plan.selected_section_ids {
+            let Some(section) = sections.get(section_id.as_str()) else {
+                return Err(BundleImportError::UnknownSelection {
+                    section_id: section_id.clone(),
+                });
+            };
+            let is_extension = matches!(section.scope, PortableBundleScope::Extension);
+            let participant = participants
+                .iter()
+                .find(|participant| {
+                    participant.owner_id() == section.owner_id
+                        && participant.bundle_scope() == section.scope.clone()
+                })
+                .copied();
+
+            if !is_extension {
+                let digest = Sha256::digest(&section.payload);
+                if encode_hex(&digest) != section.sha256.to_ascii_lowercase() {
+                    return Err(BundleImportError::DigestMismatch {
+                        section_id: section.section_id.clone(),
+                    });
+                }
+                let Some(participant) = participant else {
+                    return Err(BundleImportError::MissingParticipant {
+                        owner_id: section.owner_id.clone(),
+                        scope: bundle_scope_label(&section.scope).into(),
+                    });
+                };
+                let owner_scope = (
+                    participant.owner_id().to_owned(),
+                    participant.snapshot_scope().to_owned(),
+                );
+                if !seen_owners.insert(owner_scope.clone()) {
+                    return Err(BundleImportError::DuplicateOwner {
+                        owner_id: owner_scope.0,
+                        scope: owner_scope.1,
+                    });
+                }
+                let supported_schema = participant.schema_version();
+                if section.schema_version > supported_schema {
+                    return Err(BundleImportError::UnsupportedCoreSchema {
+                        owner_id: section.owner_id.clone(),
+                        received: section.schema_version,
+                        supported: supported_schema,
+                    });
+                }
+                let existing = self
+                    .snapshots
+                    .load_latest(participant.owner_id(), participant.snapshot_scope())
+                    .map_err(BundleImportError::Snapshot)?;
+                let payload = participant
+                    .import_payload(
+                        section,
+                        existing.as_ref(),
+                        migrations.get(section_id.as_str()).copied(),
+                    )
+                    .map_err(|error| BundleImportError::Participant {
+                        owner_id: participant.owner_id().into(),
+                        scope: participant.snapshot_scope().into(),
+                        error,
+                    })?;
+                core_snapshots.push(PreparedSnapshot {
+                    owner_id: participant.owner_id().into(),
+                    scope: participant.snapshot_scope().into(),
+                    snapshot: make_snapshot(participant, existing.as_ref(), now_ms, payload)?,
+                });
+                continue;
+            }
+
+            let Some(participant) = participant else {
+                owner_receipts.push(skipped_extension_receipt(
+                    section,
+                    "extension participant is unavailable",
+                ));
+                continue;
+            };
+            if !verify_digest(section) {
+                owner_receipts.push(ImportOwnerReceipt {
+                    owner_id: participant.owner_id().into(),
+                    scope: participant.snapshot_scope().into(),
+                    status: ImportOwnerStatus::Quarantined,
+                    generation: None,
+                    message: Some("extension section integrity check failed".into()),
+                });
+                continue;
+            }
+            if section.schema_version > participant.schema_version() {
+                owner_receipts.push(ImportOwnerReceipt {
+                    owner_id: participant.owner_id().into(),
+                    scope: participant.snapshot_scope().into(),
+                    status: ImportOwnerStatus::Quarantined,
+                    generation: None,
+                    message: Some("extension schema is newer than the participant".into()),
+                });
+                continue;
+            }
+            let owner_scope = (
+                participant.owner_id().to_owned(),
+                participant.snapshot_scope().to_owned(),
+            );
+            if !seen_owners.insert(owner_scope.clone()) {
+                return Err(BundleImportError::DuplicateOwner {
+                    owner_id: owner_scope.0,
+                    scope: owner_scope.1,
+                });
+            }
+            let existing = match self
+                .snapshots
+                .load_latest(participant.owner_id(), participant.snapshot_scope())
+            {
+                Ok(existing) => existing,
+                Err(error) => {
+                    owner_receipts.push(ImportOwnerReceipt {
+                        owner_id: participant.owner_id().into(),
+                        scope: participant.snapshot_scope().into(),
+                        status: ImportOwnerStatus::Quarantined,
+                        generation: None,
+                        message: Some(format!("extension state could not be loaded: {error:?}")),
+                    });
+                    continue;
+                }
+            };
+            let payload = match participant.import_payload(
+                section,
+                existing.as_ref(),
+                migrations.get(section_id.as_str()).copied(),
+            ) {
+                Ok(payload) => payload,
+                Err(error) => {
+                    owner_receipts.push(ImportOwnerReceipt {
+                        owner_id: participant.owner_id().into(),
+                        scope: participant.snapshot_scope().into(),
+                        status: ImportOwnerStatus::Quarantined,
+                        generation: None,
+                        message: Some(format!("extension import failed: {error:?}")),
+                    });
+                    continue;
+                }
+            };
+            match make_snapshot(participant, existing.as_ref(), now_ms, payload) {
+                Ok(snapshot) => extension_snapshots.push(PreparedSnapshot {
+                    owner_id: participant.owner_id().into(),
+                    scope: participant.snapshot_scope().into(),
+                    snapshot,
+                }),
+                Err(BundleImportError::PayloadTooLarge { .. }) => {
+                    owner_receipts.push(ImportOwnerReceipt {
+                        owner_id: participant.owner_id().into(),
+                        scope: participant.snapshot_scope().into(),
+                        status: ImportOwnerStatus::Quarantined,
+                        generation: None,
+                        message: Some("extension payload exceeds snapshot limit".into()),
+                    });
+                }
+                Err(error) => return Err(error),
+            }
+        }
+
+        let recovery_set = if core_snapshots.is_empty() {
+            None
+        } else {
+            let current = self
+                .recovery_sets
+                .load_latest(CORE_RECOVERY_SET_ID)
+                .map_err(BundleImportError::RecoverySet)?
+                .ok_or(BundleImportError::RecoverySet(RecoverySetError::NotFound))?;
+            let scopes = current
+                .members
+                .values()
+                .map(|member| (member.owner_id.as_str(), member.scope.as_str()))
+                .collect::<Vec<_>>();
+            for prepared in &core_snapshots {
+                if !current
+                    .members
+                    .contains_key(&format!("{}:{}", prepared.owner_id, prepared.scope))
+                {
+                    return Err(BundleImportError::RecoverySet(
+                        RecoverySetError::Incomplete(format!(
+                            "owner {}:{} is not in the current recovery set",
+                            prepared.owner_id, prepared.scope
+                        )),
+                    ));
+                }
+            }
+            let mut transaction = RecoverySetTransaction::new(
+                self.snapshots,
+                self.recovery_sets,
+                CORE_RECOVERY_SET_ID,
+                now_ms,
+                &scopes,
+            )
+            .map_err(BundleImportError::RecoverySet)?;
+            for prepared in &core_snapshots {
+                transaction
+                    .stage(&prepared.snapshot)
+                    .map_err(BundleImportError::RecoverySet)?;
+            }
+            let committed = transaction
+                .commit()
+                .map_err(BundleImportError::RecoverySet)?;
+            for prepared in &core_snapshots {
+                owner_receipts.push(ImportOwnerReceipt {
+                    owner_id: prepared.owner_id.clone(),
+                    scope: prepared.scope.clone(),
+                    status: ImportOwnerStatus::Committed,
+                    generation: Some(prepared.snapshot.metadata.generation),
+                    message: None,
+                });
+            }
+            Some(committed)
+        };
+
+        for prepared in extension_snapshots {
+            let owner_id = prepared.owner_id.clone();
+            let scope = prepared.scope.clone();
+            let generation = prepared.snapshot.metadata.generation;
+            let result = self
+                .snapshots
+                .stage(&prepared.snapshot)
+                .and_then(|_| self.snapshots.commit(&owner_id, &scope, generation));
+            owner_receipts.push(match result {
+                Ok(()) => ImportOwnerReceipt {
+                    owner_id,
+                    scope,
+                    status: ImportOwnerStatus::Committed,
+                    generation: Some(generation),
+                    message: None,
+                },
+                Err(error) => ImportOwnerReceipt {
+                    owner_id,
+                    scope,
+                    status: ImportOwnerStatus::Quarantined,
+                    generation: None,
+                    message: Some(format!(
+                        "extension snapshot could not be committed: {error:?}"
+                    )),
+                },
+            });
+        }
+
+        let status = if owner_receipts
+            .iter()
+            .any(|owner| !matches!(owner.status, ImportOwnerStatus::Committed))
+        {
+            ImportReceiptStatus::Partial
+        } else {
+            ImportReceiptStatus::Committed
+        };
+        Ok(ImportReceipt {
+            schema_version: IMPORT_RECEIPT_SCHEMA_VERSION,
+            plan_id: plan.plan_id.clone(),
+            bundle_id: plan.bundle_id.clone(),
+            status,
+            recorded_at_ms: now_ms,
+            recovery_set_generation: recovery_set.map(|set| set.generation),
+            owners: owner_receipts,
+        })
+    }
+}
+
+fn make_snapshot(
+    participant: &dyn BundleImportParticipant,
+    existing: Option<&StateSnapshot>,
+    now_ms: u64,
+    payload: Vec<u8>,
+) -> Result<StateSnapshot, BundleImportError> {
+    if payload.len() > MAX_STATE_SNAPSHOT_BYTES {
+        return Err(BundleImportError::PayloadTooLarge {
+            owner_id: participant.owner_id().into(),
+            scope: participant.snapshot_scope().into(),
+        });
+    }
+    let generation = existing
+        .map(|snapshot| snapshot.metadata.generation.saturating_add(1))
+        .unwrap_or(1)
+        .max(1);
+    Ok(StateSnapshot::new(
+        participant.owner_id(),
+        participant.snapshot_scope(),
+        participant.schema_version(),
+        generation,
+        now_ms,
+        payload,
+    ))
+}
+
+fn verify_digest(section: &PortableBundleSection) -> bool {
+    let digest = Sha256::digest(&section.payload);
+    encode_hex(&digest) == section.sha256.to_ascii_lowercase()
+}
+
+fn skipped_extension_receipt(section: &PortableBundleSection, message: &str) -> ImportOwnerReceipt {
+    ImportOwnerReceipt {
+        owner_id: section
+            .extension_id
+            .clone()
+            .unwrap_or_else(|| section.owner_id.clone()),
+        scope: "extension".into(),
+        status: ImportOwnerStatus::Skipped,
+        generation: None,
+        message: Some(message.into()),
+    }
+}
+
+fn bundle_scope_label(scope: &PortableBundleScope) -> &'static str {
+    match scope {
+        PortableBundleScope::Profile => "profile",
+        PortableBundleScope::Workspace => "workspace",
+        PortableBundleScope::Asset => "asset",
+        PortableBundleScope::Extension => "extension",
+    }
+}
+
 fn encode_hex(bytes: &[u8]) -> String {
     let mut output = String::with_capacity(bytes.len() * 2);
     for byte in bytes {
@@ -187,7 +619,50 @@ fn encode_hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use velvet_persistence::{
+        commit_current_recovery_set, InMemoryRecoverySetStore, InMemoryStateSnapshotStore,
+        StateSnapshotStore, CORE_RECOVERY_SET_ID, JOB_SNAPSHOT_OWNER, JOB_SNAPSHOT_SCOPE,
+        LAYOUT_SNAPSHOT_OWNER, LAYOUT_SNAPSHOT_SCOPE, PROFILE_SNAPSHOT_OWNER,
+        PROFILE_SNAPSHOT_SCOPE,
+    };
     use velvet_workbench_protocol::{PortableBundleSection, PORTABLE_BUNDLE_SCHEMA_VERSION};
+
+    struct FakeParticipant {
+        owner_id: &'static str,
+        snapshot_scope: &'static str,
+        bundle_scope: PortableBundleScope,
+        schema_version: u16,
+        failure: Option<BundleImportParticipantError>,
+    }
+
+    impl BundleImportParticipant for FakeParticipant {
+        fn owner_id(&self) -> &str {
+            self.owner_id
+        }
+
+        fn snapshot_scope(&self) -> &str {
+            self.snapshot_scope
+        }
+
+        fn bundle_scope(&self) -> PortableBundleScope {
+            self.bundle_scope.clone()
+        }
+
+        fn schema_version(&self) -> u16 {
+            self.schema_version
+        }
+
+        fn import_payload(
+            &self,
+            section: &PortableBundleSection,
+            _existing: Option<&StateSnapshot>,
+            _migration: Option<&ImportMigration>,
+        ) -> Result<Vec<u8>, BundleImportParticipantError> {
+            self.failure
+                .clone()
+                .map_or_else(|| Ok(section.payload.clone()), Err)
+        }
+    }
 
     fn section(
         section_id: &str,
@@ -249,6 +724,43 @@ mod tests {
             ]),
             trusted_extensions: BTreeSet::from(["sample.extension".into()]),
         }
+    }
+
+    fn seed_core_recovery_set(
+        snapshots: &InMemoryStateSnapshotStore,
+        recovery_sets: &InMemoryRecoverySetStore,
+    ) {
+        for (owner_id, scope, payload) in [
+            (
+                LAYOUT_SNAPSHOT_OWNER,
+                LAYOUT_SNAPSHOT_SCOPE,
+                b"layout-v1".to_vec(),
+            ),
+            (
+                PROFILE_SNAPSHOT_OWNER,
+                PROFILE_SNAPSHOT_SCOPE,
+                b"profile-v1".to_vec(),
+            ),
+            (JOB_SNAPSHOT_OWNER, JOB_SNAPSHOT_SCOPE, b"jobs-v1".to_vec()),
+        ] {
+            let snapshot = StateSnapshot::new(owner_id, scope, 1, 1, 1, payload);
+            snapshots.stage(&snapshot).expect("seed should stage");
+            snapshots
+                .commit(owner_id, scope, 1)
+                .expect("seed should commit");
+        }
+        commit_current_recovery_set(
+            snapshots,
+            recovery_sets,
+            CORE_RECOVERY_SET_ID,
+            1,
+            &[
+                (LAYOUT_SNAPSHOT_OWNER, LAYOUT_SNAPSHOT_SCOPE),
+                (PROFILE_SNAPSHOT_OWNER, PROFILE_SNAPSHOT_SCOPE),
+                (JOB_SNAPSHOT_OWNER, JOB_SNAPSHOT_SCOPE),
+            ],
+        )
+        .expect("seed recovery set should commit");
     }
 
     #[test]
@@ -342,5 +854,133 @@ mod tests {
                 section_id: "missing".into()
             })
         );
+    }
+
+    #[test]
+    fn importer_stages_core_payload_and_publishes_one_recovery_set_generation() {
+        let snapshots = InMemoryStateSnapshotStore::default();
+        let recovery_sets = InMemoryRecoverySetStore::default();
+        seed_core_recovery_set(&snapshots, &recovery_sets);
+        let bundle = bundle();
+        let plan =
+            PortableBundleInspector::inspect(&bundle, "import-1", &["profile".into()], &context())
+                .expect("plan should be valid");
+        let profile = FakeParticipant {
+            owner_id: PROFILE_SNAPSHOT_OWNER,
+            snapshot_scope: PROFILE_SNAPSHOT_SCOPE,
+            bundle_scope: PortableBundleScope::Profile,
+            schema_version: 2,
+            failure: None,
+        };
+        let receipt = PortableBundleImporter::new(&snapshots, &recovery_sets)
+            .import(&bundle, &plan, &[&profile], 20)
+            .expect("core import should commit");
+        assert_eq!(receipt.status, ImportReceiptStatus::Committed);
+        assert_eq!(receipt.recovery_set_generation, Some(2));
+        assert_eq!(receipt.owners[0].generation, Some(2));
+        assert_eq!(
+            snapshots
+                .load_latest(PROFILE_SNAPSHOT_OWNER, PROFILE_SNAPSHOT_SCOPE)
+                .expect("profile should load")
+                .expect("profile should exist")
+                .payload,
+            br#"{"locale":"zh-Hans"}"#
+        );
+        assert_eq!(
+            snapshots
+                .load_latest(LAYOUT_SNAPSHOT_OWNER, LAYOUT_SNAPSHOT_SCOPE)
+                .expect("layout should load")
+                .expect("layout should exist")
+                .metadata
+                .generation,
+            1
+        );
+    }
+
+    #[test]
+    fn failed_core_participant_does_not_publish_a_new_recovery_set() {
+        let snapshots = InMemoryStateSnapshotStore::default();
+        let recovery_sets = InMemoryRecoverySetStore::default();
+        seed_core_recovery_set(&snapshots, &recovery_sets);
+        let bundle = bundle();
+        let plan =
+            PortableBundleInspector::inspect(&bundle, "import-1", &["profile".into()], &context())
+                .expect("plan should be valid");
+        let profile = FakeParticipant {
+            owner_id: PROFILE_SNAPSHOT_OWNER,
+            snapshot_scope: PROFILE_SNAPSHOT_SCOPE,
+            bundle_scope: PortableBundleScope::Profile,
+            schema_version: 2,
+            failure: Some(BundleImportParticipantError::Conflict(
+                "profile revision changed".into(),
+            )),
+        };
+        assert!(matches!(
+            PortableBundleImporter::new(&snapshots, &recovery_sets).import(
+                &bundle,
+                &plan,
+                &[&profile],
+                20
+            ),
+            Err(BundleImportError::Participant { .. })
+        ));
+        assert_eq!(
+            recovery_sets
+                .load_latest(CORE_RECOVERY_SET_ID)
+                .expect("recovery set should load")
+                .expect("recovery set should exist")
+                .generation,
+            1
+        );
+        assert_eq!(
+            snapshots
+                .load_latest(PROFILE_SNAPSHOT_OWNER, PROFILE_SNAPSHOT_SCOPE)
+                .expect("profile should load")
+                .expect("profile should exist")
+                .metadata
+                .generation,
+            1
+        );
+    }
+
+    #[test]
+    fn extension_participant_failure_is_partial_after_core_commit() {
+        let snapshots = InMemoryStateSnapshotStore::default();
+        let recovery_sets = InMemoryRecoverySetStore::default();
+        seed_core_recovery_set(&snapshots, &recovery_sets);
+        let bundle = bundle();
+        let plan = PortableBundleInspector::inspect(
+            &bundle,
+            "import-1",
+            &["profile".into(), "extension-sample".into()],
+            &context(),
+        )
+        .expect("plan should be valid");
+        let profile = FakeParticipant {
+            owner_id: PROFILE_SNAPSHOT_OWNER,
+            snapshot_scope: PROFILE_SNAPSHOT_SCOPE,
+            bundle_scope: PortableBundleScope::Profile,
+            schema_version: 2,
+            failure: None,
+        };
+        let extension = FakeParticipant {
+            owner_id: "sample.extension",
+            snapshot_scope: "storage",
+            bundle_scope: PortableBundleScope::Extension,
+            schema_version: 1,
+            failure: Some(BundleImportParticipantError::Unavailable(
+                "extension is disabled".into(),
+            )),
+        };
+        let receipt = PortableBundleImporter::new(&snapshots, &recovery_sets)
+            .import(&bundle, &plan, &[&profile, &extension], 20)
+            .expect("core import should survive extension failure");
+        assert_eq!(receipt.status, ImportReceiptStatus::Partial);
+        assert_eq!(receipt.recovery_set_generation, Some(2));
+        assert!(receipt
+            .owners
+            .iter()
+            .any(|owner| owner.owner_id == "sample.extension"
+                && owner.status == ImportOwnerStatus::Quarantined));
     }
 }

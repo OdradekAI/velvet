@@ -30,6 +30,33 @@ pub struct StateSnapshot {
     pub payload: Vec<u8>,
 }
 
+impl StateSnapshot {
+    /// Builds a staged snapshot with the checksum owned by the persistence
+    /// format. Callers still choose the domain owner, scope and schema, while
+    /// validation and publication remain the store's responsibility.
+    pub fn new(
+        owner_id: impl Into<String>,
+        scope: impl Into<String>,
+        schema_version: u16,
+        generation: u64,
+        created_at_ms: u64,
+        payload: Vec<u8>,
+    ) -> Self {
+        Self {
+            metadata: StateSnapshotMetadata {
+                owner_id: owner_id.into(),
+                scope: scope.into(),
+                schema_version,
+                generation,
+                created_at_ms,
+                checksum: hash(&payload),
+                committed: false,
+            },
+            payload,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SnapshotError {
     Invalid(String),

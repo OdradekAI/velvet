@@ -14,7 +14,11 @@ pub use operation::{
     OperationProvider, OperationProviderError,
 };
 
-pub use bundle::{BundleInspectionContext, BundleInspectionError, PortableBundleInspector};
+pub use bundle::{
+    BundleImportError, BundleImportParticipant, BundleImportParticipantError,
+    BundleInspectionContext, BundleInspectionError, PortableBundleImporter,
+    PortableBundleInspector,
+};
 
 pub use release::{
     canonical_unsigned_manifest, ReleaseTrustPolicy, ReleaseUpdateError, ReleaseUpdateManager,

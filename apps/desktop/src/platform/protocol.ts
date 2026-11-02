@@ -30,6 +30,7 @@ export type JobExecutionEnvironmentSchemaVersion =
 export const OPERATION_SCHEMA_VERSION = 1 as const;
 export const PORTABLE_BUNDLE_SCHEMA_VERSION = 1 as const;
 export const IMPORT_PLAN_SCHEMA_VERSION = 1 as const;
+export const IMPORT_RECEIPT_SCHEMA_VERSION = 1 as const;
 export const NATIVE_UPDATE_SCHEMA_VERSION = 1 as const;
 export type WorkbenchAppId = string;
 

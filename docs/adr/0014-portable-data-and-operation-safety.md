@@ -147,8 +147,12 @@ The versioned `PortableBundle` and `ImportPlan` contracts now validate bounded,
 path-free metadata, section ownership, integrity digests, schema compatibility
 and plan expiry. `PortableBundleInspector` verifies selected section bytes and
 keeps untrusted, corrupt or newer extension sections out of the selected core
-import. It intentionally stops before owner payload decoding, staging or
-`RecoverySet` publication; those steps remain the next owner-participant slice.
+import. `PortableBundleImporter` now gives owner participants a decode/migrate
+seam, stages core snapshots through `RecoverySetTransaction`, and publishes an
+`ImportReceipt`; a participant failure leaves the current core pointer intact,
+while extension failures become partial/quarantined receipt entries. Concrete
+owner payload schemas and extension quarantine storage remain separate owner
+work.
 
 ## Consequences
 

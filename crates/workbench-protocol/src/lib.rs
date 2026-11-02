@@ -39,6 +39,7 @@ pub const RELEASE_TRANSACTION_SCHEMA_VERSION: u16 = 1;
 pub const OPERATION_SCHEMA_VERSION: u16 = 1;
 pub const PORTABLE_BUNDLE_SCHEMA_VERSION: u16 = 1;
 pub const IMPORT_PLAN_SCHEMA_VERSION: u16 = 1;
+pub const IMPORT_RECEIPT_SCHEMA_VERSION: u16 = 1;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -151,6 +152,7 @@ pub fn supported_schema_versions() -> BTreeMap<String, u16> {
         ("operation".into(), OPERATION_SCHEMA_VERSION),
         ("portable-bundle".into(), PORTABLE_BUNDLE_SCHEMA_VERSION),
         ("import-plan".into(), IMPORT_PLAN_SCHEMA_VERSION),
+        ("import-receipt".into(), IMPORT_RECEIPT_SCHEMA_VERSION),
     ])
 }
 
@@ -1191,6 +1193,112 @@ fn validate_plan_identifier(value: &str, field: &'static str) -> Result<(), Impo
     Ok(())
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ImportReceiptStatus {
+    Committed,
+    Partial,
+    Rejected,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ImportOwnerStatus {
+    Committed,
+    Skipped,
+    Quarantined,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ImportOwnerReceipt {
+    pub owner_id: String,
+    pub scope: String,
+    pub status: ImportOwnerStatus,
+    #[serde(default)]
+    pub generation: Option<u64>,
+    #[serde(default)]
+    pub message: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ImportReceipt {
+    pub schema_version: u16,
+    pub plan_id: String,
+    pub bundle_id: String,
+    pub status: ImportReceiptStatus,
+    pub recorded_at_ms: u64,
+    #[serde(default)]
+    pub recovery_set_generation: Option<u64>,
+    pub owners: Vec<ImportOwnerReceipt>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ImportReceiptError {
+    UnsupportedSchema { schema_version: u16 },
+    InvalidField(&'static str),
+    TooManyOwners,
+    DuplicateOwner(String),
+}
+
+impl ImportReceipt {
+    pub fn validate(&self) -> Result<(), ImportReceiptError> {
+        if self.schema_version != IMPORT_RECEIPT_SCHEMA_VERSION {
+            return Err(ImportReceiptError::UnsupportedSchema {
+                schema_version: self.schema_version,
+            });
+        }
+        for (field, value) in [
+            ("planId", self.plan_id.as_str()),
+            ("bundleId", self.bundle_id.as_str()),
+        ] {
+            if value.is_empty()
+                || value.len() > PortableBundle::MAX_ID_BYTES
+                || value.contains('\0')
+                || value.contains('/')
+                || value.contains('\\')
+            {
+                return Err(ImportReceiptError::InvalidField(field));
+            }
+        }
+        if self.owners.len() > IMPORT_PLAN_MAX_ENTRIES {
+            return Err(ImportReceiptError::TooManyOwners);
+        }
+        let mut owners = std::collections::BTreeSet::new();
+        for owner in &self.owners {
+            if owner.owner_id.is_empty()
+                || owner.owner_id.len() > PortableBundle::MAX_ID_BYTES
+                || owner.owner_id.contains('\0')
+                || owner.owner_id.contains('/')
+                || owner.owner_id.contains('\\')
+                || owner.scope.is_empty()
+                || owner.scope.len() > PortableBundle::MAX_ID_BYTES
+                || owner.scope.contains('\0')
+                || owner.scope.contains('/')
+                || owner.scope.contains('\\')
+            {
+                return Err(ImportReceiptError::InvalidField("owner"));
+            }
+            let key = format!("{}:{}", owner.owner_id, owner.scope);
+            if !owners.insert(key.clone()) {
+                return Err(ImportReceiptError::DuplicateOwner(key));
+            }
+            if owner.generation == Some(0) {
+                return Err(ImportReceiptError::InvalidField("generation"));
+            }
+            if owner
+                .message
+                .as_ref()
+                .is_some_and(|message| message.is_empty() || message.len() > 4096)
+            {
+                return Err(ImportReceiptError::InvalidField("message"));
+            }
+        }
+        Ok(())
+    }
+}
+
 impl Default for RecoveryJournalState {
     fn default() -> Self {
         Self {
@@ -2005,6 +2113,26 @@ mod tests {
         let plan_json = serde_json::to_value(&plan).expect("plan should serialize");
         assert_eq!(plan_json["schemaVersion"], IMPORT_PLAN_SCHEMA_VERSION);
         assert_eq!(plan_json["migrations"][0]["fromSchemaVersion"], 1);
+
+        let receipt = ImportReceipt {
+            schema_version: IMPORT_RECEIPT_SCHEMA_VERSION,
+            plan_id: plan.plan_id.clone(),
+            bundle_id: plan.bundle_id.clone(),
+            status: ImportReceiptStatus::Partial,
+            recorded_at_ms: 70,
+            recovery_set_generation: Some(4),
+            owners: vec![ImportOwnerReceipt {
+                owner_id: "profile".into(),
+                scope: "user".into(),
+                status: ImportOwnerStatus::Committed,
+                generation: Some(2),
+                message: None,
+            }],
+        };
+        receipt.validate().expect("import receipt should validate");
+        let receipt_json = serde_json::to_value(&receipt).expect("receipt should serialize");
+        assert_eq!(receipt_json["status"], "partial");
+        assert_eq!(receipt_json["owners"][0]["status"], "committed");
     }
 
     #[test]
