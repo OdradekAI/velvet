@@ -16,12 +16,14 @@ mod launcher_failure;
 mod native_recovery_window;
 mod platform_probe;
 mod release_policy;
+mod update_coordinator;
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_global_shortcut::{Builder as ShortcutBuilder, ShortcutState};
 use velvet_application_core::{ApplicationCore, ApplicationRecoveryStores, CrashCaptureAdapter};
+use velvet_application_core::RELEASE_HEALTH_CHECKPOINT;
 use velvet_job_system::{
     JobBudgetRequest, JobExecutionEnvironment, JobExecutionPolicy, JobId, JobProvenance,
     JobResult, JobSnapshot, JobStatus,
@@ -59,6 +61,7 @@ use velvet_workbench_protocol::{
     StartupPhase,
     PROTOCOL_VERSION,
 };
+use update_coordinator::{NativeUpdateStatus, UpdateCoordinator, UpdateCoordinatorError};
 
 use crash_capture::{
     arm_process_receipt, complete_process_receipt, update_process_receipt,
@@ -82,6 +85,7 @@ const MAX_TAURI_STARTUP_FAILURE_BYTES: usize = 8 * 1024;
 
 pub struct AppState {
     pub transport: Mutex<TauriTransport>,
+    pub update_coordinator: UpdateCoordinator,
     pub platform_signals: PlatformSignalController,
     pub instance: Option<Mutex<ProfileInstanceCoordinator>>,
     pub pending_activation: Arc<Mutex<Vec<ActivationRequest>>>,
@@ -595,6 +599,27 @@ impl From<CoreError> for WireError {
                 expected_revision: None,
                 actual_revision: None,
             },
+        }
+    }
+}
+
+impl From<UpdateCoordinatorError> for WireError {
+    fn from(error: UpdateCoordinatorError) -> Self {
+        let (code, retryable) = match &error {
+            UpdateCoordinatorError::Disabled(_) => ("updater-disabled", false),
+            UpdateCoordinatorError::Updater(_) => ("updater-request-failed", true),
+            UpdateCoordinatorError::Manifest(_) => ("updater-manifest-invalid", false),
+            UpdateCoordinatorError::Core(_) => ("updater-core-rejected", false),
+            UpdateCoordinatorError::Stale(_) => ("updater-stale", true),
+            UpdateCoordinatorError::Busy => ("updater-busy", true),
+            UpdateCoordinatorError::Install(_) => ("updater-install-failed", true),
+        };
+        Self {
+            code: code.into(),
+            message: error.to_string(),
+            retryable,
+            expected_revision: None,
+            actual_revision: None,
         }
     }
 }
@@ -2363,6 +2388,53 @@ fn velvet_activation_pending(
     Ok(std::mem::take(&mut *pending))
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeUpdateInstallRequest {
+    expected_version: String,
+}
+
+fn clone_transport(state: &State<'_, AppState>) -> Result<TauriTransport, WireError> {
+    state
+        .transport
+        .lock()
+        .map(|transport| transport.clone())
+        .map_err(|_| WireError {
+            code: "core-lock-poisoned".into(),
+            message: "The application core lock is poisoned.".into(),
+            retryable: false,
+            expected_revision: None,
+            actual_revision: None,
+        })
+}
+
+#[tauri::command]
+async fn velvet_update_check(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<NativeUpdateStatus, WireError> {
+    let transport = clone_transport(&state)?;
+    state
+        .update_coordinator
+        .check(&app, &transport)
+        .await
+        .map_err(WireError::from)
+}
+
+#[tauri::command]
+async fn velvet_update_install(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: NativeUpdateInstallRequest,
+) -> Result<NativeUpdateStatus, WireError> {
+    let transport = clone_transport(&state)?;
+    state
+        .update_coordinator
+        .install(&app, &transport, &request.expected_version)
+        .await
+        .map_err(WireError::from)
+}
+
 fn enqueue_activation(queue: &Mutex<Vec<ActivationRequest>>, request: ActivationRequest) {
     if let Ok(mut pending) = queue.lock() {
         pending.push(request);
@@ -2469,6 +2541,7 @@ pub fn run() {
 
     let result = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(shortcuts)
         .setup(move |app| {
             let mut instance = instance;
@@ -2748,11 +2821,36 @@ pub fn run() {
                 platform_preflight: core.recovery_projection().platform_preflight.clone(),
                 crash_evidence_count: core.diagnostic_bundle().crash_evidence.len(),
             };
+            if !core.in_safe_mode() {
+                if let Ok(status) = core.release_status() {
+                    if let Some(transaction_id) = status
+                        .pending
+                        .as_ref()
+                        .map(|transaction| transaction.transaction_id.clone())
+                    {
+                        if let Err(error) = core.commit_release_health(
+                            &transaction_id,
+                            RELEASE_HEALTH_CHECKPOINT,
+                        ) {
+                            core.record_recovery_failure(
+                                RecoveryFailureClass::ReleaseRollback,
+                                format!(
+                                    "the staged release could not pass the workbench-ready health barrier: {error:?}"
+                                ),
+                            );
+                        }
+                    }
+                }
+            }
             core.mark_ready();
             let transport = TauriTransport::with_event_sink(core, sink);
             let platform_signals = PlatformSignalController::start(transport.clone());
             app.manage(AppState {
                 transport: Mutex::new(transport),
+                update_coordinator: UpdateCoordinator::new(
+                    env!("CARGO_PKG_VERSION"),
+                    velvet_workbench_protocol::ReleaseChannel::Preview,
+                ),
                 platform_signals,
                 instance: instance.map(Mutex::new),
                 pending_activation: pending_activation.clone(),
@@ -2766,7 +2864,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             velvet_core_handshake,
             velvet_core_request,
-            velvet_activation_pending
+            velvet_activation_pending,
+            velvet_update_check,
+            velvet_update_install
         ])
         .build(tauri::generate_context!());
     match result {

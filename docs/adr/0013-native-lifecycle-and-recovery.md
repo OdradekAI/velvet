@@ -970,14 +970,15 @@ and launcher-level package selection remain platform release gates.
 #### Tauri updater and GitHub Releases
 
 Tauri's official updater is an allowed distribution adapter, not a second
-release state machine. The future `tauri-plugin-updater` integration will own
-endpoint discovery, signed updater-artifact verification, bounded download and
-platform install/relaunch behavior. A host-owned update coordinator will call
-that adapter; the renderer will not receive unrestricted updater permissions or
-choose an arbitrary endpoint. Before installation it must stage a Velvet
-`ReleaseManifest` transaction and its data-generation anchor. After restart,
-`ApplicationCore` performs the startup checks above and only the typed
-`workbench-ready` checkpoint commits the package/data pair. Tauri updater does
+release state machine. The implemented host-owned `UpdateCoordinator` calls
+`tauri-plugin-updater` for endpoint discovery, signed updater-artifact
+verification, bounded download and platform install/relaunch behavior. The
+renderer has no updater permission and cannot choose an endpoint or receive
+package bytes. Before installation the coordinator parses the extra
+`velvetManifest` member from Tauri's `latest.json`, asks `ApplicationCore` to
+verify it, stages the package bytes and `RecoverySet` data-generation anchor,
+then invokes Tauri's install operation. After restart, native setup commits the
+transaction only at the typed `workbench-ready` checkpoint. Tauri updater does
 not decide migration compatibility, release sequence, `RecoverySet` restore,
 Safe Mode or user-visible rollback actions, and its install operation is not a
 binary rollback guarantee. Velvet must retain a previous package or invoke a
@@ -985,21 +986,24 @@ platform installer rollback adapter when a failed binary must be replaced.
 
 GitHub Releases are a viable transport for stable and preview channels when
 the release pipeline publishes Tauri's signed per-target artifacts and a
-signed `latest.json` (the Tauri Action can generate the static endpoint). The
+signed `latest.json` (the Tauri Action generates the standard static endpoint;
+the release pipeline must add the signed `velvetManifest` member before the
+file is published). The
 stable and preview channels must use separate endpoint/asset selection; the
 generic GitHub `latest` release must not be allowed to silently select a
-preview build. Enabling the adapter requires Tauri's updater public key and
-HTTPS endpoint in `tauri.conf.json`, `bundle.createUpdaterArtifacts`, the
-minimal updater capability permissions and a CI-held private signer key.
+preview build. Enabling a release configuration requires Tauri's updater public
+key and HTTPS endpoint in `tauri.conf.json`, `bundle.createUpdaterArtifacts`,
+and a CI-held private signer key. No renderer updater capability is required
+because the coordinator uses the Rust API directly.
 Tauri updater signing key and the Velvet `ReleaseManifest` root key are
 separate trust roots with separate rotation and revocation policies. The
 static updater record is therefore only discovery/install metadata; Velvet's
 signed manifest remains the authority for channel, target, data schema,
-anti-rollback and health commit. The initial foundation slice keeps the
-updater plugin disabled until CI has provisioned a non-development Tauri
-signing key, artifact generation, endpoint ownership, permissions and a
-rollback-capable staging adapter. Enabling the plugin without those inputs
-would create a false trust boundary.
+anti-rollback and health commit. The plugin is compiled and registered in the
+alpha host, but the checked-in development config has no endpoint or public
+key, so checks return a typed `disabled` status. The generated release config
+and CI secrets are the activation gate; missing `velvetManifest` also fails
+closed before any package is staged.
 
 Update checks and downloads use bounded timeouts, the configured proxy and
 diagnosable offline behavior. A failed check does not block startup. A partial

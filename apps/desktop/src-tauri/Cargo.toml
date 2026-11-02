@@ -24,6 +24,7 @@ libc = "0.2"
 tauri = { version = "2.9.5", features = ["unstable"] }
 tauri-plugin-dialog = "2.4.0"
 tauri-plugin-global-shortcut = "2.4.1"
+tauri-plugin-updater = "2.14.1"
 velvet-asset-core = { path = "../../../crates/asset-core" }
 velvet-application-core = { path = "../../../crates/application-core" }
 velvet-job-system = { path = "../../../crates/job-system" }

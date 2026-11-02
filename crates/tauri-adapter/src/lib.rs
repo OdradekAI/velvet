@@ -182,6 +182,70 @@ impl TauriTransport {
     pub fn record_shutdown_complete(&self) -> Result<(), velvet_application_core::RecoveryError> {
         self.inner.record_shutdown_complete()
     }
+
+    pub fn stage_release_package_bytes(
+        &self,
+        transaction_id: &str,
+        bytes: &[u8],
+        expected_sha256: &str,
+    ) -> Result<String, CoreError> {
+        self.inner.with_core(|core| {
+            core.stage_release_package_bytes(transaction_id, bytes, expected_sha256)
+        })
+    }
+
+    pub fn stage_release(
+        &self,
+        transaction_id: String,
+        manifest: velvet_workbench_protocol::ReleaseManifestDto,
+        staged_package_id: String,
+        package_generation: String,
+    ) -> Result<velvet_workbench_protocol::ReleaseStatusDto, CoreError> {
+        self.inner.with_core(|core| {
+            core.stage_release(
+                transaction_id,
+                manifest,
+                staged_package_id,
+                package_generation,
+            )
+        })
+    }
+
+    pub fn validate_release_manifest(
+        &self,
+        manifest: &velvet_workbench_protocol::ReleaseManifestDto,
+        now_ms: u64,
+        expected_target: &str,
+    ) -> Result<(), CoreError> {
+        self.inner
+            .with_core(|core| core.validate_release_manifest(manifest, now_ms, expected_target))
+    }
+
+    pub fn discard_staged_release_package(&self, staged_package_id: &str) -> Result<(), CoreError> {
+        self.inner
+            .with_core(|core| core.discard_staged_release_package(staged_package_id))
+    }
+
+    pub fn commit_release_health(
+        &self,
+        transaction_id: &str,
+    ) -> Result<velvet_workbench_protocol::ReleaseStatusDto, CoreError> {
+        self.inner
+            .with_core(|core| core.commit_release_health(transaction_id, "workbench-ready"))
+    }
+
+    pub fn rollback_release(
+        &self,
+        transaction_id: &str,
+        reason: String,
+    ) -> Result<velvet_workbench_protocol::ReleaseStatusDto, CoreError> {
+        self.inner
+            .with_core(|core| core.rollback_release(transaction_id, reason))
+    }
+
+    pub fn release_status(&self) -> Result<velvet_workbench_protocol::ReleaseStatusDto, CoreError> {
+        self.inner.with_core(|core| core.release_status())
+    }
 }
 
 impl CoreTransport for TauriTransport {

@@ -148,7 +148,11 @@ helper 不创建 Tauri 窗口，因此不请求该集合；若未来恢复界面
 
 ## TauriUpdaterAdapter
 
-对 Tauri 官方 updater plugin 的宿主适配器。它负责 endpoint discovery、签名产物下载、安装和平台重启语义；它不拥有 `ReleaseManifest`、`UpdateTransaction`、`RecoverySet`、迁移兼容性或 Safe Mode。启用前必须同时具备 CI 签名密钥、每个 channel 的 endpoint、最小 updater capability 和可验证的健康提交/回滚联调。
+对 Tauri 官方 updater plugin 的宿主适配器。它负责 endpoint discovery、Tauri artifact 签名验证、下载、安装和平台重启语义；它不拥有 `ReleaseManifest`、`UpdateTransaction`、`RecoverySet`、迁移兼容性或 Safe Mode。Velvet 的 `UpdateCoordinator` 读取 `latest.json` 的 `velvetManifest` 扩展字段并在安装前交给 `ApplicationCore` 校验。启用发布配置前必须具备 CI 签名密钥、每个 channel 的 endpoint、`createUpdaterArtifacts` 和可验证的健康提交/回滚联调；renderer 不需要 updater capability。
+
+## UpdateCoordinator
+
+宿主拥有的更新编排器。它把 Tauri updater 的发现/下载/安装适配到 Velvet 的 `ReleaseManifest`、`UpdateTransaction`、`RecoverySet` 和 `workbench-ready` 提交屏障；缺少 endpoint、签名配置或 `velvetManifest` 时返回 `disabled`/失败状态，不阻塞启动，也不把包字节或任意安装路径交给 renderer。
 
 ## ReleaseRollback
 

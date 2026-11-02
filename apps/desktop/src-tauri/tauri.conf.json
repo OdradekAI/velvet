@@ -49,5 +49,12 @@
       "icons/icon.ico"
     ],
     "externalBin": ["binaries/velvet-launcher"]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "",
+      "endpoints": [],
+      "requireSignedVersion": true
+    }
   }
 }

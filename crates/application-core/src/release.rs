@@ -274,6 +274,43 @@ impl ReleaseUpdateManager {
             .map_err(map_store_error)
     }
 
+    pub fn stage_package_bytes(
+        &self,
+        transaction_id: &str,
+        bytes: &[u8],
+        expected_sha256: &str,
+    ) -> Result<String, ReleaseUpdateError> {
+        self.packages
+            .as_ref()
+            .ok_or_else(|| {
+                ReleaseUpdateError::InvalidState("package staging is unavailable".into())
+            })?
+            .stage_package_bytes(transaction_id, bytes, expected_sha256)
+            .map_err(map_store_error)
+    }
+
+    pub fn validate_manifest(
+        &self,
+        manifest: &ReleaseManifestDto,
+        now_ms: u64,
+        expected_target: &str,
+    ) -> Result<(), ReleaseUpdateError> {
+        let status = self.status()?;
+        self.trust
+            .verify_manifest(manifest, now_ms, expected_target, status.committed_sequence)
+            .map_err(|error| ReleaseUpdateError::Verification(error.to_string()))
+    }
+
+    pub fn discard_package(&self, staged_package_id: &str) -> Result<(), ReleaseUpdateError> {
+        self.packages
+            .as_ref()
+            .ok_or_else(|| {
+                ReleaseUpdateError::InvalidState("package staging is unavailable".into())
+            })?
+            .rollback_package(staged_package_id)
+            .map_err(map_store_error)
+    }
+
     pub fn stage(
         &self,
         transaction_id: String,

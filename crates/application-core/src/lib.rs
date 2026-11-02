@@ -749,6 +749,40 @@ impl ApplicationCore {
             .map_err(|error| CoreError::Release(error.to_string()))
     }
 
+    pub fn stage_release_package_bytes(
+        &self,
+        transaction_id: &str,
+        bytes: &[u8],
+        expected_sha256: &str,
+    ) -> Result<String, CoreError> {
+        self.release_updates
+            .as_ref()
+            .ok_or_else(|| CoreError::Release("release update manager is unavailable".into()))?
+            .stage_package_bytes(transaction_id, bytes, expected_sha256)
+            .map_err(|error| CoreError::Release(error.to_string()))
+    }
+
+    pub fn validate_release_manifest(
+        &self,
+        manifest: &velvet_workbench_protocol::ReleaseManifestDto,
+        now_ms: u64,
+        expected_target: &str,
+    ) -> Result<(), CoreError> {
+        self.release_updates
+            .as_ref()
+            .ok_or_else(|| CoreError::Release("release update manager is unavailable".into()))?
+            .validate_manifest(manifest, now_ms, expected_target)
+            .map_err(|error| CoreError::Release(error.to_string()))
+    }
+
+    pub fn discard_staged_release_package(&self, staged_package_id: &str) -> Result<(), CoreError> {
+        self.release_updates
+            .as_ref()
+            .ok_or_else(|| CoreError::Release("release update manager is unavailable".into()))?
+            .discard_package(staged_package_id)
+            .map_err(|error| CoreError::Release(error.to_string()))
+    }
+
     pub fn stage_release(
         &self,
         transaction_id: String,
@@ -2743,6 +2777,17 @@ impl InProcessCoreTransport {
             .map_err(|_| RecoveryError::InvalidState("core lock poisoned".into()))?
             .record_shutdown_complete()
             .map(|_| ())
+    }
+
+    pub fn with_core<R>(
+        &self,
+        operation: impl FnOnce(&ApplicationCore) -> Result<R, CoreError>,
+    ) -> Result<R, CoreError> {
+        let core = self
+            .core
+            .lock()
+            .map_err(|_| CoreError::InvalidCommand("core lock poisoned".into()))?;
+        operation(&core)
     }
 }
 

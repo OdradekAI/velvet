@@ -24,6 +24,7 @@ export const ACTIVATION_SCHEMA_VERSION = 1 as const;
 export type ActivationSchemaVersion = typeof ACTIVATION_SCHEMA_VERSION;
 export const RELEASE_MANIFEST_SCHEMA_VERSION = 1 as const;
 export const RELEASE_TRANSACTION_SCHEMA_VERSION = 1 as const;
+export const NATIVE_UPDATE_SCHEMA_VERSION = 1 as const;
 export type WorkbenchAppId = string;
 
 export type CoreActivationTargetKind = 'file-path' | 'deep-link';
@@ -696,6 +697,27 @@ export interface CoreReleaseStatus {
   readonly committedPackageGeneration: string;
   readonly pending: CoreReleaseTransaction | null;
   readonly lastTransaction: CoreReleaseTransaction | null;
+}
+
+export type CoreNativeUpdateState =
+  | 'disabled'
+  | 'no-update'
+  | 'available'
+  | 'installing'
+  | 'restart-required'
+  | 'failed';
+
+export interface CoreNativeUpdateStatus {
+  readonly schemaVersion: typeof NATIVE_UPDATE_SCHEMA_VERSION;
+  readonly state: CoreNativeUpdateState;
+  readonly channel: CoreReleaseChannel;
+  readonly currentVersion: string;
+  readonly version: string | null;
+  readonly target: string | null;
+  readonly releaseSequence: number | null;
+  readonly transactionId: string | null;
+  readonly notes: string | null;
+  readonly message: string | null;
 }
 
 export interface CoreRecoveryDiagnosticBundle {

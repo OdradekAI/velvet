@@ -85,6 +85,7 @@ mod tests {
                 permission.starts_with("fs:")
                     || permission.starts_with("shell:")
                     || permission.starts_with("opener:")
+                    || permission.starts_with("updater:")
             })
         }));
     }

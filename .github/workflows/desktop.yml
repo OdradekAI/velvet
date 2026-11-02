@@ -176,6 +176,9 @@ jobs:
         working-directory: apps/desktop
         run: bash ../../tools/release-qualification/test-package-wiring.sh
 
+      - name: Verify updater endpoint fixture
+        run: node tools/release-qualification/validate-updater-json.mjs tools/release-qualification/fixtures/tauri-latest-preview.json preview
+
       - name: Build and upload Tauri bundles
         uses: tauri-apps/tauri-action@v1
         env:
@@ -272,16 +275,26 @@ jobs:
         working-directory: apps/desktop
         run: bash ../../tools/release-qualification/test-package-wiring.sh
 
+      - name: Prepare signed updater configuration
+        env:
+          TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.VELVET_TAURI_UPDATER_PUBLIC_KEY }}
+          TAURI_UPDATER_ENDPOINT: ${{ secrets.VELVET_TAURI_UPDATER_ENDPOINT }}
+        run: node tools/release-qualification/write-tauri-updater-config.mjs apps/desktop/src-tauri/tauri.release.generated.json
+
       - name: Build and upload release bundles
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.VELVET_TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.VELVET_TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: apps/desktop
           tauriScript: npm run tauri
-          args: ${{ matrix.args }}
+          args: --config src-tauri/tauri.release.generated.json ${{ matrix.args }}
           tagName: ${{ github.ref_name }}
           releaseName: Velvet ${{ github.ref_name }}
           releaseBody: Download the installer for your operating system from the assets below.
           releaseDraft: true
           prerelease: false
+          uploadUpdaterJson: true
+          uploadUpdaterSignatures: true

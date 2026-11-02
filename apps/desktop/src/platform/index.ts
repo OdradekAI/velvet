@@ -71,6 +71,11 @@ export type {
   CorePreviewContributionSurface,
   CorePreviewContributionSlot,
   CoreEvent,
+  CoreReleaseChannel,
+  CoreReleaseManifest,
+  CoreReleaseStatus,
+  CoreNativeUpdateState,
+  CoreNativeUpdateStatus,
   CoreError,
   CoreRequest,
   CoreResponse,
@@ -102,6 +107,7 @@ export {
   CORE_SNAPSHOT_SCHEMA_VERSION,
   CRASH_CAPTURE_SCHEMA_VERSION,
   ACTIVATION_SCHEMA_VERSION,
+  NATIVE_UPDATE_SCHEMA_VERSION,
   PROTOCOL_MAJOR,
   PROTOCOL_MINOR,
   TRANSPORT_FEATURE_SESSION_V1,
@@ -123,6 +129,7 @@ export type {
   TauriTransportOptions,
 } from './tauri-transport.js';
 export { createNativeTauriBridge, createNativeTauriTransport } from './tauri-runtime.js';
+export { TauriUpdateCoordinator, type NativeUpdateBridge } from './tauri-updater.js';
 export {
   createNativePluginPackagePicker,
   type PluginPackagePicker,

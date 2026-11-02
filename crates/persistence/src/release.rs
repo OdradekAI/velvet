@@ -29,6 +29,19 @@ pub trait ReleasePackageStore: Send + Sync {
         source: &Path,
         expected_sha256: &str,
     ) -> Result<String, ReleaseStoreError>;
+    /// Stage bytes supplied by a trusted native updater without exposing a
+    /// filesystem path to the transport boundary.
+    fn stage_package_bytes(
+        &self,
+        transaction_id: &str,
+        bytes: &[u8],
+        expected_sha256: &str,
+    ) -> Result<String, ReleaseStoreError> {
+        let _ = (transaction_id, bytes, expected_sha256);
+        Err(ReleaseStoreError::Unavailable(
+            "byte package staging is unavailable".into(),
+        ))
+    }
     fn is_staged(&self, staged_package_id: &str) -> Result<bool, ReleaseStoreError>;
     fn commit_package(
         &self,
@@ -167,6 +180,47 @@ impl ReleasePackageStore for JsonFileReleasePackageStore {
                 "package digest does not match the release manifest".into(),
             ));
         }
+        if self.durability == DurabilityMode::RequireFsync {
+            output
+                .sync_all()
+                .map_err(|error| ReleaseStoreError::Unavailable(error.to_string()))?;
+        }
+        drop(output);
+        fs::rename(&temporary, &destination)
+            .map_err(|error| ReleaseStoreError::Unavailable(error.to_string()))?;
+        if self.durability == DurabilityMode::RequireFsync {
+            File::open(parent)
+                .and_then(|directory| directory.sync_all())
+                .map_err(|error| ReleaseStoreError::Unavailable(error.to_string()))?;
+        }
+        Ok(transaction_id.into())
+    }
+
+    fn stage_package_bytes(
+        &self,
+        transaction_id: &str,
+        bytes: &[u8],
+        expected_sha256: &str,
+    ) -> Result<String, ReleaseStoreError> {
+        validate_token(transaction_id, "transaction id")?;
+        validate_digest(expected_sha256)?;
+        let digest = Sha256::digest(bytes);
+        if encode_hex(&digest) != expected_sha256.to_ascii_lowercase() {
+            return Err(ReleaseStoreError::Corrupt(
+                "package digest does not match the release manifest".into(),
+            ));
+        }
+        let destination = self.staging_path(transaction_id);
+        let parent = destination
+            .parent()
+            .ok_or_else(|| ReleaseStoreError::Unavailable("staging path has no parent".into()))?;
+        fs::create_dir_all(parent)
+            .map_err(|error| ReleaseStoreError::Unavailable(error.to_string()))?;
+        let temporary = destination.with_extension("tmp");
+        let mut output = File::create(&temporary)
+            .map_err(|error| ReleaseStoreError::Unavailable(error.to_string()))?;
+        std::io::Write::write_all(&mut output, bytes)
+            .map_err(|error| ReleaseStoreError::Unavailable(error.to_string()))?;
         if self.durability == DurabilityMode::RequireFsync {
             output
                 .sync_all()
@@ -344,6 +398,15 @@ fn validate_token(value: &str, field: &str) -> Result<(), ReleaseStoreError> {
     Ok(())
 }
 
+fn validate_digest(value: &str) -> Result<(), ReleaseStoreError> {
+    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(ReleaseStoreError::Corrupt(
+            "package digest must be a 64 character hexadecimal string".into(),
+        ));
+    }
+    Ok(())
+}
+
 fn encode_hex(bytes: &[u8]) -> String {
     let mut output = String::with_capacity(bytes.len() * 2);
     for byte in bytes {
@@ -455,6 +518,11 @@ mod tests {
         assert!(store.is_staged(&id).expect("staged"));
         store.commit_package(&id, "pkg-1").expect("commit package");
         assert!(!store.is_staged(&id).expect("staging removed"));
+        let byte_digest = encode_hex(&Sha256::digest(b"native-updater-bytes"));
+        let byte_id = store
+            .stage_package_bytes("txn-2", b"native-updater-bytes", &byte_digest)
+            .expect("stage updater bytes");
+        assert!(store.is_staged(&byte_id).expect("updater bytes staged"));
         let _ = fs::remove_dir_all(root);
     }
 }
