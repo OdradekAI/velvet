@@ -14,6 +14,7 @@ use crate::durability::write_atomic;
 mod durability;
 mod owner_snapshots;
 mod recovery_set;
+mod release;
 mod snapshot;
 
 pub use durability::{
@@ -33,6 +34,10 @@ pub use recovery_set::{
     commit_recovery_set_after_owner_changes, InMemoryRecoverySetStore, JsonFileRecoverySetStore,
     RecoverySet, RecoverySetError, RecoverySetMember, RecoverySetStore, RecoverySetTransaction,
     CORE_RECOVERY_SET_ID, RECOVERY_SET_FORMAT_VERSION,
+};
+pub use release::{
+    default_release_status, InMemoryReleaseUpdateStore, JsonFileReleasePackageStore,
+    JsonFileReleaseUpdateStore, ReleasePackageStore, ReleaseStoreError, ReleaseUpdateStore,
 };
 pub use snapshot::{
     InMemoryStateSnapshotStore, JsonFileStateSnapshotStore, SnapshotError, StateSnapshot,

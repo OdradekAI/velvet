@@ -865,8 +865,11 @@ never rewrites user data. The public release root key is pinned in the
 application. A key rotation is accepted only when a currently trusted key signs the new key
 set during an overlap window; an unknown key, invalid signature, expired or
 stale discovery metadata, hash mismatch, target mismatch or unsigned package
-fails closed. Tauri's updater is the transport and artifact verifier; it does
-not own rollout, migration or recovery policy.
+fails closed. The native updater may fetch bytes, but `ApplicationCore` owns
+manifest verification and the update state machine; `persistence` owns the
+durable transaction journal and package staging adapter. Tauri remains a thin
+transport/composition boundary and does not own rollout, migration or recovery
+policy.
 
 The committed recovery-index metadata also records the minimum binary/data
 compatibility floor for the current `RecoverySet`. Uninstalling package files
@@ -910,17 +913,44 @@ discover manifest
   → commit the new package/data generation and retire old generations by policy
 ```
 
+The first implementation slice makes this boundary executable. `ReleaseManifest`
+is canonicalized without its signature and verified with Ed25519 against the
+pinned preview root (`velvet-preview-root-1`); the verifier checks schema,
+channel, target, updater/data schema range, minimum client version, validity
+window, monotonic release sequence and artifact SHA-256. `JsonFileReleasePackageStore` copies a package into a private,
+durability-aware staging directory and publishes a package generation only
+after the application reports the typed `workbench-ready` checkpoint.
+`JsonFileReleaseUpdateStore` records the pending transaction, the base
+`RecoverySet` generation and the last committed/rolled-back transaction. A
+failed health check or startup recovery action removes only the staged package
+and leaves the committed package and data generation authoritative. Renderer
+requests use the typed `query-release-status`, `stage-release`,
+`commit-release-health` and `rollback-release` seam; no request accepts an
+arbitrary filesystem path. The package store is an updater adapter seam, so a
+future network updater can stage bytes without widening the Tauri command
+surface.
+
+This slice deliberately does not claim platform installer signing,
+notarization, OS-before-launcher capture or a production key-rotation service.
+Those remain release qualification gates. The pinned key is public metadata;
+the corresponding private signing key is kept outside the repository and must
+be provisioned by the release pipeline.
+
 The previous package and last committed `StateSnapshot` generations remain
 available until the new version reaches `ready` and writes its checkpoint.
 Before that commit, a failed launch, interrupted installer or migration error
 can abort the transaction and return to the old package plus old data
-generation. Failed packages, staging data and new generations are retained as
-bounded quarantined evidence for diagnostics. After the new generation is
+generation. Failed package metadata is retained in the bounded transaction
+journal; package bytes remain private until commit and are discarded on an
+explicit rollback. After the new generation is
 committed, the old binary is not launched against the new schema: package
 rollback becomes an explicit recovery operation and is allowed only when the
 release declares backward compatibility; otherwise Safe Mode offers an
 owner-scoped snapshot restore or a compatible reinstall. Data rollback never
-rewrites unrelated owners.
+rewrites unrelated owners. The native package adapter removes failed private
+staging on explicit rollback while the journal keeps bounded transaction
+metadata for diagnostics; a future updater may retain a separately bounded
+artifact evidence copy.
 
 Update checks and downloads use bounded timeouts, the configured proxy and
 diagnosable offline behavior. A failed check does not block startup. A partial
@@ -955,8 +985,10 @@ of uninstall.
    sleep/network behavior, versioned resource budgets, cold-start/idle
    baselines, cross-platform enforcement and OS integration fallbacks.
 8. **P1 crash evidence and release recovery**: local crash-capture adapter,
-   package verification, signing/key rotation, manifest freshness, staged
-   updates and application rollback that never rewrites user data.
+   pinned-root manifest verification, durability-aware package staging, typed
+   health commit and application rollback that never rewrites user data.
+   Platform installer signing/notarization, key rotation service and release
+   qualification remain separate gates.
 9. **Optional platform implementation**: an out-of-process supervisor or
    native relaunch adapter only after measurements and a platform-specific
    requirement justify the extra artifact.

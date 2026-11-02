@@ -5,6 +5,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 mod preview_source;
 mod recovery;
+mod release;
+
+pub use release::{
+    canonical_unsigned_manifest, ReleaseTrustPolicy, ReleaseUpdateError, ReleaseUpdateManager,
+    RELEASE_HEALTH_CHECKPOINT,
+};
 
 pub use recovery::{
     CrashCaptureAdapter, RecoveryClock, RecoveryError, RecoverySupervisor, StartupDeadlinePolicy,
@@ -29,6 +35,9 @@ pub struct ApplicationRecoveryStores {
     pub diagnostics: Option<Arc<dyn DiagnosticEventStore>>,
     pub runtime_leases: Option<Arc<dyn velvet_plugin_host::RuntimeLeaseStore>>,
     pub durability_report: Option<velvet_workbench_protocol::DurabilityReport>,
+    pub release_updates: Option<Arc<dyn velvet_persistence::ReleaseUpdateStore>>,
+    pub release_packages: Option<Arc<dyn velvet_persistence::ReleasePackageStore>>,
+    pub release_trust: Option<ReleaseTrustPolicy>,
 }
 
 impl ApplicationRecoveryStores {
@@ -44,6 +53,9 @@ impl ApplicationRecoveryStores {
             diagnostics: None,
             runtime_leases: None,
             durability_report: None,
+            release_updates: None,
+            release_packages: None,
+            release_trust: None,
         }
     }
 
@@ -65,6 +77,24 @@ impl ApplicationRecoveryStores {
         durability_report: velvet_workbench_protocol::DurabilityReport,
     ) -> Self {
         self.durability_report = Some(durability_report);
+        self
+    }
+
+    pub fn with_release_updates(
+        mut self,
+        store: Arc<dyn velvet_persistence::ReleaseUpdateStore>,
+        trust: ReleaseTrustPolicy,
+    ) -> Self {
+        self.release_updates = Some(store);
+        self.release_trust = Some(trust);
+        self
+    }
+
+    pub fn with_release_packages(
+        mut self,
+        store: Arc<dyn velvet_persistence::ReleasePackageStore>,
+    ) -> Self {
+        self.release_packages = Some(store);
         self
     }
 
@@ -131,6 +161,7 @@ pub struct ApplicationCore {
     recovery_snapshots: Option<Arc<dyn StateSnapshotStore>>,
     recovery_sets: Option<Arc<dyn RecoverySetStore>>,
     durability_report: Option<velvet_workbench_protocol::DurabilityReport>,
+    release_updates: Option<ReleaseUpdateManager>,
     diagnostic_store: Option<Arc<dyn DiagnosticEventStore>>,
     plugin_diagnostics: VecDeque<PluginDiagnosticEvent>,
     diagnostic_history: VecDeque<PluginDiagnosticEvent>,
@@ -452,6 +483,9 @@ impl ApplicationCore {
             durability_report,
             diagnostics: diagnostic_store,
             runtime_leases,
+            release_updates: release_updates_store,
+            release_packages,
+            release_trust,
         } = recovery_stores;
         let recovery = RecoverySupervisor::new(recovery_journal, Arc::new(SystemRecoveryClock));
         let launch_started = recovery.begin_launch(env!("CARGO_PKG_VERSION"));
@@ -560,6 +594,11 @@ impl ApplicationCore {
             .last()
             .map(|event| event.sequence.saturating_add(1))
             .unwrap_or(1);
+        let release_updates = release_updates_store
+            .zip(release_trust)
+            .map(|(store, trust)| {
+                ReleaseUpdateManager::new(store, release_packages, recovery_sets.clone(), trust)
+            });
         let mut core = Self {
             layout,
             plugins,
@@ -576,6 +615,7 @@ impl ApplicationCore {
             recovery_snapshots,
             recovery_sets,
             durability_report,
+            release_updates,
             diagnostic_store,
             plugin_diagnostics: VecDeque::new(),
             diagnostic_history: diagnostic_history.into_iter().collect(),
@@ -686,6 +726,70 @@ impl ApplicationCore {
         snapshot_store
             .quarantine(&target.owner_id, &target.scope, target.generation)
             .map_err(|error| CoreError::Recovery(format!("{error:?}")))
+    }
+
+    pub fn release_status(&self) -> Result<velvet_workbench_protocol::ReleaseStatusDto, CoreError> {
+        self.release_updates
+            .as_ref()
+            .ok_or_else(|| CoreError::Release("release update manager is unavailable".into()))?
+            .status()
+            .map_err(|error| CoreError::Release(error.to_string()))
+    }
+
+    pub fn stage_release_package(
+        &self,
+        transaction_id: &str,
+        source: &std::path::Path,
+        expected_sha256: &str,
+    ) -> Result<String, CoreError> {
+        self.release_updates
+            .as_ref()
+            .ok_or_else(|| CoreError::Release("release update manager is unavailable".into()))?
+            .stage_package(transaction_id, source, expected_sha256)
+            .map_err(|error| CoreError::Release(error.to_string()))
+    }
+
+    pub fn stage_release(
+        &self,
+        transaction_id: String,
+        manifest: velvet_workbench_protocol::ReleaseManifestDto,
+        staged_package_id: String,
+        package_generation: String,
+    ) -> Result<velvet_workbench_protocol::ReleaseStatusDto, CoreError> {
+        self.release_updates
+            .as_ref()
+            .ok_or_else(|| CoreError::Release("release update manager is unavailable".into()))?
+            .stage(
+                transaction_id,
+                manifest,
+                staged_package_id,
+                package_generation,
+            )
+            .map_err(|error| CoreError::Release(error.to_string()))
+    }
+
+    pub fn commit_release_health(
+        &self,
+        transaction_id: &str,
+        checkpoint: &str,
+    ) -> Result<velvet_workbench_protocol::ReleaseStatusDto, CoreError> {
+        self.release_updates
+            .as_ref()
+            .ok_or_else(|| CoreError::Release("release update manager is unavailable".into()))?
+            .commit_health(transaction_id, checkpoint)
+            .map_err(|error| CoreError::Release(error.to_string()))
+    }
+
+    pub fn rollback_release(
+        &self,
+        transaction_id: &str,
+        reason: String,
+    ) -> Result<velvet_workbench_protocol::ReleaseStatusDto, CoreError> {
+        self.release_updates
+            .as_ref()
+            .ok_or_else(|| CoreError::Release("release update manager is unavailable".into()))?
+            .rollback(transaction_id, reason)
+            .map_err(|error| CoreError::Release(error.to_string()))
     }
 
     pub fn in_safe_mode(&self) -> bool {
@@ -1814,6 +1918,31 @@ impl ApplicationCore {
                 locale,
                 expected_revision,
             }) => self.set_locale(expected_revision, locale),
+            Request::Command(Command::StageRelease {
+                transaction_id,
+                manifest,
+                staged_package_id,
+                package_generation,
+            }) => self
+                .stage_release(
+                    transaction_id,
+                    *manifest,
+                    staged_package_id,
+                    package_generation,
+                )
+                .map(Response::ReleaseStatus),
+            Request::Command(Command::CommitReleaseHealth {
+                transaction_id,
+                checkpoint,
+            }) => self
+                .commit_release_health(&transaction_id, &checkpoint)
+                .map(Response::ReleaseStatus),
+            Request::Command(Command::RollbackRelease {
+                transaction_id,
+                reason,
+            }) => self
+                .rollback_release(&transaction_id, reason)
+                .map(Response::ReleaseStatus),
             Request::Query(Query::Layout) => Ok(Response::Layout(self.layout.snapshot())),
             Request::Query(Query::Profile) => Ok(Response::Profile(self.profile.clone())),
             Request::Query(Query::Recovery) => Ok(Response::Recovery(self.recovery_projection())),
@@ -1855,6 +1984,9 @@ impl ApplicationCore {
                     status: velvet_workbench_protocol::RequestOutcomeStatus::Unknown,
                 },
             )),
+            Request::Query(Query::ReleaseStatus) => {
+                self.release_status().map(Response::ReleaseStatus)
+            }
             Request::Query(Query::PluginProjection { extension_id }) => self
                 .plugins
                 .projection(&extension_id)

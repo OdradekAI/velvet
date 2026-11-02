@@ -33,6 +33,8 @@ pub const PLUGIN_DIAGNOSTIC_SCHEMA_VERSION: u16 = 1;
 pub const CRASH_CAPTURE_SCHEMA_VERSION: u16 = 1;
 pub const CORE_SNAPSHOT_SCHEMA_VERSION: u16 = 1;
 pub const ACTIVATION_SCHEMA_VERSION: u16 = 1;
+pub const RELEASE_MANIFEST_SCHEMA_VERSION: u16 = 1;
+pub const RELEASE_TRANSACTION_SCHEMA_VERSION: u16 = 1;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -133,6 +135,11 @@ pub fn supported_schema_versions() -> BTreeMap<String, u16> {
         ("plugin-resource".into(), PLUGIN_RESOURCE_SCHEMA_VERSION),
         ("plugin-diagnostic".into(), PLUGIN_DIAGNOSTIC_SCHEMA_VERSION),
         ("crash-capture".into(), CRASH_CAPTURE_SCHEMA_VERSION),
+        ("release-manifest".into(), RELEASE_MANIFEST_SCHEMA_VERSION),
+        (
+            "release-transaction".into(),
+            RELEASE_TRANSACTION_SCHEMA_VERSION,
+        ),
     ])
 }
 
@@ -658,6 +665,66 @@ pub struct RecoveryJournalState {
     pub crash_evidence: Vec<CrashCaptureEvidence>,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ReleaseChannel {
+    Stable,
+    Preview,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ReleaseManifestDto {
+    pub schema_version: u16,
+    pub channel: ReleaseChannel,
+    pub version: String,
+    pub target: String,
+    pub artifact_sha256: String,
+    pub updater_schema: u16,
+    pub min_data_schema: u16,
+    pub max_data_schema: u16,
+    pub min_client_version: String,
+    pub release_sequence: u64,
+    pub issued_at_ms: u64,
+    pub expires_at_ms: u64,
+    pub signing_key_id: String,
+    pub signature: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ReleaseTransactionState {
+    Staged,
+    Committed,
+    RolledBack,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ReleaseTransactionDto {
+    pub schema_version: u16,
+    pub transaction_id: String,
+    pub manifest: ReleaseManifestDto,
+    pub staged_package_id: String,
+    pub package_generation: String,
+    pub base_data_generation: Option<u64>,
+    pub committed_data_generation: Option<u64>,
+    pub state: ReleaseTransactionState,
+    pub health_checkpoint: Option<String>,
+    pub failure_reason: Option<String>,
+    pub created_at_ms: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ReleaseStatusDto {
+    pub schema_version: u16,
+    pub committed_sequence: u64,
+    pub committed_package_generation: String,
+    pub pending: Option<ReleaseTransactionDto>,
+    pub last_transaction: Option<ReleaseTransactionDto>,
+}
+
 impl Default for RecoveryJournalState {
     fn default() -> Self {
         Self {
@@ -811,6 +878,20 @@ pub enum Command {
         locale: String,
         expected_revision: Option<u64>,
     },
+    StageRelease {
+        transaction_id: String,
+        manifest: Box<ReleaseManifestDto>,
+        staged_package_id: String,
+        package_generation: String,
+    },
+    CommitReleaseHealth {
+        transaction_id: String,
+        checkpoint: String,
+    },
+    RollbackRelease {
+        transaction_id: String,
+        reason: String,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -856,6 +937,7 @@ pub enum Query {
     RequestOutcome {
         request_id: RequestId,
     },
+    ReleaseStatus,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -884,6 +966,7 @@ pub enum Response {
     ApprovedSourceRoots(Vec<String>),
     Snapshot(AuthoritativeSnapshot),
     RequestOutcome(RequestOutcome),
+    ReleaseStatus(ReleaseStatusDto),
     Accepted,
 }
 
@@ -916,6 +999,8 @@ pub fn request_idempotency_scope(request: &Request) -> Option<&'static str> {
             expected_revision: Some(_),
             ..
         }) => Some("set-locale-at-revision"),
+        Request::Command(Command::CommitReleaseHealth { .. }) => Some("commit-release-health"),
+        Request::Command(Command::RollbackRelease { .. }) => Some("rollback-release"),
         Request::Command(_) | Request::Query(_) => None,
     }
 }
@@ -975,6 +1060,7 @@ pub enum CoreError {
     },
     Profile(String),
     Recovery(String),
+    Release(String),
     PluginResourceNotFound {
         extension_id: String,
         locale: String,

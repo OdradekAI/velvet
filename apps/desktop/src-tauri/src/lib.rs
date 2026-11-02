@@ -15,6 +15,7 @@ mod capability_policy;
 mod launcher_failure;
 mod native_recovery_window;
 mod platform_probe;
+mod release_policy;
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
@@ -41,8 +42,9 @@ use velvet_persistence::{
     DurabilityReportStore, JsonFileDurabilityReportStore, JsonFileRecoveryJournalStore,
     JsonFileRecoverySetStore, JsonFileStateSnapshotStore, LegacyJobMigrationParticipant,
     LegacyLayoutMigrationParticipant, LegacyProfileMigrationParticipant,
-    OwnerMigrationParticipant, SnapshotJobStateStore, SnapshotLayoutStateStore,
-    SnapshotProfileStateStore, migrate_legacy_owner_snapshots,
+    JsonFileReleasePackageStore, JsonFileReleaseUpdateStore, OwnerMigrationParticipant,
+    SnapshotJobStateStore,
+    SnapshotLayoutStateStore, SnapshotProfileStateStore, migrate_legacy_owner_snapshots,
 };
 use velvet_preview_core::{PreviewIntent, PreviewRenderer, PreviewSurface, ResolvedPreview};
 use velvet_tauri_adapter::{
@@ -530,6 +532,13 @@ impl From<CoreError> for WireError {
                 expected_revision: None,
                 actual_revision: None,
             },
+            CoreError::Release(message) => Self {
+                code: "release-error".into(),
+                message,
+                retryable: true,
+                expected_revision: None,
+                actual_revision: None,
+            },
             CoreError::PluginResourceNotFound {
                 extension_id,
                 locale,
@@ -671,6 +680,10 @@ pub enum WireRequest {
         protocol_version: u16,
     },
     QueryRecovery {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+    },
+    QueryReleaseStatus {
         #[serde(rename = "protocolVersion")]
         protocol_version: u16,
     },
@@ -943,6 +956,31 @@ pub enum WireRequest {
         #[serde(rename = "expectedRevision")]
         expected_revision: Option<u64>,
     },
+    StageRelease {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        #[serde(rename = "transactionId")]
+        transaction_id: String,
+        manifest: velvet_workbench_protocol::ReleaseManifestDto,
+        #[serde(rename = "stagedPackageId")]
+        staged_package_id: String,
+        #[serde(rename = "packageGeneration")]
+        package_generation: String,
+    },
+    CommitReleaseHealth {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        #[serde(rename = "transactionId")]
+        transaction_id: String,
+        checkpoint: String,
+    },
+    RollbackRelease {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        #[serde(rename = "transactionId")]
+        transaction_id: String,
+        reason: String,
+    },
     LayoutCommand {
         #[serde(rename = "protocolVersion")]
         protocol_version: u16,
@@ -984,6 +1022,10 @@ impl WireRequest {
             Self::QueryRecovery { protocol_version } => {
                 validate_inner_protocol(outer_protocol_version, protocol_version)?;
                 Ok(Request::Query(velvet_workbench_protocol::Query::Recovery))
+            }
+            Self::QueryReleaseStatus { protocol_version } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Query(velvet_workbench_protocol::Query::ReleaseStatus))
             }
             Self::ReadPluginLocalization {
                 protocol_version,
@@ -1376,6 +1418,43 @@ impl WireRequest {
                     expected_revision,
                 }))
             }
+            Self::StageRelease {
+                protocol_version,
+                transaction_id,
+                manifest,
+                staged_package_id,
+                package_generation,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Command(Command::StageRelease {
+                    transaction_id,
+                    manifest: Box::new(manifest),
+                    staged_package_id,
+                    package_generation,
+                }))
+            }
+            Self::CommitReleaseHealth {
+                protocol_version,
+                transaction_id,
+                checkpoint,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Command(Command::CommitReleaseHealth {
+                    transaction_id,
+                    checkpoint,
+                }))
+            }
+            Self::RollbackRelease {
+                protocol_version,
+                transaction_id,
+                reason,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Command(Command::RollbackRelease {
+                    transaction_id,
+                    reason,
+                }))
+            }
             Self::LayoutCommand {
                 protocol_version,
                 command,
@@ -1615,6 +1694,9 @@ enum WireResponse {
     Recovery {
         projection: velvet_workbench_protocol::RecoveryProjection,
     },
+    ReleaseStatus {
+        status: velvet_workbench_protocol::ReleaseStatusDto,
+    },
     PluginResource {
         resource: velvet_workbench_protocol::PluginResourceDto,
     },
@@ -1680,6 +1762,7 @@ impl WireResponseEnvelope {
             },
             Response::Profile(state) => WireResponse::Profile { state },
             Response::Recovery(projection) => WireResponse::Recovery { projection },
+            Response::ReleaseStatus(status) => WireResponse::ReleaseStatus { status },
             Response::PluginResource(resource) => WireResponse::PluginResource { resource },
             Response::Extensions(extensions) => WireResponse::Extensions {
                 extensions: extensions
@@ -2428,6 +2511,8 @@ pub fn run() {
             let snapshot_root = app_data_dir.join("snapshots");
             let recovery_set_root = app_data_dir.join("recovery-sets");
             let runtime_leases_path = app_data_dir.join("runtime-leases.json");
+            let release_transaction_path = app_data_dir.join("release-transaction.json");
+            let release_package_root = app_data_dir.join("release-packages");
             let crash_receipts_path = app_data_dir.join(crash_capture::CRASH_RECEIPTS_FILE);
             let plugin_directory = app_data_dir.join("plugins");
             let durability = if cfg!(unix) {
@@ -2494,6 +2579,17 @@ pub fn run() {
                 )))
                 .with_runtime_leases(Arc::new(JsonFileRuntimeLeaseStore::with_durability(
                     runtime_leases_path,
+                    durability,
+                )))
+                .with_release_updates(
+                    Arc::new(JsonFileReleaseUpdateStore::with_durability(
+                        release_transaction_path,
+                        durability,
+                    )),
+                    release_policy::preview_release_trust_policy(),
+                )
+                .with_release_packages(Arc::new(JsonFileReleasePackageStore::with_durability(
+                    release_package_root,
                     durability,
                 )))
                 .with_durability_report(protocol_durability_report(&durability_report)),
@@ -3153,6 +3249,57 @@ mod tests {
                 request_id: RequestId(44)
             })
         ));
+    }
+
+    #[test]
+    fn wire_release_transaction_commands_and_status_keep_typed_boundaries() {
+        let stage: WireRequestEnvelope = serde_json::from_value(serde_json::json!({
+            "protocolVersion": 1,
+            "requestId": 61,
+            "request": {
+                "kind": "stage-release",
+                "protocolVersion": 1,
+                "transactionId": "txn-1",
+                "stagedPackageId": "stage-1",
+                "packageGeneration": "pkg-1",
+                "manifest": {
+                    "schemaVersion": 1,
+                    "channel": "preview",
+                    "version": "0.0.5",
+                    "target": "test-target",
+                    "artifactSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+                    "updaterSchema": 1,
+                    "minDataSchema": 1,
+                    "maxDataSchema": 1,
+                    "minClientVersion": "0.0.1",
+                    "releaseSequence": 1,
+                    "issuedAtMs": 100,
+                    "expiresAtMs": 1000,
+                    "signingKeyId": "root-1",
+                    "signature": "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+                }
+            }
+        }))
+        .expect("stage request should deserialize");
+        assert!(matches!(
+            stage.request.into_core(1).expect("stage request should map"),
+            Request::Command(Command::StageRelease { .. })
+        ));
+
+        let response = WireResponseEnvelope::from_core(ResponseEnvelope {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: RequestId(62),
+            response: Response::ReleaseStatus(velvet_workbench_protocol::ReleaseStatusDto {
+                schema_version: 1,
+                committed_sequence: 0,
+                committed_package_generation: "bootstrap".into(),
+                pending: None,
+                last_transaction: None,
+            }),
+        });
+        let value = serde_json::to_value(response).expect("release status should serialize");
+        assert_eq!(value["response"]["kind"], "release-status");
+        assert_eq!(value["response"]["status"]["committedPackageGeneration"], "bootstrap");
     }
 
     #[test]

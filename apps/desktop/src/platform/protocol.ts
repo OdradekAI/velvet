@@ -22,6 +22,8 @@ export type PluginDiagnosticSchemaVersion = typeof PLUGIN_DIAGNOSTIC_SCHEMA_VERS
 export const CRASH_CAPTURE_SCHEMA_VERSION = 1 as const;
 export const ACTIVATION_SCHEMA_VERSION = 1 as const;
 export type ActivationSchemaVersion = typeof ACTIVATION_SCHEMA_VERSION;
+export const RELEASE_MANIFEST_SCHEMA_VERSION = 1 as const;
+export const RELEASE_TRANSACTION_SCHEMA_VERSION = 1 as const;
 export type WorkbenchAppId = string;
 
 export type CoreActivationTargetKind = 'file-path' | 'deep-link';
@@ -146,6 +148,7 @@ export type CoreRequest =
   | { readonly protocolVersion: ProtocolVersion; readonly kind: 'query-layout' }
   | { readonly protocolVersion: ProtocolVersion; readonly kind: 'query-profile' }
   | { readonly protocolVersion: ProtocolVersion; readonly kind: 'query-recovery' }
+  | { readonly protocolVersion: ProtocolVersion; readonly kind: 'query-release-status' }
   | {
       readonly protocolVersion: ProtocolVersion;
       readonly kind: 'export-recovery-diagnostics';
@@ -364,6 +367,26 @@ export type CoreRequest =
     }
   | {
       readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'stage-release';
+      readonly transactionId: string;
+      readonly manifest: CoreReleaseManifest;
+      readonly stagedPackageId: string;
+      readonly packageGeneration: string;
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'commit-release-health';
+      readonly transactionId: string;
+      readonly checkpoint: string;
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'rollback-release';
+      readonly transactionId: string;
+      readonly reason: string;
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
       readonly kind: 'layout-command';
       readonly command: LayoutCommand;
       readonly expectedRevision?: number;
@@ -415,6 +438,7 @@ export type CoreResponse =
   | { readonly kind: 'jobs'; readonly jobs: readonly CoreJobSnapshot[] }
   | { readonly kind: 'snapshot'; readonly snapshot: CoreAuthoritativeSnapshot }
   | { readonly kind: 'request-outcome'; readonly outcome: CoreRequestOutcome }
+  | { readonly kind: 'release-status'; readonly status: CoreReleaseStatus }
   | { readonly kind: 'accepted' };
 
 export type CoreRequestOutcomeStatus = 'unknown' | 'completed';
@@ -629,6 +653,48 @@ export interface CoreRecoveryProjection {
   readonly actions: readonly CoreRecoveryAction[];
   readonly platformPreflight?: readonly CorePlatformPreflightEvidence[];
   readonly durabilityReport?: CoreDurabilityReport | null;
+}
+
+export type CoreReleaseChannel = 'stable' | 'preview';
+export type CoreReleaseTransactionState = 'staged' | 'committed' | 'rolled-back';
+
+export interface CoreReleaseManifest {
+  readonly schemaVersion: number;
+  readonly channel: CoreReleaseChannel;
+  readonly version: string;
+  readonly target: string;
+  readonly artifactSha256: string;
+  readonly updaterSchema: number;
+  readonly minDataSchema: number;
+  readonly maxDataSchema: number;
+  readonly minClientVersion: string;
+  readonly releaseSequence: number;
+  readonly issuedAtMs: number;
+  readonly expiresAtMs: number;
+  readonly signingKeyId: string;
+  readonly signature: string;
+}
+
+export interface CoreReleaseTransaction {
+  readonly schemaVersion: number;
+  readonly transactionId: string;
+  readonly manifest: CoreReleaseManifest;
+  readonly stagedPackageId: string;
+  readonly packageGeneration: string;
+  readonly baseDataGeneration: number | null;
+  readonly committedDataGeneration: number | null;
+  readonly state: CoreReleaseTransactionState;
+  readonly healthCheckpoint: string | null;
+  readonly failureReason: string | null;
+  readonly createdAtMs: number;
+}
+
+export interface CoreReleaseStatus {
+  readonly schemaVersion: number;
+  readonly committedSequence: number;
+  readonly committedPackageGeneration: string;
+  readonly pending: CoreReleaseTransaction | null;
+  readonly lastTransaction: CoreReleaseTransaction | null;
 }
 
 export interface CoreRecoveryDiagnosticBundle {

@@ -140,11 +140,11 @@ helper 不创建 Tauri 窗口，因此不请求该集合；若未来恢复界面
 
 ## ReleaseManifest
 
-描述一个 Velvet 应用发布产物的签名元数据。它绑定发布 channel、版本、目标 OS/architecture、产物哈希、updater schema、支持的数据 schema 范围、最低客户端版本、单调递增的 release sequence、新鲜度信息和 signing key id；客户端在安装前校验签名、目标、版本、新鲜度和兼容性。
+描述一个 Velvet 应用发布产物的签名元数据。它绑定发布 channel、版本、目标 OS/architecture、产物哈希、updater schema、支持的数据 schema 范围、最低客户端版本、单调递增的 release sequence、新鲜度信息和 signing key id；客户端在安装前使用 pinned root 校验签名、目标、版本、新鲜度、兼容性和 artifact digest。
 
 ## UpdateTransaction
 
-由宿主记录的一次应用更新事务，包含 manifest 校验、下载 staging、待迁移状态、旧 package/data generation 保留和健康 checkpoint。事务在新版本进入 `ready` 前可以成对回退到旧 package 与旧 `StateSnapshot` generation；提交后不允许旧 binary 直接打开新 schema。
+由宿主记录的一次应用更新事务，包含 manifest 校验、私有 package staging、当前 `RecoverySet` 数据锚点、待迁移状态、旧 package/data generation 保留和健康 checkpoint。事务在新版本进入 `ready` 前可以成对回退到旧 package 与旧 `StateSnapshot` generation；提交后不允许旧 binary 直接打开新 schema。事务状态和最近一次回滚原因可供诊断查询，staging 不接受 renderer 提供的任意路径。
 
 ## ReleaseChannel
 

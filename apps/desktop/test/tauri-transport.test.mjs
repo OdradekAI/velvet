@@ -50,6 +50,22 @@ const bridge = {
         },
       };
     }
+    if (args.envelope.request.kind === 'query-release-status') {
+      return {
+        protocolVersion: 1,
+        requestId: args.envelope.requestId,
+        response: {
+          kind: 'release-status',
+          status: {
+            schemaVersion: 1,
+            committedSequence: 0,
+            committedPackageGeneration: 'bootstrap',
+            pending: null,
+            lastTransaction: null,
+          },
+        },
+      };
+    }
     return {
       protocolVersion: 1,
       requestId: args.envelope.requestId,
@@ -92,8 +108,11 @@ await new Promise((resolve) => setImmediate(resolve));
 assert.equal(activation?.requestId, 'activation-boot');
 const response = await transport.request({ protocolVersion: 1, kind: 'query-profile' });
 assert.equal(response.kind, 'profile');
+const releaseStatus = await transport.request({ protocolVersion: 1, kind: 'query-release-status' });
+assert.equal(releaseStatus.kind, 'release-status');
+assert.equal(releaseStatus.status.committedPackageGeneration, 'bootstrap');
 assert.equal(calls.filter(({ command }) => command === 'velvet_core_handshake').length, 1);
-assert.equal(calls.filter(({ command }) => command === 'velvet_core_request').length, 1);
+assert.equal(calls.filter(({ command }) => command === 'velvet_core_request').length, 2);
 await new Promise((resolve) => setImmediate(resolve));
 pendingActivations.push({
   schemaVersion: 1,
@@ -143,7 +162,7 @@ await new Promise((resolve) => setImmediate(resolve));
 await new Promise((resolve) => setImmediate(resolve));
 assert.equal(resynced.schemaVersion, 1);
 assert.equal(calls.filter(({ command }) => command === 'velvet_core_handshake').length, 2);
-assert.equal(calls.filter(({ command }) => command === 'velvet_core_request').length, 2);
+assert.equal(calls.filter(({ command }) => command === 'velvet_core_request').length, 3);
 assert.ok(statuses.includes('connecting'));
 assert.ok(statuses.includes('connected'));
 assert.ok(statuses.includes('resyncing'));
