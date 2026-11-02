@@ -1009,8 +1009,9 @@ and CI secrets are the activation gate; missing target-specific
 `velvetManifests` also fails
 closed before any package is staged.
 
-Update checks and downloads use bounded timeouts, the configured proxy and
-diagnosable offline behavior. A failed check does not block startup. A partial
+Update checks and downloads use a 30-second host timeout, the Tauri updater's
+system-proxy support and diagnosable offline behavior. A failed check does not
+block startup. A partial
 download is never executable and is discarded or resumed only through the
 updater adapter. An interrupted install is reconciled from the journal on the
 next launch; it never deletes user data or silently replaces a committed
