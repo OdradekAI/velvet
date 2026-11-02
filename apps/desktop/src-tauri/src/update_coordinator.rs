@@ -208,7 +208,11 @@ impl UpdateCoordinator {
         else {
             return Ok(None);
         };
-        let manifest = parse_release_manifest(&update.raw_json, &update.target)?;
+        let manifest = parse_release_manifest(
+            &update.raw_json,
+            &update.target,
+            Some(update.download_url.as_str()),
+        )?;
         if normalize_version(&update.version) != normalize_version(&manifest.version) {
             return Err(UpdateCoordinatorError::Manifest(
                 "Tauri update version and Velvet manifest version differ".into(),
@@ -268,10 +272,23 @@ impl UpdateCoordinator {
 pub fn parse_release_manifest(
     raw_json: &serde_json::Value,
     updater_target: &str,
+    download_url: Option<&str>,
 ) -> Result<ReleaseManifestDto, UpdateCoordinatorError> {
-    let value = raw_json
-        .get("velvetManifests")
-        .and_then(|manifests| manifests.get(updater_target))
+    let manifests = raw_json.get("velvetManifests");
+    let selected_platform = download_url.and_then(|url| {
+        raw_json
+            .get("platforms")
+            .and_then(serde_json::Value::as_object)
+            .and_then(|platforms| {
+                platforms.iter().find_map(|(platform, value)| {
+                    (value.get("url").and_then(serde_json::Value::as_str) == Some(url))
+                        .then_some(platform.as_str())
+                })
+            })
+    });
+    let value = selected_platform
+        .and_then(|platform| manifests.and_then(|entries| entries.get(platform)))
+        .or_else(|| manifests.and_then(|entries| entries.get(updater_target)))
         .ok_or_else(|| {
             UpdateCoordinatorError::Manifest(format!(
                 "latest.json has no velvetManifests entry for {updater_target}"
@@ -345,14 +362,18 @@ mod tests {
               }
             }
         });
-        let manifest = parse_release_manifest(&raw, "test-x86_64").expect("manifest");
+        let manifest = parse_release_manifest(&raw, "test-x86_64", None).expect("manifest");
         assert_eq!(manifest.version, "0.0.5");
         assert_eq!(manifest.release_sequence, 2);
     }
 
     #[test]
     fn missing_manifest_fails_closed() {
-        let error = parse_release_manifest(&serde_json::json!({"version": "0.0.5"}), "darwin-aarch64")
+        let error = parse_release_manifest(
+            &serde_json::json!({"version": "0.0.5"}),
+            "darwin-aarch64",
+            None,
+        )
             .expect_err("missing manifest should fail");
         assert!(error.to_string().contains("no velvetManifests entry"));
     }
@@ -379,8 +400,51 @@ mod tests {
                 }
             }
         });
-        let error = parse_release_manifest(&raw, "linux-x86_64").expect_err("target must be bound");
+        let error = parse_release_manifest(&raw, "linux-x86_64", None)
+            .expect_err("target must be bound");
         assert!(error.to_string().contains("linux-x86_64"));
+    }
+
+    #[test]
+    fn selected_installer_manifest_is_bound_to_the_download_url() {
+        let raw = serde_json::json!({
+            "platforms": {
+                "windows-x86_64": {"url": "https://example.test/msi.zip"},
+                "windows-x86_64-msi": {"url": "https://example.test/msi.zip"},
+                "windows-x86_64-nsis": {"url": "https://example.test/nsis.zip"}
+            },
+            "velvetManifests": {
+                "windows-x86_64": manifest_json("windows-x86_64", "base"),
+                "windows-x86_64-msi": manifest_json("windows-x86_64", "msi"),
+                "windows-x86_64-nsis": manifest_json("windows-x86_64", "nsis")
+            }
+        });
+        let manifest = parse_release_manifest(
+            &raw,
+            "windows-x86_64",
+            Some("https://example.test/nsis.zip"),
+        )
+        .expect("installer manifest");
+        assert_eq!(manifest.signing_key_id, "nsis");
+    }
+
+    fn manifest_json(target: &str, signing_key_id: &str) -> serde_json::Value {
+        serde_json::json!({
+            "schemaVersion": 1,
+            "channel": "preview",
+            "version": "0.0.5",
+            "target": target,
+            "artifactSha256": "a".repeat(64),
+            "updaterSchema": 1,
+            "minDataSchema": 1,
+            "maxDataSchema": 1,
+            "minClientVersion": "0.0.1",
+            "releaseSequence": 2,
+            "issuedAtMs": 1,
+            "expiresAtMs": 2,
+            "signingKeyId": signing_key_id,
+            "signature": "b".repeat(128)
+        })
     }
 
     #[test]

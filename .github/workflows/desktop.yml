@@ -210,36 +210,28 @@ jobs:
             target: ""
             args: ""
             channel: preview
-            updaterTarget: linux-x86_64
-            velvetTarget: linux-x86_64
-            updaterArtifactSuffix: .AppImage.tar.gz
+            manifestSpecs: '[{"updaterTarget":"linux-x86_64","velvetTarget":"linux-x86_64","artifactSuffix":".AppImage.tar.gz"},{"updaterTarget":"linux-x86_64-appimage","velvetTarget":"linux-x86_64","artifactSuffix":".AppImage.tar.gz"},{"updaterTarget":"linux-x86_64-deb","velvetTarget":"linux-x86_64","artifactSuffix":".deb"},{"updaterTarget":"linux-x86_64-rpm","velvetTarget":"linux-x86_64","artifactSuffix":".rpm"}]'
             signingKeyId: velvet-preview-root-1
           - os: macos-latest
             arch: arm64
             target: aarch64-apple-darwin
             args: --target aarch64-apple-darwin
             channel: preview
-            updaterTarget: darwin-aarch64
-            velvetTarget: macos-aarch64
-            updaterArtifactSuffix: .app.tar.gz
+            manifestSpecs: '[{"updaterTarget":"darwin-aarch64","velvetTarget":"macos-aarch64","artifactSuffix":".app.tar.gz"},{"updaterTarget":"darwin-aarch64-app","velvetTarget":"macos-aarch64","artifactSuffix":".app.tar.gz"}]'
             signingKeyId: velvet-preview-root-1
           - os: macos-latest
             arch: x64
             target: x86_64-apple-darwin
             args: --target x86_64-apple-darwin
             channel: preview
-            updaterTarget: darwin-x86_64
-            velvetTarget: macos-x86_64
-            updaterArtifactSuffix: .app.tar.gz
+            manifestSpecs: '[{"updaterTarget":"darwin-x86_64","velvetTarget":"macos-x86_64","artifactSuffix":".app.tar.gz"},{"updaterTarget":"darwin-x86_64-app","velvetTarget":"macos-x86_64","artifactSuffix":".app.tar.gz"}]'
             signingKeyId: velvet-preview-root-1
           - os: windows-latest
             arch: x64
             target: ""
             args: ""
             channel: preview
-            updaterTarget: windows-x86_64
-            velvetTarget: windows-x86_64
-            updaterArtifactSuffix: .msi.zip
+            manifestSpecs: '[{"updaterTarget":"windows-x86_64","velvetTarget":"windows-x86_64","artifactSuffix":".msi.zip"},{"updaterTarget":"windows-x86_64-msi","velvetTarget":"windows-x86_64","artifactSuffix":".msi.zip"},{"updaterTarget":"windows-x86_64-nsis","velvetTarget":"windows-x86_64","artifactSuffix":".nsis.zip"}]'
             signingKeyId: velvet-preview-root-1
     runs-on: ${{ matrix.os }}
 
@@ -299,6 +291,7 @@ jobs:
         run: bash ../../tools/release-qualification/test-package-wiring.sh
 
       - name: Prepare signed updater configuration
+        shell: bash
         env:
           TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.VELVET_TAURI_UPDATER_PUBLIC_KEY }}
           TAURI_UPDATER_ENDPOINT_PREVIEW: ${{ secrets.VELVET_TAURI_UPDATER_ENDPOINT_PREVIEW }}
@@ -333,27 +326,35 @@ jobs:
           updaterJsonPreferNsis: false
 
       - name: Generate target ReleaseManifest
+        shell: bash
         env:
           VELVET_UPDATER_ARTIFACT_PATHS: ${{ steps.tauri_release.outputs.artifactPaths }}
           VELVET_RELEASE_MANIFEST_PRIVATE_KEY: ${{ secrets.VELVET_RELEASE_MANIFEST_PRIVATE_KEY }}
           VELVET_RELEASE_MANIFEST_PUBLIC_KEY: ${{ secrets.VELVET_RELEASE_MANIFEST_PUBLIC_KEY }}
         run: |
           mkdir -p artifacts/release-manifests
-          node tools/release-qualification/generate-release-manifest.mjs \
-            --artifact-paths "$VELVET_UPDATER_ARTIFACT_PATHS" \
-            --artifact-suffix '${{ matrix.updaterArtifactSuffix }}' \
-            --version '${{ steps.tauri_release.outputs.appVersion }}' \
-            --channel '${{ matrix.channel }}' \
-            --target '${{ matrix.velvetTarget }}' \
-            --signing-key-id '${{ matrix.signingKeyId }}' \
-            --release-sequence '${{ github.run_number }}' \
-            --output 'artifacts/release-manifests/velvet-manifest-${{ matrix.updaterTarget }}.json'
-          node tools/release-qualification/verify-release-manifest.mjs \
-            --manifest 'artifacts/release-manifests/velvet-manifest-${{ matrix.updaterTarget }}.json' \
-            --channel '${{ matrix.channel }}'
-          gh release upload '${{ github.ref_name }}' \
-            'artifacts/release-manifests/velvet-manifest-${{ matrix.updaterTarget }}.json#velvet-manifest-${{ matrix.updaterTarget }}.json' \
-            --clobber
+          specs='${{ matrix.manifestSpecs }}'
+          while IFS= read -r spec; do
+            updater_target="$(jq -r '.updaterTarget' <<< "$spec")"
+            artifact_suffix="$(jq -r '.artifactSuffix' <<< "$spec")"
+            velvet_target="$(jq -r '.velvetTarget' <<< "$spec")"
+            manifest_path="artifacts/release-manifests/velvet-manifest-${updater_target}.json"
+            node tools/release-qualification/generate-release-manifest.mjs \
+              --artifact-paths "$VELVET_UPDATER_ARTIFACT_PATHS" \
+              --artifact-suffix "$artifact_suffix" \
+              --version '${{ steps.tauri_release.outputs.appVersion }}' \
+              --channel '${{ matrix.channel }}' \
+              --target "$velvet_target" \
+              --signing-key-id '${{ matrix.signingKeyId }}' \
+              --release-sequence '${{ github.run_number }}' \
+              --output "$manifest_path"
+            node tools/release-qualification/verify-release-manifest.mjs \
+              --manifest "$manifest_path" \
+              --channel '${{ matrix.channel }}'
+            gh release upload '${{ github.ref_name }}' \
+              "$manifest_path#velvet-manifest-${updater_target}.json" \
+              --clobber
+          done < <(jq -c '.[]' <<< "$specs")
 
   finalize-updater-manifest:
     name: Finalize channel latest.json

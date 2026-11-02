@@ -31,8 +31,7 @@ for (const [target, manifest] of Object.entries(manifests)) {
   if (!manifest || typeof manifest !== 'object') {
     throw new Error(`velvetManifests.${target} must be an object`);
   }
-  if (!document.platforms[target] &&
-      !Object.keys(document.platforms).some((platform) => platform.startsWith(`${target}-`))) {
+  if (!document.platforms[target]) {
     throw new Error(`velvetManifests.${target} has no matching updater platform`);
   }
   if (manifest.version !== document.version.replace(/^v/, '')) {
@@ -65,8 +64,7 @@ for (const [target, manifest] of Object.entries(manifests)) {
   }
 }
 for (const platform of Object.keys(document.platforms)) {
-  if (!Object.keys(manifests).some((target) =>
-    platform === target || platform.startsWith(`${target}-`))) {
+  if (!manifests[platform]) {
     throw new Error(`latest.json platform ${platform} has no Velvet release manifest`);
   }
 }

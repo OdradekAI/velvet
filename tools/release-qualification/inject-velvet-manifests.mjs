@@ -33,13 +33,12 @@ for (const file of fs.readdirSync(manifestDirectory).filter((name) =>
 }
 if (Object.keys(manifests).length === 0) throw new Error('manifest directory is empty');
 for (const target of Object.keys(manifests)) {
-  if (!latest.platforms[target] && !Object.keys(latest.platforms).some((key) => key.startsWith(`${target}-`))) {
+  if (!latest.platforms[target]) {
     throw new Error(`manifest target ${target} has no matching latest.json platform`);
   }
 }
 for (const platform of Object.keys(latest.platforms)) {
-  if (!Object.keys(manifests).some((target) =>
-    platform === target || platform.startsWith(`${target}-`))) {
+  if (!manifests[platform]) {
     throw new Error(`latest.json platform ${platform} has no Velvet release manifest`);
   }
 }

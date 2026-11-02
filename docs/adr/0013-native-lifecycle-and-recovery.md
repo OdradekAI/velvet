@@ -974,8 +974,10 @@ release state machine. The implemented host-owned `UpdateCoordinator` calls
 `tauri-plugin-updater` for endpoint discovery, signed updater-artifact
 verification, bounded download and platform install/relaunch behavior. The
 renderer has no updater permission and cannot choose an endpoint or receive
-package bytes. Before installation the coordinator parses the target-specific
-`velvetManifests[tauriTarget]` member from Tauri's `latest.json`, asks
+package bytes. Before installation the coordinator matches the selected
+Tauri platform/download entry and parses its
+`velvetManifests[tauriPlatform]` member from `latest.json`, with the base
+`tauriTarget` as a compatibility fallback, then asks
 `ApplicationCore` to verify it, stages the package bytes and `RecoverySet` data-generation anchor,
 then invokes Tauri's install operation. After restart, native setup commits the
 transaction only at the typed `workbench-ready` checkpoint. Tauri updater does
