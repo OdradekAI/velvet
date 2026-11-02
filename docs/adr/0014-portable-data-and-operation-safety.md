@@ -134,13 +134,14 @@ silent partial write.
 
 ### Implementation status (2026-11-03)
 
-The protocol contract and the persistence adapter now have a bounded
+The protocol contract and persistence adapter now have a bounded
 `OperationReceiptStore` with in-memory and atomic JSON-file implementations.
-It preserves schema-compatible receipts, rejects duplicate operation ids and
-oversized/corrupt journals, and keeps `unknown` outcomes available after a
-restart. It does not execute providers or decide compensation validity; those
-remain `ApplicationCore`/provider-owner work and are not claimed by this
-slice.
+`ApplicationCore` adds an `OperationCoordinator` that revalidates observed
+targets, serializes receipt transitions, writes `started` before invoking a
+provider, preserves `unknown` outcomes after restart and blocks replay until
+reconciliation. The coordinator still does not infer idempotency, grant file
+or remote authority, or decide compensation validity; those remain provider
+owner work.
 
 ## Consequences
 

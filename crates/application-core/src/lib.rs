@@ -3,9 +3,15 @@ use std::fs;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+mod operation;
 mod preview_source;
 mod recovery;
 mod release;
+
+pub use operation::{
+    OperationCoordinator, OperationCoordinatorError, OperationExecution, OperationPhase,
+    OperationProvider, OperationProviderError,
+};
 
 pub use release::{
     canonical_unsigned_manifest, ReleaseTrustPolicy, ReleaseUpdateError, ReleaseUpdateManager,
@@ -38,6 +44,7 @@ pub struct ApplicationRecoveryStores {
     pub release_updates: Option<Arc<dyn velvet_persistence::ReleaseUpdateStore>>,
     pub release_packages: Option<Arc<dyn velvet_persistence::ReleasePackageStore>>,
     pub release_trust: Option<ReleaseTrustPolicy>,
+    pub operation_receipts: Option<Arc<dyn velvet_persistence::OperationReceiptStore>>,
 }
 
 impl ApplicationRecoveryStores {
@@ -56,6 +63,7 @@ impl ApplicationRecoveryStores {
             release_updates: None,
             release_packages: None,
             release_trust: None,
+            operation_receipts: None,
         }
     }
 
@@ -95,6 +103,14 @@ impl ApplicationRecoveryStores {
         store: Arc<dyn velvet_persistence::ReleasePackageStore>,
     ) -> Self {
         self.release_packages = Some(store);
+        self
+    }
+
+    pub fn with_operation_receipts(
+        mut self,
+        store: Arc<dyn velvet_persistence::OperationReceiptStore>,
+    ) -> Self {
+        self.operation_receipts = Some(store);
         self
     }
 
@@ -163,6 +179,7 @@ pub struct ApplicationCore {
     durability_report: Option<velvet_workbench_protocol::DurabilityReport>,
     release_updates: Option<ReleaseUpdateManager>,
     diagnostic_store: Option<Arc<dyn DiagnosticEventStore>>,
+    operation_receipts: Arc<dyn velvet_persistence::OperationReceiptStore>,
     plugin_diagnostics: VecDeque<PluginDiagnosticEvent>,
     diagnostic_history: VecDeque<PluginDiagnosticEvent>,
     diagnostics_degraded: bool,
@@ -486,6 +503,7 @@ impl ApplicationCore {
             release_updates: release_updates_store,
             release_packages,
             release_trust,
+            operation_receipts,
         } = recovery_stores;
         let recovery = RecoverySupervisor::new(recovery_journal, Arc::new(SystemRecoveryClock));
         let launch_started = recovery.begin_launch(env!("CARGO_PKG_VERSION"));
@@ -617,6 +635,9 @@ impl ApplicationCore {
             durability_report,
             release_updates,
             diagnostic_store,
+            operation_receipts: operation_receipts.unwrap_or_else(|| {
+                Arc::new(velvet_persistence::InMemoryOperationReceiptStore::default())
+            }),
             plugin_diagnostics: VecDeque::new(),
             diagnostic_history: diagnostic_history.into_iter().collect(),
             diagnostics_degraded,
@@ -636,6 +657,13 @@ impl ApplicationCore {
         core.previews
             .set_asset_source(Arc::new(FilePreviewAssetSource::new(preview_locations)));
         core
+    }
+
+    /// Returns the host-owned operation policy seam. Providers remain owned by
+    /// their domain and are supplied for each commit; the coordinator only
+    /// controls validation, receipt transitions and replay blocking.
+    pub fn operation_coordinator(&self) -> OperationCoordinator {
+        OperationCoordinator::new(self.operation_receipts.clone())
     }
 
     pub fn recovery_projection(&self) -> velvet_workbench_protocol::RecoveryProjection {

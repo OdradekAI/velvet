@@ -42,7 +42,8 @@ use velvet_plugin_host::JsonFileRuntimeLeaseStore;
 use velvet_persistence::{
     DurabilityMode, JsonFileAssetSourceLocationStore, JsonFileDiagnosticEventStore,
     DurabilityReportStore, JsonFileDurabilityReportStore, JsonFileRecoveryJournalStore,
-    JsonFileRecoverySetStore, JsonFileStateSnapshotStore, LegacyJobMigrationParticipant,
+    JsonFileOperationReceiptStore, JsonFileRecoverySetStore, JsonFileStateSnapshotStore,
+    LegacyJobMigrationParticipant,
     LegacyLayoutMigrationParticipant, LegacyProfileMigrationParticipant,
     JsonFileReleasePackageStore, JsonFileReleaseUpdateStore, OwnerMigrationParticipant,
     SnapshotJobStateStore,
@@ -2588,6 +2589,7 @@ pub fn run() {
             let profile_path = app_data_dir.join("profile.json");
             let asset_sources_path = app_data_dir.join("asset-sources.json");
             let recovery_path = app_data_dir.join("recovery-journal.json");
+            let operation_receipts_path = app_data_dir.join("operation-receipts.json");
             let diagnostic_events_path = app_data_dir.join("diagnostic-events.json");
             let durability_report_path = app_data_dir.join("durability-report.json");
             let snapshot_root = app_data_dir.join("snapshots");
@@ -2659,6 +2661,12 @@ pub fn run() {
                     diagnostic_events_path,
                     durability,
                 )))
+                .with_operation_receipts(Arc::new(
+                    JsonFileOperationReceiptStore::with_durability(
+                        operation_receipts_path,
+                        durability,
+                    ),
+                ))
                 .with_runtime_leases(Arc::new(JsonFileRuntimeLeaseStore::with_durability(
                     runtime_leases_path,
                     durability,
