@@ -28,6 +28,8 @@ export const JOB_EXECUTION_ENVIRONMENT_SCHEMA_VERSION = 1 as const;
 export type JobExecutionEnvironmentSchemaVersion =
   typeof JOB_EXECUTION_ENVIRONMENT_SCHEMA_VERSION;
 export const OPERATION_SCHEMA_VERSION = 1 as const;
+export const PORTABLE_BUNDLE_SCHEMA_VERSION = 1 as const;
+export const IMPORT_PLAN_SCHEMA_VERSION = 1 as const;
 export const NATIVE_UPDATE_SCHEMA_VERSION = 1 as const;
 export type WorkbenchAppId = string;
 

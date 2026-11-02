@@ -143,6 +143,13 @@ reconciliation. The coordinator still does not infer idempotency, grant file
 or remote authority, or decide compensation validity; those remain provider
 owner work.
 
+The versioned `PortableBundle` and `ImportPlan` contracts now validate bounded,
+path-free metadata, section ownership, integrity digests, schema compatibility
+and plan expiry. `PortableBundleInspector` verifies selected section bytes and
+keeps untrusted, corrupt or newer extension sections out of the selected core
+import. It intentionally stops before owner payload decoding, staging or
+`RecoverySet` publication; those steps remain the next owner-participant slice.
+
 ## Consequences
 
 Positive:

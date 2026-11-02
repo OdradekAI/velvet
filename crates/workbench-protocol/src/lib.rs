@@ -37,6 +37,8 @@ pub const ACTIVATION_SCHEMA_VERSION: u16 = 1;
 pub const RELEASE_MANIFEST_SCHEMA_VERSION: u16 = 1;
 pub const RELEASE_TRANSACTION_SCHEMA_VERSION: u16 = 1;
 pub const OPERATION_SCHEMA_VERSION: u16 = 1;
+pub const PORTABLE_BUNDLE_SCHEMA_VERSION: u16 = 1;
+pub const IMPORT_PLAN_SCHEMA_VERSION: u16 = 1;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -147,6 +149,8 @@ pub fn supported_schema_versions() -> BTreeMap<String, u16> {
             JOB_EXECUTION_ENVIRONMENT_SCHEMA_VERSION,
         ),
         ("operation".into(), OPERATION_SCHEMA_VERSION),
+        ("portable-bundle".into(), PORTABLE_BUNDLE_SCHEMA_VERSION),
+        ("import-plan".into(), IMPORT_PLAN_SCHEMA_VERSION),
     ])
 }
 
@@ -928,6 +932,265 @@ impl OperationReceipt {
     }
 }
 
+pub const PORTABLE_BUNDLE_MAX_SECTIONS: usize = 64;
+pub const PORTABLE_BUNDLE_MAX_SECTION_BYTES: usize = 2 * 1024 * 1024;
+pub const PORTABLE_BUNDLE_MAX_TOTAL_BYTES: u64 = 16 * 1024 * 1024;
+pub const IMPORT_PLAN_MAX_ENTRIES: usize = PORTABLE_BUNDLE_MAX_SECTIONS;
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PortableBundleScope {
+    Profile,
+    Workspace,
+    Asset,
+    Extension,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PortableBundleSection {
+    pub section_id: String,
+    pub scope: PortableBundleScope,
+    pub owner_id: String,
+    pub schema_version: u16,
+    pub required: bool,
+    #[serde(default)]
+    pub extension_id: Option<String>,
+    pub sha256: String,
+    pub payload: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PortableBundle {
+    pub schema_version: u16,
+    pub bundle_id: String,
+    pub created_at_ms: u64,
+    pub source_build: String,
+    pub sections: Vec<PortableBundleSection>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PortableBundleError {
+    UnsupportedSchema { schema_version: u16 },
+    InvalidField(&'static str),
+    EmptySections,
+    TooManySections,
+    DuplicateSection(String),
+    OversizedSection(String),
+    OversizedBundle,
+    InvalidExtensionSection(String),
+    InvalidDigest(String),
+}
+
+impl PortableBundle {
+    pub const MAX_ID_BYTES: usize = 128;
+    pub const MAX_BUILD_BYTES: usize = 128;
+
+    pub fn validate(&self) -> Result<(), PortableBundleError> {
+        if self.schema_version != PORTABLE_BUNDLE_SCHEMA_VERSION {
+            return Err(PortableBundleError::UnsupportedSchema {
+                schema_version: self.schema_version,
+            });
+        }
+        validate_bundle_identifier(&self.bundle_id, "bundleId")?;
+        if self.source_build.is_empty()
+            || self.source_build.len() > Self::MAX_BUILD_BYTES
+            || self.source_build.contains('\0')
+            || self.source_build.contains('/')
+            || self.source_build.contains('\\')
+        {
+            return Err(PortableBundleError::InvalidField("sourceBuild"));
+        }
+        if self.sections.is_empty() {
+            return Err(PortableBundleError::EmptySections);
+        }
+        if self.sections.len() > PORTABLE_BUNDLE_MAX_SECTIONS {
+            return Err(PortableBundleError::TooManySections);
+        }
+        let mut section_ids = std::collections::BTreeSet::new();
+        let mut total_bytes = 0u64;
+        for section in &self.sections {
+            validate_bundle_identifier(&section.section_id, "sectionId")?;
+            validate_bundle_identifier(&section.owner_id, "ownerId")?;
+            if !section_ids.insert(section.section_id.clone()) {
+                return Err(PortableBundleError::DuplicateSection(
+                    section.section_id.clone(),
+                ));
+            }
+            if section.payload.len() > PORTABLE_BUNDLE_MAX_SECTION_BYTES {
+                return Err(PortableBundleError::OversizedSection(
+                    section.section_id.clone(),
+                ));
+            }
+            total_bytes = total_bytes.saturating_add(section.payload.len() as u64);
+            if total_bytes > PORTABLE_BUNDLE_MAX_TOTAL_BYTES {
+                return Err(PortableBundleError::OversizedBundle);
+            }
+            if section.sha256.len() != 64
+                || !section.sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
+            {
+                return Err(PortableBundleError::InvalidDigest(
+                    section.section_id.clone(),
+                ));
+            }
+            match section.scope {
+                PortableBundleScope::Extension
+                    if section.extension_id.is_none()
+                        || section.required
+                        || section.owner_id
+                            != section.extension_id.as_deref().unwrap_or_default() =>
+                {
+                    return Err(PortableBundleError::InvalidExtensionSection(
+                        section.section_id.clone(),
+                    ));
+                }
+                PortableBundleScope::Extension => {}
+                _ if section.extension_id.is_some() => {
+                    return Err(PortableBundleError::InvalidExtensionSection(
+                        section.section_id.clone(),
+                    ));
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    pub fn total_payload_bytes(&self) -> u64 {
+        self.sections
+            .iter()
+            .map(|section| section.payload.len() as u64)
+            .sum()
+    }
+}
+
+fn validate_bundle_identifier(value: &str, field: &'static str) -> Result<(), PortableBundleError> {
+    if value.is_empty()
+        || value.len() > PortableBundle::MAX_ID_BYTES
+        || value.contains('\0')
+        || value.contains('/')
+        || value.contains('\\')
+    {
+        return Err(PortableBundleError::InvalidField(field));
+    }
+    Ok(())
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ImportMigration {
+    pub section_id: String,
+    pub from_schema_version: u16,
+    pub to_schema_version: u16,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ImportConflict {
+    pub section_id: String,
+    pub reason: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ImportPlan {
+    pub schema_version: u16,
+    pub plan_id: String,
+    pub bundle_id: String,
+    pub created_at_ms: u64,
+    pub expires_at_ms: u64,
+    pub selected_section_ids: Vec<String>,
+    pub migrations: Vec<ImportMigration>,
+    pub conflicts: Vec<ImportConflict>,
+    pub unavailable_sources: Vec<String>,
+    pub skipped_extension_sections: Vec<String>,
+    pub estimated_bytes: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ImportPlanError {
+    UnsupportedSchema { schema_version: u16 },
+    InvalidField(&'static str),
+    EmptySelection,
+    TooManyEntries,
+    DuplicateSection(String),
+    Expired,
+}
+
+impl ImportPlan {
+    pub fn validate(&self, now_ms: u64) -> Result<(), ImportPlanError> {
+        if self.schema_version != IMPORT_PLAN_SCHEMA_VERSION {
+            return Err(ImportPlanError::UnsupportedSchema {
+                schema_version: self.schema_version,
+            });
+        }
+        for (field, value) in [
+            ("planId", self.plan_id.as_str()),
+            ("bundleId", self.bundle_id.as_str()),
+        ] {
+            if value.is_empty()
+                || value.len() > PortableBundle::MAX_ID_BYTES
+                || value.contains('\0')
+            {
+                return Err(ImportPlanError::InvalidField(field));
+            }
+        }
+        if self.selected_section_ids.is_empty() {
+            return Err(ImportPlanError::EmptySelection);
+        }
+        if self.selected_section_ids.len() > IMPORT_PLAN_MAX_ENTRIES
+            || self.migrations.len() > IMPORT_PLAN_MAX_ENTRIES
+            || self.conflicts.len() > IMPORT_PLAN_MAX_ENTRIES
+            || self.unavailable_sources.len() > IMPORT_PLAN_MAX_ENTRIES
+            || self.skipped_extension_sections.len() > IMPORT_PLAN_MAX_ENTRIES
+        {
+            return Err(ImportPlanError::TooManyEntries);
+        }
+        if self.expires_at_ms <= self.created_at_ms || now_ms >= self.expires_at_ms {
+            return Err(ImportPlanError::Expired);
+        }
+        let mut section_ids = std::collections::BTreeSet::new();
+        for section_id in &self.selected_section_ids {
+            validate_plan_identifier(section_id, "selectedSectionId")?;
+            if !section_ids.insert(section_id.clone()) {
+                return Err(ImportPlanError::DuplicateSection(section_id.clone()));
+            }
+        }
+        for migration in &self.migrations {
+            validate_plan_identifier(&migration.section_id, "migrationSectionId")?;
+        }
+        for conflict in &self.conflicts {
+            validate_plan_identifier(&conflict.section_id, "conflictSectionId")?;
+            if conflict.reason.is_empty()
+                || conflict.reason.len() > 4096
+                || conflict.reason.contains('\0')
+            {
+                return Err(ImportPlanError::InvalidField("conflictReason"));
+            }
+        }
+        for source in &self.unavailable_sources {
+            validate_plan_identifier(source, "unavailableSource")?;
+        }
+        for section_id in &self.skipped_extension_sections {
+            validate_plan_identifier(section_id, "skippedExtensionSection")?;
+        }
+        Ok(())
+    }
+}
+
+fn validate_plan_identifier(value: &str, field: &'static str) -> Result<(), ImportPlanError> {
+    if value.is_empty()
+        || value.len() > PortableBundle::MAX_ID_BYTES
+        || value.contains('\0')
+        || value.contains('/')
+        || value.contains('\\')
+    {
+        return Err(ImportPlanError::InvalidField(field));
+    }
+    Ok(())
+}
+
 impl Default for RecoveryJournalState {
     fn default() -> Self {
         Self {
@@ -1677,6 +1940,71 @@ mod tests {
         assert_eq!(json["schemaVersion"], OPERATION_SCHEMA_VERSION);
         assert_eq!(json["kind"], "delete");
         assert_eq!(json["targets"][0]["expectedRevision"], 7);
+    }
+
+    #[test]
+    fn portable_bundle_and_import_plan_are_bounded_and_path_free_at_the_contract() {
+        let section = PortableBundleSection {
+            section_id: "profile".into(),
+            scope: PortableBundleScope::Profile,
+            owner_id: "profile".into(),
+            schema_version: 1,
+            required: true,
+            extension_id: None,
+            sha256: "a".repeat(64),
+            payload: vec![1, 2, 3],
+        };
+        let bundle = PortableBundle {
+            schema_version: PORTABLE_BUNDLE_SCHEMA_VERSION,
+            bundle_id: "bundle-1".into(),
+            created_at_ms: 42,
+            source_build: "0.0.4".into(),
+            sections: vec![section],
+        };
+        bundle.validate().expect("bundle metadata should validate");
+        let json = serde_json::to_value(&bundle).expect("bundle should serialize");
+        assert_eq!(json["schemaVersion"], PORTABLE_BUNDLE_SCHEMA_VERSION);
+        assert_eq!(json["sections"][0]["scope"], "profile");
+        assert!(json.get("path").is_none());
+        assert!(serde_json::from_value::<PortableBundle>(serde_json::json!({
+            "schemaVersion": PORTABLE_BUNDLE_SCHEMA_VERSION,
+            "bundleId": "bundle-1",
+            "createdAtMs": 42,
+            "sourceBuild": "0.0.4",
+            "sections": [{
+                "sectionId": "profile",
+                "scope": "profile",
+                "ownerId": "profile",
+                "schemaVersion": 1,
+                "required": true,
+                "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "payload": [],
+                "path": "/tmp/unsafe"
+            }]
+        }))
+        .is_err());
+
+        let plan = ImportPlan {
+            schema_version: IMPORT_PLAN_SCHEMA_VERSION,
+            plan_id: "import-1".into(),
+            bundle_id: "bundle-1".into(),
+            created_at_ms: 50,
+            expires_at_ms: 100,
+            selected_section_ids: vec!["profile".into()],
+            migrations: vec![ImportMigration {
+                section_id: "profile".into(),
+                from_schema_version: 1,
+                to_schema_version: 2,
+            }],
+            conflicts: Vec::new(),
+            unavailable_sources: Vec::new(),
+            skipped_extension_sections: Vec::new(),
+            estimated_bytes: 3,
+        };
+        plan.validate(60).expect("import plan should validate");
+        let plan_json = serde_json::to_value(&plan).expect("plan should serialize");
+        assert_eq!(plan_json["schemaVersion"], IMPORT_PLAN_SCHEMA_VERSION);
+        assert_eq!(plan_json["migrations"][0]["fromSchemaVersion"], 1);
     }
 
     #[test]

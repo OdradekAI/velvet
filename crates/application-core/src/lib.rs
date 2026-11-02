@@ -3,6 +3,7 @@ use std::fs;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+mod bundle;
 mod operation;
 mod preview_source;
 mod recovery;
@@ -12,6 +13,8 @@ pub use operation::{
     OperationCoordinator, OperationCoordinatorError, OperationExecution, OperationPhase,
     OperationProvider, OperationProviderError,
 };
+
+pub use bundle::{BundleInspectionContext, BundleInspectionError, PortableBundleInspector};
 
 pub use release::{
     canonical_unsigned_manifest, ReleaseTrustPolicy, ReleaseUpdateError, ReleaseUpdateManager,
