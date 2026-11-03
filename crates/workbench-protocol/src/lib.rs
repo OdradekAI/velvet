@@ -812,6 +812,21 @@ impl OperationPlan {
     pub const MAX_FINGERPRINT_BYTES: usize = 256;
 
     pub fn validate(&self, now_ms: u64) -> Result<(), OperationPlanError> {
+        self.validate_internal(now_ms, true)
+    }
+
+    /// Validates the immutable plan envelope before the provider has observed
+    /// current target evidence. The host must replace missing evidence with a
+    /// provider-owned observation before allowing commit.
+    pub fn validate_for_preview(&self, now_ms: u64) -> Result<(), OperationPlanError> {
+        self.validate_internal(now_ms, false)
+    }
+
+    fn validate_internal(
+        &self,
+        now_ms: u64,
+        require_target_evidence: bool,
+    ) -> Result<(), OperationPlanError> {
         if self.schema_version != OPERATION_SCHEMA_VERSION {
             return Err(OperationPlanError::UnsupportedSchema {
                 schema_version: self.schema_version,
@@ -848,7 +863,10 @@ impl OperationPlan {
                     target.target_id.clone(),
                 ));
             }
-            if target.expected_revision.is_none() && target.expected_fingerprint.is_none() {
+            if require_target_evidence
+                && target.expected_revision.is_none()
+                && target.expected_fingerprint.is_none()
+            {
                 return Err(OperationPlanError::MissingTargetEvidence(
                     target.target_id.clone(),
                 ));
@@ -1580,6 +1598,9 @@ pub enum Command {
     CommitAssetDelete {
         plan: OperationPlan,
     },
+    PreviewAssetDelete {
+        plan: OperationPlan,
+    },
     UninstallPlugin {
         extension_id: ExtensionId,
     },
@@ -1720,6 +1741,7 @@ pub enum Response {
     ImportQuarantine(Vec<ImportQuarantineSummary>),
     OperationReceipt(OperationReceipt),
     OperationReceipts(Vec<OperationReceipt>),
+    OperationPlan(OperationPlan),
     PluginProjection(PluginProjectionDto),
     Job(JobSnapshot),
     Jobs(Vec<JobSnapshot>),
@@ -2219,6 +2241,21 @@ mod tests {
             Err(OperationPlanError::StaleTarget("asset-1".into()))
         );
         assert_eq!(plan.validate(500), Err(OperationPlanError::Expired));
+        let preview_plan = OperationPlan {
+            targets: vec![OperationTarget {
+                target_id: "asset-1".into(),
+                expected_revision: None,
+                expected_fingerprint: None,
+            }],
+            ..plan.clone()
+        };
+        preview_plan
+            .validate_for_preview(200)
+            .expect("preview envelope should allow provider-owned evidence");
+        assert_eq!(
+            preview_plan.validate(200),
+            Err(OperationPlanError::MissingTargetEvidence("asset-1".into()))
+        );
 
         let receipt = OperationReceipt {
             schema_version: OPERATION_SCHEMA_VERSION,

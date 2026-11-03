@@ -723,6 +723,31 @@ impl ApplicationCore {
             .map_err(operation_error)
     }
 
+    /// Produces a fresh Asset delete plan from source-owner observations. The
+    /// caller may provide only opaque AssetIds; trusted fingerprints are
+    /// filled by the provider and must be sent back unchanged for commit.
+    pub fn preview_asset_delete(
+        &self,
+        plan: &OperationPlan,
+        now_ms: u64,
+    ) -> Result<OperationPlan, CoreError> {
+        plan.validate_for_preview(now_ms)
+            .map_err(|error| operation_error(OperationCoordinatorError::Plan(error)))?;
+        let mut provider = self.file_asset_operation_provider();
+        let observed = provider.observe(plan).map_err(|error| {
+            operation_error(OperationCoordinatorError::ProviderFailed {
+                phase: OperationPhase::Observe,
+                message: format!("{error:?}"),
+            })
+        })?;
+        let mut refreshed = plan.clone();
+        refreshed.targets = observed;
+        refreshed
+            .validate(now_ms)
+            .map_err(|error| operation_error(OperationCoordinatorError::Plan(error)))?;
+        Ok(refreshed)
+    }
+
     /// Imports a portable bundle through the application-owned snapshot and
     /// recovery-set stores. The Tauri layer can expose this seam as a typed
     /// command without gaining a second persistence owner or direct access to
@@ -2050,6 +2075,9 @@ impl ApplicationCore {
             Request::Command(Command::CommitAssetDelete { plan }) => self
                 .commit_asset_delete(&plan, diagnostic_timestamp_ms())
                 .map(Response::OperationReceipt),
+            Request::Command(Command::PreviewAssetDelete { plan }) => self
+                .preview_asset_delete(&plan, diagnostic_timestamp_ms())
+                .map(Response::OperationPlan),
             Request::Command(Command::UninstallPlugin { extension_id }) => {
                 self.uninstall_plugin(&extension_id).map_err(plugin_error)?;
                 Ok(Response::Accepted)
@@ -3841,8 +3869,7 @@ mod tests {
             Some(root),
         )
         .expect("the source location should register");
-        let fingerprint = "sha256:asset-delete".into();
-        let plan = OperationPlan {
+        let preview_plan = OperationPlan {
             schema_version: OPERATION_SCHEMA_VERSION,
             plan_id: "plan-delete".into(),
             operation_id: "operation-delete".into(),
@@ -3851,13 +3878,26 @@ mod tests {
             targets: vec![OperationTarget {
                 target_id: "asset-delete".into(),
                 expected_revision: None,
-                expected_fingerprint: Some(fingerprint),
+                expected_fingerprint: None,
             }],
             created_at_ms: 0,
             expires_at_ms: u64::MAX,
             retry_policy: OperationRetryPolicy::Never,
             undo: OperationUndoCapability::None,
         };
+        let plan = match core
+            .dispatch(Request::Command(Command::PreviewAssetDelete {
+                plan: preview_plan,
+            }))
+            .expect("asset delete preview should observe the source")
+        {
+            Response::OperationPlan(plan) => plan,
+            other => panic!("expected refreshed operation plan, got {other:?}"),
+        };
+        assert_eq!(
+            plan.targets[0].expected_fingerprint.as_deref(),
+            Some("sha256:asset-delete")
+        );
         let response = core
             .dispatch(Request::Command(Command::CommitAssetDelete {
                 plan: plan.clone(),

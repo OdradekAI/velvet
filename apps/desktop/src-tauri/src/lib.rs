@@ -857,6 +857,11 @@ pub enum WireRequest {
         protocol_version: u16,
         plan: velvet_workbench_protocol::OperationPlan,
     },
+    PreviewAssetDelete {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        plan: velvet_workbench_protocol::OperationPlan,
+    },
     InstallPlugin {
         #[serde(rename = "protocolVersion")]
         protocol_version: u16,
@@ -1289,6 +1294,13 @@ impl WireRequest {
             } => {
                 validate_inner_protocol(outer_protocol_version, protocol_version)?;
                 Ok(Request::Command(Command::CommitAssetDelete { plan }))
+            }
+            Self::PreviewAssetDelete {
+                protocol_version,
+                plan,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Command(Command::PreviewAssetDelete { plan }))
             }
             Self::InstallPlugin {
                 protocol_version,
@@ -1831,6 +1843,9 @@ enum WireResponse {
     OperationReceipts {
         receipts: Vec<velvet_workbench_protocol::OperationReceipt>,
     },
+    OperationPlan {
+        plan: velvet_workbench_protocol::OperationPlan,
+    },
     Job {
         job: WireJobSnapshot,
     },
@@ -1895,6 +1910,7 @@ impl WireResponseEnvelope {
             Response::ImportQuarantine(entries) => WireResponse::ImportQuarantine { entries },
             Response::OperationReceipt(receipt) => WireResponse::OperationReceipt { receipt },
             Response::OperationReceipts(receipts) => WireResponse::OperationReceipts { receipts },
+            Response::OperationPlan(plan) => WireResponse::OperationPlan { plan },
             Response::Job(job) => WireResponse::Job {
                 job: WireJobSnapshot::from(job),
             },
@@ -3794,6 +3810,25 @@ mod tests {
                 if plan.operation_id == "operation-delete"
         ));
 
+        let mut preview_plan = operation_plan.clone();
+        preview_plan.targets[0].expected_fingerprint = None;
+        let preview: WireRequestEnvelope = serde_json::from_value(serde_json::json!({
+            "protocolVersion": 1,
+            "requestId": 50,
+            "request": {
+                "kind": "preview-asset-delete",
+                "protocolVersion": 1,
+                "plan": preview_plan,
+            }
+        }))
+        .expect("asset delete preview should deserialize");
+        assert!(matches!(
+            preview.request.into_core(1).expect("preview should map"),
+            Request::Command(Command::PreviewAssetDelete { plan })
+                if plan.operation_id == "operation-delete"
+                    && plan.targets[0].expected_fingerprint.is_none()
+        ));
+
         let response = WireResponseEnvelope::from_core(
             velvet_workbench_protocol::ResponseEnvelope {
                 protocol_version: PROTOCOL_VERSION,
@@ -3819,6 +3854,17 @@ mod tests {
         let value = serde_json::to_value(response).expect("operation receipt should serialize");
         assert_eq!(value["response"]["kind"], "operation-receipt");
         assert_eq!(value["response"]["receipt"]["operationId"], "operation-delete");
+
+        let response = WireResponseEnvelope::from_core(
+            velvet_workbench_protocol::ResponseEnvelope {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: RequestId(51),
+                response: Response::OperationPlan(operation_plan),
+            },
+        );
+        let value = serde_json::to_value(response).expect("operation plan should serialize");
+        assert_eq!(value["response"]["kind"], "operation-plan");
+        assert_eq!(value["response"]["plan"]["operationId"], "operation-delete");
     }
 
     #[test]

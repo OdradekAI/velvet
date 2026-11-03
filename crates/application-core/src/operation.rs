@@ -128,10 +128,10 @@ impl<'a> FileAssetOperationProvider<'a> {
         if plan
             .targets
             .iter()
-            .any(|target| target.expected_fingerprint.is_none())
+            .any(|target| target.expected_revision.is_some())
         {
             return Err(OperationProviderError::Failed(
-                "file deletion requires a trusted target fingerprint".into(),
+                "file provider does not support revision evidence".into(),
             ));
         }
         Ok(())
@@ -183,10 +183,11 @@ impl OperationProvider for FileAssetOperationProvider<'_> {
         let mut any_failed = false;
         for target in &plan.targets {
             let asset_id = AssetId(target.target_id.clone());
-            let expected = target
-                .expected_fingerprint
-                .as_deref()
-                .expect("validate_plan ensures a fingerprint");
+            let Some(expected) = target.expected_fingerprint.as_deref() else {
+                return Err(OperationProviderError::Failed(
+                    "file deletion requires a trusted target fingerprint".into(),
+                ));
+            };
             let current = self.current_fingerprint(&asset_id)?;
             if current != expected {
                 any_failed = true;
@@ -776,14 +777,28 @@ mod tests {
         let no_fingerprint_plan = OperationPlan {
             targets: vec![OperationTarget {
                 target_id: "asset-1".into(),
-                expected_revision: Some(1),
+                expected_revision: None,
                 expected_fingerprint: None,
             }],
             ..file_delete_plan("sha256:current")
         };
         assert!(matches!(
             coordinator.commit(&no_fingerprint_plan, 10, &mut provider),
-            Err(OperationCoordinatorError::ProviderFailed { .. })
+            Err(OperationCoordinatorError::Plan(
+                OperationPlanError::MissingTargetEvidence(_)
+            ))
+        ));
+        assert!(path.exists());
+
+        let mut revision_plan = file_delete_plan("sha256:current");
+        revision_plan.targets[0].expected_revision = Some(1);
+        revision_plan.operation_id = "operation-revision".into();
+        assert!(matches!(
+            coordinator.commit(&revision_plan, 10, &mut provider),
+            Err(OperationCoordinatorError::ProviderFailed {
+                phase: OperationPhase::Observe,
+                ..
+            })
         ));
         assert!(path.exists());
         let _ = std::fs::remove_file(path);

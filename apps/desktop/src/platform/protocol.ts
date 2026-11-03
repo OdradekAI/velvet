@@ -303,6 +303,11 @@ export type CoreRequest =
     }
   | {
       readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'preview-asset-delete';
+      readonly plan: CoreOperationPlan;
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
       readonly kind: 'install-plugin';
       readonly sourceDir: string;
     }
@@ -501,6 +506,7 @@ export type CoreResponse =
     }
   | { readonly kind: 'operation-receipt'; readonly receipt: CoreOperationReceipt }
   | { readonly kind: 'operation-receipts'; readonly receipts: readonly CoreOperationReceipt[] }
+  | { readonly kind: 'operation-plan'; readonly plan: CoreOperationPlan }
   | { readonly kind: 'approved-source-roots'; readonly roots: readonly string[] }
   | { readonly kind: 'job'; readonly job: CoreJobSnapshot }
   | { readonly kind: 'jobs'; readonly jobs: readonly CoreJobSnapshot[] }

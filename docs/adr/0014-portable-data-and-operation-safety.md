@@ -148,8 +148,10 @@ source resolver for canonical path/root/volume checks before trusting the
 fingerprint, and makes no undo or destination claim. Move, overwrite, trash
 and remote providers remain open. `ApplicationCore::file_asset_operation_provider`
 composes it with the same Rust-owned source resolver used by Preview, so the
-typed `CommitAssetDelete` command can expose it without creating a second path
-or permission owner. `OperationReceipts` is queryable through the same
+typed `PreviewAssetDelete` command can fill provider-owned fingerprints before
+the caller submits the plan to `CommitAssetDelete`, without creating a second
+path or permission owner. Commit repeats the source-owner check immediately
+before the side effect. `OperationReceipts` is queryable through the same
 metadata-only transport boundary; replay remains blocked by the coordinator.
 
 The versioned `PortableBundle` and `ImportPlan` contracts now validate bounded,
