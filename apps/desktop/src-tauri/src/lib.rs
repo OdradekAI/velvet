@@ -546,6 +546,39 @@ impl From<CoreError> for WireError {
                 expected_revision: None,
                 actual_revision: None,
             },
+            CoreError::Storage { availability } => Self {
+                code: match availability {
+                    velvet_job_system::StorageAvailability::Writable => "storage-writable",
+                    velvet_job_system::StorageAvailability::ReadOnly => "storage-read-only",
+                    velvet_job_system::StorageAvailability::Full => "storage-full",
+                    velvet_job_system::StorageAvailability::Unavailable => "storage-unavailable",
+                    velvet_job_system::StorageAvailability::Unknown => "storage-unknown",
+                }
+                .into(),
+                message: match availability {
+                    velvet_job_system::StorageAvailability::Writable => {
+                        "Profile storage is writable".into()
+                    }
+                    velvet_job_system::StorageAvailability::ReadOnly => {
+                        "Profile storage is read-only".into()
+                    }
+                    velvet_job_system::StorageAvailability::Full => {
+                        "Profile storage is full".into()
+                    }
+                    velvet_job_system::StorageAvailability::Unavailable => {
+                        "Profile storage is unavailable".into()
+                    }
+                    velvet_job_system::StorageAvailability::Unknown => {
+                        "Profile storage state is unknown".into()
+                    }
+                },
+                retryable: !matches!(
+                    availability,
+                    velvet_job_system::StorageAvailability::Writable
+                ),
+                expected_revision: None,
+                actual_revision: None,
+            },
             CoreError::Operation(operation) => Self {
                 code: operation.code.as_wire_code().into(),
                 message: operation
@@ -4123,6 +4156,7 @@ mod tests {
                     actions: vec![velvet_workbench_protocol::RecoveryAction::Retry],
                     platform_preflight: Vec::new(),
                     durability_report: None,
+                    storage: None,
                 }),
             },
         );
@@ -4154,6 +4188,7 @@ mod tests {
                 actions: vec![velvet_workbench_protocol::RecoveryAction::Retry],
                 platform_preflight: Vec::new(),
                 durability_report: None,
+                storage: None,
             }),
         });
         let value = serde_json::to_value(response).expect("recovery response should serialize");
@@ -4918,6 +4953,17 @@ mod tests {
         assert_eq!(error.code, "operation-reconciliation-required");
         assert!(!error.retryable);
         assert!(error.message.contains("operation-delete"));
+    }
+
+    #[test]
+    fn wire_storage_errors_preserve_degradation_state() {
+        let error = WireError::from(CoreError::Storage {
+            availability: velvet_job_system::StorageAvailability::ReadOnly,
+        });
+
+        assert_eq!(error.code, "storage-read-only");
+        assert!(error.retryable);
+        assert_eq!(error.message, "Profile storage is read-only");
     }
 
     #[test]

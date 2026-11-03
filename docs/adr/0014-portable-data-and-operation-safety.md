@@ -158,6 +158,13 @@ stale targets, recorded operations, reconciliation-required outcomes,
 provider failures/unknown outcomes and persistence failures; callers do not
 need to parse Rust debug strings to choose a recovery action.
 
+The host also projects the shared `StorageAvailability` vocabulary into the
+recovery projection. A read-only, full, unavailable or unknown Profile/Core
+storage state is propagated to `JobSystem` and blocks new persistent mutations
+while keeping queries and recovery actions available. Startup load failure
+marks the state degraded without writing a default Profile or Layout back over
+the unavailable store.
+
 The versioned `PortableBundle` and `ImportPlan` contracts now validate bounded,
 path-free metadata, section ownership, integrity digests, schema compatibility
 and plan expiry. `PortableBundleInspector` verifies selected section bytes and

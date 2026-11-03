@@ -148,7 +148,7 @@ use velvet_asset_core::{AssetId, ContentFingerprint, ContentKindId};
 use velvet_job_system::{
     JobBudgetRequest, JobError, JobExecutionContext, JobExecutionEnvironment, JobExecutionError,
     JobExecutionPolicy, JobExecutionResult, JobId, JobProvenance, JobRunner, JobSpec,
-    JobStateStore, JobStatus, JobSystem, JOB_SCHEMA_VERSION,
+    JobStateStore, JobStatus, JobSystem, StorageAvailability, JOB_SCHEMA_VERSION,
 };
 use velvet_layout_model::{InMemoryLayoutService, LayoutService};
 use velvet_persistence::{
@@ -208,6 +208,7 @@ pub struct ApplicationCore {
     diagnostic_store: Option<Arc<dyn DiagnosticEventStore>>,
     operation_receipts: Arc<dyn velvet_persistence::OperationReceiptStore>,
     import_quarantine: Option<Arc<dyn velvet_persistence::ImportQuarantineStore>>,
+    storage_availability: Arc<Mutex<StorageAvailability>>,
     plugin_diagnostics: VecDeque<PluginDiagnosticEvent>,
     diagnostic_history: VecDeque<PluginDiagnosticEvent>,
     diagnostics_degraded: bool,
@@ -534,6 +535,7 @@ impl ApplicationCore {
             operation_receipts,
             import_quarantine,
         } = recovery_stores;
+        let mut storage_availability = StorageAvailability::Writable;
         let recovery = RecoverySupervisor::new(recovery_journal, Arc::new(SystemRecoveryClock));
         let launch_started = recovery.begin_launch(env!("CARGO_PKG_VERSION"));
         let mut layout = InMemoryLayoutService::default();
@@ -568,6 +570,9 @@ impl ApplicationCore {
                 );
             }
             Err(error) => {
+                if matches!(error, velvet_persistence::PersistenceError::Unavailable) {
+                    storage_availability = StorageAvailability::Unavailable;
+                }
                 let _ = recovery.record_failure(
                     velvet_workbench_protocol::RecoveryFailureClass::StateCorrupt,
                     format!("layout state could not be loaded: {error:?}"),
@@ -603,6 +608,9 @@ impl ApplicationCore {
                 ProfileState::default()
             }
             Err(error) => {
+                if matches!(error, velvet_persistence::PersistenceError::Unavailable) {
+                    storage_availability = StorageAvailability::Unavailable;
+                }
                 let _ = recovery.record_failure(
                     velvet_workbench_protocol::RecoveryFailureClass::StateCorrupt,
                     format!("profile state could not be loaded: {error:?}"),
@@ -668,11 +676,18 @@ impl ApplicationCore {
                 Arc::new(velvet_persistence::InMemoryOperationReceiptStore::default())
             }),
             import_quarantine,
+            storage_availability: Arc::new(Mutex::new(storage_availability)),
             plugin_diagnostics: VecDeque::new(),
             diagnostic_history: diagnostic_history.into_iter().collect(),
             diagnostics_degraded,
             next_plugin_diagnostic_sequence,
         };
+
+        if storage_availability != StorageAvailability::Writable {
+            let mut environment = core.jobs.execution_environment();
+            environment.storage = storage_availability;
+            let _ = core.jobs.set_execution_environment(environment);
+        }
 
         if launch_started.is_ok() && !core.recovery.is_safe_mode() {
             let _ = core
@@ -837,7 +852,39 @@ impl ApplicationCore {
     pub fn recovery_projection(&self) -> velvet_workbench_protocol::RecoveryProjection {
         let mut projection = self.recovery.projection();
         projection.durability_report = self.durability_report.clone();
+        projection.storage = Some(self.storage_availability());
         projection
+    }
+
+    pub fn storage_availability(&self) -> StorageAvailability {
+        self.storage_availability
+            .lock()
+            .map(|availability| *availability)
+            .unwrap_or(StorageAvailability::Unknown)
+    }
+
+    fn set_storage_availability(&self, availability: StorageAvailability) {
+        if let Ok(mut current) = self.storage_availability.lock() {
+            *current = availability;
+        }
+    }
+
+    fn ensure_storage_writable(&self) -> Result<(), CoreError> {
+        let availability = self.storage_availability();
+        if availability == StorageAvailability::Writable {
+            Ok(())
+        } else {
+            Err(CoreError::Storage { availability })
+        }
+    }
+
+    fn ensure_storage_writable_for_job(&self) -> Result<(), JobError> {
+        match self.storage_availability() {
+            StorageAvailability::Writable => Ok(()),
+            availability => Err(JobError::Store(format!(
+                "Profile storage is {availability:?}"
+            ))),
+        }
     }
 
     pub fn recovery_launch_identity(&self) -> Option<(String, u64)> {
@@ -1539,6 +1586,7 @@ impl ApplicationCore {
         provenance: JobProvenance,
         input: serde_json::Value,
     ) -> Result<velvet_job_system::JobSnapshot, JobError> {
+        self.ensure_storage_writable_for_job()?;
         self.jobs.submit_or_reuse(JobSpec {
             kind,
             duration_ms,
@@ -1575,6 +1623,7 @@ impl ApplicationCore {
         policy: JobExecutionPolicy,
         budget: JobBudgetRequest,
     ) -> Result<velvet_job_system::JobSnapshot, JobError> {
+        self.ensure_storage_writable_for_job()?;
         self.jobs.submit_or_reuse_with_policy_and_budget(
             JobSpec {
                 kind,
@@ -1673,6 +1722,7 @@ impl ApplicationCore {
                 job_kind,
                 duration_ms,
             } => {
+                self.ensure_storage_writable()?;
                 if job_kind.trim().is_empty() {
                     return Err(CoreError::InvalidCommand(
                         "preview action job kind cannot be empty".into(),
@@ -1825,7 +1875,10 @@ impl ApplicationCore {
         &self,
         environment: JobExecutionEnvironment,
     ) -> Result<Vec<velvet_job_system::JobSnapshot>, JobError> {
-        self.jobs.set_execution_environment(environment)
+        let storage = environment.storage;
+        let result = self.jobs.set_execution_environment(environment)?;
+        self.set_storage_availability(storage);
+        Ok(result)
     }
 
     pub fn job_snapshots(&self) -> Vec<velvet_job_system::JobSnapshot> {
@@ -2154,8 +2207,9 @@ impl ApplicationCore {
                 input,
                 policy,
                 budget,
-            }) => self
-                .create_job_with_policy_and_budget(
+            }) => {
+                self.ensure_storage_writable()?;
+                self.create_job_with_policy_and_budget(
                     kind,
                     duration_ms,
                     will_fail,
@@ -2164,7 +2218,8 @@ impl ApplicationCore {
                     budget,
                 )
                 .map(Response::Job)
-                .map_err(job_error),
+                .map_err(job_error)
+            }
             Request::Command(Command::CancelJob { job_id }) => self
                 .cancel_job(&job_id)
                 .map(Response::Job)
@@ -2345,6 +2400,7 @@ impl ApplicationCore {
         expected_revision: Option<u64>,
         command: velvet_layout_model::LayoutCommand,
     ) -> Result<Response, CoreError> {
+        self.ensure_storage_writable()?;
         let actual_revision = self.layout.snapshot().revision;
         if let Some(expected) = expected_revision {
             if expected != actual_revision {
@@ -2359,9 +2415,15 @@ impl ApplicationCore {
         let state = next_layout
             .apply(command)
             .map_err(|error| CoreError::Layout(format!("{error:?}")))?;
-        self.layout_store
-            .save(&state)
-            .map_err(|error| CoreError::Layout(format!("{error:?}")))?;
+        self.layout_store.save(&state).map_err(|error| {
+            if matches!(error, velvet_persistence::PersistenceError::Unavailable) {
+                self.set_storage_availability(StorageAvailability::Unavailable);
+                return CoreError::Storage {
+                    availability: StorageAvailability::Unavailable,
+                };
+            }
+            CoreError::Layout(format!("{error:?}"))
+        })?;
         self.layout = next_layout;
         Ok(Response::Layout(state))
     }
@@ -2371,6 +2433,7 @@ impl ApplicationCore {
         expected_revision: Option<u64>,
         locale: String,
     ) -> Result<Response, CoreError> {
+        self.ensure_storage_writable()?;
         if !valid_locale(&locale) {
             return Err(CoreError::Profile(format!("invalid locale: {locale}")));
         }
@@ -2395,9 +2458,15 @@ impl ApplicationCore {
                 .ok_or_else(|| CoreError::Profile("profile revision exhausted".into()))?,
             locale,
         };
-        self.profile_store
-            .save(&next)
-            .map_err(|error| CoreError::Profile(format!("{error:?}")))?;
+        self.profile_store.save(&next).map_err(|error| {
+            if matches!(error, velvet_persistence::PersistenceError::Unavailable) {
+                self.set_storage_availability(StorageAvailability::Unavailable);
+                return CoreError::Storage {
+                    availability: StorageAvailability::Unavailable,
+                };
+            }
+            CoreError::Profile(format!("{error:?}"))
+        })?;
         self.profile = next.clone();
         Ok(Response::Profile(next))
     }
@@ -3099,9 +3168,9 @@ mod tests {
         InMemoryImportQuarantineStore, InMemoryLayoutStateStore, InMemoryProfileStateStore,
         InMemoryRecoveryJournalStore, InMemoryRecoverySetStore, InMemoryReleaseUpdateStore,
         InMemoryStateSnapshotStore, JsonFileAssetSourceLocationStore, JsonFileDiagnosticEventStore,
-        JsonFileJobStateStore, JsonFileLayoutStateStore, LayoutStateStore, ReleaseUpdateStore,
-        SnapshotError, SnapshotJobStateStore, SnapshotLayoutStateStore, SnapshotProfileStateStore,
-        StateSnapshot, StateSnapshotStore,
+        JsonFileJobStateStore, JsonFileLayoutStateStore, LayoutStateStore, ProfileStateStore,
+        ReleaseUpdateStore, SnapshotError, SnapshotJobStateStore, SnapshotLayoutStateStore,
+        SnapshotProfileStateStore, StateSnapshot, StateSnapshotStore,
     };
     use velvet_plugin_api::{
         ContributionDescriptor, ContributionKind, ContributionScope, ExtensionId,
@@ -3131,6 +3200,18 @@ mod tests {
             "velvet-application-core-restart-{}-{nonce}-{sequence}.json",
             std::process::id(),
         ))
+    }
+
+    struct UnavailableProfileStore;
+
+    impl ProfileStateStore for UnavailableProfileStore {
+        fn load(&self) -> Result<Option<ProfileState>, velvet_persistence::PersistenceError> {
+            Err(velvet_persistence::PersistenceError::Unavailable)
+        }
+
+        fn save(&self, _state: &ProfileState) -> Result<(), velvet_persistence::PersistenceError> {
+            Err(velvet_persistence::PersistenceError::Unavailable)
+        }
     }
 
     struct CorruptGenerationStore {
@@ -4149,6 +4230,96 @@ mod tests {
                 actual: 1,
             }
         );
+    }
+
+    #[test]
+    fn storage_degradation_is_projected_and_blocks_persistent_mutations() {
+        let mut core = ApplicationCore::default();
+        let environment = velvet_job_system::JobExecutionEnvironment {
+            storage: StorageAvailability::ReadOnly,
+            ..Default::default()
+        };
+
+        assert!(matches!(
+            core.dispatch(Request::Command(Command::SetJobExecutionEnvironment {
+                environment,
+            })),
+            Ok(Response::Jobs(_))
+        ));
+        assert_eq!(core.storage_availability(), StorageAvailability::ReadOnly);
+        assert!(matches!(
+            core.dispatch(Request::Query(Query::Recovery)),
+            Ok(Response::Recovery(projection))
+                if projection.storage == Some(StorageAvailability::ReadOnly)
+        ));
+
+        assert!(matches!(
+            core.dispatch(Request::Command(Command::SetLocale {
+                locale: "zh-CN".into(),
+                expected_revision: Some(0),
+            })),
+            Err(CoreError::Storage {
+                availability: StorageAvailability::ReadOnly
+            })
+        ));
+        assert!(matches!(
+            core.dispatch(Request::Command(Command::Layout(
+                LayoutCommand::ActivateApp(WorkbenchAppId::FeedWorkbench),
+            ))),
+            Err(CoreError::Storage {
+                availability: StorageAvailability::ReadOnly
+            })
+        ));
+        assert!(matches!(
+            core.dispatch(Request::Command(Command::CreateJob {
+                kind: "storage-blocked".into(),
+                duration_ms: 1,
+                will_fail: false,
+                input: serde_json::Value::Null,
+                policy: velvet_job_system::JobExecutionPolicy::default(),
+                budget: velvet_job_system::JobBudgetRequest::default(),
+            })),
+            Err(CoreError::Storage {
+                availability: StorageAvailability::ReadOnly
+            })
+        ));
+
+        let writable = velvet_job_system::JobExecutionEnvironment {
+            storage: StorageAvailability::Writable,
+            ..Default::default()
+        };
+        core.dispatch(Request::Command(Command::SetJobExecutionEnvironment {
+            environment: writable,
+        }))
+        .expect("storage recovery should be accepted");
+        assert_eq!(core.storage_availability(), StorageAvailability::Writable);
+    }
+
+    #[test]
+    fn unavailable_profile_store_degrades_without_writing_default_state() {
+        let mut core = ApplicationCore::with_store_and_profile_store(
+            Arc::new(InMemoryLayoutStateStore::default()),
+            Arc::new(UnavailableProfileStore),
+        );
+
+        assert_eq!(
+            core.storage_availability(),
+            StorageAvailability::Unavailable
+        );
+        assert!(matches!(
+            core.dispatch(Request::Query(Query::Recovery)),
+            Ok(Response::Recovery(projection))
+                if projection.storage == Some(StorageAvailability::Unavailable)
+        ));
+        assert!(matches!(
+            core.dispatch(Request::Command(Command::SetLocale {
+                locale: "zh-CN".into(),
+                expected_revision: Some(0),
+            })),
+            Err(CoreError::Storage {
+                availability: StorageAvailability::Unavailable
+            })
+        ));
     }
 
     #[test]

@@ -545,6 +545,8 @@ pub struct RecoveryProjection {
     pub platform_preflight: Vec<PlatformPreflightEvidence>,
     #[serde(default)]
     pub durability_report: Option<DurabilityReport>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub storage: Option<velvet_job_system::StorageAvailability>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -1884,6 +1886,9 @@ pub enum CoreError {
     Profile(String),
     Recovery(String),
     Release(String),
+    Storage {
+        availability: velvet_job_system::StorageAvailability,
+    },
     Operation(OperationError),
     PluginResourceNotFound {
         extension_id: String,
@@ -2044,6 +2049,7 @@ mod tests {
                 crash_durable: true,
                 detail: "fsync".into(),
             }),
+            storage: Some(velvet_job_system::StorageAvailability::Writable),
         };
         let json = serde_json::to_value(&projection).expect("recovery should serialize");
         assert_eq!(json["schemaVersion"], RECOVERY_SCHEMA_VERSION);
@@ -2073,6 +2079,7 @@ mod tests {
                 actions: vec![RecoveryAction::Retry, RecoveryAction::ExportDiagnostics],
                 platform_preflight: Vec::new(),
                 durability_report: None,
+                storage: None,
             },
             plugin_diagnostics: Vec::new(),
             diagnostics_degraded: false,

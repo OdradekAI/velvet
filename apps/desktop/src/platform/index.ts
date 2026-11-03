@@ -34,6 +34,7 @@ export type {
   CoreJobExecutionEnvironment,
   JobExecutionEnvironmentSchemaVersion,
   CoreStorageAvailability,
+  CoreStorageErrorCode,
   CorePowerPressure,
   CoreJobExecutionPolicy,
   CoreJobNetworkPolicy,

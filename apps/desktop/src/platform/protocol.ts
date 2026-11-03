@@ -597,6 +597,11 @@ export type CoreStorageAvailability =
   | 'full'
   | 'unavailable'
   | 'unknown';
+export type CoreStorageErrorCode =
+  | 'storage-read-only'
+  | 'storage-full'
+  | 'storage-unavailable'
+  | 'storage-unknown';
 export type CorePowerPressure = 'normal' | 'battery' | 'thermal' | 'critical' | 'unknown';
 
 export interface CoreJobBudgetRequest {
@@ -738,6 +743,7 @@ export interface CoreRecoveryProjection {
   readonly actions: readonly CoreRecoveryAction[];
   readonly platformPreflight?: readonly CorePlatformPreflightEvidence[];
   readonly durabilityReport?: CoreDurabilityReport | null;
+  readonly storage?: CoreStorageAvailability | null;
 }
 
 export type CoreReleaseChannel = 'stable' | 'preview';
