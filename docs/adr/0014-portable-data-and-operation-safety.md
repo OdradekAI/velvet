@@ -153,6 +153,10 @@ the caller submits the plan to `CommitAssetDelete`, without creating a second
 path or permission owner. Commit repeats the source-owner check immediately
 before the side effect. `OperationReceipts` is queryable through the same
 metadata-only transport boundary; replay remains blocked by the coordinator.
+Coordinator failures now map to stable protocol error codes for invalid plans,
+stale targets, recorded operations, reconciliation-required outcomes,
+provider failures/unknown outcomes and persistence failures; callers do not
+need to parse Rust debug strings to choose a recovery action.
 
 The versioned `PortableBundle` and `ImportPlan` contracts now validate bounded,
 path-free metadata, section ownership, integrity digests, schema compatibility

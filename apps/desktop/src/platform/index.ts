@@ -78,6 +78,7 @@ export type {
   CoreReleaseManifest,
   CoreReleaseStatus,
   CoreOperationKind,
+  CoreOperationErrorCode,
   CoreOperationRetryPolicy,
   CoreOperationUndoCapability,
   CoreOperationReceiptStatus,

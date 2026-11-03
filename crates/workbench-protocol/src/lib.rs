@@ -43,6 +43,40 @@ pub const IMPORT_RECEIPT_SCHEMA_VERSION: u16 = 1;
 pub const ASSET_BUNDLE_SCHEMA_VERSION: u16 = 1;
 pub const IMPORT_QUARANTINE_SCHEMA_VERSION: u16 = 1;
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum OperationErrorCode {
+    InvalidPlan,
+    StaleTarget,
+    AlreadyRecorded,
+    ReconciliationRequired,
+    ProviderFailed,
+    ProviderUnknown,
+    Persistence,
+}
+
+impl OperationErrorCode {
+    pub const fn as_wire_code(self) -> &'static str {
+        match self {
+            Self::InvalidPlan => "operation-invalid-plan",
+            Self::StaleTarget => "operation-stale-target",
+            Self::AlreadyRecorded => "operation-already-recorded",
+            Self::ReconciliationRequired => "operation-reconciliation-required",
+            Self::ProviderFailed => "operation-provider-failed",
+            Self::ProviderUnknown => "operation-provider-unknown",
+            Self::Persistence => "operation-persistence",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OperationError {
+    pub code: OperationErrorCode,
+    pub message: String,
+    pub operation_id: Option<String>,
+    pub retryable: bool,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ProtocolHandshakeRequest {
@@ -1850,7 +1884,7 @@ pub enum CoreError {
     Profile(String),
     Recovery(String),
     Release(String),
-    Operation(String),
+    Operation(OperationError),
     PluginResourceNotFound {
         extension_id: String,
         locale: String,

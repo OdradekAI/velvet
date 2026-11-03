@@ -783,6 +783,14 @@ export interface CoreReleaseStatus {
 }
 
 export type CoreOperationKind = 'delete' | 'overwrite' | 'move' | 'batch-job' | 'remote';
+export type CoreOperationErrorCode =
+  | 'operation-invalid-plan'
+  | 'operation-stale-target'
+  | 'operation-already-recorded'
+  | 'operation-reconciliation-required'
+  | 'operation-provider-failed'
+  | 'operation-provider-unknown'
+  | 'operation-persistence';
 export type CoreOperationRetryPolicy =
   | 'provider-declared-idempotent'
   | 'reconcile-before-retry'

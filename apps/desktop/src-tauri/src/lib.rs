@@ -57,6 +57,7 @@ use velvet_tauri_adapter::{
 use velvet_workbench_protocol::{
     ActivationRequest, ActivationTarget, ActivationTargetKind, Command, CoreError, CoreTransport,
     CrashCaptureEvidence, CrashCaptureKind, Event,
+    OperationError, OperationErrorCode,
     PlatformCapabilityStatus,
     PlatformPreflightEvidence, PluginDisableReason, RecoveryFailureClass, Request,
     ProtocolHandshakeRequest, ProtocolHandshakeResponse, RequestId, Response, ResponseEnvelope,
@@ -545,10 +546,13 @@ impl From<CoreError> for WireError {
                 expected_revision: None,
                 actual_revision: None,
             },
-            CoreError::Operation(message) => Self {
-                code: "operation-error".into(),
-                message,
-                retryable: false,
+            CoreError::Operation(operation) => Self {
+                code: operation.code.as_wire_code().into(),
+                message: operation
+                    .operation_id
+                    .map(|operation_id| format!("{} ({operation_id})", operation.message))
+                    .unwrap_or(operation.message),
+                retryable: operation.retryable,
                 expected_revision: None,
                 actual_revision: None,
             },
@@ -4900,6 +4904,20 @@ mod tests {
         assert_eq!(error.code, "plugin-runtime-failed");
         assert!(error.retryable);
         assert!(error.message.contains("velvet.example.echo"));
+    }
+
+    #[test]
+    fn wire_operation_errors_preserve_stable_recovery_codes() {
+        let error = WireError::from(CoreError::Operation(OperationError {
+            code: OperationErrorCode::ReconciliationRequired,
+            message: "query the authoritative outcome before retry".into(),
+            operation_id: Some("operation-delete".into()),
+            retryable: false,
+        }));
+
+        assert_eq!(error.code, "operation-reconciliation-required");
+        assert!(!error.retryable);
+        assert!(error.message.contains("operation-delete"));
     }
 
     #[test]

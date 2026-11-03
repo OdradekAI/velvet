@@ -178,8 +178,8 @@ use velvet_preview_core::{
 };
 use velvet_workbench_protocol::{
     Command, CoreError, CoreTransport, CrashCaptureEvidence, ImportPlan, ImportQuarantineEntry,
-    ImportQuarantineSummary, ImportReceipt, OperationPlan, OperationReceipt,
-    PlatformPreflightEvidence, PluginDiagnosticEvent,
+    ImportQuarantineSummary, ImportReceipt, OperationError, OperationErrorCode, OperationPlan,
+    OperationReceipt, PlatformPreflightEvidence, PluginDiagnosticEvent,
     PluginDiagnosticKind as WirePluginDiagnosticKind, PluginDisableReason, PluginInstallPreviewDto,
     PluginProjectionDto, PluginResourceDto, PluginRuntimeRecoveryDto, PluginRuntimeRecoveryState,
     PluginStorageRecoveryDto, PluginStorageRecoveryStatus, PortableBundle, ProfileState, Query,
@@ -2853,7 +2853,63 @@ fn normalize_plugin_diagnostic_event(mut event: PluginDiagnosticEvent) -> Plugin
 }
 
 fn operation_error(error: OperationCoordinatorError) -> CoreError {
-    CoreError::Operation(format!("{error:?}"))
+    let operation = match error {
+        OperationCoordinatorError::Plan(plan_error) => OperationError {
+            code: match &plan_error {
+                velvet_workbench_protocol::OperationPlanError::StaleTarget(_) => {
+                    OperationErrorCode::StaleTarget
+                }
+                _ => OperationErrorCode::InvalidPlan,
+            },
+            message: format!("{plan_error:?}"),
+            operation_id: None,
+            retryable: matches!(
+                &plan_error,
+                velvet_workbench_protocol::OperationPlanError::StaleTarget(_)
+                    | velvet_workbench_protocol::OperationPlanError::Expired
+            ),
+        },
+        OperationCoordinatorError::Persistence(persistence_error) => OperationError {
+            code: OperationErrorCode::Persistence,
+            message: format!("{persistence_error:?}"),
+            operation_id: None,
+            retryable: true,
+        },
+        OperationCoordinatorError::AlreadyRecorded {
+            operation_id,
+            status,
+        } => OperationError {
+            code: OperationErrorCode::AlreadyRecorded,
+            message: format!("operation {operation_id} is already recorded with status {status:?}"),
+            operation_id: Some(operation_id),
+            retryable: false,
+        },
+        OperationCoordinatorError::ReconciliationRequired { operation_id } => OperationError {
+            code: OperationErrorCode::ReconciliationRequired,
+            message: format!("operation {operation_id} requires reconciliation before retry"),
+            operation_id: Some(operation_id),
+            retryable: false,
+        },
+        OperationCoordinatorError::ProviderFailed { phase, message } => OperationError {
+            code: OperationErrorCode::ProviderFailed,
+            message: format!("{phase:?}: {message}"),
+            operation_id: None,
+            retryable: matches!(phase, OperationPhase::Observe),
+        },
+        OperationCoordinatorError::ProviderUnknown { phase, message } => OperationError {
+            code: OperationErrorCode::ProviderUnknown,
+            message: format!("{phase:?}: {message}"),
+            operation_id: None,
+            retryable: false,
+        },
+        OperationCoordinatorError::InvalidExecution(message) => OperationError {
+            code: OperationErrorCode::ProviderFailed,
+            message,
+            operation_id: None,
+            retryable: false,
+        },
+    };
+    CoreError::Operation(operation)
 }
 
 fn diagnostic_timestamp_ms() -> u64 {
@@ -3918,7 +3974,9 @@ mod tests {
         ));
         assert!(matches!(
             core.dispatch(Request::Command(Command::CommitAssetDelete { plan })),
-            Err(CoreError::Operation(message)) if message.contains("AlreadyRecorded")
+            Err(CoreError::Operation(error))
+                if error.code == OperationErrorCode::AlreadyRecorded
+                    && error.operation_id.as_deref() == Some("operation-delete")
         ));
         let _ = fs::remove_dir_all(plugin_root);
         let _ = fs::remove_file(jobs_path);
