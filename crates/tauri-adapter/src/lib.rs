@@ -12,7 +12,7 @@ use velvet_workbench_protocol::{
 static NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(1);
 const MAX_REQUEST_OUTCOMES: usize = 128;
 type RequestOutcomeKey = (String, u64);
-type RequestOutcomeCache = VecDeque<(RequestOutcomeKey, Option<&'static str>, Response)>;
+type RequestOutcomeCache = VecDeque<(RequestOutcomeKey, Option<&'static str>, Option<Response>)>;
 
 pub mod platform_signals;
 
@@ -130,7 +130,9 @@ impl TauriTransport {
                     CoreError::InvalidCommand("request outcome store is unavailable".into())
                 })?
                 .iter()
-                .any(|((owner, id), _, _)| owner == &client_id && *id == target.0);
+                .any(|((owner, id), _, response)| {
+                    owner == &client_id && *id == target.0 && response.is_some()
+                });
             return Ok(Response::RequestOutcome(RequestOutcome {
                 request_id: target.clone(),
                 status: if completed {
@@ -150,7 +152,9 @@ impl TauriTransport {
             .iter()
             .find(|((owner, id), _, _)| owner == &cache_key.0 && *id == request_id.0)
         {
-            if let (Some(current_scope), Some(previous_scope)) = (scope, *existing_scope) {
+            if let (Some(current_scope), Some(previous_scope), Some(response)) =
+                (scope, *existing_scope, response.as_ref())
+            {
                 if current_scope == previous_scope {
                     return Ok(response.clone());
                 }
@@ -165,18 +169,41 @@ impl TauriTransport {
         }
 
         let record_outcome = matches!(&request, Request::Command(_));
-        let response = self.dispatch(request_id, request)?;
-        if record_outcome {
-            let mut outcomes = self.request_outcomes.lock().map_err(|_| {
-                CoreError::InvalidCommand("request outcome store is unavailable".into())
-            })?;
-            outcomes.retain(|(key, _, _)| key != &cache_key);
-            outcomes.push_back((cache_key, scope, response.clone()));
-            while outcomes.len() > MAX_REQUEST_OUTCOMES {
-                outcomes.pop_front();
+        let response = match self.dispatch(request_id, request) {
+            Ok(response) => {
+                if record_outcome {
+                    self.remember_outcome(cache_key, scope, Some(response.clone()))?;
+                }
+                response
             }
-        }
+            Err(error) => {
+                if record_outcome {
+                    // A command that crossed the Core boundary but did not
+                    // produce a response is consumed as an unknown outcome.
+                    // Retrying the same request id must not invoke it again.
+                    let _ = self.remember_outcome(cache_key, scope, None);
+                }
+                return Err(error);
+            }
+        };
         Ok(response)
+    }
+
+    fn remember_outcome(
+        &self,
+        cache_key: RequestOutcomeKey,
+        scope: Option<&'static str>,
+        response: Option<Response>,
+    ) -> Result<(), CoreError> {
+        let mut outcomes = self.request_outcomes.lock().map_err(|_| {
+            CoreError::InvalidCommand("request outcome store is unavailable".into())
+        })?;
+        outcomes.retain(|(key, _, _)| key != &cache_key);
+        outcomes.push_back((cache_key, scope, response));
+        while outcomes.len() > MAX_REQUEST_OUTCOMES {
+            outcomes.pop_front();
+        }
+        Ok(())
     }
 
     pub fn record_shutdown_intent(&self) -> Result<(), velvet_application_core::RecoveryError> {
@@ -838,6 +865,32 @@ mod tests {
         assert!(matches!(
             transport.dispatch_session(&session, RequestId(48), mutation),
             Err(CoreError::RequestIdReuse { request_id: 48 })
+        ));
+
+        let failed = Request::Command(Command::LayoutAt {
+            expected_revision: Some(99),
+            command: LayoutCommand::ResetLayout,
+        });
+        assert!(matches!(
+            transport.dispatch_session(&session, RequestId(49), failed.clone()),
+            Err(CoreError::StaleRevision { .. })
+        ));
+        assert!(matches!(
+            transport.dispatch_session(
+                &session,
+                RequestId(50),
+                Request::Query(Query::RequestOutcome {
+                    request_id: RequestId(49),
+                })
+            ),
+            Ok(Response::RequestOutcome(RequestOutcome {
+                status: RequestOutcomeStatus::Unknown,
+                ..
+            }))
+        ));
+        assert!(matches!(
+            transport.dispatch_session(&session, RequestId(49), failed),
+            Err(CoreError::RequestIdReuse { request_id: 49 })
         ));
 
         assert!(matches!(

@@ -162,7 +162,9 @@ The session transport records mutating command outcomes by `(clientId,
 requestId)`. Only commands with a declared idempotency scope may return the
 cached result. Reusing a request id for an unscoped mutation, or with a
 different scope, is rejected before dispatch so a repeated submission cannot
-silently apply a side effect twice.
+silently apply a side effect twice. A command error is retained as an
+`unknown` tombstone for the same purpose: `query-request-outcome` exposes the
+uncertain result, while the original request id remains consumed.
 
 The host also projects the shared `StorageAvailability` vocabulary into the
 recovery projection. A read-only, full, unavailable or unknown Profile/Core
