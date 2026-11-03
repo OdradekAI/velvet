@@ -197,6 +197,12 @@ Declared Job contributions use the same runtime process through a distinct
 `args` and a bounded context containing Job id, kind, attempt, provenance and
 the host-owned read-only `JobBudgetRequest` claim. The plugin can adapt its
 work to the claim, but cannot widen it or mutate the ledger.
+The host-owned request envelope also carries the concrete owner schema reference
+`velvet.job.<extensionId>.<jobKind>` with `JOB_SCHEMA_VERSION`. `PluginJobInvocation`
+uses the typed `JobProvenance` projection and rejects a cross-owner or unsupported
+provenance schema before it reaches the runtime process. This is the first
+concrete schema adoption; command and preview payloads remain open until their
+owners declare equivalent schemas.
 The response contains a typed result (`contentType` plus JSON `payload`) with
 bounds-checked input/result projections and a bounded list of `progress`
 events. `PluginHost` exposes this process through a

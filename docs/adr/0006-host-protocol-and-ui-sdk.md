@@ -350,3 +350,10 @@ bounded payloads, stale sessions, sequence gaps, unknown outcomes and the
 negative case where an untyped path/URL/process command is rejected. Until
 those fixtures and non-Tauri adoption exist, the proposed protocol remains a
 host contract rather than a public SDK compatibility promise.
+
+The first concrete schema adoption is the Job runtime request: the JSONL
+`invoke-job` envelope carries `schemaId: velvet.job.<extensionId>.<jobKind>`
+and `schemaVersion: JOB_SCHEMA_VERSION`, while the host validates typed
+`JobProvenance` owner and version before IPC. This proves the boundary without
+pretending that command or preview JSON already has a stable owner schema; each
+of those payloads remains a separate follow-up decision with its own fixture.

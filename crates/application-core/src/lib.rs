@@ -241,9 +241,7 @@ impl JobRunner for PluginJobRunner {
             job_kind: context.kind.clone(),
             attempt: context.attempt,
             input: context.input.clone(),
-            provenance: serde_json::to_value(&context.provenance).map_err(|error| {
-                JobExecutionError::Failed(format!("job provenance could not be encoded: {error}"))
-            })?,
+            provenance: context.provenance.clone(),
             deadline_ms: context.deadline_ms(),
             cancellation_grace_ms: context.cancellation_grace_ms(),
             checkpoint: context.checkpoint().cloned(),

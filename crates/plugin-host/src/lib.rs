@@ -16,7 +16,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use platform_process::ProcessSupervisor;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use velvet_job_system::JobBudgetRequest;
+use velvet_job_system::{JobBudgetRequest, JobProvenance, JOB_SCHEMA_VERSION};
 use velvet_layout_model::WorkbenchZone;
 use velvet_plugin_api::{
     validate_reserved_metadata, AppTarget, ContributionKind, ContributionScope, ExtensionId,
@@ -747,7 +747,7 @@ pub struct PluginJobInvocation {
     pub job_kind: String,
     pub attempt: u32,
     pub input: Value,
-    pub provenance: Value,
+    pub provenance: JobProvenance,
     #[serde(default)]
     pub budget: JobBudgetRequest,
     #[serde(default)]
@@ -805,6 +805,7 @@ impl PluginJobHandle {
                 invocation.job_kind, self.job_kind
             )));
         }
+        validate_job_provenance(&self.extension_id, &invocation.provenance)?;
         let args = invocation.input.clone();
         let context =
             serde_json::to_value(&invocation).map_err(|error| PluginError::RuntimeInvocation {
@@ -1306,6 +1307,12 @@ impl RuntimeProcess for ChildRuntimeProcess {
             Err(error) => return Err(RuntimeError::InvocationFailed(error.to_string())),
         }
 
+        let schema_id = (invocation.method == "job.run").then(|| {
+            format!(
+                "velvet.job.{}.{}",
+                invocation.extension_id.0, invocation.command_id
+            )
+        });
         let request = RuntimeInvocationRequest {
             protocol_version: RUNTIME_PROTOCOL_VERSION,
             kind: match invocation.method.as_str() {
@@ -1318,6 +1325,8 @@ impl RuntimeProcess for ChildRuntimeProcess {
             command_id: &invocation.command_id,
             args: &invocation.args,
             context: &invocation.context,
+            schema_id: schema_id.as_deref(),
+            schema_version: schema_id.as_ref().map(|_| JOB_SCHEMA_VERSION),
         };
         let line = serde_json::to_string(&request)
             .map_err(|error| RuntimeError::InvocationFailed(error.to_string()))?;
@@ -1545,6 +1554,10 @@ struct RuntimeInvocationRequest<'a> {
     command_id: &'a str,
     args: &'a Value,
     context: &'a Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    schema_id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    schema_version: Option<u16>,
 }
 
 #[derive(Deserialize)]
@@ -1573,6 +1586,31 @@ fn validate_runtime_payload(
             extension_id: extension_id.clone(),
             message: format!(
                 "runtime invocation request exceeded {MAX_RUNTIME_REQUEST_BYTES} bytes"
+            ),
+        });
+    }
+    Ok(())
+}
+
+fn validate_job_provenance(
+    extension_id: &ExtensionId,
+    provenance: &JobProvenance,
+) -> Result<(), PluginError> {
+    if provenance.owner_id != extension_id.0 {
+        return Err(PluginError::RuntimeInvocation {
+            extension_id: extension_id.clone(),
+            message: format!(
+                "Job provenance owner {} does not match extension {}",
+                provenance.owner_id, extension_id.0
+            ),
+        });
+    }
+    if provenance.schema_version != JOB_SCHEMA_VERSION {
+        return Err(PluginError::RuntimeInvocation {
+            extension_id: extension_id.clone(),
+            message: format!(
+                "Job provenance schema {} is unsupported; expected {}",
+                provenance.schema_version, JOB_SCHEMA_VERSION
             ),
         });
     }
@@ -5578,7 +5616,10 @@ mod tests {
                 job_kind: "job.example.analyze".into(),
                 attempt: 1,
                 input: serde_json::json!({ "assetId": "asset-1" }),
-                provenance: serde_json::json!({ "inputFingerprint": "sha256:asset-1" }),
+                provenance: JobProvenance {
+                    input_fingerprint: Some("sha256:asset-1".into()),
+                    ..JobProvenance::for_owner("job.example")
+                },
                 budget: JobBudgetRequest::default(),
                 deadline_ms: None,
                 cancellation_grace_ms: default_job_cancellation_grace_ms(),
@@ -5592,13 +5633,72 @@ mod tests {
     }
 
     #[test]
+    fn job_handles_reject_stale_provenance_schema_before_runtime_invocation() {
+        let mut host = InMemoryPluginHost::default();
+        let manifest = job_manifest(true);
+        let id = manifest.id.clone();
+        host.register(manifest)
+            .expect("Job manifest should register");
+        host.activate(&id).expect("Job extension should activate");
+        let handle = host
+            .job_handles(&id)
+            .expect("active Job contribution should expose a handle")
+            .pop()
+            .expect("Job contribution should have a handle");
+        let error = handle
+            .invoke(PluginJobInvocation {
+                job_id: "job-stale-schema".into(),
+                job_kind: "job.example.analyze".into(),
+                attempt: 1,
+                input: serde_json::json!({ "assetId": "asset-1" }),
+                provenance: JobProvenance {
+                    schema_version: JOB_SCHEMA_VERSION + 1,
+                    ..JobProvenance::for_owner("job.example")
+                },
+                budget: JobBudgetRequest::default(),
+                deadline_ms: None,
+                cancellation_grace_ms: default_job_cancellation_grace_ms(),
+                checkpoint: None,
+            })
+            .expect_err("stale Job provenance must fail before runtime invocation");
+        assert!(matches!(
+            error,
+            PluginError::RuntimeInvocation { message, .. }
+                if message.contains("schema") && message.contains("unsupported")
+        ));
+
+        let owner_error = handle
+            .invoke(PluginJobInvocation {
+                job_id: "job-cross-owner".into(),
+                job_kind: "job.example.analyze".into(),
+                attempt: 1,
+                input: serde_json::json!({ "assetId": "asset-1" }),
+                provenance: JobProvenance::for_owner("other.extension"),
+                budget: JobBudgetRequest::default(),
+                deadline_ms: None,
+                cancellation_grace_ms: default_job_cancellation_grace_ms(),
+                checkpoint: None,
+            })
+            .expect_err("cross-owner Job provenance must fail before runtime invocation");
+        assert!(matches!(
+            owner_error,
+            PluginError::RuntimeInvocation { message, .. }
+                if message.contains("owner") && message.contains("does not match")
+        ));
+    }
+
+    #[test]
     fn plugin_job_invocation_and_checkpoint_event_are_bounded_wire_shapes() {
         let invocation: PluginJobInvocation = serde_json::from_value(serde_json::json!({
             "jobId": "job-1",
             "jobKind": "job.example.analyze",
             "attempt": 2,
             "input": { "assetId": "asset-1" },
-            "provenance": { "inputFingerprint": "sha256:asset-1" },
+            "provenance": {
+                "ownerId": "job.example",
+                "inputFingerprint": "sha256:asset-1",
+                "schemaVersion": 1
+            },
             "budget": {
                 "memoryBytes": 1024,
                 "diskBytes": 2048,
@@ -6802,6 +6902,58 @@ mod tests {
     }
 
     #[test]
+    fn process_runtime_carries_job_payload_schema_reference() {
+        let mut runtime = ProcessPluginRuntime;
+        let manifest = ExtensionManifest {
+            id: ExtensionId("process.job-schema".into()),
+            version: "1.0.0".into(),
+            host_api: VersionRange("^1".into()),
+            runtime: RuntimeKind::Sidecar,
+            launch: Some(RuntimeLaunchSpec {
+                program: "sh".into(),
+                args: vec![
+                    "-c".into(),
+                    "IFS= read -r line; if printf '%s' \"$line\" | grep -q '\"kind\":\"invoke-job\"' && printf '%s' \"$line\" | grep -q '\"schemaId\":\"velvet.job.process.job-schema.metadata\"' && printf '%s' \"$line\" | grep -q '\"schemaVersion\":1'; then printf '%s\\n' '{\"protocolVersion\":1,\"ok\":true,\"result\":{\"contentType\":\"application/json\",\"payload\":{\"accepted\":true}}}'; else printf '%s\\n' '{\"protocolVersion\":1,\"ok\":false,\"error\":\"missing job schema reference\"}'; fi; sleep 5".into(),
+                ],
+            }),
+            target_app: None,
+            contributions: vec![],
+            permission_sets: vec![],
+            ..ExtensionManifest::default()
+        };
+        let mut process = runtime
+            .start(&manifest, &PermissionGrant::default())
+            .expect("the sidecar should start");
+        let result = process
+            .invoke(&PluginInvocation {
+                extension_id: manifest.id.clone(),
+                method: "job.run".into(),
+                command_id: "metadata".into(),
+                args: serde_json::json!({ "assetId": "asset-1" }),
+                context: serde_json::json!({
+                    "jobId": "job-1",
+                    "jobKind": "metadata",
+                    "provenance": {
+                        "ownerId": "process.job-schema",
+                        "schemaVersion": JOB_SCHEMA_VERSION
+                    }
+                }),
+            })
+            .expect("the sidecar should receive the Job schema reference");
+        assert_eq!(result.error, None);
+        assert_eq!(
+            result.result,
+            Some(serde_json::json!({
+                "contentType": "application/json",
+                "payload": { "accepted": true }
+            }))
+        );
+        process
+            .shutdown()
+            .expect("the sidecar should be stoppable after invocation");
+    }
+
+    #[test]
     fn process_runtime_rejects_unknown_response_fields() {
         let mut runtime = ProcessPluginRuntime;
         let manifest = ExtensionManifest {
@@ -7191,7 +7343,10 @@ mod tests {
                 job_kind: "echo.metadata-analysis".into(),
                 attempt: 1,
                 input: serde_json::json!({ "scope": "metadata" }),
-                provenance: serde_json::json!({ "inputFingerprint": "sha256:echo" }),
+                provenance: JobProvenance {
+                    input_fingerprint: Some("sha256:echo".into()),
+                    ..JobProvenance::for_owner("velvet.example.echo")
+                },
                 budget: JobBudgetRequest::default(),
                 deadline_ms: None,
                 cancellation_grace_ms: default_job_cancellation_grace_ms(),
