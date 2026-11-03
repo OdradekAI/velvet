@@ -2,8 +2,9 @@ use serde_json::Error as JsonError;
 use velvet_layout_model::{InMemoryLayoutService, LayoutService, LayoutState};
 use velvet_persistence::StateSnapshot;
 use velvet_workbench_protocol::{
-    ImportMigration, PortableBundleScope, PortableBundleSection, ProfileState,
-    PROFILE_SCHEMA_VERSION,
+    ImportMigration, PortableAssetMetadata, PortableBundleScope, PortableBundleSection,
+    ProfileState, SourceAvailability,
+    ASSET_BUNDLE_SCHEMA_VERSION as PROTOCOL_ASSET_BUNDLE_SCHEMA_VERSION, PROFILE_SCHEMA_VERSION,
 };
 
 use crate::{BundleImportParticipant, BundleImportParticipantError};
@@ -13,6 +14,9 @@ pub const LAYOUT_BUNDLE_SCOPE: &str = "workspace";
 pub const PROFILE_BUNDLE_OWNER: &str = "profile";
 pub const PROFILE_BUNDLE_SCOPE: &str = "user";
 pub const LAYOUT_BUNDLE_SCHEMA_VERSION: u16 = 1;
+pub const ASSET_BUNDLE_OWNER: &str = "asset";
+pub const ASSET_BUNDLE_SCOPE: &str = "metadata";
+pub const ASSET_BUNDLE_SCHEMA_VERSION: u16 = PROTOCOL_ASSET_BUNDLE_SCHEMA_VERSION;
 
 /// Imports the host-owned Profile section while preserving the monotonic
 /// Profile revision used by optimistic transport commands.
@@ -107,6 +111,59 @@ impl BundleImportParticipant for LayoutBundleParticipant {
         serde_json::to_vec(&state).map_err(|error| {
             BundleImportParticipantError::Invalid(format!(
                 "layout payload could not be encoded: {error}"
+            ))
+        })
+    }
+}
+
+/// Imports path-free Asset metadata without touching the source-location
+/// registry. A source path, approved root or volume identity from another
+/// machine is never a portable capability; local availability must be
+/// re-established by the Asset source owner after import.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct AssetBundleParticipant;
+
+impl BundleImportParticipant for AssetBundleParticipant {
+    fn owner_id(&self) -> &str {
+        ASSET_BUNDLE_OWNER
+    }
+
+    fn snapshot_scope(&self) -> &str {
+        ASSET_BUNDLE_SCOPE
+    }
+
+    fn bundle_scope(&self) -> PortableBundleScope {
+        PortableBundleScope::Asset
+    }
+
+    fn schema_version(&self) -> u16 {
+        ASSET_BUNDLE_SCHEMA_VERSION
+    }
+
+    fn import_payload(
+        &self,
+        section: &PortableBundleSection,
+        _existing: Option<&StateSnapshot>,
+        _migration: Option<&ImportMigration>,
+    ) -> Result<Vec<u8>, BundleImportParticipantError> {
+        let mut metadata =
+            decode_json::<PortableAssetMetadata>(&section.payload, "asset metadata")?;
+        metadata.validate().map_err(|error| {
+            BundleImportParticipantError::Invalid(format!(
+                "asset metadata failed schema validation: {error:?}"
+            ))
+        })?;
+
+        // Availability is an observation of the exporting environment. Since
+        // the bundle intentionally carries no path/root/volume identity, an
+        // import must never claim that a local source is currently available.
+        for asset in &mut metadata.assets {
+            asset.source_availability = SourceAvailability::Unknown;
+        }
+
+        serde_json::to_vec(&metadata).map_err(|error| {
+            BundleImportParticipantError::Invalid(format!(
+                "asset metadata could not be encoded: {error}"
             ))
         })
     }
@@ -237,6 +294,57 @@ mod tests {
         };
         assert!(matches!(
             participant.import_payload(&section, None, None),
+            Err(BundleImportParticipantError::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn asset_participant_rejects_paths_and_normalizes_foreign_availability() {
+        let participant = AssetBundleParticipant;
+        let section = PortableBundleSection {
+            section_id: "asset-metadata".into(),
+            scope: PortableBundleScope::Asset,
+            owner_id: ASSET_BUNDLE_OWNER.into(),
+            schema_version: ASSET_BUNDLE_SCHEMA_VERSION,
+            required: true,
+            extension_id: None,
+            sha256: String::new(),
+            payload: serde_json::to_vec(&PortableAssetMetadata {
+                schema_version: ASSET_BUNDLE_SCHEMA_VERSION,
+                assets: vec![velvet_workbench_protocol::PortableAssetRecord {
+                    asset_id: "asset-1".into(),
+                    content_kind: "text/plain".into(),
+                    fingerprint: Some("sha256:asset-1".into()),
+                    source_availability: SourceAvailability::Available,
+                }],
+            })
+            .expect("asset metadata should encode"),
+        };
+        let payload = participant
+            .import_payload(&section, None, None)
+            .expect("asset metadata should import");
+        let imported: PortableAssetMetadata =
+            serde_json::from_slice(&payload).expect("asset metadata should decode");
+        assert_eq!(
+            imported.assets[0].source_availability,
+            SourceAvailability::Unknown
+        );
+
+        let path_payload = br#"{
+            "schemaVersion": 1,
+            "assets": [{
+                "assetId": "asset-1",
+                "contentKind": "text/plain",
+                "sourcePath": "/tmp/foreign"
+            }]
+        }"#
+        .to_vec();
+        let path_section = PortableBundleSection {
+            payload: path_payload,
+            ..section
+        };
+        assert!(matches!(
+            participant.import_payload(&path_section, None, None),
             Err(BundleImportParticipantError::Invalid(_))
         ));
     }

@@ -22,7 +22,8 @@ pub use bundle::{
 };
 
 pub use bundle_participants::{
-    LayoutBundleParticipant, ProfileBundleParticipant, LAYOUT_BUNDLE_OWNER,
+    AssetBundleParticipant, LayoutBundleParticipant, ProfileBundleParticipant, ASSET_BUNDLE_OWNER,
+    ASSET_BUNDLE_SCHEMA_VERSION, ASSET_BUNDLE_SCOPE, LAYOUT_BUNDLE_OWNER,
     LAYOUT_BUNDLE_SCHEMA_VERSION, LAYOUT_BUNDLE_SCOPE, PROFILE_BUNDLE_OWNER, PROFILE_BUNDLE_SCOPE,
 };
 

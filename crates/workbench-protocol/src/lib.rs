@@ -40,6 +40,7 @@ pub const OPERATION_SCHEMA_VERSION: u16 = 1;
 pub const PORTABLE_BUNDLE_SCHEMA_VERSION: u16 = 1;
 pub const IMPORT_PLAN_SCHEMA_VERSION: u16 = 1;
 pub const IMPORT_RECEIPT_SCHEMA_VERSION: u16 = 1;
+pub const ASSET_BUNDLE_SCHEMA_VERSION: u16 = 1;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -151,6 +152,7 @@ pub fn supported_schema_versions() -> BTreeMap<String, u16> {
         ),
         ("operation".into(), OPERATION_SCHEMA_VERSION),
         ("portable-bundle".into(), PORTABLE_BUNDLE_SCHEMA_VERSION),
+        ("asset-bundle".into(), ASSET_BUNDLE_SCHEMA_VERSION),
         ("import-plan".into(), IMPORT_PLAN_SCHEMA_VERSION),
         ("import-receipt".into(), IMPORT_RECEIPT_SCHEMA_VERSION),
     ])
@@ -938,6 +940,85 @@ pub const PORTABLE_BUNDLE_MAX_SECTIONS: usize = 64;
 pub const PORTABLE_BUNDLE_MAX_SECTION_BYTES: usize = 2 * 1024 * 1024;
 pub const PORTABLE_BUNDLE_MAX_TOTAL_BYTES: u64 = 16 * 1024 * 1024;
 pub const IMPORT_PLAN_MAX_ENTRIES: usize = PORTABLE_BUNDLE_MAX_SECTIONS;
+pub const ASSET_BUNDLE_MAX_RECORDS: usize = 4096;
+pub const ASSET_BUNDLE_MAX_FIELD_BYTES: usize = 256;
+
+/// Host-local source availability. An imported `Available` value is only a
+/// statement about the exporting machine; the asset participant normalizes it
+/// before it becomes local state because a portable bundle never carries a
+/// source path, root or volume identity.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SourceAvailability {
+    Available,
+    Degraded,
+    PermissionDenied,
+    #[default]
+    Unknown,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PortableAssetRecord {
+    pub asset_id: String,
+    pub content_kind: String,
+    #[serde(default)]
+    pub fingerprint: Option<String>,
+    #[serde(default)]
+    pub source_availability: SourceAvailability,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PortableAssetMetadata {
+    pub schema_version: u16,
+    pub assets: Vec<PortableAssetRecord>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PortableAssetMetadataError {
+    UnsupportedSchema { schema_version: u16 },
+    TooManyRecords,
+    DuplicateAsset(String),
+    InvalidField(&'static str),
+}
+
+impl PortableAssetMetadata {
+    pub fn validate(&self) -> Result<(), PortableAssetMetadataError> {
+        if self.schema_version != ASSET_BUNDLE_SCHEMA_VERSION {
+            return Err(PortableAssetMetadataError::UnsupportedSchema {
+                schema_version: self.schema_version,
+            });
+        }
+        if self.assets.len() > ASSET_BUNDLE_MAX_RECORDS {
+            return Err(PortableAssetMetadataError::TooManyRecords);
+        }
+        let mut asset_ids = std::collections::BTreeSet::new();
+        for asset in &self.assets {
+            validate_asset_bundle_field(&asset.asset_id, "assetId")?;
+            validate_asset_bundle_field(&asset.content_kind, "contentKind")?;
+            if !asset_ids.insert(asset.asset_id.clone()) {
+                return Err(PortableAssetMetadataError::DuplicateAsset(
+                    asset.asset_id.clone(),
+                ));
+            }
+            if let Some(fingerprint) = asset.fingerprint.as_deref() {
+                validate_asset_bundle_field(fingerprint, "fingerprint")?;
+            }
+        }
+        Ok(())
+    }
+}
+
+fn validate_asset_bundle_field(
+    value: &str,
+    field: &'static str,
+) -> Result<(), PortableAssetMetadataError> {
+    if value.is_empty() || value.len() > ASSET_BUNDLE_MAX_FIELD_BYTES || value.contains('\0') {
+        return Err(PortableAssetMetadataError::InvalidField(field));
+    }
+    Ok(())
+}
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -2133,6 +2214,57 @@ mod tests {
         let receipt_json = serde_json::to_value(&receipt).expect("receipt should serialize");
         assert_eq!(receipt_json["status"], "partial");
         assert_eq!(receipt_json["owners"][0]["status"], "committed");
+    }
+
+    #[test]
+    fn portable_asset_metadata_is_path_free_and_bounded() {
+        let metadata = PortableAssetMetadata {
+            schema_version: ASSET_BUNDLE_SCHEMA_VERSION,
+            assets: vec![PortableAssetRecord {
+                asset_id: "asset-1".into(),
+                content_kind: "text/plain".into(),
+                fingerprint: Some("sha256:asset-1".into()),
+                source_availability: SourceAvailability::Available,
+            }],
+        };
+        metadata.validate().expect("asset metadata should validate");
+        let json = serde_json::to_value(&metadata).expect("asset metadata should serialize");
+        assert_eq!(json["schemaVersion"], ASSET_BUNDLE_SCHEMA_VERSION);
+        assert_eq!(json["assets"][0]["sourceAvailability"], "available");
+        assert!(json["assets"][0].get("sourcePath").is_none());
+
+        assert!(
+            serde_json::from_value::<PortableAssetMetadata>(serde_json::json!({
+                "schemaVersion": ASSET_BUNDLE_SCHEMA_VERSION,
+                "assets": [{
+                    "assetId": "asset-1",
+                    "contentKind": "text/plain",
+                    "sourcePath": "/tmp/should-not-cross-the-boundary"
+                }]
+            }))
+            .is_err()
+        );
+        assert_eq!(
+            PortableAssetMetadata {
+                schema_version: ASSET_BUNDLE_SCHEMA_VERSION,
+                assets: vec![
+                    PortableAssetRecord {
+                        asset_id: "asset-1".into(),
+                        content_kind: "text/plain".into(),
+                        fingerprint: None,
+                        source_availability: SourceAvailability::Unknown,
+                    },
+                    PortableAssetRecord {
+                        asset_id: "asset-1".into(),
+                        content_kind: "image/png".into(),
+                        fingerprint: None,
+                        source_availability: SourceAvailability::Unknown,
+                    },
+                ],
+            }
+            .validate(),
+            Err(PortableAssetMetadataError::DuplicateAsset("asset-1".into()))
+        );
     }
 
     #[test]

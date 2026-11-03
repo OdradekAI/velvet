@@ -625,7 +625,10 @@ mod tests {
         LAYOUT_SNAPSHOT_OWNER, LAYOUT_SNAPSHOT_SCOPE, PROFILE_SNAPSHOT_OWNER,
         PROFILE_SNAPSHOT_SCOPE,
     };
-    use velvet_workbench_protocol::{PortableBundleSection, PORTABLE_BUNDLE_SCHEMA_VERSION};
+    use velvet_workbench_protocol::{
+        PortableAssetMetadata, PortableAssetRecord, PortableBundleSection, SourceAvailability,
+        ASSET_BUNDLE_SCHEMA_VERSION, PORTABLE_BUNDLE_SCHEMA_VERSION,
+    };
 
     struct FakeParticipant {
         owner_id: &'static str,
@@ -763,6 +766,42 @@ mod tests {
         .expect("seed recovery set should commit");
     }
 
+    fn seed_core_recovery_set_with_asset(
+        snapshots: &InMemoryStateSnapshotStore,
+        recovery_sets: &InMemoryRecoverySetStore,
+    ) {
+        seed_core_recovery_set(snapshots, recovery_sets);
+        let snapshot = StateSnapshot::new(
+            crate::ASSET_BUNDLE_OWNER,
+            crate::ASSET_BUNDLE_SCOPE,
+            ASSET_BUNDLE_SCHEMA_VERSION,
+            1,
+            1,
+            serde_json::to_vec(&PortableAssetMetadata {
+                schema_version: ASSET_BUNDLE_SCHEMA_VERSION,
+                assets: Vec::new(),
+            })
+            .expect("asset metadata should encode"),
+        );
+        snapshots.stage(&snapshot).expect("asset should stage");
+        snapshots
+            .commit(crate::ASSET_BUNDLE_OWNER, crate::ASSET_BUNDLE_SCOPE, 1)
+            .expect("asset should commit");
+        commit_current_recovery_set(
+            snapshots,
+            recovery_sets,
+            CORE_RECOVERY_SET_ID,
+            1,
+            &[
+                (LAYOUT_SNAPSHOT_OWNER, LAYOUT_SNAPSHOT_SCOPE),
+                (PROFILE_SNAPSHOT_OWNER, PROFILE_SNAPSHOT_SCOPE),
+                (JOB_SNAPSHOT_OWNER, JOB_SNAPSHOT_SCOPE),
+                (crate::ASSET_BUNDLE_OWNER, crate::ASSET_BUNDLE_SCOPE),
+            ],
+        )
+        .expect("asset recovery set should commit");
+    }
+
     #[test]
     fn inspection_verifies_digest_and_emits_expiring_migration_plan() {
         let bundle = bundle();
@@ -894,6 +933,78 @@ mod tests {
                 .metadata
                 .generation,
             1
+        );
+    }
+
+    #[test]
+    fn importer_stages_asset_metadata_without_rebinding_source_state() {
+        let snapshots = InMemoryStateSnapshotStore::default();
+        let recovery_sets = InMemoryRecoverySetStore::default();
+        seed_core_recovery_set_with_asset(&snapshots, &recovery_sets);
+        let payload = serde_json::to_vec(&PortableAssetMetadata {
+            schema_version: ASSET_BUNDLE_SCHEMA_VERSION,
+            assets: vec![PortableAssetRecord {
+                asset_id: "asset-1".into(),
+                content_kind: "text/plain".into(),
+                fingerprint: Some("sha256:asset-1".into()),
+                source_availability: SourceAvailability::Available,
+            }],
+        })
+        .expect("asset metadata should encode");
+        let bundle = PortableBundle {
+            schema_version: PORTABLE_BUNDLE_SCHEMA_VERSION,
+            bundle_id: "asset-bundle-1".into(),
+            created_at_ms: 1,
+            source_build: "0.0.4".into(),
+            sections: vec![section(
+                "asset-metadata",
+                PortableBundleScope::Asset,
+                crate::ASSET_BUNDLE_OWNER,
+                ASSET_BUNDLE_SCHEMA_VERSION,
+                &payload,
+                None,
+                true,
+            )],
+        };
+        let context = BundleInspectionContext {
+            now_ms: 10,
+            plan_ttl_ms: 100,
+            supported_owner_schemas: BTreeMap::from([(
+                crate::ASSET_BUNDLE_OWNER.into(),
+                ASSET_BUNDLE_SCHEMA_VERSION,
+            )]),
+            trusted_extensions: BTreeSet::new(),
+        };
+        let plan = PortableBundleInspector::inspect(
+            &bundle,
+            "asset-import-1",
+            &["asset-metadata".into()],
+            &context,
+        )
+        .expect("asset plan should be valid");
+        let participant = crate::AssetBundleParticipant;
+        let receipt = PortableBundleImporter::new(&snapshots, &recovery_sets)
+            .import(&bundle, &plan, &[&participant], 20)
+            .expect("asset import should commit");
+        assert_eq!(receipt.status, ImportReceiptStatus::Committed);
+        let imported = snapshots
+            .load_latest(crate::ASSET_BUNDLE_OWNER, crate::ASSET_BUNDLE_SCOPE)
+            .expect("asset snapshot should load")
+            .expect("asset snapshot should exist");
+        let metadata: PortableAssetMetadata =
+            serde_json::from_slice(&imported.payload).expect("asset snapshot should decode");
+        assert_eq!(
+            metadata.assets[0].source_availability,
+            SourceAvailability::Unknown
+        );
+        assert_eq!(
+            recovery_sets
+                .load_latest(CORE_RECOVERY_SET_ID)
+                .expect("recovery set should load")
+                .expect("recovery set should exist")
+                .members
+                .len(),
+            4
         );
     }
 

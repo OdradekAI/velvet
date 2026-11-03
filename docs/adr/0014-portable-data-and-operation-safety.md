@@ -152,8 +152,14 @@ seam, stages core snapshots through `RecoverySetTransaction`, and publishes an
 `ImportReceipt`; a participant failure leaves the current core pointer intact,
 while extension failures become partial/quarantined receipt entries. Profile
 and Workbench layout participants now reuse their domain validators and keep
-monotonic revisions. Asset/source payloads and durable extension quarantine
-storage remain separate owner work.
+monotonic revisions. The path-free `PortableAssetMetadata` schema and
+`AssetBundleParticipant` accept only stable Asset identity, content kind and
+optional fingerprint; unknown fields such as `sourcePath`, approved roots and
+volume identities are rejected, and imported source availability is normalized
+to `Unknown` until the local Asset source owner revalidates a registration.
+The participant does not write the source-location registry. Wiring the Asset
+metadata snapshot into the native composition's default `RecoverySet`, and
+durable extension quarantine storage, remain separate owner work.
 
 ## Consequences
 

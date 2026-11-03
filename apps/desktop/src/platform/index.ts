@@ -101,6 +101,8 @@ export type {
   LayoutCommandId,
   LayoutOrderAnchor,
   LayoutSnapshot,
+  PortableAssetMetadata,
+  PortableAssetRecord,
   Part,
   PluginResourceSchemaVersion,
   ProfileSchemaVersion,
@@ -108,6 +110,7 @@ export type {
   WorkbenchAppId,
   WorkspaceId,
   Zone,
+  SourceAvailability,
 } from './protocol.js';
 export {
   PLUGIN_RESOURCE_SCHEMA_VERSION,
@@ -124,6 +127,7 @@ export {
   PORTABLE_BUNDLE_SCHEMA_VERSION,
   IMPORT_PLAN_SCHEMA_VERSION,
   IMPORT_RECEIPT_SCHEMA_VERSION,
+  ASSET_BUNDLE_SCHEMA_VERSION,
   PROTOCOL_MAJOR,
   PROTOCOL_MINOR,
   TRANSPORT_FEATURE_SESSION_V1,

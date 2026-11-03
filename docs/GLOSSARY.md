@@ -269,6 +269,14 @@ typed `PermissionDenied`，便于用户先修复权限再重试。未声明 `app
 
 由宿主生成的、有版本和完整性元数据的逻辑用户数据包。它按 owner 分段保存 Profile、Workspace、Asset/source metadata 和可选的扩展备份表示，不默认包含素材字节、缓存、派生结果、凭据、密钥或未脱敏环境数据；它不是可执行插件包。
 
+## PortableAssetMetadata
+
+PortableBundle 中 Asset scope 的路径无关表示。它只包含稳定 AssetId、内容类型、可选
+ContentFingerprint 和导出端的 SourceAvailability；schema 拒绝 sourcePath、approvedRoot
+和 volume identity 等环境绑定字段。导入时 SourceAvailability 会归一为本机 `unknown`，
+之后由 Asset source owner 重新校验路径、批准根和卷身份；这一步不会写入或隐式重绑定
+现有 source registry。
+
 ## ImportPlan
 
 对 PortableBundle 的只读导入预览。它列出选定 scope、schema migration、冲突、不可用 source、跳过或隔离的扩展 section、影响估计和过期/revision 条件；用户确认前不能发布任何 owner generation。

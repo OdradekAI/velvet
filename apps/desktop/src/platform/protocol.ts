@@ -31,8 +31,23 @@ export const OPERATION_SCHEMA_VERSION = 1 as const;
 export const PORTABLE_BUNDLE_SCHEMA_VERSION = 1 as const;
 export const IMPORT_PLAN_SCHEMA_VERSION = 1 as const;
 export const IMPORT_RECEIPT_SCHEMA_VERSION = 1 as const;
+export const ASSET_BUNDLE_SCHEMA_VERSION = 1 as const;
 export const NATIVE_UPDATE_SCHEMA_VERSION = 1 as const;
 export type WorkbenchAppId = string;
+
+export type SourceAvailability = 'available' | 'degraded' | 'permission-denied' | 'unknown';
+
+export interface PortableAssetRecord {
+  readonly assetId: string;
+  readonly contentKind: string;
+  readonly fingerprint?: string;
+  readonly sourceAvailability?: SourceAvailability;
+}
+
+export interface PortableAssetMetadata {
+  readonly schemaVersion: typeof ASSET_BUNDLE_SCHEMA_VERSION;
+  readonly assets: readonly PortableAssetRecord[];
+}
 
 export type CoreActivationTargetKind = 'file-path' | 'deep-link';
 
