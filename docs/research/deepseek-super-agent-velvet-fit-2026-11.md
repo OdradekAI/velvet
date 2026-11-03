@@ -223,3 +223,36 @@ Inline/Spill、Chain of Recall 或长期记忆属于 Agent context 的压缩、�
 方向无需重写，需在“插件/任务/工作台”之上补出一层“Agent 编排与授权”。当前规划对多插件生态的关键优势——单一 Rust 权威状态、显式 CoreTransport、能力授权、每扩展失败域、共享 JobSystem、全局 Companion/Operations 分区和可恢复状态——正好是 Super-agent 落地所需的底座。
 
 真正需要改变的是优先级和边界：在继续扩充插件种类之前，先固定 AgentTask 与 Job 的关系、Trigger/Subscription 的语义、Mandate 的准入模型、Watchdog 的 owner 以及 Agent context 的持久化边界。这样可以吸收 DeepSeek 的 Router–Worker 和事件驱动思想，同时保持 Velvet 的插件隔离和数据所有权不被一个“万能 Agent”吞掉。
+
+## 结合自动化实践文章的调度补充
+
+参考文章：[《折腾了整整1年，毫无保留地分享一下我这套Agent自动化系统》](https://mp.weixin.qq.com/s/2R9xtPdgYr3kF6L-LGr8aA)，作者为“数字生命卡兹克”，发表于 2026-11-02。文章不是 DeepSeek 官方设计文档，而是一套已经运行近一年的个人自动化实践；它补充了公开 superagent 原型里没有展开的运维和调度细节。
+
+文章的核心形态是“自动化中台 + 本地执行节点 + 独立 CI 中台 + 单一人工决策出口”：各种定时任务、Webhook、消息、告警和代码事件先进入统一中台；中台把来源事件归一化，再用规则选择 Agent、模型、推理强度、Skill、工作目录、并行度和回传方式；本地机器上的接单程序通过长轮询领取任务；重复事件需要去重；真正需要人拍板的事项汇聚为决策卡片；代码变更交给独立的审查、检查、合并、发布和上线核验流水线。
+
+这说明“自动调度”比 Router/Worker 多一层控制面，至少要明确以下语义：
+
+1. **统一事件入口**：定时、Webhook、文件变化、Feed、Job 完成、CI 状态、人工决定和插件事件都应进入同一种带来源、对象、事件类型、时间、幂等键、关联任务和可信级别的 `AgentTrigger`。当前 Velvet 的 `ActivationRequest` 只解决启动激活，不是通用事件总线。
+2. **规则路由与模型调用分离**：规则先决定是否接纳、交给哪类 Worker、使用哪个 `ExecutionProfile`、限制多少并发和成本，再由模型做语义评估。`rules.json` 可以作为原型，但生产形态必须有 schema、版本、优先级、冲突诊断、dry-run、审计和回滚；规则不能授予 manifest 没有的能力。
+3. **执行节点调度**：本地 sidecar、WASM、浏览器节点、CI runner 和未来远程 worker 需要声明能力、容量、健康、区域/数据边界和租约。调度器要处理 claim、heartbeat、lease expiry、取消、重试、回收和 backpressure，而不是只把事件转成一次模型调用。
+4. **模型与成本路由**：应把模型、推理深度、Token/费用预算、延迟和数据驻留作为可审计的策略输入。当前 `JobSystem` 有设备/owner/Job 资源预算，但还没有 provider、模型、订阅额度和 Token 成本账本；这会成为多模型自动化的缺口。
+5. **幂等与至少一次投递**：文章指出重复事件是常态。Velvet 需要区分事件去重、任务去重、Assignment 去重和外部副作用幂等；不能承诺跨系统 exactly-once，应采用持久 inbox/outbox、source cursor、幂等 key、未知结果查询和过期策略。
+6. **注意力与决策中台**：`CompanionView`/`OperationsPanel` 可以承载界面，但还需要宿主拥有的 `AttentionBroker`/`DecisionInbox`，统一聚合、去重、静默、升级、超时和唯一出口。决策卡片必须带提案、证据、影响范围、风险、过期时间、策略版本、授权范围和 revision；点击后的处理必须是幂等 typed command。
+7. **决定记录与反复询问抑制**：文章把已决定和明确拒绝的事项沉淀下来。Velvet 应将其建模为带范围、来源、时间、policy revision、有效期和撤销语义的 `DecisionRecord`，不能只保存一份自然语言文件；策略变化或作用域变化时要重新验证。
+8. **Skill/Runbook 作为版本化输入**：文章中的 Skill 是任务 SOP。Velvet 可以把它作为 `ExecutionProfile` 或插件贡献提供的版本化 playbook，但 Skill 只能约束步骤和输出，不能扩大 CapabilityGrant、访问路径或副作用权限。
+9. **Workflow/CI DAG 高于 Job**：审查、测试、合并、发布、上线核验是有依赖和门禁的流程图。`JobSystem` 继续拥有每一步的执行生命周期；上层需要 `Workflow`/`AgentTask` 持有步骤依赖、审批门、artifact provenance、失败恢复和回滚，不应把整条流水线压成一个 Job。
+10. **安全执行环境**：文章为审查和检查任务使用只读、无密钥、隔离的临时环境。Velvet 的 ADR-0005 已说明 sidecar 只是进程故障边界，不是安全沙箱；自动调度真正落地前，还要定义 runner capability profile、网络/Secret/浏览器权限、临时工作区、产物扫描和销毁证明。
+
+因此，结合这篇文章后，原方案需要把“Agent orchestration plane”进一步明确为两个宿主服务：
+
+```text
+EventIngress + RuleRouter + AttentionBroker
+                    │
+          AgentTask / Workflow coordinator
+                    │
+       WorkerScheduler → JobSystem / PluginHost
+```
+
+第一阶段仍可把这些服务放在 `ApplicationCore` 内，保持 ADR-0001 的单部署单元；但接口必须从一开始支持多个 `ExecutionNode` 和多个模型 Provider。出现第二台执行机、独立 CI、长时间后台运行或第二客户端后，再把 EventIngress/WorkerScheduler 提取为远程 adapter 或独立 automation hub。这里需要新增的不是一个“超级 Agent WorkbenchApp”，而是一个 Core-owned control plane 及其投影。
+
+这篇文章还改变了实施优先级：在扩充插件种类之前，先完成 `AgentTrigger`、规则版本化、执行节点租约、模型/成本预算、Attention/DecisionInbox、Workflow DAG 和端到端审计。否则多插件只会增加入口和模型数量，却没有统一的调度、回收和人工决策边界。
