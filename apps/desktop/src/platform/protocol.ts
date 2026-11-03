@@ -62,6 +62,18 @@ export interface ImportQuarantineEntry {
   readonly payload: readonly number[];
 }
 
+export interface ImportQuarantineSummary {
+  readonly schemaVersion: typeof IMPORT_QUARANTINE_SCHEMA_VERSION;
+  readonly bundleId: string;
+  readonly planId: string;
+  readonly sectionId: string;
+  readonly ownerId: string;
+  readonly sectionSchemaVersion: number;
+  readonly quarantinedAtMs: number;
+  readonly reason: string;
+  readonly payloadBytes: number;
+}
+
 export type CoreActivationTargetKind = 'file-path' | 'deep-link';
 
 export interface CoreActivationTarget {
@@ -231,6 +243,7 @@ export type CoreRequest =
       readonly extensionId: string;
     }
   | { readonly protocolVersion: ProtocolVersion; readonly kind: 'query-plugin-runtime-recovery' }
+  | { readonly protocolVersion: ProtocolVersion; readonly kind: 'query-import-quarantine' }
   | { readonly protocolVersion: ProtocolVersion; readonly kind: 'query-approved-source-roots' }
   | {
       readonly protocolVersion: ProtocolVersion;
@@ -274,6 +287,13 @@ export type CoreRequest =
       readonly kind: 'close-quarantined-runtime-lease';
       readonly extensionId: string;
       readonly runtimeNonce: string;
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'discard-import-quarantine';
+      readonly bundleId: string;
+      readonly planId: string;
+      readonly sectionId: string;
     }
   | {
       readonly protocolVersion: ProtocolVersion;
@@ -468,6 +488,10 @@ export type CoreResponse =
   | {
       readonly kind: 'plugin-runtime-recovery';
       readonly recoveries: readonly CorePluginRuntimeRecovery[];
+    }
+  | {
+      readonly kind: 'import-quarantine';
+      readonly entries: readonly ImportQuarantineSummary[];
     }
   | { readonly kind: 'approved-source-roots'; readonly roots: readonly string[] }
   | { readonly kind: 'job'; readonly job: CoreJobSnapshot }

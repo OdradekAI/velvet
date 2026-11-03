@@ -175,10 +175,11 @@ composes that optional store without exposing it as a second persistence owner,
 and the Tauri composition creates a durable atomic `import-quarantine.json`
 adapter beside the other application stores. User actions for listing,
 retrying or deleting quarantined bundle sections remain a separate transport
-and UI slice. The host seam now supports bounded listing and idempotent discard
-by the bundle/plan/section provenance key; it deliberately does not expose
-raw retained bytes to the renderer or pretend that a section is retryable
-without its original bundle and participant context.
+and UI slice. The typed CoreTransport/Tauri mapping now supports metadata-only
+listing and idempotent discard by the bundle/plan/section provenance key. It
+deliberately does not expose raw retained bytes to the renderer or pretend
+that a section is retryable without its original bundle and participant
+context.
 
 ## Consequences
 

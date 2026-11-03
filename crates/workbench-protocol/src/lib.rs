@@ -1344,6 +1344,22 @@ pub struct ImportQuarantineEntry {
     pub payload: Vec<u8>,
 }
 
+/// Host-facing metadata for a retained extension section. The raw payload is
+/// intentionally omitted from transport projections and remains native-only.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ImportQuarantineSummary {
+    pub schema_version: u16,
+    pub bundle_id: String,
+    pub plan_id: String,
+    pub section_id: String,
+    pub owner_id: String,
+    pub section_schema_version: u16,
+    pub quarantined_at_ms: u64,
+    pub reason: String,
+    pub payload_bytes: u64,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ImportQuarantineError {
     UnsupportedSchema { schema_version: u16 },
@@ -1383,6 +1399,20 @@ impl ImportQuarantineEntry {
             return Err(ImportQuarantineError::OversizedPayload);
         }
         Ok(())
+    }
+
+    pub fn summary(&self) -> ImportQuarantineSummary {
+        ImportQuarantineSummary {
+            schema_version: self.schema_version,
+            bundle_id: self.bundle_id.clone(),
+            plan_id: self.plan_id.clone(),
+            section_id: self.section_id.clone(),
+            owner_id: self.owner_id.clone(),
+            section_schema_version: self.section_schema_version,
+            quarantined_at_ms: self.quarantined_at_ms,
+            reason: self.reason.clone(),
+            payload_bytes: self.payload.len() as u64,
+        }
     }
 }
 
@@ -1542,6 +1572,11 @@ pub enum Command {
         extension_id: ExtensionId,
         runtime_nonce: String,
     },
+    DiscardImportQuarantine {
+        bundle_id: String,
+        plan_id: String,
+        section_id: String,
+    },
     UninstallPlugin {
         extension_id: ExtensionId,
     },
@@ -1650,6 +1685,7 @@ pub enum Query {
         extension_id: ExtensionId,
     },
     PluginRuntimeRecovery,
+    ImportQuarantine,
     Jobs,
     Snapshot,
     RequestOutcome {
@@ -1677,6 +1713,7 @@ pub enum Response {
     PluginInstallRecoveryLog(Vec<ExtensionInstallRecoveryLogEntry>),
     PluginStorageRecovery(PluginStorageRecoveryDto),
     PluginRuntimeRecovery(Vec<PluginRuntimeRecoveryDto>),
+    ImportQuarantine(Vec<ImportQuarantineSummary>),
     PluginProjection(PluginProjectionDto),
     Job(JobSnapshot),
     Jobs(Vec<JobSnapshot>),
@@ -1712,6 +1749,9 @@ pub fn request_idempotency_scope(request: &Request) -> Option<&'static str> {
         Request::Command(Command::CancelJob { .. }) => Some("cancel-job"),
         Request::Command(Command::CloseQuarantinedRuntimeLease { .. }) => {
             Some("close-quarantined-runtime-lease")
+        }
+        Request::Command(Command::DiscardImportQuarantine { .. }) => {
+            Some("discard-import-quarantine")
         }
         Request::Command(Command::SetLocale {
             expected_revision: Some(_),
@@ -2344,6 +2384,20 @@ mod tests {
             payload: vec![1, 2, 3],
         };
         entry.validate().expect("quarantine entry should validate");
+        assert_eq!(
+            entry.summary(),
+            ImportQuarantineSummary {
+                schema_version: IMPORT_QUARANTINE_SCHEMA_VERSION,
+                bundle_id: "bundle-1".into(),
+                plan_id: "plan-1".into(),
+                section_id: "extension-sample".into(),
+                owner_id: "sample.extension".into(),
+                section_schema_version: 1,
+                quarantined_at_ms: 42,
+                reason: "participant unavailable".into(),
+                payload_bytes: 3,
+            }
+        );
         let json = serde_json::to_value(&entry).expect("quarantine entry should serialize");
         assert_eq!(json["schemaVersion"], IMPORT_QUARANTINE_SCHEMA_VERSION);
         assert!(json.get("path").is_none());
@@ -2435,6 +2489,13 @@ mod tests {
         assert!(!is_idempotent_request(&Request::Command(
             Command::RetryJob {
                 job_id: JobId("job-1".into()),
+            }
+        )));
+        assert!(is_idempotent_request(&Request::Command(
+            Command::DiscardImportQuarantine {
+                bundle_id: "bundle-1".into(),
+                plan_id: "plan-1".into(),
+                section_id: "section-1".into(),
             }
         )));
         assert!(!is_idempotent_request(&Request::Command(Command::Layout(

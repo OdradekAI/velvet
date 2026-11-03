@@ -772,6 +772,10 @@ pub enum WireRequest {
         #[serde(rename = "protocolVersion")]
         protocol_version: u16,
     },
+    QueryImportQuarantine {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+    },
     QueryApprovedSourceRoots {
         #[serde(rename = "protocolVersion")]
         protocol_version: u16,
@@ -826,6 +830,16 @@ pub enum WireRequest {
         extension_id: String,
         #[serde(rename = "runtimeNonce")]
         runtime_nonce: String,
+    },
+    DiscardImportQuarantine {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        #[serde(rename = "bundleId")]
+        bundle_id: String,
+        #[serde(rename = "planId")]
+        plan_id: String,
+        #[serde(rename = "sectionId")]
+        section_id: String,
     },
     InstallPlugin {
         #[serde(rename = "protocolVersion")]
@@ -1135,6 +1149,12 @@ impl WireRequest {
                     velvet_workbench_protocol::Query::PluginRuntimeRecovery,
                 ))
             }
+            Self::QueryImportQuarantine { protocol_version } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Query(
+                    velvet_workbench_protocol::Query::ImportQuarantine,
+                ))
+            }
             Self::QueryApprovedSourceRoots { protocol_version } => {
                 validate_inner_protocol(outer_protocol_version, protocol_version)?;
                 Ok(Request::Query(
@@ -1226,6 +1246,19 @@ impl WireRequest {
                 Ok(Request::Command(Command::CloseQuarantinedRuntimeLease {
                     extension_id: ExtensionId(extension_id),
                     runtime_nonce,
+                }))
+            }
+            Self::DiscardImportQuarantine {
+                protocol_version,
+                bundle_id,
+                plan_id,
+                section_id,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Command(Command::DiscardImportQuarantine {
+                    bundle_id,
+                    plan_id,
+                    section_id,
                 }))
             }
             Self::InstallPlugin {
@@ -1760,6 +1793,9 @@ enum WireResponse {
     PluginRuntimeRecovery {
         recoveries: Vec<velvet_workbench_protocol::PluginRuntimeRecoveryDto>,
     },
+    ImportQuarantine {
+        entries: Vec<velvet_workbench_protocol::ImportQuarantineSummary>,
+    },
     Job {
         job: WireJobSnapshot,
     },
@@ -1821,6 +1857,7 @@ impl WireResponseEnvelope {
             Response::PluginRuntimeRecovery(recoveries) => {
                 WireResponse::PluginRuntimeRecovery { recoveries }
             }
+            Response::ImportQuarantine(entries) => WireResponse::ImportQuarantine { entries },
             Response::Job(job) => WireResponse::Job {
                 job: WireJobSnapshot::from(job),
             },
@@ -3608,6 +3645,69 @@ mod tests {
         assert_eq!(value["response"]["kind"], "plugin-runtime-recovery");
         assert_eq!(value["response"]["recoveries"][0]["runtimeNonce"], "nonce-7");
         assert_eq!(value["response"]["recoveries"][0]["state"], "quarantined");
+
+        let import_query: WireRequestEnvelope = serde_json::from_str(
+            r#"{
+                "protocolVersion": 1,
+                "requestId": 44,
+                "request": {
+                    "kind": "query-import-quarantine",
+                    "protocolVersion": 1
+                }
+            }"#,
+        )
+        .expect("import quarantine query should deserialize");
+        assert!(matches!(
+            import_query.request.into_core(1).expect("query should map"),
+            Request::Query(velvet_workbench_protocol::Query::ImportQuarantine)
+        ));
+
+        let discard: WireRequestEnvelope = serde_json::from_str(
+            r#"{
+                "protocolVersion": 1,
+                "requestId": 45,
+                "request": {
+                    "kind": "discard-import-quarantine",
+                    "protocolVersion": 1,
+                    "bundleId": "bundle-1",
+                    "planId": "plan-1",
+                    "sectionId": "extension-sample"
+                }
+            }"#,
+        )
+        .expect("import quarantine discard should deserialize");
+        assert!(matches!(
+            discard.request.into_core(1).expect("command should map"),
+            Request::Command(Command::DiscardImportQuarantine {
+                bundle_id,
+                plan_id,
+                section_id
+            }) if bundle_id == "bundle-1" && plan_id == "plan-1" && section_id == "extension-sample"
+        ));
+
+        let response = WireResponseEnvelope::from_core(
+            velvet_workbench_protocol::ResponseEnvelope {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: RequestId(46),
+                response: Response::ImportQuarantine(vec![
+                    velvet_workbench_protocol::ImportQuarantineSummary {
+                        schema_version: 1,
+                        bundle_id: "bundle-1".into(),
+                        plan_id: "plan-1".into(),
+                        section_id: "extension-sample".into(),
+                        owner_id: "sample.reader".into(),
+                        section_schema_version: 2,
+                        quarantined_at_ms: 42,
+                        reason: "disabled".into(),
+                        payload_bytes: 3,
+                    },
+                ]),
+            },
+        );
+        let value = serde_json::to_value(response).expect("import quarantine should serialize");
+        assert_eq!(value["response"]["kind"], "import-quarantine");
+        assert_eq!(value["response"]["entries"][0]["payloadBytes"], 3);
+        assert!(value["response"]["entries"][0].get("payload").is_none());
     }
 
     #[test]

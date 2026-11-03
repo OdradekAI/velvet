@@ -104,6 +104,7 @@ export type {
   PortableAssetMetadata,
   PortableAssetRecord,
   ImportQuarantineEntry,
+  ImportQuarantineSummary,
   Part,
   PluginResourceSchemaVersion,
   ProfileSchemaVersion,

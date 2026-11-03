@@ -178,7 +178,7 @@ use velvet_preview_core::{
 };
 use velvet_workbench_protocol::{
     Command, CoreError, CoreTransport, CrashCaptureEvidence, ImportPlan, ImportQuarantineEntry,
-    ImportReceipt, PlatformPreflightEvidence, PluginDiagnosticEvent,
+    ImportQuarantineSummary, ImportReceipt, PlatformPreflightEvidence, PluginDiagnosticEvent,
     PluginDiagnosticKind as WirePluginDiagnosticKind, PluginDisableReason, PluginInstallPreviewDto,
     PluginProjectionDto, PluginResourceDto, PluginRuntimeRecoveryDto, PluginRuntimeRecoveryState,
     PluginStorageRecoveryDto, PluginStorageRecoveryStatus, PortableBundle, ProfileState, Query,
@@ -746,6 +746,11 @@ impl ApplicationCore {
         store.load().map_err(|error| {
             CoreError::Recovery(format!("import quarantine unavailable: {error:?}"))
         })
+    }
+
+    pub fn import_quarantine_summaries(&self) -> Result<Vec<ImportQuarantineSummary>, CoreError> {
+        self.import_quarantine_entries()
+            .map(|entries| entries.iter().map(ImportQuarantineEntry::summary).collect())
     }
 
     /// Discards one retained extension section by its stable provenance key.
@@ -2014,6 +2019,13 @@ impl ApplicationCore {
                     .map_err(plugin_error)?;
                 Ok(Response::Accepted)
             }
+            Request::Command(Command::DiscardImportQuarantine {
+                bundle_id,
+                plan_id,
+                section_id,
+            }) => self
+                .discard_import_quarantine(&bundle_id, &plan_id, &section_id)
+                .map(|_| Response::Accepted),
             Request::Command(Command::UninstallPlugin { extension_id }) => {
                 self.uninstall_plugin(&extension_id).map_err(plugin_error)?;
                 Ok(Response::Accepted)
@@ -2166,6 +2178,9 @@ impl ApplicationCore {
                 .query_plugin_runtime_recovery()
                 .map(Response::PluginRuntimeRecovery)
                 .map_err(plugin_error),
+            Request::Query(Query::ImportQuarantine) => self
+                .import_quarantine_summaries()
+                .map(Response::ImportQuarantine),
             Request::Query(Query::Jobs) => Ok(Response::Jobs(self.job_snapshots())),
             Request::Query(Query::Snapshot) => Ok(Response::Snapshot(
                 velvet_workbench_protocol::AuthoritativeSnapshot {
@@ -4993,7 +5008,7 @@ mod tests {
             },
         )
         .expect("extension plan should be valid");
-        let core = ApplicationCore::with_store_and_plugin_directory_and_job_store_and_profile_store_and_asset_source_store_and_recovery_stores(
+        let mut core = ApplicationCore::with_store_and_plugin_directory_and_job_store_and_profile_store_and_asset_source_store_and_recovery_stores(
             Arc::new(SnapshotLayoutStateStore::new(
                 snapshots.clone(),
                 Some(recovery_sets.clone()),
@@ -5029,13 +5044,28 @@ mod tests {
             .expect("quarantine should load");
         assert_eq!(quarantined.len(), 1);
         assert_eq!(quarantined[0].payload, bundle.sections[0].payload);
-        assert!(core
-            .discard_import_quarantine(
-                "bundle-composition-1",
-                "plan-composition-1",
-                "extension-settings",
-            )
-            .expect("discard should succeed"));
+        match core
+            .dispatch(Request::Query(Query::ImportQuarantine))
+            .expect("quarantine query should succeed")
+        {
+            Response::ImportQuarantine(entries) => {
+                assert_eq!(entries.len(), 1);
+                assert_eq!(
+                    entries[0].payload_bytes,
+                    bundle.sections[0].payload.len() as u64
+                );
+            }
+            other => panic!("expected quarantine summaries, got {other:?}"),
+        }
+        assert_eq!(
+            core.dispatch(Request::Command(Command::DiscardImportQuarantine {
+                bundle_id: "bundle-composition-1".into(),
+                plan_id: "plan-composition-1".into(),
+                section_id: "extension-settings".into(),
+            }))
+            .expect("discard should succeed"),
+            Response::Accepted
+        );
         assert!(core
             .import_quarantine_entries()
             .expect("quarantine should reload")
