@@ -13,9 +13,11 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use platform_process::ProcessSupervisor;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use velvet_job_system::{JobBudgetRequest, JobProvenance, JOB_SCHEMA_VERSION};
 use velvet_layout_model::WorkbenchZone;
 use velvet_plugin_api::{
@@ -44,6 +46,115 @@ pub use runtime_lease::{
     RuntimeOrphanReport, RuntimeProcessIdentity, MAX_RUNTIME_LEASES, MAX_RUNTIME_LEASE_STORE_BYTES,
     RUNTIME_LEASE_SCHEMA_VERSION,
 };
+
+pub const PLUGIN_SIGNATURE_SCHEMA_VERSION: u16 = 1;
+pub const MAX_PLUGIN_SIGNATURE_BYTES: usize = 64 * 1024;
+const PLUGIN_SIGNATURE_FILE: &str = "signature.json";
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PluginTrustState {
+    Trusted,
+    DeveloperUnsigned,
+    Unknown,
+    Revoked,
+    Incompatible,
+    Blocked,
+    Quarantined,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PluginTrustPolicy {
+    require_signature: bool,
+    developer_mode: bool,
+    trusted_publishers: BTreeMap<String, String>,
+    revoked_publishers: BTreeSet<String>,
+    minimum_generations: BTreeMap<ExtensionId, u64>,
+}
+
+impl PluginTrustPolicy {
+    pub fn developer_mode() -> Self {
+        Self {
+            require_signature: false,
+            developer_mode: true,
+            trusted_publishers: BTreeMap::new(),
+            revoked_publishers: BTreeSet::new(),
+            minimum_generations: BTreeMap::new(),
+        }
+    }
+
+    pub fn require_signed() -> Self {
+        Self {
+            require_signature: true,
+            developer_mode: false,
+            trusted_publishers: BTreeMap::new(),
+            revoked_publishers: BTreeSet::new(),
+            minimum_generations: BTreeMap::new(),
+        }
+    }
+
+    pub fn trust_publisher(
+        mut self,
+        publisher_key_id: impl Into<String>,
+        public_key_hex: impl Into<String>,
+    ) -> Self {
+        self.trusted_publishers
+            .insert(publisher_key_id.into(), public_key_hex.into());
+        self
+    }
+
+    pub fn revoke_publisher(mut self, publisher_key_id: impl Into<String>) -> Self {
+        self.revoked_publishers.insert(publisher_key_id.into());
+        self
+    }
+
+    pub fn require_minimum_generation(
+        mut self,
+        extension_id: ExtensionId,
+        generation: u64,
+    ) -> Self {
+        self.minimum_generations.insert(extension_id, generation);
+        self
+    }
+
+    pub fn is_developer_mode(&self) -> bool {
+        self.developer_mode
+    }
+}
+
+impl Default for PluginTrustPolicy {
+    fn default() -> Self {
+        Self::developer_mode()
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PluginSignatureEnvelope {
+    pub schema_version: u16,
+    pub publisher_key_id: String,
+    pub publisher_key: String,
+    pub signature: String,
+    pub package_sha256: String,
+    pub extension_id: ExtensionId,
+    pub version: String,
+    pub runtime: RuntimeKind,
+    pub manifest_schema: u16,
+    pub host_api: VersionRange,
+    pub generation: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginTrustRecord {
+    pub schema_version: u16,
+    pub extension_id: ExtensionId,
+    pub version: String,
+    pub package_sha256: String,
+    pub publisher_key_id: Option<String>,
+    pub generation: u64,
+    pub state: PluginTrustState,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PluginError {
@@ -80,6 +191,11 @@ pub enum PluginError {
     },
     InstallFailed(String),
     InstallConflict(ExtensionId),
+    TrustDenied {
+        extension_id: ExtensionId,
+        state: PluginTrustState,
+        message: String,
+    },
     VersionConflict {
         extension_id: ExtensionId,
         installed: String,
@@ -2143,6 +2259,8 @@ pub trait PluginHost {
 pub struct InMemoryPluginHost {
     manifests: BTreeMap<ExtensionId, ExtensionManifest>,
     package_roots: BTreeMap<ExtensionId, PathBuf>,
+    trust_policy: PluginTrustPolicy,
+    trust_records: BTreeMap<ExtensionId, PluginTrustRecord>,
     active: BTreeSet<ExtensionId>,
     states: BTreeMap<ExtensionId, ExtensionState>,
     processes: BTreeMap<ExtensionId, Arc<Mutex<Box<dyn RuntimeProcess>>>>,
@@ -2182,6 +2300,8 @@ impl Default for InMemoryPluginHost {
         Self {
             manifests: BTreeMap::new(),
             package_roots: BTreeMap::new(),
+            trust_policy: PluginTrustPolicy::default(),
+            trust_records: BTreeMap::new(),
             active: BTreeSet::new(),
             states: BTreeMap::new(),
             processes: BTreeMap::new(),
@@ -2215,6 +2335,17 @@ impl InMemoryPluginHost {
             runtime,
             ..Self::default()
         }
+    }
+
+    pub fn set_plugin_trust_policy(&mut self, policy: PluginTrustPolicy) {
+        self.trust_policy = policy;
+    }
+
+    pub fn plugin_trust_record(&self, id: &ExtensionId) -> Result<PluginTrustRecord, PluginError> {
+        self.trust_records
+            .get(id)
+            .cloned()
+            .ok_or_else(|| PluginError::NotFound(id.clone()))
     }
 
     pub fn set_extension_storage_store(
@@ -3067,6 +3198,9 @@ impl InMemoryPluginHost {
         }
 
         self.validate_manifest(&manifest)?;
+        let trust_record = package_root
+            .map(|package_root| self.verify_package_trust(&manifest, package_root))
+            .transpose()?;
         if let Some(package_root) = package_root {
             self.package_roots
                 .insert(manifest.id.clone(), package_root.to_path_buf());
@@ -3075,8 +3209,157 @@ impl InMemoryPluginHost {
         }
         self.states
             .insert(manifest.id.clone(), ExtensionState::Registered);
+        if let Some(trust_record) = trust_record {
+            self.trust_records.insert(manifest.id.clone(), trust_record);
+        }
         self.manifests.insert(manifest.id.clone(), manifest);
         Ok(())
+    }
+
+    fn verify_package_trust(
+        &self,
+        manifest: &ExtensionManifest,
+        package_root: &Path,
+    ) -> Result<PluginTrustRecord, PluginError> {
+        let package_sha256 = package_sha256(package_root)?;
+        let signature_path = package_root.join(PLUGIN_SIGNATURE_FILE);
+        if !signature_path.exists() {
+            if self.trust_policy.developer_mode && !self.trust_policy.require_signature {
+                return Ok(PluginTrustRecord {
+                    schema_version: PLUGIN_SIGNATURE_SCHEMA_VERSION,
+                    extension_id: manifest.id.clone(),
+                    version: manifest.version.clone(),
+                    package_sha256,
+                    publisher_key_id: None,
+                    generation: 0,
+                    state: PluginTrustState::DeveloperUnsigned,
+                });
+            }
+            return Err(PluginError::TrustDenied {
+                extension_id: manifest.id.clone(),
+                state: PluginTrustState::Unknown,
+                message: "unsigned package requires explicit developer mode".into(),
+            });
+        }
+
+        let bytes = fs::read(&signature_path).map_err(|error| PluginError::TrustDenied {
+            extension_id: manifest.id.clone(),
+            state: PluginTrustState::Unknown,
+            message: format!("package signature could not be read: {error}"),
+        })?;
+        if bytes.len() > MAX_PLUGIN_SIGNATURE_BYTES {
+            return Err(PluginError::TrustDenied {
+                extension_id: manifest.id.clone(),
+                state: PluginTrustState::Blocked,
+                message: format!("package signature exceeds {MAX_PLUGIN_SIGNATURE_BYTES} bytes"),
+            });
+        }
+        let envelope =
+            serde_json::from_slice::<PluginSignatureEnvelope>(&bytes).map_err(|error| {
+                PluginError::TrustDenied {
+                    extension_id: manifest.id.clone(),
+                    state: PluginTrustState::Blocked,
+                    message: format!("package signature is invalid: {error}"),
+                }
+            })?;
+        if envelope.schema_version != PLUGIN_SIGNATURE_SCHEMA_VERSION
+            || envelope.extension_id != manifest.id
+            || envelope.version != manifest.version
+            || envelope.runtime != manifest.runtime
+            || envelope.manifest_schema != manifest.manifest_schema
+            || envelope.host_api != manifest.host_api
+            || envelope.package_sha256 != package_sha256
+            || envelope.generation == 0
+        {
+            return Err(PluginError::TrustDenied {
+                extension_id: manifest.id.clone(),
+                state: PluginTrustState::Incompatible,
+                message: "package signature identity or digest does not match the manifest".into(),
+            });
+        }
+        if self
+            .trust_policy
+            .revoked_publishers
+            .contains(&envelope.publisher_key_id)
+        {
+            return Err(PluginError::TrustDenied {
+                extension_id: manifest.id.clone(),
+                state: PluginTrustState::Revoked,
+                message: format!("publisher {} is revoked", envelope.publisher_key_id),
+            });
+        }
+        if self
+            .trust_policy
+            .minimum_generations
+            .get(&manifest.id)
+            .is_some_and(|minimum| envelope.generation < *minimum)
+        {
+            return Err(PluginError::TrustDenied {
+                extension_id: manifest.id.clone(),
+                state: PluginTrustState::Blocked,
+                message: "package generation is below the accepted minimum".into(),
+            });
+        }
+        let Some(expected_key) = self
+            .trust_policy
+            .trusted_publishers
+            .get(&envelope.publisher_key_id)
+        else {
+            return Err(PluginError::TrustDenied {
+                extension_id: manifest.id.clone(),
+                state: PluginTrustState::Unknown,
+                message: format!("publisher {} is not trusted", envelope.publisher_key_id),
+            });
+        };
+        if expected_key != &envelope.publisher_key {
+            return Err(PluginError::TrustDenied {
+                extension_id: manifest.id.clone(),
+                state: PluginTrustState::Blocked,
+                message: "package publisher key does not match the trusted key".into(),
+            });
+        }
+        let public_key = decode_hex(&envelope.publisher_key, 32).map_err(|message| {
+            PluginError::TrustDenied {
+                extension_id: manifest.id.clone(),
+                state: PluginTrustState::Blocked,
+                message: format!("publisher key is invalid: {message}"),
+            }
+        })?;
+        let public_key: [u8; 32] = public_key.try_into().expect("key length is checked");
+        let verifying_key =
+            VerifyingKey::from_bytes(&public_key).map_err(|error| PluginError::TrustDenied {
+                extension_id: manifest.id.clone(),
+                state: PluginTrustState::Blocked,
+                message: format!("publisher key is invalid: {error}"),
+            })?;
+        let signature =
+            decode_hex(&envelope.signature, 64).map_err(|message| PluginError::TrustDenied {
+                extension_id: manifest.id.clone(),
+                state: PluginTrustState::Blocked,
+                message: format!("package signature is invalid: {message}"),
+            })?;
+        let signature =
+            Signature::from_slice(&signature).map_err(|error| PluginError::TrustDenied {
+                extension_id: manifest.id.clone(),
+                state: PluginTrustState::Blocked,
+                message: format!("package signature is invalid: {error}"),
+            })?;
+        verifying_key
+            .verify(&canonical_plugin_signature_payload(&envelope), &signature)
+            .map_err(|_| PluginError::TrustDenied {
+                extension_id: manifest.id.clone(),
+                state: PluginTrustState::Blocked,
+                message: "package signature verification failed".into(),
+            })?;
+        Ok(PluginTrustRecord {
+            schema_version: PLUGIN_SIGNATURE_SCHEMA_VERSION,
+            extension_id: manifest.id.clone(),
+            version: manifest.version.clone(),
+            package_sha256,
+            publisher_key_id: Some(envelope.publisher_key_id),
+            generation: envelope.generation,
+            state: PluginTrustState::Trusted,
+        })
     }
 
     fn validate_manifest(&self, manifest: &ExtensionManifest) -> Result<(), PluginError> {
@@ -3394,6 +3677,7 @@ impl InMemoryPluginHost {
         self.close_runtime_lease(id, runtime_nonce.as_deref());
         self.manifests.remove(id);
         self.package_roots.remove(id);
+        self.trust_records.remove(id);
         self.active.remove(id);
         self.states.remove(id);
         self.processes.remove(id);
@@ -4165,6 +4449,9 @@ impl PluginHost for InMemoryPluginHost {
             ));
         } else {
             self.validate_manifest(&manifest)?;
+            if let Err(error) = self.verify_package_trust(&manifest, source_dir) {
+                issues.push(format!("package trust is not ready: {error:?}"));
+            }
         }
 
         let existing = self
@@ -4251,6 +4538,7 @@ impl PluginHost for InMemoryPluginHost {
                 });
             }
         }
+        self.verify_package_trust(&manifest, source_dir)?;
         let staging = install_root.join(format!(".{}.staging-{}", id.0, std::process::id()));
         if staging.exists() {
             fs::remove_dir_all(&staging)
@@ -5052,6 +5340,123 @@ fn version_is_newer(requested: &str, installed: &str) -> bool {
     }
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginSignaturePayload<'a> {
+    schema_version: u16,
+    publisher_key_id: &'a str,
+    publisher_key: &'a str,
+    package_sha256: &'a str,
+    extension_id: &'a ExtensionId,
+    version: &'a str,
+    runtime: &'a RuntimeKind,
+    manifest_schema: u16,
+    host_api: &'a VersionRange,
+    generation: u64,
+}
+
+fn canonical_plugin_signature_payload(envelope: &PluginSignatureEnvelope) -> Vec<u8> {
+    serde_json::to_vec(&PluginSignaturePayload {
+        schema_version: envelope.schema_version,
+        publisher_key_id: &envelope.publisher_key_id,
+        publisher_key: &envelope.publisher_key,
+        package_sha256: &envelope.package_sha256,
+        extension_id: &envelope.extension_id,
+        version: &envelope.version,
+        runtime: &envelope.runtime,
+        manifest_schema: envelope.manifest_schema,
+        host_api: &envelope.host_api,
+        generation: envelope.generation,
+    })
+    .expect("plugin signature payload should serialize")
+}
+
+fn package_sha256(root: &Path) -> Result<String, PluginError> {
+    let mut files = Vec::new();
+    collect_package_files(root, Path::new(""), &mut files)?;
+    files.sort();
+    let mut digest = Sha256::new();
+    for relative in files {
+        let relative_text = relative.to_string_lossy().replace('\\', "/");
+        let bytes = fs::read(root.join(&relative)).map_err(|error| {
+            PluginError::InstallFailed(format!(
+                "package file {} could not be read: {error}",
+                relative_text
+            ))
+        })?;
+        digest.update((relative_text.len() as u64).to_be_bytes());
+        digest.update(relative_text.as_bytes());
+        digest.update((bytes.len() as u64).to_be_bytes());
+        digest.update(bytes);
+    }
+    Ok(encode_hex(&digest.finalize()))
+}
+
+fn collect_package_files(
+    root: &Path,
+    relative_root: &Path,
+    files: &mut Vec<PathBuf>,
+) -> Result<(), PluginError> {
+    let entries = fs::read_dir(root).map_err(|error| {
+        PluginError::InstallFailed(format!("package directory could not be read: {error}"))
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            PluginError::InstallFailed(format!("package entry could not be read: {error}"))
+        })?;
+        let path = entry.path();
+        let relative = relative_root.join(entry.file_name());
+        let file_type = entry.file_type().map_err(|error| {
+            PluginError::InstallFailed(format!("package entry type could not be read: {error}"))
+        })?;
+        if file_type.is_dir() {
+            collect_package_files(&path, &relative, files)?;
+        } else if file_type.is_file() {
+            if relative != Path::new(PLUGIN_SIGNATURE_FILE) {
+                files.push(relative);
+            }
+        } else {
+            return Err(PluginError::InstallFailed(
+                "plugin packages cannot contain symbolic links or special files".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn encode_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        encoded.push(HEX[(byte >> 4) as usize] as char);
+        encoded.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    encoded
+}
+
+fn decode_hex(value: &str, expected_bytes: usize) -> Result<Vec<u8>, String> {
+    if value.len() != expected_bytes * 2 {
+        return Err(format!("expected {expected_bytes} bytes"));
+    }
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(expected_bytes);
+    for index in (0..bytes.len()).step_by(2) {
+        let high = hex_digit(bytes[index]).ok_or_else(|| "non-hex digit".to_owned())?;
+        let low = hex_digit(bytes[index + 1]).ok_or_else(|| "non-hex digit".to_owned())?;
+        decoded.push((high << 4) | low);
+    }
+    Ok(decoded)
+}
+
+fn hex_digit(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        b'A'..=b'F' => Some(value - b'A' + 10),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::VecDeque;
@@ -5063,6 +5468,7 @@ mod tests {
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     use super::*;
+    use ed25519_dalek::{Signer, SigningKey};
     use velvet_layout_model::WorkbenchZone;
     use velvet_persistence::{
         InMemoryStateSnapshotStore, JsonFileStateSnapshotStore, StateSnapshotStore,
@@ -5131,6 +5537,40 @@ mod tests {
             serde_json::to_vec_pretty(manifest).expect("the manifest should serialize"),
         )
         .expect("the manifest should be written");
+    }
+
+    fn write_signed_package(
+        root: &PathBuf,
+        manifest: &ExtensionManifest,
+        publisher_key_id: &str,
+        signing_key: &SigningKey,
+        generation: u64,
+    ) {
+        write_package(root, manifest);
+        let public_key = encode_hex(signing_key.verifying_key().as_bytes());
+        let mut envelope = PluginSignatureEnvelope {
+            schema_version: PLUGIN_SIGNATURE_SCHEMA_VERSION,
+            publisher_key_id: publisher_key_id.into(),
+            publisher_key: public_key,
+            signature: String::new(),
+            package_sha256: package_sha256(root).expect("package digest should be computable"),
+            extension_id: manifest.id.clone(),
+            version: manifest.version.clone(),
+            runtime: manifest.runtime.clone(),
+            manifest_schema: manifest.manifest_schema,
+            host_api: manifest.host_api.clone(),
+            generation,
+        };
+        envelope.signature = encode_hex(
+            &signing_key
+                .sign(&canonical_plugin_signature_payload(&envelope))
+                .to_bytes(),
+        );
+        fs::write(
+            root.join(PLUGIN_SIGNATURE_FILE),
+            serde_json::to_vec_pretty(&envelope).expect("the package signature should serialize"),
+        )
+        .expect("the package signature should be written");
     }
 
     fn write_zip_package(path: &PathBuf, manifest: &ExtensionManifest, entries: &[(&str, &[u8])]) {
@@ -5223,7 +5663,7 @@ mod tests {
         let root = temporary_manifest_dir();
         fs::create_dir_all(&root).expect("the archive root should be writable");
         let archive_path = root.join("example.zip");
-        let manifest = view_manifest(None);
+        let manifest = view_manifest(Some(WorkbenchZone::Navigation));
         write_zip_package(
             &archive_path,
             &manifest,
@@ -7432,6 +7872,121 @@ mod tests {
             .expect("the example should be stoppable");
 
         fs::remove_dir_all(root).expect("the temporary example directory should be removed");
+    }
+
+    #[test]
+    fn unsigned_packages_are_developer_only_and_signed_packages_record_trust() {
+        let source = temporary_manifest_dir();
+        let install_root = temporary_manifest_dir();
+        let manifest = view_manifest(Some(WorkbenchZone::Navigation));
+        write_package(&source, &manifest);
+
+        let mut developer_host = InMemoryPluginHost::default();
+        developer_host
+            .install_from_directory(&source, &install_root)
+            .expect("developer mode should admit an unsigned local package");
+        assert_eq!(
+            developer_host
+                .plugin_trust_record(&manifest.id)
+                .unwrap()
+                .state,
+            PluginTrustState::DeveloperUnsigned
+        );
+
+        let mut release_host = InMemoryPluginHost::default();
+        release_host.set_plugin_trust_policy(PluginTrustPolicy::require_signed());
+        let preview = release_host
+            .inspect_from_directory(&source)
+            .expect("trust failures should be reviewable before copy");
+        assert!(!preview.can_install);
+        assert!(preview
+            .issues
+            .iter()
+            .any(|issue| issue.contains("unsigned package")));
+        assert!(matches!(
+            release_host.install_from_directory(&source, &temporary_manifest_dir()),
+            Err(PluginError::TrustDenied {
+                state: PluginTrustState::Unknown,
+                ..
+            })
+        ));
+
+        let signing_key = SigningKey::from_bytes(&[7u8; 32]);
+        write_signed_package(&source, &manifest, "publisher.test", &signing_key, 1);
+        let policy = PluginTrustPolicy::require_signed().trust_publisher(
+            "publisher.test",
+            encode_hex(signing_key.verifying_key().as_bytes()),
+        );
+        release_host.set_plugin_trust_policy(policy);
+        let signed_install_root = temporary_manifest_dir();
+        release_host
+            .install_from_directory(&source, &signed_install_root)
+            .expect("a trusted signed package should install");
+        let record = release_host
+            .plugin_trust_record(&manifest.id)
+            .expect("the signed package should have a trust record");
+        assert_eq!(record.state, PluginTrustState::Trusted);
+        assert_eq!(record.generation, 1);
+
+        fs::write(source.join("tampered.txt"), b"changed")
+            .expect("the package should be mutable for the tamper fixture");
+        let mut tampered_host = InMemoryPluginHost::default();
+        tampered_host.set_plugin_trust_policy(PluginTrustPolicy::require_signed().trust_publisher(
+            "publisher.test",
+            encode_hex(signing_key.verifying_key().as_bytes()),
+        ));
+        assert!(matches!(
+            tampered_host.install_from_directory(&source, &temporary_manifest_dir()),
+            Err(PluginError::TrustDenied {
+                state: PluginTrustState::Incompatible,
+                ..
+            })
+        ));
+
+        let _ = fs::remove_dir_all(source);
+        let _ = fs::remove_dir_all(install_root);
+        let _ = fs::remove_dir_all(signed_install_root);
+    }
+
+    #[test]
+    fn revoked_or_downgraded_signed_packages_stay_inactive() {
+        let source = temporary_manifest_dir();
+        let install_root = temporary_manifest_dir();
+        let manifest = view_manifest(Some(WorkbenchZone::Navigation));
+        let signing_key = SigningKey::from_bytes(&[9u8; 32]);
+        write_signed_package(&source, &manifest, "publisher.revoked", &signing_key, 2);
+        let public_key = encode_hex(signing_key.verifying_key().as_bytes());
+
+        let mut revoked_host = InMemoryPluginHost::default();
+        revoked_host.set_plugin_trust_policy(
+            PluginTrustPolicy::require_signed()
+                .trust_publisher("publisher.revoked", public_key.clone())
+                .revoke_publisher("publisher.revoked"),
+        );
+        assert!(matches!(
+            revoked_host.install_from_directory(&source, &install_root),
+            Err(PluginError::TrustDenied {
+                state: PluginTrustState::Revoked,
+                ..
+            })
+        ));
+
+        let mut downgraded_host = InMemoryPluginHost::default();
+        downgraded_host.set_plugin_trust_policy(
+            PluginTrustPolicy::require_signed()
+                .trust_publisher("publisher.revoked", public_key)
+                .require_minimum_generation(manifest.id.clone(), 3),
+        );
+        assert!(matches!(
+            downgraded_host.install_from_directory(&source, &temporary_manifest_dir()),
+            Err(PluginError::TrustDenied {
+                state: PluginTrustState::Blocked,
+                ..
+            })
+        ));
+
+        let _ = fs::remove_dir_all(source);
+        let _ = fs::remove_dir_all(install_root);
     }
 
     #[test]

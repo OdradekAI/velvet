@@ -4364,9 +4364,11 @@ name = "velvet-plugin-host"
 version = "0.0.4"
 dependencies = [
  "crc32fast",
+ "ed25519-dalek",
  "libc",
  "serde",
  "serde_json",
+ "sha2",
  "velvet-job-system",
  "velvet-layout-model",
  "velvet-persistence",

@@ -73,6 +73,19 @@ extension package/data pair. Uninstall removes the package after stopping its
 runtime but retains extension data and trust/recovery records until explicit
 user deletion.
 
+The first implementation slice lives in `PluginHost`: `signature.json` is a
+bounded Ed25519 envelope whose canonical payload binds the package digest,
+extension identity, version, runtime, manifest schema, host API and generation.
+The digest covers every regular package file except the envelope itself, and
+package-root validation still rejects links and special files. A
+`PluginTrustPolicy` can require trusted publisher keys, reject revoked keys or
+lower generations, and admit unsigned packages only through its explicit
+developer-mode policy. The host records the resulting `PluginTrustRecord` and
+fails closed on tampering, unknown publishers or incompatible identity.
+The current slice keeps policy and records in the in-memory host seam so the
+existing skeleton remains usable; durable trust-store persistence, Profile
+scoping, key rotation and native production policy wiring remain release gates.
+
 ### Offline incident response
 
 Incident response uses bounded signed `SafetyNotice` metadata rather than a

@@ -483,10 +483,13 @@ until the health checkpoint. A failed activation or migration rolls back only
 that extension. Uninstall stops the runtime and removes the package while
 retaining namespaced data and trust/recovery records until explicit deletion.
 
-This amendment is an architecture decision, not a claim that the current
-source tree has the signature envelope or trust store. The foundation plan
-keeps those fixtures as a P1 implementation and release gate. A sidecar still
-provides availability isolation only; it is not a security sandbox.
+The first `PluginHost` verifier slice now implements the bounded Ed25519
+envelope, whole-package digest binding, publisher revocation/lower-generation
+checks and explicit developer-mode policy. The trust policy and records remain
+in-memory in the architecture skeleton; durable trust storage, Profile scope,
+key rotation/freshness and native production wiring stay P1 release gates. A
+sidecar still provides availability isolation only; it is not a security
+sandbox.
 
 ## Alternatives considered
 
