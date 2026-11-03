@@ -244,6 +244,7 @@ export type CoreRequest =
     }
   | { readonly protocolVersion: ProtocolVersion; readonly kind: 'query-plugin-runtime-recovery' }
   | { readonly protocolVersion: ProtocolVersion; readonly kind: 'query-import-quarantine' }
+  | { readonly protocolVersion: ProtocolVersion; readonly kind: 'query-operation-receipts' }
   | { readonly protocolVersion: ProtocolVersion; readonly kind: 'query-approved-source-roots' }
   | {
       readonly protocolVersion: ProtocolVersion;
@@ -294,6 +295,11 @@ export type CoreRequest =
       readonly bundleId: string;
       readonly planId: string;
       readonly sectionId: string;
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'commit-asset-delete';
+      readonly plan: CoreOperationPlan;
     }
   | {
       readonly protocolVersion: ProtocolVersion;
@@ -493,6 +499,8 @@ export type CoreResponse =
       readonly kind: 'import-quarantine';
       readonly entries: readonly ImportQuarantineSummary[];
     }
+  | { readonly kind: 'operation-receipt'; readonly receipt: CoreOperationReceipt }
+  | { readonly kind: 'operation-receipts'; readonly receipts: readonly CoreOperationReceipt[] }
   | { readonly kind: 'approved-source-roots'; readonly roots: readonly string[] }
   | { readonly kind: 'job'; readonly job: CoreJobSnapshot }
   | { readonly kind: 'jobs'; readonly jobs: readonly CoreJobSnapshot[] }

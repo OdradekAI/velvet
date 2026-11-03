@@ -178,7 +178,8 @@ use velvet_preview_core::{
 };
 use velvet_workbench_protocol::{
     Command, CoreError, CoreTransport, CrashCaptureEvidence, ImportPlan, ImportQuarantineEntry,
-    ImportQuarantineSummary, ImportReceipt, PlatformPreflightEvidence, PluginDiagnosticEvent,
+    ImportQuarantineSummary, ImportReceipt, OperationPlan, OperationReceipt,
+    PlatformPreflightEvidence, PluginDiagnosticEvent,
     PluginDiagnosticKind as WirePluginDiagnosticKind, PluginDisableReason, PluginInstallPreviewDto,
     PluginProjectionDto, PluginResourceDto, PluginRuntimeRecoveryDto, PluginRuntimeRecoveryState,
     PluginStorageRecoveryDto, PluginStorageRecoveryStatus, PortableBundle, ProfileState, Query,
@@ -695,11 +696,31 @@ impl ApplicationCore {
         OperationCoordinator::new(self.operation_receipts.clone())
     }
 
+    pub fn operation_receipts(&self) -> Result<Vec<OperationReceipt>, CoreError> {
+        self.operation_coordinator()
+            .load_receipts()
+            .map_err(operation_error)
+    }
+
     /// Builds the concrete file provider against the same source owner used by
     /// Preview. The provider borrows the resolver so every operation repeats
     /// canonical path, approved-root and volume validation at commit time.
     pub fn file_asset_operation_provider(&self) -> FileAssetOperationProvider<'_> {
         FileAssetOperationProvider::new(self.preview_locations.as_ref())
+    }
+
+    /// Commits the first concrete operation slice through the host-owned
+    /// coordinator. The provider accepts only an Asset permanent-delete plan;
+    /// no path, destination or shell command crosses this method.
+    pub fn commit_asset_delete(
+        &self,
+        plan: &OperationPlan,
+        now_ms: u64,
+    ) -> Result<OperationReceipt, CoreError> {
+        let mut provider = self.file_asset_operation_provider();
+        self.operation_coordinator()
+            .commit(plan, now_ms, &mut provider)
+            .map_err(operation_error)
     }
 
     /// Imports a portable bundle through the application-owned snapshot and
@@ -2026,6 +2047,9 @@ impl ApplicationCore {
             }) => self
                 .discard_import_quarantine(&bundle_id, &plan_id, &section_id)
                 .map(|_| Response::Accepted),
+            Request::Command(Command::CommitAssetDelete { plan }) => self
+                .commit_asset_delete(&plan, diagnostic_timestamp_ms())
+                .map(Response::OperationReceipt),
             Request::Command(Command::UninstallPlugin { extension_id }) => {
                 self.uninstall_plugin(&extension_id).map_err(plugin_error)?;
                 Ok(Response::Accepted)
@@ -2181,6 +2205,9 @@ impl ApplicationCore {
             Request::Query(Query::ImportQuarantine) => self
                 .import_quarantine_summaries()
                 .map(Response::ImportQuarantine),
+            Request::Query(Query::OperationReceipts) => {
+                self.operation_receipts().map(Response::OperationReceipts)
+            }
             Request::Query(Query::Jobs) => Ok(Response::Jobs(self.job_snapshots())),
             Request::Query(Query::Snapshot) => Ok(Response::Snapshot(
                 velvet_workbench_protocol::AuthoritativeSnapshot {
@@ -2797,6 +2824,10 @@ fn normalize_plugin_diagnostic_event(mut event: PluginDiagnosticEvent) -> Plugin
     event
 }
 
+fn operation_error(error: OperationCoordinatorError) -> CoreError {
+    CoreError::Operation(format!("{error:?}"))
+}
+
 fn diagnostic_timestamp_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -3000,7 +3031,9 @@ mod tests {
         RuntimeProcess,
     };
     use velvet_workbench_protocol::{
-        PortableBundle, PortableBundleScope, PortableBundleSection, PORTABLE_BUNDLE_SCHEMA_VERSION,
+        OperationKind, OperationRetryPolicy, OperationTarget, OperationUndoCapability,
+        PortableBundle, PortableBundleScope, PortableBundleSection, OPERATION_SCHEMA_VERSION,
+        PORTABLE_BUNDLE_SCHEMA_VERSION,
     };
     static NEXT_TEST_FILE: AtomicU64 = AtomicU64::new(0);
 
@@ -3781,6 +3814,75 @@ mod tests {
             }
             other => panic!("expected fallback preview response, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn application_core_commits_asset_delete_through_typed_command() {
+        let source_path = temporary_layout_path().with_extension("delete.txt");
+        let plugin_root = temporary_layout_path().with_extension("plugins");
+        let jobs_path = temporary_layout_path().with_extension("jobs.json");
+        let asset_sources_path = temporary_layout_path().with_extension("asset-sources.json");
+        fs::write(&source_path, "delete me").expect("the delete source should be writable");
+        let mut core = ApplicationCore::with_store_and_plugin_directory_and_job_store_and_profile_store_and_asset_source_store(
+            Arc::new(InMemoryLayoutStateStore::default()),
+            &plugin_root,
+            Arc::new(JsonFileJobStateStore::new(&jobs_path)),
+            Arc::new(InMemoryProfileStateStore::default()),
+            Arc::new(JsonFileAssetSourceLocationStore::new(&asset_sources_path)),
+        );
+        let root = source_path.parent().expect("source should have a parent");
+        core.add_approved_source_root(root)
+            .expect("the source root should be approved");
+        core.register_preview_asset_with_approved_root(
+            AssetId("asset-delete".into()),
+            &source_path,
+            ContentKindId("text/plain".into()),
+            Some(ContentFingerprint("sha256:asset-delete".into())),
+            Some(root),
+        )
+        .expect("the source location should register");
+        let fingerprint = "sha256:asset-delete".into();
+        let plan = OperationPlan {
+            schema_version: OPERATION_SCHEMA_VERSION,
+            plan_id: "plan-delete".into(),
+            operation_id: "operation-delete".into(),
+            owner_id: ASSET_OPERATION_OWNER.into(),
+            kind: OperationKind::Delete,
+            targets: vec![OperationTarget {
+                target_id: "asset-delete".into(),
+                expected_revision: None,
+                expected_fingerprint: Some(fingerprint),
+            }],
+            created_at_ms: 0,
+            expires_at_ms: u64::MAX,
+            retry_policy: OperationRetryPolicy::Never,
+            undo: OperationUndoCapability::None,
+        };
+        let response = core
+            .dispatch(Request::Command(Command::CommitAssetDelete {
+                plan: plan.clone(),
+            }))
+            .expect("asset delete should commit");
+        assert!(matches!(
+            response,
+            Response::OperationReceipt(receipt)
+                if receipt.status == velvet_workbench_protocol::OperationReceiptStatus::Committed
+        ));
+        assert!(!source_path.exists());
+        assert!(matches!(
+            core.dispatch(Request::Query(Query::OperationReceipts))
+                .expect("operation receipts should be queryable"),
+            Response::OperationReceipts(receipts)
+                if receipts.len() == 1
+                    && receipts[0].operation_id == "operation-delete"
+        ));
+        assert!(matches!(
+            core.dispatch(Request::Command(Command::CommitAssetDelete { plan })),
+            Err(CoreError::Operation(message)) if message.contains("AlreadyRecorded")
+        ));
+        let _ = fs::remove_dir_all(plugin_root);
+        let _ = fs::remove_file(jobs_path);
+        let _ = fs::remove_file(asset_sources_path);
     }
 
     #[test]

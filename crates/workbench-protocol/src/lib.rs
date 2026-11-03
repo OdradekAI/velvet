@@ -1577,6 +1577,9 @@ pub enum Command {
         plan_id: String,
         section_id: String,
     },
+    CommitAssetDelete {
+        plan: OperationPlan,
+    },
     UninstallPlugin {
         extension_id: ExtensionId,
     },
@@ -1686,6 +1689,7 @@ pub enum Query {
     },
     PluginRuntimeRecovery,
     ImportQuarantine,
+    OperationReceipts,
     Jobs,
     Snapshot,
     RequestOutcome {
@@ -1714,6 +1718,8 @@ pub enum Response {
     PluginStorageRecovery(PluginStorageRecoveryDto),
     PluginRuntimeRecovery(Vec<PluginRuntimeRecoveryDto>),
     ImportQuarantine(Vec<ImportQuarantineSummary>),
+    OperationReceipt(OperationReceipt),
+    OperationReceipts(Vec<OperationReceipt>),
     PluginProjection(PluginProjectionDto),
     Job(JobSnapshot),
     Jobs(Vec<JobSnapshot>),
@@ -1822,6 +1828,7 @@ pub enum CoreError {
     Profile(String),
     Recovery(String),
     Release(String),
+    Operation(String),
     PluginResourceNotFound {
         extension_id: String,
         locale: String,

@@ -545,6 +545,13 @@ impl From<CoreError> for WireError {
                 expected_revision: None,
                 actual_revision: None,
             },
+            CoreError::Operation(message) => Self {
+                code: "operation-error".into(),
+                message,
+                retryable: false,
+                expected_revision: None,
+                actual_revision: None,
+            },
             CoreError::PluginResourceNotFound {
                 extension_id,
                 locale,
@@ -776,6 +783,10 @@ pub enum WireRequest {
         #[serde(rename = "protocolVersion")]
         protocol_version: u16,
     },
+    QueryOperationReceipts {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+    },
     QueryApprovedSourceRoots {
         #[serde(rename = "protocolVersion")]
         protocol_version: u16,
@@ -840,6 +851,11 @@ pub enum WireRequest {
         plan_id: String,
         #[serde(rename = "sectionId")]
         section_id: String,
+    },
+    CommitAssetDelete {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        plan: velvet_workbench_protocol::OperationPlan,
     },
     InstallPlugin {
         #[serde(rename = "protocolVersion")]
@@ -1155,6 +1171,12 @@ impl WireRequest {
                     velvet_workbench_protocol::Query::ImportQuarantine,
                 ))
             }
+            Self::QueryOperationReceipts { protocol_version } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Query(
+                    velvet_workbench_protocol::Query::OperationReceipts,
+                ))
+            }
             Self::QueryApprovedSourceRoots { protocol_version } => {
                 validate_inner_protocol(outer_protocol_version, protocol_version)?;
                 Ok(Request::Query(
@@ -1260,6 +1282,13 @@ impl WireRequest {
                     plan_id,
                     section_id,
                 }))
+            }
+            Self::CommitAssetDelete {
+                protocol_version,
+                plan,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Command(Command::CommitAssetDelete { plan }))
             }
             Self::InstallPlugin {
                 protocol_version,
@@ -1796,6 +1825,12 @@ enum WireResponse {
     ImportQuarantine {
         entries: Vec<velvet_workbench_protocol::ImportQuarantineSummary>,
     },
+    OperationReceipt {
+        receipt: velvet_workbench_protocol::OperationReceipt,
+    },
+    OperationReceipts {
+        receipts: Vec<velvet_workbench_protocol::OperationReceipt>,
+    },
     Job {
         job: WireJobSnapshot,
     },
@@ -1858,6 +1893,8 @@ impl WireResponseEnvelope {
                 WireResponse::PluginRuntimeRecovery { recoveries }
             }
             Response::ImportQuarantine(entries) => WireResponse::ImportQuarantine { entries },
+            Response::OperationReceipt(receipt) => WireResponse::OperationReceipt { receipt },
+            Response::OperationReceipts(receipts) => WireResponse::OperationReceipts { receipts },
             Response::Job(job) => WireResponse::Job {
                 job: WireJobSnapshot::from(job),
             },
@@ -3708,6 +3745,80 @@ mod tests {
         assert_eq!(value["response"]["kind"], "import-quarantine");
         assert_eq!(value["response"]["entries"][0]["payloadBytes"], 3);
         assert!(value["response"]["entries"][0].get("payload").is_none());
+
+        let operation_query: WireRequestEnvelope = serde_json::from_str(
+            r#"{
+                "protocolVersion": 1,
+                "requestId": 47,
+                "request": {
+                    "kind": "query-operation-receipts",
+                    "protocolVersion": 1
+                }
+            }"#,
+        )
+        .expect("operation receipt query should deserialize");
+        assert!(matches!(
+            operation_query.request.into_core(1).expect("query should map"),
+            Request::Query(velvet_workbench_protocol::Query::OperationReceipts)
+        ));
+
+        let operation_plan = velvet_workbench_protocol::OperationPlan {
+            schema_version: 1,
+            plan_id: "plan-delete".into(),
+            operation_id: "operation-delete".into(),
+            owner_id: "asset".into(),
+            kind: velvet_workbench_protocol::OperationKind::Delete,
+            targets: vec![velvet_workbench_protocol::OperationTarget {
+                target_id: "asset-1".into(),
+                expected_revision: None,
+                expected_fingerprint: Some("sha256:asset-1".into()),
+            }],
+            created_at_ms: 1,
+            expires_at_ms: 100,
+            retry_policy: velvet_workbench_protocol::OperationRetryPolicy::Never,
+            undo: velvet_workbench_protocol::OperationUndoCapability::None,
+        };
+        let commit: WireRequestEnvelope = serde_json::from_value(serde_json::json!({
+            "protocolVersion": 1,
+            "requestId": 48,
+            "request": {
+                "kind": "commit-asset-delete",
+                "protocolVersion": 1,
+                "plan": operation_plan,
+            }
+        }))
+        .expect("asset delete command should deserialize");
+        assert!(matches!(
+            commit.request.into_core(1).expect("command should map"),
+            Request::Command(Command::CommitAssetDelete { plan })
+                if plan.operation_id == "operation-delete"
+        ));
+
+        let response = WireResponseEnvelope::from_core(
+            velvet_workbench_protocol::ResponseEnvelope {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: RequestId(49),
+                response: Response::OperationReceipt(
+                    velvet_workbench_protocol::OperationReceipt {
+                        schema_version: 1,
+                        plan_id: "plan-delete".into(),
+                        operation_id: "operation-delete".into(),
+                        status: velvet_workbench_protocol::OperationReceiptStatus::Committed,
+                        reconciled: true,
+                        recorded_at_ms: 42,
+                        items: vec![velvet_workbench_protocol::OperationItemReceipt {
+                            target_id: "asset-1".into(),
+                            status: velvet_workbench_protocol::OperationReceiptStatus::Committed,
+                            message: None,
+                        }],
+                        undo_token: None,
+                    },
+                ),
+            },
+        );
+        let value = serde_json::to_value(response).expect("operation receipt should serialize");
+        assert_eq!(value["response"]["kind"], "operation-receipt");
+        assert_eq!(value["response"]["receipt"]["operationId"], "operation-delete");
     }
 
     #[test]
