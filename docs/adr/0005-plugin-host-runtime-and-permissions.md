@@ -177,6 +177,9 @@ malformed runtime output and fail the invocation before projection. The
 `args`, `context` and `result` values remain extension- or contribution-owned
 payloads; their schemas are validated by the owner that declared the command,
 Job or storage participant rather than by a generic host map.
+Every runtime request is also bounded at 4 MiB before it crosses the process
+boundary; responses have their own larger bounded line limit. Oversized input
+is rejected as a local invocation failure and never written to the sidecar.
 The alpha `ProcessPluginRuntime` now captures a bounded stderr tail, reports
 exit status and Unix signal evidence, and starts sidecars in a dedicated Unix
 process group so shutdown can terminate descendants. Linux also arms

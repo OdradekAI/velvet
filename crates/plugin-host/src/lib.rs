@@ -214,6 +214,7 @@ fn default_allowed_programs() -> BTreeSet<String> {
 const RUNTIME_PROTOCOL_VERSION: u16 = 1;
 const RUNTIME_INVOCATION_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_JOB_EVENTS: usize = 128;
+pub const MAX_RUNTIME_REQUEST_BYTES: usize = 4 * 1024 * 1024;
 const MAX_RUNTIME_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
 const STORAGE_EXPORT_METHOD: &str = "storage.export";
 const STORAGE_MIGRATE_METHOD: &str = "storage.migrate";
@@ -817,6 +818,11 @@ impl PluginJobHandle {
             args,
             context,
         };
+        validate_runtime_payload(
+            &plugin_invocation.extension_id,
+            &plugin_invocation.args,
+            &plugin_invocation.context,
+        )?;
         let result = self
             .process
             .lock()
@@ -1315,6 +1321,11 @@ impl RuntimeProcess for ChildRuntimeProcess {
         };
         let line = serde_json::to_string(&request)
             .map_err(|error| RuntimeError::InvocationFailed(error.to_string()))?;
+        if line.len() > MAX_RUNTIME_REQUEST_BYTES {
+            return Err(RuntimeError::InvocationFailed(format!(
+                "runtime invocation request exceeded {MAX_RUNTIME_REQUEST_BYTES} bytes"
+            )));
+        }
         let (response_sender, response_receiver) = mpsc::channel();
         self.requests
             .as_ref()
@@ -1545,6 +1556,27 @@ struct RuntimeInvocationResponse {
     error: Option<String>,
     #[serde(default)]
     events: Vec<PluginInvocationEvent>,
+}
+
+fn validate_runtime_payload(
+    extension_id: &ExtensionId,
+    args: &Value,
+    context: &Value,
+) -> Result<(), PluginError> {
+    let bytes =
+        serde_json::to_vec(&(args, context)).map_err(|error| PluginError::RuntimeInvocation {
+            extension_id: extension_id.clone(),
+            message: format!("runtime invocation payload could not be encoded: {error}"),
+        })?;
+    if bytes.len() > MAX_RUNTIME_REQUEST_BYTES {
+        return Err(PluginError::RuntimeInvocation {
+            extension_id: extension_id.clone(),
+            message: format!(
+                "runtime invocation request exceeded {MAX_RUNTIME_REQUEST_BYTES} bytes"
+            ),
+        });
+    }
+    Ok(())
 }
 
 fn runtime_io_loop(
@@ -2679,6 +2711,11 @@ impl InMemoryPluginHost {
                 "operation": method,
             }),
         };
+        validate_runtime_payload(
+            &invocation.extension_id,
+            &invocation.args,
+            &invocation.context,
+        )?;
         let result = match process.lock() {
             Ok(mut process) => process.invoke(&invocation),
             Err(_) => Err(RuntimeError::InvocationFailed(
@@ -3362,6 +3399,11 @@ impl InMemoryPluginHost {
             args,
             context,
         };
+        validate_runtime_payload(
+            &invocation.extension_id,
+            &invocation.args,
+            &invocation.context,
+        )?;
         let process = self
             .processes
             .get(id)
@@ -6798,6 +6840,45 @@ mod tests {
         process
             .shutdown()
             .expect("the malformed sidecar should still be stoppable");
+    }
+
+    #[test]
+    fn process_runtime_rejects_oversized_request_payloads() {
+        let mut runtime = ProcessPluginRuntime;
+        let manifest = ExtensionManifest {
+            id: ExtensionId("process.oversized-request".into()),
+            version: "1.0.0".into(),
+            host_api: VersionRange("^1".into()),
+            runtime: RuntimeKind::Sidecar,
+            launch: Some(RuntimeLaunchSpec {
+                program: "sh".into(),
+                args: vec!["-c".into(), "sleep 5".into()],
+            }),
+            target_app: None,
+            contributions: vec![],
+            permission_sets: vec![],
+            ..ExtensionManifest::default()
+        };
+        let mut process = runtime
+            .start(&manifest, &PermissionGrant::default())
+            .expect("the sidecar should start");
+        let error = process
+            .invoke(&PluginInvocation {
+                extension_id: manifest.id.clone(),
+                method: "command.execute".into(),
+                command_id: "oversized.request".into(),
+                args: serde_json::json!("x".repeat(MAX_RUNTIME_REQUEST_BYTES)),
+                context: serde_json::json!({}),
+            })
+            .expect_err("oversized runtime requests must fail before IPC");
+        assert!(matches!(
+            error,
+            RuntimeError::InvocationFailed(message)
+                if message.contains("runtime invocation request exceeded")
+        ));
+        process
+            .shutdown()
+            .expect("the runtime should remain stoppable after a rejected request");
     }
 
     #[test]
