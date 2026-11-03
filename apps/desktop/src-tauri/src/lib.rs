@@ -38,7 +38,7 @@ use velvet_plugin_api::{
     ZonePermissionSet,
     validate_reserved_metadata,
 };
-use velvet_plugin_host::JsonFileRuntimeLeaseStore;
+use velvet_plugin_host::{JsonFilePluginTrustStore, JsonFileRuntimeLeaseStore, PluginTrustPolicy};
 use velvet_persistence::{
     DurabilityMode, JsonFileAssetSourceLocationStore, JsonFileDiagnosticEventStore,
     DurabilityReportStore, JsonFileDurabilityReportStore, JsonFileRecoveryJournalStore,
@@ -2723,6 +2723,7 @@ pub fn run() {
             let snapshot_root = app_data_dir.join("snapshots");
             let recovery_set_root = app_data_dir.join("recovery-sets");
             let runtime_leases_path = app_data_dir.join("runtime-leases.json");
+            let plugin_trust_path = app_data_dir.join("plugin-trust.json");
             let release_transaction_path = app_data_dir.join("release-transaction.json");
             let release_package_root = app_data_dir.join("release-packages");
             let crash_receipts_path = app_data_dir.join(crash_capture::CRASH_RECEIPTS_FILE);
@@ -2805,6 +2806,10 @@ pub fn run() {
                     runtime_leases_path,
                     durability,
                 )))
+                .with_plugin_trust(Arc::new(JsonFilePluginTrustStore::with_durability(
+                    plugin_trust_path,
+                    durability,
+                )))
                 .with_release_updates(
                     Arc::new(JsonFileReleaseUpdateStore::with_durability(
                         release_transaction_path,
@@ -2818,6 +2823,11 @@ pub fn run() {
                 )))
                 .with_durability_report(protocol_durability_report(&durability_report)),
             );
+            core.set_plugin_trust_policy(if cfg!(debug_assertions) {
+                PluginTrustPolicy::developer_mode()
+            } else {
+                PluginTrustPolicy::require_signed()
+            });
             if let Err(error) = migration_result {
                 core.record_recovery_failure(
                     RecoveryFailureClass::CoreMigration,

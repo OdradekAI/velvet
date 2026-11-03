@@ -82,9 +82,15 @@ package-root validation still rejects links and special files. A
 lower generations, and admit unsigned packages only through its explicit
 developer-mode policy. The host records the resulting `PluginTrustRecord` and
 fails closed on tampering, unknown publishers or incompatible identity.
-The current slice keeps policy and records in the in-memory host seam so the
-existing skeleton remains usable; durable trust-store persistence, Profile
-scoping, key rotation and native production policy wiring remain release gates.
+`PluginTrustStore` now persists a bounded, versioned record set through an
+atomic JSON adapter; the durable trust-record schema is versioned separately
+from the signature-envelope schema. `ApplicationCore` treats a corrupt store
+as an optional component failure so the workbench still starts, while a write
+failure blocks the package mutation before its manifest is published. Native composition
+wires `plugin-trust.json`, uses developer mode only for debug builds and
+requires signatures for release builds; uninstall retains trust evidence.
+Profile-scoped developer mode, publisher-key provisioning/rotation and signed
+freshness metadata remain release gates.
 
 ### Offline incident response
 

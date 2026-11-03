@@ -55,6 +55,7 @@ pub struct ApplicationRecoveryStores {
     pub recovery_sets: Option<Arc<dyn RecoverySetStore>>,
     pub diagnostics: Option<Arc<dyn DiagnosticEventStore>>,
     pub runtime_leases: Option<Arc<dyn velvet_plugin_host::RuntimeLeaseStore>>,
+    pub plugin_trust: Option<Arc<dyn velvet_plugin_host::PluginTrustStore>>,
     pub durability_report: Option<velvet_workbench_protocol::DurabilityReport>,
     pub release_updates: Option<Arc<dyn velvet_persistence::ReleaseUpdateStore>>,
     pub release_packages: Option<Arc<dyn velvet_persistence::ReleasePackageStore>>,
@@ -75,6 +76,7 @@ impl ApplicationRecoveryStores {
             recovery_sets,
             diagnostics: None,
             runtime_leases: None,
+            plugin_trust: None,
             durability_report: None,
             release_updates: None,
             release_packages: None,
@@ -94,6 +96,14 @@ impl ApplicationRecoveryStores {
         runtime_leases: Arc<dyn velvet_plugin_host::RuntimeLeaseStore>,
     ) -> Self {
         self.runtime_leases = Some(runtime_leases);
+        self
+    }
+
+    pub fn with_plugin_trust(
+        mut self,
+        plugin_trust: Arc<dyn velvet_plugin_host::PluginTrustStore>,
+    ) -> Self {
+        self.plugin_trust = Some(plugin_trust);
         self
     }
 
@@ -527,6 +537,7 @@ impl ApplicationCore {
             durability_report,
             diagnostics: diagnostic_store,
             runtime_leases,
+            plugin_trust,
             release_updates: release_updates_store,
             release_packages,
             release_trust,
@@ -630,6 +641,14 @@ impl ApplicationCore {
             plugins.set_runtime_orphan_reconciler(Arc::new(
                 velvet_plugin_host::PlatformRuntimeOrphanReconciler,
             ));
+        }
+        if let Some(plugin_trust) = plugin_trust {
+            if let Err(error) = plugins.set_plugin_trust_store(plugin_trust) {
+                let _ = recovery.record_failure(
+                    velvet_workbench_protocol::RecoveryFailureClass::OptionalComponent,
+                    format!("plugin trust records could not be loaded: {error:?}"),
+                );
+            }
         }
         let (diagnostic_history, diagnostics_degraded) =
             match diagnostic_store.as_ref().map(|store| store.load()) {
@@ -1283,6 +1302,10 @@ impl ApplicationCore {
             return Err(error);
         }
         Ok(())
+    }
+
+    pub fn set_plugin_trust_policy(&mut self, policy: velvet_plugin_host::PluginTrustPolicy) {
+        self.plugins.set_plugin_trust_policy(policy);
     }
 
     pub fn disable_plugin(
@@ -3178,8 +3201,8 @@ mod tests {
         VersionRange, ZonePermissionSet,
     };
     use velvet_plugin_host::{
-        PluginInvocation, PluginInvocationResult, PluginRuntime, RuntimeError, RuntimeHealth,
-        RuntimeProcess,
+        JsonFilePluginTrustStore, PluginInvocation, PluginInvocationResult, PluginRuntime,
+        RuntimeError, RuntimeHealth, RuntimeProcess,
     };
     use velvet_workbench_protocol::{
         OperationKind, OperationRetryPolicy, OperationTarget, OperationUndoCapability,
@@ -4594,6 +4617,36 @@ mod tests {
         assert!(!core.in_safe_mode());
         assert!(core.diagnostic_bundle().diagnostics_degraded);
         let _ = fs::remove_file(diagnostic_path);
+    }
+
+    #[test]
+    fn corrupt_plugin_trust_history_degrades_optional_state_without_safe_mode() {
+        let trust_path = temporary_layout_path().with_extension("plugin-trust.json");
+        fs::write(&trust_path, br#"not-json"#)
+            .expect("the corrupt plugin trust fixture should be writable");
+        let core = ApplicationCore::with_store_and_runtime_and_plugin_directory_and_jobs_and_profile_and_recovery(
+            Arc::new(InMemoryLayoutStateStore::default()),
+            Box::new(velvet_plugin_host::ProcessPluginRuntime),
+            None,
+            JobSystem::default(),
+            Arc::new(InMemoryProfileStateStore::default()),
+            Arc::new(InMemoryAssetSourceLocationStore::default()),
+            ApplicationRecoveryStores::new(
+                Arc::new(InMemoryRecoveryJournalStore::default()),
+                None,
+                None,
+            )
+            .with_plugin_trust(Arc::new(JsonFilePluginTrustStore::new(&trust_path))),
+        );
+
+        assert!(!core.in_safe_mode());
+        assert!(matches!(
+            core.recovery_projection()
+                .last_failure
+                .map(|failure| failure.class),
+            Some(velvet_workbench_protocol::RecoveryFailureClass::OptionalComponent)
+        ));
+        let _ = fs::remove_file(trust_path);
     }
 
     #[test]

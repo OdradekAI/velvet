@@ -32,6 +32,7 @@ use velvet_plugin_api::{
 mod extension_storage;
 mod platform_process;
 mod runtime_lease;
+mod trust_store;
 
 pub use extension_storage::{
     BackupParticipant, ExtensionStorage, ExtensionStorageError, ExtensionStorageExport,
@@ -46,8 +47,13 @@ pub use runtime_lease::{
     RuntimeOrphanReport, RuntimeProcessIdentity, MAX_RUNTIME_LEASES, MAX_RUNTIME_LEASE_STORE_BYTES,
     RUNTIME_LEASE_SCHEMA_VERSION,
 };
+pub use trust_store::{
+    InMemoryPluginTrustStore, JsonFilePluginTrustStore, PluginTrustStore, PluginTrustStoreError,
+    MAX_PLUGIN_TRUST_RECORDS, MAX_PLUGIN_TRUST_STORE_BYTES, PLUGIN_TRUST_STORE_SCHEMA_VERSION,
+};
 
 pub const PLUGIN_SIGNATURE_SCHEMA_VERSION: u16 = 1;
+pub const PLUGIN_TRUST_RECORD_SCHEMA_VERSION: u16 = 1;
 pub const MAX_PLUGIN_SIGNATURE_BYTES: usize = 64 * 1024;
 const PLUGIN_SIGNATURE_FILE: &str = "signature.json";
 
@@ -196,6 +202,7 @@ pub enum PluginError {
         state: PluginTrustState,
         message: String,
     },
+    TrustStore(String),
     VersionConflict {
         extension_id: ExtensionId,
         installed: String,
@@ -223,6 +230,10 @@ pub enum PluginError {
         extension_id: ExtensionId,
         state: ExtensionState,
     },
+}
+
+fn plugin_trust_store_error(error: PluginTrustStoreError) -> PluginError {
+    PluginError::TrustStore(format!("{error:?}"))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2261,6 +2272,7 @@ pub struct InMemoryPluginHost {
     package_roots: BTreeMap<ExtensionId, PathBuf>,
     trust_policy: PluginTrustPolicy,
     trust_records: BTreeMap<ExtensionId, PluginTrustRecord>,
+    trust_store: Option<Arc<dyn PluginTrustStore>>,
     active: BTreeSet<ExtensionId>,
     states: BTreeMap<ExtensionId, ExtensionState>,
     processes: BTreeMap<ExtensionId, Arc<Mutex<Box<dyn RuntimeProcess>>>>,
@@ -2302,6 +2314,7 @@ impl Default for InMemoryPluginHost {
             package_roots: BTreeMap::new(),
             trust_policy: PluginTrustPolicy::default(),
             trust_records: BTreeMap::new(),
+            trust_store: None,
             active: BTreeSet::new(),
             states: BTreeMap::new(),
             processes: BTreeMap::new(),
@@ -2339,6 +2352,20 @@ impl InMemoryPluginHost {
 
     pub fn set_plugin_trust_policy(&mut self, policy: PluginTrustPolicy) {
         self.trust_policy = policy;
+    }
+
+    pub fn set_plugin_trust_store(
+        &mut self,
+        store: Arc<dyn PluginTrustStore>,
+    ) -> Result<(), PluginError> {
+        let records = store.load().map_err(plugin_trust_store_error)?;
+        trust_store::validate_records(&records).map_err(plugin_trust_store_error)?;
+        self.trust_records = records
+            .into_iter()
+            .map(|record| (record.extension_id.clone(), record))
+            .collect();
+        self.trust_store = Some(store);
+        Ok(())
     }
 
     pub fn plugin_trust_record(&self, id: &ExtensionId) -> Result<PluginTrustRecord, PluginError> {
@@ -3201,6 +3228,11 @@ impl InMemoryPluginHost {
         let trust_record = package_root
             .map(|package_root| self.verify_package_trust(&manifest, package_root))
             .transpose()?;
+        if let Some(trust_record) = &trust_record {
+            let mut records = self.trust_records.clone();
+            records.insert(manifest.id.clone(), trust_record.clone());
+            self.persist_trust_records(&records)?;
+        }
         if let Some(package_root) = package_root {
             self.package_roots
                 .insert(manifest.id.clone(), package_root.to_path_buf());
@@ -3216,6 +3248,17 @@ impl InMemoryPluginHost {
         Ok(())
     }
 
+    fn persist_trust_records(
+        &self,
+        records: &BTreeMap<ExtensionId, PluginTrustRecord>,
+    ) -> Result<(), PluginError> {
+        let Some(store) = self.trust_store.as_ref() else {
+            return Ok(());
+        };
+        let records = records.values().cloned().collect::<Vec<_>>();
+        store.save(&records).map_err(plugin_trust_store_error)
+    }
+
     fn verify_package_trust(
         &self,
         manifest: &ExtensionManifest,
@@ -3226,7 +3269,7 @@ impl InMemoryPluginHost {
         if !signature_path.exists() {
             if self.trust_policy.developer_mode && !self.trust_policy.require_signature {
                 return Ok(PluginTrustRecord {
-                    schema_version: PLUGIN_SIGNATURE_SCHEMA_VERSION,
+                    schema_version: PLUGIN_TRUST_RECORD_SCHEMA_VERSION,
                     extension_id: manifest.id.clone(),
                     version: manifest.version.clone(),
                     package_sha256,
@@ -3352,7 +3395,7 @@ impl InMemoryPluginHost {
                 message: "package signature verification failed".into(),
             })?;
         Ok(PluginTrustRecord {
-            schema_version: PLUGIN_SIGNATURE_SCHEMA_VERSION,
+            schema_version: PLUGIN_TRUST_RECORD_SCHEMA_VERSION,
             extension_id: manifest.id.clone(),
             version: manifest.version.clone(),
             package_sha256,
@@ -3677,7 +3720,6 @@ impl InMemoryPluginHost {
         self.close_runtime_lease(id, runtime_nonce.as_deref());
         self.manifests.remove(id);
         self.package_roots.remove(id);
-        self.trust_records.remove(id);
         self.active.remove(id);
         self.states.remove(id);
         self.processes.remove(id);
@@ -7987,6 +8029,113 @@ mod tests {
 
         let _ = fs::remove_dir_all(source);
         let _ = fs::remove_dir_all(install_root);
+    }
+
+    #[test]
+    fn plugin_trust_records_survive_restart_and_uninstall() {
+        let source = temporary_manifest_dir();
+        let install_root = temporary_manifest_dir();
+        let trust_root = temporary_manifest_dir();
+        let trust_path = trust_root.join("plugin-trust.json");
+        let manifest = view_manifest(Some(WorkbenchZone::Navigation));
+        let signing_key = SigningKey::from_bytes(&[11u8; 32]);
+        write_signed_package(&source, &manifest, "publisher.persisted", &signing_key, 3);
+        let policy = PluginTrustPolicy::require_signed().trust_publisher(
+            "publisher.persisted",
+            encode_hex(signing_key.verifying_key().as_bytes()),
+        );
+
+        let store = Arc::new(JsonFilePluginTrustStore::new(&trust_path));
+        let mut first_host = InMemoryPluginHost::default();
+        first_host.set_plugin_trust_policy(policy.clone());
+        first_host
+            .set_plugin_trust_store(store.clone())
+            .expect("an empty trust store should load");
+        first_host
+            .install_from_directory(&source, &install_root)
+            .expect("the signed package should install");
+        first_host
+            .uninstall_from_directory(&manifest.id, &install_root)
+            .expect("uninstall should remove only the package");
+        assert_eq!(
+            first_host
+                .plugin_trust_record(&manifest.id)
+                .expect("uninstall should retain trust evidence")
+                .state,
+            PluginTrustState::Trusted
+        );
+
+        let mut restarted_host = InMemoryPluginHost::default();
+        restarted_host.set_plugin_trust_policy(policy);
+        restarted_host
+            .set_plugin_trust_store(store)
+            .expect("the persisted trust record should load after restart");
+        assert_eq!(
+            restarted_host
+                .plugin_trust_record(&manifest.id)
+                .expect("the restarted host should see trust evidence")
+                .generation,
+            3
+        );
+
+        let _ = fs::remove_dir_all(source);
+        let _ = fs::remove_dir_all(install_root);
+        let _ = fs::remove_dir_all(trust_root);
+    }
+
+    #[test]
+    fn trust_store_write_failure_does_not_publish_registration() {
+        struct FailingStore;
+
+        impl PluginTrustStore for FailingStore {
+            fn load(&self) -> Result<Vec<PluginTrustRecord>, PluginTrustStoreError> {
+                Ok(Vec::new())
+            }
+
+            fn save(&self, _records: &[PluginTrustRecord]) -> Result<(), PluginTrustStoreError> {
+                Err(PluginTrustStoreError::Unavailable(
+                    "test store is read-only".into(),
+                ))
+            }
+        }
+
+        let source = temporary_manifest_dir();
+        let install_root = temporary_manifest_dir();
+        let manifest = view_manifest(Some(WorkbenchZone::Navigation));
+        let signing_key = SigningKey::from_bytes(&[13u8; 32]);
+        write_signed_package(&source, &manifest, "publisher.read-only", &signing_key, 1);
+        let mut host = InMemoryPluginHost::default();
+        host.set_plugin_trust_policy(PluginTrustPolicy::require_signed().trust_publisher(
+            "publisher.read-only",
+            encode_hex(signing_key.verifying_key().as_bytes()),
+        ));
+        host.set_plugin_trust_store(Arc::new(FailingStore))
+            .expect("the empty read-only store should load");
+
+        assert!(matches!(
+            host.install_from_directory(&source, &install_root),
+            Err(PluginError::TrustStore(_))
+        ));
+        assert!(host.discover().is_empty());
+
+        let _ = fs::remove_dir_all(source);
+        let _ = fs::remove_dir_all(install_root);
+    }
+
+    #[test]
+    fn corrupt_plugin_trust_store_fails_closed_without_blocking_host() {
+        let root = temporary_manifest_dir();
+        fs::create_dir_all(&root).expect("the trust store directory should be writable");
+        let path = root.join("plugin-trust.json");
+        fs::write(&path, b"{\"schemaVersion\":999,\"records\":[]}")
+            .expect("the corrupt trust store should be writable");
+        let mut host = InMemoryPluginHost::default();
+        let error = host
+            .set_plugin_trust_store(Arc::new(JsonFilePluginTrustStore::new(&path)))
+            .expect_err("an unsupported trust store must fail closed");
+        assert!(matches!(error, PluginError::TrustStore(_)));
+        assert!(host.discover().is_empty());
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
