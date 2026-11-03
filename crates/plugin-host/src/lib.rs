@@ -24,7 +24,7 @@ use velvet_plugin_api::{
     ExtensionInstallRecoveryAction, ExtensionInstallRecoveryKind, ExtensionInstallRecoveryLogEntry,
     ExtensionInstallRecoveryLogStatus, ExtensionManifest, ExtensionProjection, ExtensionState,
     ExtensionSummary, HostContainer, Permission, PreviewActionContext, RuntimeKind,
-    RuntimeLaunchSpec, VersionRange, MANIFEST_SCHEMA_VERSION,
+    RuntimeLaunchSpec, VersionRange, MANIFEST_SCHEMA_VERSION, PREVIEW_ACTION_SCHEMA_VERSION,
 };
 
 mod extension_storage;
@@ -1307,12 +1307,23 @@ impl RuntimeProcess for ChildRuntimeProcess {
             Err(error) => return Err(RuntimeError::InvocationFailed(error.to_string())),
         }
 
-        let schema_id = (invocation.method == "job.run").then(|| {
-            format!(
-                "velvet.job.{}.{}",
-                invocation.extension_id.0, invocation.command_id
-            )
-        });
+        let (schema_id, schema_version) = match invocation.method.as_str() {
+            "job.run" => (
+                Some(format!(
+                    "velvet.job.{}.{}",
+                    invocation.extension_id.0, invocation.command_id
+                )),
+                Some(JOB_SCHEMA_VERSION),
+            ),
+            "preview.action" => (
+                Some(format!(
+                    "velvet.preview.{}.{}",
+                    invocation.extension_id.0, invocation.command_id
+                )),
+                Some(PREVIEW_ACTION_SCHEMA_VERSION),
+            ),
+            _ => (None, None),
+        };
         let request = RuntimeInvocationRequest {
             protocol_version: RUNTIME_PROTOCOL_VERSION,
             kind: match invocation.method.as_str() {
@@ -1326,7 +1337,7 @@ impl RuntimeProcess for ChildRuntimeProcess {
             args: &invocation.args,
             context: &invocation.context,
             schema_id: schema_id.as_deref(),
-            schema_version: schema_id.as_ref().map(|_| JOB_SCHEMA_VERSION),
+            schema_version,
         };
         let line = serde_json::to_string(&request)
             .map_err(|error| RuntimeError::InvocationFailed(error.to_string()))?;
@@ -6947,6 +6958,55 @@ mod tests {
                 "contentType": "application/json",
                 "payload": { "accepted": true }
             }))
+        );
+        process
+            .shutdown()
+            .expect("the sidecar should be stoppable after invocation");
+    }
+
+    #[test]
+    fn process_runtime_carries_preview_action_schema_reference() {
+        let mut runtime = ProcessPluginRuntime;
+        let manifest = ExtensionManifest {
+            id: ExtensionId("process.preview-schema".into()),
+            version: "1.0.0".into(),
+            host_api: VersionRange("^1".into()),
+            runtime: RuntimeKind::Sidecar,
+            launch: Some(RuntimeLaunchSpec {
+                program: "sh".into(),
+                args: vec![
+                    "-c".into(),
+                    "IFS= read -r line; if printf '%s' \"$line\" | grep -q '\"method\":\"preview.action\"' && printf '%s' \"$line\" | grep -q '\"schemaId\":\"velvet.preview.process.preview-schema.preview-open\"' && printf '%s' \"$line\" | grep -q '\"schemaVersion\":1'; then printf '%s\\n' '{\"protocolVersion\":1,\"ok\":true,\"result\":{\"kind\":\"accepted\"}}'; else printf '%s\\n' '{\"protocolVersion\":1,\"ok\":false,\"error\":\"missing preview schema reference\"}'; fi; sleep 5".into(),
+                ],
+            }),
+            target_app: None,
+            contributions: vec![],
+            permission_sets: vec![],
+            ..ExtensionManifest::default()
+        };
+        let mut process = runtime
+            .start(&manifest, &PermissionGrant::default())
+            .expect("the sidecar should start");
+        let result = process
+            .invoke(&PluginInvocation {
+                extension_id: manifest.id.clone(),
+                method: "preview.action".into(),
+                command_id: "preview-open".into(),
+                args: serde_json::json!({ "scope": "metadata" }),
+                context: serde_json::json!({
+                    "sessionId": "preview-session",
+                    "providerId": "preview-provider",
+                    "assetId": "asset-1",
+                    "contentKind": "image",
+                    "intent": "analyze",
+                    "surface": "workspace"
+                }),
+            })
+            .expect("the sidecar should receive the Preview action schema reference");
+        assert_eq!(result.error, None);
+        assert_eq!(
+            result.result,
+            Some(serde_json::json!({ "kind": "accepted" }))
         );
         process
             .shutdown()

@@ -351,9 +351,14 @@ negative case where an untyped path/URL/process command is rejected. Until
 those fixtures and non-Tauri adoption exist, the proposed protocol remains a
 host contract rather than a public SDK compatibility promise.
 
-The first concrete schema adoption is the Job runtime request: the JSONL
-`invoke-job` envelope carries `schemaId: velvet.job.<extensionId>.<jobKind>`
-and `schemaVersion: JOB_SCHEMA_VERSION`, while the host validates typed
-`JobProvenance` owner and version before IPC. This proves the boundary without
-pretending that command or preview JSON already has a stable owner schema; each
-of those payloads remains a separate follow-up decision with its own fixture.
+The first concrete schema adoptions are the Job and Preview action runtime
+requests. JSONL `invoke-job` carries
+`schemaId: velvet.job.<extensionId>.<jobKind>` and
+`schemaVersion: JOB_SCHEMA_VERSION`, while the host validates typed
+`JobProvenance` owner and version before IPC. `preview.action` carries
+`schemaId: velvet.preview.<extensionId>.<commandId>` and
+`PREVIEW_ACTION_SCHEMA_VERSION`; the active preview session remains the
+authority for the typed context and command authorization. This proves the
+envelope boundary without pretending that extension-specific command or
+action arguments already have a host-understood schema; those remain separate
+owner decisions with their own validation fixtures.

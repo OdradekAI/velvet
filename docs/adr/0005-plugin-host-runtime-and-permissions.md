@@ -201,8 +201,14 @@ The host-owned request envelope also carries the concrete owner schema reference
 `velvet.job.<extensionId>.<jobKind>` with `JOB_SCHEMA_VERSION`. `PluginJobInvocation`
 uses the typed `JobProvenance` projection and rejects a cross-owner or unsupported
 provenance schema before it reaches the runtime process. This is the first
-concrete schema adoption; command and preview payloads remain open until their
-owners declare equivalent schemas.
+concrete Job schema adoption; command payloads remain open until their owners
+declare equivalent schemas.
+Preview actions now also carry the host-owned action-envelope reference
+`velvet.preview.<extensionId>.<commandId>` with
+`PREVIEW_ACTION_SCHEMA_VERSION`. The active preview session still authorizes
+the typed `PreviewActionContext` in `ApplicationCore`; the schema reference
+does not grant a command, path or native capability and does not pretend to
+validate extension-specific action arguments.
 The response contains a typed result (`contentType` plus JSON `payload`) with
 bounds-checked input/result projections and a bounded list of `progress`
 events. `PluginHost` exposes this process through a

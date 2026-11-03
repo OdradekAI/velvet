@@ -5,6 +5,7 @@ use serde_json::Value;
 use velvet_layout_model::WorkbenchZone;
 
 pub const MANIFEST_SCHEMA_VERSION: u16 = 1;
+pub const PREVIEW_ACTION_SCHEMA_VERSION: u16 = 1;
 
 #[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct ExtensionId(pub String);
