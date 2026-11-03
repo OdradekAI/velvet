@@ -93,8 +93,15 @@ Profile projection now carries an optional `pluginDeveloperMode` authorization
 with revision-checked mutation. Missing legacy fields are migrated as an
 unspecified setting, and the active release policy still has final authority
 over whether unsigned packages can be accepted.
-Profile-scoped developer mode, publisher-key provisioning/rotation and signed
-freshness metadata remain release gates.
+`PluginTrustPolicy::register_publisher_key_rotation` now verifies a bounded,
+versioned rotation statement signed by both the currently trusted key and its
+successor, enforces a monotonic sequence per key lineage, and admits the
+successor while the old key remains available for overlap. Exact replay is
+idempotent; conflicting, forged, stale or revoked-key rotations fail before any
+package is published. This is a host policy seam, not a durable or renderer-
+controlled key source: native release composition still needs a protected,
+pinned publisher-key provisioning path, rotation distribution and signed
+freshness metadata before those gates can be claimed complete.
 
 ### Offline incident response
 
@@ -161,6 +168,9 @@ Costs:
 
 - Which concrete envelope format (for example COSE/DSSE) and release service
   will publish extension signatures and SafetyNotices?
+- Which protected native release artifact provisions the initial publisher-key
+  set and overlap-signed rotations, and how are key-set changes audited or
+  rolled back offline?
 - Which supported installers can retain the previous package atomically, and
   what adapter is required for the others?
 - Which rollout service owns cohort assignment and online key-revocation

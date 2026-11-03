@@ -53,8 +53,10 @@ pub use trust_store::{
 };
 
 pub const PLUGIN_SIGNATURE_SCHEMA_VERSION: u16 = 1;
+pub const PLUGIN_KEY_ROTATION_SCHEMA_VERSION: u16 = 1;
 pub const PLUGIN_TRUST_RECORD_SCHEMA_VERSION: u16 = 1;
 pub const MAX_PLUGIN_SIGNATURE_BYTES: usize = 64 * 1024;
+pub const MAX_PLUGIN_KEY_ROTATION_BYTES: usize = 16 * 1024;
 const PLUGIN_SIGNATURE_FILE: &str = "signature.json";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -74,8 +76,33 @@ pub struct PluginTrustPolicy {
     require_signature: bool,
     developer_mode: bool,
     trusted_publishers: BTreeMap<String, String>,
+    publisher_rotations: BTreeMap<String, PluginPublisherKeyRotation>,
     revoked_publishers: BTreeSet<String>,
     minimum_generations: BTreeMap<ExtensionId, u64>,
+}
+
+/// A publisher key transition that is authorized by both sides of the
+/// transition. The signatures cover every field except the two signature
+/// fields themselves, so a successor cannot be introduced by editing local
+/// policy text or by possessing only the new key.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PluginPublisherKeyRotation {
+    pub schema_version: u16,
+    pub old_key_id: String,
+    pub old_public_key: String,
+    pub new_key_id: String,
+    pub new_public_key: String,
+    pub sequence: u64,
+    pub old_signature: String,
+    pub new_signature: String,
+}
+
+impl PluginPublisherKeyRotation {
+    /// Returns the canonical bytes that both keys must sign.
+    pub fn canonical_payload(&self) -> Vec<u8> {
+        canonical_plugin_publisher_key_rotation_payload(self)
+    }
 }
 
 impl PluginTrustPolicy {
@@ -84,6 +111,7 @@ impl PluginTrustPolicy {
             require_signature: false,
             developer_mode: true,
             trusted_publishers: BTreeMap::new(),
+            publisher_rotations: BTreeMap::new(),
             revoked_publishers: BTreeSet::new(),
             minimum_generations: BTreeMap::new(),
         }
@@ -94,6 +122,7 @@ impl PluginTrustPolicy {
             require_signature: true,
             developer_mode: false,
             trusted_publishers: BTreeMap::new(),
+            publisher_rotations: BTreeMap::new(),
             revoked_publishers: BTreeSet::new(),
             minimum_generations: BTreeMap::new(),
         }
@@ -107,6 +136,140 @@ impl PluginTrustPolicy {
         self.trusted_publishers
             .insert(publisher_key_id.into(), public_key_hex.into());
         self
+    }
+
+    /// Registers a successor only when the currently trusted key and the
+    /// successor key both sign the exact transition statement.
+    pub fn register_publisher_key_rotation(
+        &mut self,
+        rotation: PluginPublisherKeyRotation,
+    ) -> Result<(), PluginError> {
+        let serialized = serde_json::to_vec(&rotation).map_err(|error| {
+            PluginError::TrustPolicy(format!(
+                "publisher key rotation is not serializable: {error}"
+            ))
+        })?;
+        if serialized.len() > MAX_PLUGIN_KEY_ROTATION_BYTES {
+            return Err(PluginError::TrustPolicy(format!(
+                "publisher key rotation exceeds {MAX_PLUGIN_KEY_ROTATION_BYTES} bytes"
+            )));
+        }
+        if rotation.schema_version != PLUGIN_KEY_ROTATION_SCHEMA_VERSION {
+            return Err(PluginError::TrustPolicy(format!(
+                "unsupported publisher key rotation schema {}",
+                rotation.schema_version
+            )));
+        }
+        if rotation.sequence == 0 {
+            return Err(PluginError::TrustPolicy(
+                "publisher key rotation sequence must be positive".into(),
+            ));
+        }
+        if rotation.old_key_id.is_empty()
+            || rotation.new_key_id.is_empty()
+            || rotation.old_key_id == rotation.new_key_id
+        {
+            return Err(PluginError::TrustPolicy(
+                "publisher key rotation ids must be distinct and non-empty".into(),
+            ));
+        }
+        if self.revoked_publishers.contains(&rotation.old_key_id) {
+            return Err(PluginError::TrustPolicy(
+                "a revoked publisher key cannot authorize a rotation".into(),
+            ));
+        }
+        let Some(current_public_key) = self.trusted_publishers.get(&rotation.old_key_id) else {
+            return Err(PluginError::TrustPolicy(format!(
+                "publisher key {} is not trusted",
+                rotation.old_key_id
+            )));
+        };
+        if current_public_key != &rotation.old_public_key {
+            return Err(PluginError::TrustPolicy(
+                "rotation old key does not match the trusted publisher key".into(),
+            ));
+        }
+        if self.revoked_publishers.contains(&rotation.new_key_id) {
+            return Err(PluginError::TrustPolicy(
+                "a revoked successor key cannot be registered".into(),
+            ));
+        }
+        if let Some(existing) = self.publisher_rotations.get(&rotation.new_key_id) {
+            if existing == &rotation {
+                return Ok(());
+            }
+            return Err(PluginError::TrustPolicy(format!(
+                "publisher key {} already has a different rotation",
+                rotation.new_key_id
+            )));
+        }
+        if let Some(previous_sequence) = self
+            .publisher_rotations
+            .values()
+            .filter(|existing| existing.old_key_id == rotation.old_key_id)
+            .map(|existing| existing.sequence)
+            .max()
+        {
+            if rotation.sequence <= previous_sequence {
+                return Err(PluginError::TrustPolicy(format!(
+                    "publisher key rotation sequence {} is not newer than {}",
+                    rotation.sequence, previous_sequence
+                )));
+            }
+        }
+        if let Some(parent) = self.publisher_rotations.get(&rotation.old_key_id) {
+            if rotation.sequence <= parent.sequence {
+                return Err(PluginError::TrustPolicy(format!(
+                    "publisher key rotation sequence {} does not advance from {}",
+                    rotation.sequence, parent.sequence
+                )));
+            }
+        }
+        if self.trusted_publishers.contains_key(&rotation.new_key_id) {
+            return Err(PluginError::TrustPolicy(format!(
+                "publisher key {} is already trusted",
+                rotation.new_key_id
+            )));
+        }
+
+        let old_public_key = decode_verifying_key(&rotation.old_public_key).map_err(|message| {
+            PluginError::TrustPolicy(format!("rotation old public key is invalid: {message}"))
+        })?;
+        let new_public_key = decode_verifying_key(&rotation.new_public_key).map_err(|message| {
+            PluginError::TrustPolicy(format!("rotation new public key is invalid: {message}"))
+        })?;
+        if rotation.old_public_key == rotation.new_public_key {
+            return Err(PluginError::TrustPolicy(
+                "publisher key rotation must change the public key".into(),
+            ));
+        }
+        let old_signature = decode_signature(&rotation.old_signature).map_err(|message| {
+            PluginError::TrustPolicy(format!("rotation old signature is invalid: {message}"))
+        })?;
+        let new_signature = decode_signature(&rotation.new_signature).map_err(|message| {
+            PluginError::TrustPolicy(format!("rotation new signature is invalid: {message}"))
+        })?;
+        let payload = rotation.canonical_payload();
+        old_public_key
+            .verify(&payload, &old_signature)
+            .map_err(|_| {
+                PluginError::TrustPolicy(
+                    "publisher key rotation is not authorized by the old key".into(),
+                )
+            })?;
+        new_public_key
+            .verify(&payload, &new_signature)
+            .map_err(|_| {
+                PluginError::TrustPolicy(
+                    "publisher key rotation is not confirmed by the successor key".into(),
+                )
+            })?;
+
+        self.trusted_publishers
+            .insert(rotation.new_key_id.clone(), rotation.new_public_key.clone());
+        self.publisher_rotations
+            .insert(rotation.new_key_id.clone(), rotation);
+        Ok(())
     }
 
     pub fn revoke_publisher(mut self, publisher_key_id: impl Into<String>) -> Self {
@@ -5420,6 +5583,42 @@ struct PluginSignaturePayload<'a> {
     generation: u64,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginPublisherKeyRotationPayload<'a> {
+    schema_version: u16,
+    old_key_id: &'a str,
+    old_public_key: &'a str,
+    new_key_id: &'a str,
+    new_public_key: &'a str,
+    sequence: u64,
+}
+
+fn canonical_plugin_publisher_key_rotation_payload(
+    rotation: &PluginPublisherKeyRotation,
+) -> Vec<u8> {
+    serde_json::to_vec(&PluginPublisherKeyRotationPayload {
+        schema_version: rotation.schema_version,
+        old_key_id: &rotation.old_key_id,
+        old_public_key: &rotation.old_public_key,
+        new_key_id: &rotation.new_key_id,
+        new_public_key: &rotation.new_public_key,
+        sequence: rotation.sequence,
+    })
+    .expect("publisher key rotation payload should serialize")
+}
+
+fn decode_verifying_key(value: &str) -> Result<VerifyingKey, String> {
+    let bytes = decode_hex(value, 32)?;
+    let bytes: [u8; 32] = bytes.try_into().expect("key length is checked");
+    VerifyingKey::from_bytes(&bytes).map_err(|error| error.to_string())
+}
+
+fn decode_signature(value: &str) -> Result<Signature, String> {
+    let bytes = decode_hex(value, 64)?;
+    Signature::from_slice(&bytes).map_err(|error| error.to_string())
+}
+
 fn canonical_plugin_signature_payload(envelope: &PluginSignatureEnvelope) -> Vec<u8> {
     serde_json::to_vec(&PluginSignaturePayload {
         schema_version: envelope.schema_version,
@@ -5636,6 +5835,29 @@ mod tests {
             serde_json::to_vec_pretty(&envelope).expect("the package signature should serialize"),
         )
         .expect("the package signature should be written");
+    }
+
+    fn signed_key_rotation(
+        old_key_id: &str,
+        old_key: &SigningKey,
+        new_key_id: &str,
+        new_key: &SigningKey,
+        sequence: u64,
+    ) -> PluginPublisherKeyRotation {
+        let mut rotation = PluginPublisherKeyRotation {
+            schema_version: PLUGIN_KEY_ROTATION_SCHEMA_VERSION,
+            old_key_id: old_key_id.into(),
+            old_public_key: encode_hex(old_key.verifying_key().as_bytes()),
+            new_key_id: new_key_id.into(),
+            new_public_key: encode_hex(new_key.verifying_key().as_bytes()),
+            sequence,
+            old_signature: String::new(),
+            new_signature: String::new(),
+        };
+        let payload = rotation.canonical_payload();
+        rotation.old_signature = encode_hex(&old_key.sign(&payload).to_bytes());
+        rotation.new_signature = encode_hex(&new_key.sign(&payload).to_bytes());
+        rotation
     }
 
     fn write_zip_package(path: &PathBuf, manifest: &ExtensionManifest, entries: &[(&str, &[u8])]) {
@@ -8062,6 +8284,180 @@ mod tests {
 
         let _ = fs::remove_dir_all(source);
         let _ = fs::remove_dir_all(install_root);
+    }
+
+    #[test]
+    fn publisher_key_rotation_requires_overlap_signatures_and_preserves_old_key_overlap() {
+        let source = temporary_manifest_dir();
+        let install_root = temporary_manifest_dir();
+        let manifest = view_manifest(Some(WorkbenchZone::Navigation));
+        let old_key = SigningKey::from_bytes(&[21u8; 32]);
+        let new_key = SigningKey::from_bytes(&[22u8; 32]);
+        write_signed_package(&source, &manifest, "publisher.next", &new_key, 4);
+
+        let mut policy = PluginTrustPolicy::require_signed().trust_publisher(
+            "publisher.current",
+            encode_hex(old_key.verifying_key().as_bytes()),
+        );
+        policy
+            .register_publisher_key_rotation(signed_key_rotation(
+                "publisher.current",
+                &old_key,
+                "publisher.next",
+                &new_key,
+                1,
+            ))
+            .expect("the overlap-signed successor should be accepted");
+
+        let mut host = InMemoryPluginHost::default();
+        host.set_plugin_trust_policy(policy.clone());
+        host.install_from_directory(&source, &install_root)
+            .expect("the successor package should be trusted during overlap");
+        assert_eq!(
+            host.plugin_trust_record(&manifest.id)
+                .expect("the successor package should record trust")
+                .publisher_key_id,
+            Some("publisher.next".into())
+        );
+
+        let old_source = temporary_manifest_dir();
+        let old_install_root = temporary_manifest_dir();
+        write_signed_package(&old_source, &manifest, "publisher.current", &old_key, 3);
+        let mut overlap_host = InMemoryPluginHost::default();
+        overlap_host.set_plugin_trust_policy(policy);
+        overlap_host
+            .install_from_directory(&old_source, &old_install_root)
+            .expect("the previous key should remain valid during overlap");
+
+        let _ = fs::remove_dir_all(source);
+        let _ = fs::remove_dir_all(install_root);
+        let _ = fs::remove_dir_all(old_source);
+        let _ = fs::remove_dir_all(old_install_root);
+    }
+
+    #[test]
+    fn publisher_key_rotation_rejects_forgery_replay_and_revoked_successors() {
+        let old_key = SigningKey::from_bytes(&[23u8; 32]);
+        let new_key = SigningKey::from_bytes(&[24u8; 32]);
+        let unrelated_key = SigningKey::from_bytes(&[25u8; 32]);
+        let mut policy = PluginTrustPolicy::require_signed().trust_publisher(
+            "publisher.current",
+            encode_hex(old_key.verifying_key().as_bytes()),
+        );
+
+        let mut forged =
+            signed_key_rotation("publisher.current", &old_key, "publisher.next", &new_key, 1);
+        forged.new_signature =
+            encode_hex(&unrelated_key.sign(&forged.canonical_payload()).to_bytes());
+        assert!(matches!(
+            policy.register_publisher_key_rotation(forged),
+            Err(PluginError::TrustPolicy(message)) if message.contains("successor key")
+        ));
+
+        let rotation =
+            signed_key_rotation("publisher.current", &old_key, "publisher.next", &new_key, 1);
+        policy
+            .register_publisher_key_rotation(rotation.clone())
+            .expect("the first rotation should be accepted");
+        policy
+            .register_publisher_key_rotation(rotation)
+            .expect("replaying the exact rotation should be idempotent");
+
+        let mut conflicting = signed_key_rotation(
+            "publisher.current",
+            &old_key,
+            "publisher.next",
+            &unrelated_key,
+            2,
+        );
+        conflicting.old_signature =
+            encode_hex(&old_key.sign(&conflicting.canonical_payload()).to_bytes());
+        conflicting.new_signature = encode_hex(
+            &unrelated_key
+                .sign(&conflicting.canonical_payload())
+                .to_bytes(),
+        );
+        assert!(matches!(
+            policy.register_publisher_key_rotation(conflicting),
+            Err(PluginError::TrustPolicy(message)) if message.contains("different rotation")
+        ));
+
+        let mut stale = signed_key_rotation(
+            "publisher.current",
+            &old_key,
+            "publisher.stale",
+            &unrelated_key,
+            1,
+        );
+        stale.old_signature = encode_hex(&old_key.sign(&stale.canonical_payload()).to_bytes());
+        stale.new_signature =
+            encode_hex(&unrelated_key.sign(&stale.canonical_payload()).to_bytes());
+        assert!(matches!(
+            policy.register_publisher_key_rotation(stale),
+            Err(PluginError::TrustPolicy(message)) if message.contains("not newer")
+        ));
+
+        let mut revoked_policy = policy.revoke_publisher("publisher.next");
+        let revoked_source = temporary_manifest_dir();
+        let revoked_install_root = temporary_manifest_dir();
+        let revoked_manifest = view_manifest(Some(WorkbenchZone::Navigation));
+        write_signed_package(
+            &revoked_source,
+            &revoked_manifest,
+            "publisher.next",
+            &new_key,
+            5,
+        );
+        let mut revoked_host = InMemoryPluginHost::default();
+        revoked_host.set_plugin_trust_policy(revoked_policy.clone());
+        assert!(matches!(
+            revoked_host.install_from_directory(&revoked_source, &revoked_install_root),
+            Err(PluginError::TrustDenied {
+                state: PluginTrustState::Revoked,
+                ..
+            })
+        ));
+        revoked_policy
+            .register_publisher_key_rotation(signed_key_rotation(
+                "publisher.current",
+                &old_key,
+                "publisher.third",
+                &unrelated_key,
+                2,
+            ))
+            .expect("the still-active old key should authorize a later successor");
+        assert!(revoked_policy
+            .trusted_publishers
+            .contains_key("publisher.third"));
+
+        let _ = fs::remove_dir_all(revoked_source);
+        let _ = fs::remove_dir_all(revoked_install_root);
+    }
+
+    #[test]
+    fn publisher_key_rotation_is_versioned_and_bounded() {
+        let old_key = SigningKey::from_bytes(&[26u8; 32]);
+        let new_key = SigningKey::from_bytes(&[27u8; 32]);
+        let mut policy = PluginTrustPolicy::require_signed().trust_publisher(
+            "publisher.current",
+            encode_hex(old_key.verifying_key().as_bytes()),
+        );
+
+        let mut unsupported =
+            signed_key_rotation("publisher.current", &old_key, "publisher.next", &new_key, 1);
+        unsupported.schema_version += 1;
+        assert!(matches!(
+            policy.register_publisher_key_rotation(unsupported),
+            Err(PluginError::TrustPolicy(message)) if message.contains("unsupported")
+        ));
+
+        let mut oversized =
+            signed_key_rotation("publisher.current", &old_key, "publisher.next", &new_key, 1);
+        oversized.new_key_id = "oversized-".repeat(MAX_PLUGIN_KEY_ROTATION_BYTES);
+        assert!(matches!(
+            policy.register_publisher_key_rotation(oversized),
+            Err(PluginError::TrustPolicy(message)) if message.contains("exceeds")
+        ));
     }
 
     #[test]

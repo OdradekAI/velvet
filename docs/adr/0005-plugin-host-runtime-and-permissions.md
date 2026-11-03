@@ -495,11 +495,15 @@ versioned JSON adapter with atomic replacement; `ApplicationCore` loads it as
 an optional component, keeps startup usable when it is corrupt, and refuses to
 publish a package registration when trust-record persistence fails. Native
 composition assigns `plugin-trust.json`, uses developer mode only for debug
-builds and requires signatures for release builds. Uninstall retains trust
-evidence until explicit deletion. Profile-scoped developer mode, publisher-key
-provisioning and rotation, signed freshness metadata and native release key
-qualification remain P1 gates. A sidecar still provides availability
-isolation only; it is not a security sandbox.
+builds and requires signatures for release builds. `PluginTrustPolicy` also
+validates an overlap-signed, monotonic `PluginPublisherKeyRotation`, so a
+successor is admitted only after both old and new keys sign the same statement;
+exact replay is idempotent and forged, conflicting, stale or revoked-key
+rotations fail closed. Uninstall retains trust evidence until explicit
+deletion. Protected publisher-key provisioning, rotation distribution, signed
+freshness metadata and native release key qualification remain P1 gates. A
+sidecar still provides availability isolation only; it is not a security
+sandbox.
 
 ## Alternatives considered
 
