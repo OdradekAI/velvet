@@ -171,7 +171,12 @@ code or signal.
 Built-in extensions use the same lifecycle through a no-op process; WASM
 extensions provide their declared component/module through a host-selected
 runner. Invocation payloads and responses are typed by the negotiated runtime
-protocol; they are not an untyped second manifest or transport contract.
+protocol; they are not an untyped second manifest or transport contract. The
+host-owned JSONL response envelope is strict: unknown envelope fields are
+malformed runtime output and fail the invocation before projection. The
+`args`, `context` and `result` values remain extension- or contribution-owned
+payloads; their schemas are validated by the owner that declared the command,
+Job or storage participant rather than by a generic host map.
 The alpha `ProcessPluginRuntime` now captures a bounded stderr tail, reports
 exit status and Unix signal evidence, and starts sidecars in a dedicated Unix
 process group so shutdown can terminate descendants. Linux also arms

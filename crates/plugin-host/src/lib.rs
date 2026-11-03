@@ -1537,7 +1537,7 @@ struct RuntimeInvocationRequest<'a> {
 }
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct RuntimeInvocationResponse {
     protocol_version: u16,
     ok: bool,
@@ -6757,6 +6757,47 @@ mod tests {
         process
             .shutdown()
             .expect("the sidecar should be stoppable after invocation");
+    }
+
+    #[test]
+    fn process_runtime_rejects_unknown_response_fields() {
+        let mut runtime = ProcessPluginRuntime;
+        let manifest = ExtensionManifest {
+            id: ExtensionId("process.unknown-response-field".into()),
+            version: "1.0.0".into(),
+            host_api: VersionRange("^1".into()),
+            runtime: RuntimeKind::Sidecar,
+            launch: Some(RuntimeLaunchSpec {
+                program: "sh".into(),
+                args: vec![
+                    "-c".into(),
+                    "IFS= read -r line; printf '%s\\n' '{\"protocolVersion\":1,\"ok\":true,\"result\":null,\"unowned\":true}'".into(),
+                ],
+            }),
+            target_app: None,
+            contributions: vec![],
+            permission_sets: vec![],
+            ..ExtensionManifest::default()
+        };
+        let mut process = runtime
+            .start(&manifest, &PermissionGrant::default())
+            .expect("the sidecar should start");
+        let error = process
+            .invoke(&PluginInvocation {
+                extension_id: manifest.id.clone(),
+                method: "command.execute".into(),
+                command_id: "unknown.response.field".into(),
+                args: serde_json::json!({}),
+                context: serde_json::json!({}),
+            })
+            .expect_err("unknown runtime response fields must fail closed");
+        assert!(matches!(
+            error,
+            RuntimeError::InvocationFailed(message) if message.contains("unknown field")
+        ));
+        process
+            .shutdown()
+            .expect("the malformed sidecar should still be stoppable");
     }
 
     #[test]
