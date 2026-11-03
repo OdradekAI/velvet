@@ -26,6 +26,16 @@ struct ImportQuarantineStoreState {
 pub trait ImportQuarantineStore: Send + Sync {
     fn load(&self) -> Result<Vec<ImportQuarantineEntry>, PersistenceError>;
     fn save(&self, entries: &[ImportQuarantineEntry]) -> Result<(), PersistenceError>;
+
+    /// Removes one retained section by its stable bundle/plan/section key.
+    /// Implementations must publish the filtered set atomically with respect
+    /// to readers; a missing key is a successful no-op.
+    fn remove(
+        &self,
+        bundle_id: &str,
+        plan_id: &str,
+        section_id: &str,
+    ) -> Result<bool, PersistenceError>;
 }
 
 #[derive(Default)]
@@ -47,6 +57,26 @@ impl ImportQuarantineStore for InMemoryImportQuarantineStore {
             .lock()
             .map(|mut current| *current = entries)
             .map_err(|_| PersistenceError::Unavailable)
+    }
+
+    fn remove(
+        &self,
+        bundle_id: &str,
+        plan_id: &str,
+        section_id: &str,
+    ) -> Result<bool, PersistenceError> {
+        let mut entries = self
+            .entries
+            .lock()
+            .map_err(|_| PersistenceError::Unavailable)?;
+        bounded_entries(&entries)?;
+        let original_len = entries.len();
+        entries.retain(|entry| {
+            !(entry.bundle_id == bundle_id
+                && entry.plan_id == plan_id
+                && entry.section_id == section_id)
+        });
+        Ok(entries.len() != original_len)
     }
 }
 
@@ -107,6 +137,26 @@ impl ImportQuarantineStore for JsonFileImportQuarantineStore {
             return Err(PersistenceError::CorruptState);
         }
         write_atomic(&self.path, &bytes, self.durability).map_err(|_| PersistenceError::Unavailable)
+    }
+
+    fn remove(
+        &self,
+        bundle_id: &str,
+        plan_id: &str,
+        section_id: &str,
+    ) -> Result<bool, PersistenceError> {
+        let mut entries = self.load()?;
+        let original_len = entries.len();
+        entries.retain(|entry| {
+            !(entry.bundle_id == bundle_id
+                && entry.plan_id == plan_id
+                && entry.section_id == section_id)
+        });
+        if entries.len() == original_len {
+            return Ok(false);
+        }
+        self.save(&entries)?;
+        Ok(true)
     }
 }
 
@@ -194,6 +244,27 @@ mod tests {
         fs::write(&path, br#"{"schemaVersion":99,"entries":[]}"#)
             .expect("invalid state should be writable");
         assert_eq!(store.load(), Err(PersistenceError::CorruptState));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn remove_is_keyed_and_persists_the_remaining_entries() {
+        let path = temporary_path("import-quarantine-remove");
+        let store = JsonFileImportQuarantineStore::new(&path);
+        store
+            .save(&[entry("section-1"), entry("section-2")])
+            .expect("entries should save");
+        assert!(store
+            .remove("bundle-1", "plan-1", "section-1")
+            .expect("remove should succeed"));
+        assert!(!store
+            .remove("bundle-1", "plan-1", "section-1")
+            .expect("missing remove should be a no-op"));
+        assert_eq!(store.load().expect("remaining entry should load").len(), 1);
+        assert_eq!(
+            store.load().expect("remaining entry should load")[0].section_id,
+            "section-2"
+        );
         let _ = fs::remove_file(path);
     }
 }

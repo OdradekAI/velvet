@@ -177,8 +177,8 @@ use velvet_preview_core::{
     ResolvedPreviewAugmentation,
 };
 use velvet_workbench_protocol::{
-    Command, CoreError, CoreTransport, CrashCaptureEvidence, ImportPlan, ImportReceipt,
-    PlatformPreflightEvidence, PluginDiagnosticEvent,
+    Command, CoreError, CoreTransport, CrashCaptureEvidence, ImportPlan, ImportQuarantineEntry,
+    ImportReceipt, PlatformPreflightEvidence, PluginDiagnosticEvent,
     PluginDiagnosticKind as WirePluginDiagnosticKind, PluginDisableReason, PluginInstallPreviewDto,
     PluginProjectionDto, PluginResourceDto, PluginRuntimeRecoveryDto, PluginRuntimeRecoveryState,
     PluginStorageRecoveryDto, PluginStorageRecoveryStatus, PortableBundle, ProfileState, Query,
@@ -734,6 +734,53 @@ impl ApplicationCore {
             importer
         };
         importer.import(bundle, plan, participants, now_ms)
+    }
+
+    /// Lists retained extension sections for a host recovery surface. The
+    /// caller remains inside the host boundary; this method does not decode or
+    /// project the inert payload to the renderer.
+    pub fn import_quarantine_entries(&self) -> Result<Vec<ImportQuarantineEntry>, CoreError> {
+        let Some(store) = self.import_quarantine.as_deref() else {
+            return Ok(Vec::new());
+        };
+        store.load().map_err(|error| {
+            CoreError::Recovery(format!("import quarantine unavailable: {error:?}"))
+        })
+    }
+
+    /// Discards one retained extension section by its stable provenance key.
+    /// A missing key is an idempotent no-op so a repeated recovery action does
+    /// not turn a successful deletion into a transport error.
+    pub fn discard_import_quarantine(
+        &self,
+        bundle_id: &str,
+        plan_id: &str,
+        section_id: &str,
+    ) -> Result<bool, CoreError> {
+        for (field, value) in [
+            ("bundleId", bundle_id),
+            ("planId", plan_id),
+            ("sectionId", section_id),
+        ] {
+            if value.is_empty()
+                || value.len() > PortableBundle::MAX_ID_BYTES
+                || value.contains('\0')
+                || value.contains('/')
+                || value.contains('\\')
+            {
+                return Err(CoreError::InvalidCommand(format!(
+                    "invalid import quarantine {field}"
+                )));
+            }
+        }
+        let Some(store) = self.import_quarantine.as_deref() else {
+            return Ok(false);
+        };
+        store
+            .remove(bundle_id, plan_id, section_id)
+            .map_err(|error| {
+                CoreError::Recovery(format!("import quarantine unavailable: {error:?}"))
+            })
     }
 
     pub fn recovery_projection(&self) -> velvet_workbench_protocol::RecoveryProjection {
@@ -4977,9 +5024,37 @@ mod tests {
             receipt.status,
             velvet_workbench_protocol::ImportReceiptStatus::Partial
         );
-        let quarantined = quarantine.load().expect("quarantine should load");
+        let quarantined = core
+            .import_quarantine_entries()
+            .expect("quarantine should load");
         assert_eq!(quarantined.len(), 1);
         assert_eq!(quarantined[0].payload, bundle.sections[0].payload);
+        assert!(core
+            .discard_import_quarantine(
+                "bundle-composition-1",
+                "plan-composition-1",
+                "extension-settings",
+            )
+            .expect("discard should succeed"));
+        assert!(core
+            .import_quarantine_entries()
+            .expect("quarantine should reload")
+            .is_empty());
+        assert!(!quarantine
+            .remove(
+                "bundle-composition-1",
+                "plan-composition-1",
+                "extension-settings",
+            )
+            .expect("repeated discard should be a no-op"));
+        assert!(matches!(
+            core.discard_import_quarantine(
+                "bundle/escape",
+                "plan-composition-1",
+                "extension-settings"
+            ),
+            Err(CoreError::InvalidCommand(_))
+        ));
         let _ = fs::remove_dir_all(plugin_root);
     }
 
