@@ -191,7 +191,10 @@ seam, stages core snapshots through `RecoverySetTransaction`, and publishes an
 `ImportReceipt`; a participant failure leaves the current core pointer intact,
 while extension failures become partial/quarantined receipt entries. Profile
 and Workbench layout participants now reuse their domain validators and keep
-monotonic revisions. The path-free `PortableAssetMetadata` schema and
+monotonic revisions. Profile-scoped developer trust authorization is not
+portable content: a Profile import preserves the destination Profile's
+authorization and cannot silently enable unsigned package installation. The
+path-free `PortableAssetMetadata` schema and
 `AssetBundleParticipant` accept only stable Asset identity, content kind and
 optional fingerprint; unknown fields such as `sourcePath`, approved roots and
 volume identities are rejected, and imported source availability is normalized

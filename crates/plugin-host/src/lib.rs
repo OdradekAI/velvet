@@ -126,6 +126,20 @@ impl PluginTrustPolicy {
     pub fn is_developer_mode(&self) -> bool {
         self.developer_mode
     }
+
+    pub fn allows_developer_mode(&self) -> bool {
+        !self.require_signature
+    }
+
+    pub fn set_developer_mode(&mut self, enabled: bool) -> Result<(), PluginError> {
+        if enabled && self.require_signature {
+            return Err(PluginError::TrustPolicy(
+                "the active release policy requires signed packages".into(),
+            ));
+        }
+        self.developer_mode = enabled;
+        Ok(())
+    }
 }
 
 impl Default for PluginTrustPolicy {
@@ -203,6 +217,7 @@ pub enum PluginError {
         message: String,
     },
     TrustStore(String),
+    TrustPolicy(String),
     VersionConflict {
         extension_id: ExtensionId,
         installed: String,
@@ -2352,6 +2367,14 @@ impl InMemoryPluginHost {
 
     pub fn set_plugin_trust_policy(&mut self, policy: PluginTrustPolicy) {
         self.trust_policy = policy;
+    }
+
+    pub fn developer_mode_allowed(&self) -> bool {
+        self.trust_policy.allows_developer_mode()
+    }
+
+    pub fn set_plugin_developer_mode(&mut self, enabled: bool) -> Result<(), PluginError> {
+        self.trust_policy.set_developer_mode(enabled)
     }
 
     pub fn set_plugin_trust_store(
@@ -7988,6 +8011,16 @@ mod tests {
         let _ = fs::remove_dir_all(source);
         let _ = fs::remove_dir_all(install_root);
         let _ = fs::remove_dir_all(signed_install_root);
+    }
+
+    #[test]
+    fn signed_release_policy_cannot_be_overridden_by_developer_mode() {
+        let mut host = InMemoryPluginHost::default();
+        host.set_plugin_trust_policy(PluginTrustPolicy::require_signed());
+        assert!(matches!(
+            host.set_plugin_developer_mode(true),
+            Err(PluginError::TrustPolicy(_))
+        ));
     }
 
     #[test]

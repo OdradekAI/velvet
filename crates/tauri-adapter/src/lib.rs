@@ -313,7 +313,11 @@ impl CoreTransport for TauriTransport {
             &request,
             Request::Command(Command::Layout(_)) | Request::Command(Command::LayoutAt { .. })
         );
-        let emits_profile_event = matches!(&request, Request::Command(Command::SetLocale { .. }));
+        let emits_profile_event = matches!(
+            &request,
+            Request::Command(Command::SetLocale { .. })
+                | Request::Command(Command::SetPluginDeveloperMode { .. })
+        );
         let emits_recovery_event = matches!(
             &request,
             Request::Query(velvet_workbench_protocol::Query::Recovery)
@@ -526,6 +530,32 @@ mod tests {
         assert!(matches!(
             sink.events().as_slice(),
             [Event::ProfileChanged { revision: 1, state }] if state.locale == "zh-Hans"
+        ));
+    }
+
+    #[test]
+    fn plugin_developer_mode_commands_emit_authoritative_profile_events() {
+        let sink = InMemoryEventSink::default();
+        let transport = TauriTransport::with_event_sink(ApplicationCore::default(), sink.clone());
+        let response = transport
+            .dispatch(
+                RequestId(2),
+                Request::Command(Command::SetPluginDeveloperMode {
+                    enabled: false,
+                    expected_revision: Some(0),
+                }),
+            )
+            .expect("Profile trust mode command should succeed");
+
+        assert!(matches!(
+            response,
+            Response::Profile(state)
+                if state.plugin_developer_mode == Some(false) && state.revision == 1
+        ));
+        assert!(matches!(
+            sink.events().as_slice(),
+            [Event::ProfileChanged { revision: 1, state }]
+                if state.plugin_developer_mode == Some(false)
         ));
     }
 

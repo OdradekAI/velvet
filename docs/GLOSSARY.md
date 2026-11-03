@@ -490,6 +490,12 @@ Profile/Core 持久化区域对 owner 的有界状态：`writable`、`read-only`
 
 宿主对插件包的信任记录，包含包摘要、发布者身份、签名和撤销状态、兼容范围以及可选的构建 provenance/SBOM 引用。它与付费 entitlement 分开。
 
+## ProfileDeveloperMode
+
+由当前 Profile 明确授权的本地插件开发模式。它只允许宿主在当前发布策略
+允许时接受未签名本地包；它不授予插件额外的文件、网络、进程或元数据能力，
+也不会通过 PortableBundle 导入到另一个 Profile。
+
 ## Entitlement
 
 针对某个插件或功能的授权状态，例如 active、trial、grace、expired 或 unknown。Entitlement 表示账户或安装的使用权，不证明插件包完整性，也不包含支付凭据。

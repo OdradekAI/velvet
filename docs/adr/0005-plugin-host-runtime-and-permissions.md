@@ -469,7 +469,12 @@ key, version, target/runtime, manifest schema, host API range and declared
 capabilities. Manifest validation, package-root containment and capability
 policy remain independent checks. A revoked, expired, unknown or lower
 generation package stays inactive. An unsigned local package is accepted only
-through explicit, visible, Profile-scoped developer mode.
+through explicit, visible, Profile-scoped developer mode. The Profile
+projection carries an optional `pluginDeveloperMode` authorization and a
+revision-checked typed command; a missing field is a legacy compatibility
+state whose effective behavior remains controlled by the composition policy.
+The active release policy intersects the Profile authorization, so a release
+build requiring signatures cannot be overridden by a Profile command.
 
 Publisher key rotation requires an overlap-signed successor set. Cached
 revocation and anti-downgrade state win over an otherwise valid old signature;

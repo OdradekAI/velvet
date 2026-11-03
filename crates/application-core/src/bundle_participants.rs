@@ -52,11 +52,16 @@ impl BundleImportParticipant for ProfileBundleParticipant {
                 "profile payload failed schema or locale validation".into(),
             ));
         }
-        if let Some(existing_revision) = existing
+        if let Some(existing_state) = existing
             .and_then(|snapshot| serde_json::from_slice::<ProfileState>(&snapshot.payload).ok())
-            .map(|state| state.revision)
         {
-            state.revision = existing_revision.saturating_add(1);
+            state.revision = existing_state.revision.saturating_add(1);
+            // Developer trust is a local authorization, not portable user
+            // content. Keep the current Profile decision across imports so a
+            // bundle cannot silently enable unsigned package installation.
+            state.plugin_developer_mode = existing_state.plugin_developer_mode;
+        } else {
+            state.plugin_developer_mode = None;
         }
         serde_json::to_vec(&state).map_err(|error| {
             BundleImportParticipantError::Invalid(format!(
@@ -198,6 +203,7 @@ mod tests {
                 schema_version: PROFILE_SCHEMA_VERSION,
                 revision: 2,
                 locale: "zh-Hans".into(),
+                plugin_developer_mode: Some(true),
             })
             .expect("profile should encode"),
         };
@@ -211,6 +217,7 @@ mod tests {
                 schema_version: PROFILE_SCHEMA_VERSION,
                 revision: 9,
                 locale: "en-US".into(),
+                plugin_developer_mode: Some(false),
             })
             .expect("existing profile should encode"),
         );
@@ -221,6 +228,7 @@ mod tests {
             serde_json::from_slice(&payload).expect("profile should decode");
         assert_eq!(imported.locale, "zh-Hans");
         assert_eq!(imported.revision, 10);
+        assert_eq!(imported.plugin_developer_mode, Some(false));
     }
 
     #[test]

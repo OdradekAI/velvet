@@ -633,6 +633,14 @@ impl ApplicationCore {
             asset_source_store,
         ));
         let mut plugins = InMemoryPluginHost::with_runtime(runtime);
+        if let Some(enabled) = profile.plugin_developer_mode {
+            if let Err(error) = plugins.set_plugin_developer_mode(enabled) {
+                let _ = recovery.record_failure(
+                    velvet_workbench_protocol::RecoveryFailureClass::OptionalComponent,
+                    format!("Profile plugin trust mode could not be applied: {error:?}"),
+                );
+            }
+        }
         if let Some(snapshots) = recovery_snapshots.clone() {
             plugins.set_extension_storage_store(snapshots);
         }
@@ -1305,6 +1313,10 @@ impl ApplicationCore {
     }
 
     pub fn set_plugin_trust_policy(&mut self, policy: velvet_plugin_host::PluginTrustPolicy) {
+        let mut policy = policy;
+        if let Some(enabled) = self.profile.plugin_developer_mode {
+            let _ = policy.set_developer_mode(enabled);
+        }
         self.plugins.set_plugin_trust_policy(policy);
     }
 
@@ -2257,6 +2269,10 @@ impl ApplicationCore {
                 locale,
                 expected_revision,
             }) => self.set_locale(expected_revision, locale),
+            Request::Command(Command::SetPluginDeveloperMode {
+                enabled,
+                expected_revision,
+            }) => self.set_plugin_developer_mode(expected_revision, enabled),
             Request::Command(Command::StageRelease {
                 transaction_id,
                 manifest,
@@ -2478,6 +2494,7 @@ impl ApplicationCore {
                 .checked_add(1)
                 .ok_or_else(|| CoreError::Profile("profile revision exhausted".into()))?,
             locale,
+            plugin_developer_mode: self.profile.plugin_developer_mode,
         };
         self.profile_store.save(&next).map_err(|error| {
             if matches!(error, velvet_persistence::PersistenceError::Unavailable) {
@@ -2488,6 +2505,55 @@ impl ApplicationCore {
             }
             CoreError::Profile(format!("{error:?}"))
         })?;
+        self.profile = next.clone();
+        Ok(Response::Profile(next))
+    }
+
+    fn set_plugin_developer_mode(
+        &mut self,
+        expected_revision: Option<u64>,
+        enabled: bool,
+    ) -> Result<Response, CoreError> {
+        self.ensure_storage_writable()?;
+        if enabled && !self.plugins.developer_mode_allowed() {
+            return Err(CoreError::Profile(
+                "developer mode is disabled by the active release policy".into(),
+            ));
+        }
+        if let Some(expected) = expected_revision {
+            if expected != self.profile.revision {
+                return Err(CoreError::StaleRevision {
+                    expected,
+                    actual: self.profile.revision,
+                });
+            }
+        }
+        if self.profile.plugin_developer_mode == Some(enabled) {
+            return Ok(Response::Profile(self.profile.clone()));
+        }
+
+        let next = ProfileState {
+            schema_version: PROFILE_SCHEMA_VERSION,
+            revision: self
+                .profile
+                .revision
+                .checked_add(1)
+                .ok_or_else(|| CoreError::Profile("profile revision exhausted".into()))?,
+            locale: self.profile.locale.clone(),
+            plugin_developer_mode: Some(enabled),
+        };
+        self.profile_store.save(&next).map_err(|error| {
+            if matches!(error, velvet_persistence::PersistenceError::Unavailable) {
+                self.set_storage_availability(StorageAvailability::Unavailable);
+                return CoreError::Storage {
+                    availability: StorageAvailability::Unavailable,
+                };
+            }
+            CoreError::Profile(format!("{error:?}"))
+        })?;
+        self.plugins
+            .set_plugin_developer_mode(enabled)
+            .map_err(|error| CoreError::Profile(format!("{error:?}")))?;
         self.profile = next.clone();
         Ok(Response::Profile(next))
     }
@@ -4368,6 +4434,7 @@ mod tests {
                 schema_version: PROFILE_SCHEMA_VERSION,
                 revision: 1,
                 locale: "zh-Hans".into(),
+                plugin_developer_mode: None,
             })
         );
         assert_eq!(
@@ -4395,6 +4462,97 @@ mod tests {
             })),
             Err(CoreError::Profile(_))
         ));
+    }
+
+    #[test]
+    fn profile_developer_mode_is_explicit_revisioned_and_restored() {
+        let profile_store = Arc::new(InMemoryProfileStateStore::default());
+        profile_store
+            .save(&ProfileState {
+                plugin_developer_mode: Some(false),
+                ..ProfileState::default()
+            })
+            .expect("the profile trust setting should be writable");
+        let plugin_root = temporary_layout_path().with_extension("plugins");
+        let source = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../examples/plugins/echo-sidecar");
+        let mut core =
+            ApplicationCore::with_store_and_plugin_directory_and_job_store_and_profile_store(
+                Arc::new(InMemoryLayoutStateStore::default()),
+                &plugin_root,
+                Arc::new(velvet_job_system::InMemoryJobStateStore::default()),
+                profile_store.clone(),
+            );
+
+        assert!(matches!(
+            core.install_plugin_from_directory(&source),
+            Err(PluginError::TrustDenied {
+                state: velvet_plugin_host::PluginTrustState::Unknown,
+                ..
+            })
+        ));
+        let enabled = core
+            .dispatch(Request::Command(Command::SetPluginDeveloperMode {
+                enabled: true,
+                expected_revision: Some(0),
+            }))
+            .expect("explicit Profile authorization should succeed");
+        assert!(matches!(
+            enabled,
+            Response::Profile(ProfileState {
+                revision: 1,
+                plugin_developer_mode: Some(true),
+                ..
+            })
+        ));
+        assert!(matches!(
+            core.dispatch(Request::Command(Command::SetPluginDeveloperMode {
+                enabled: false,
+                expected_revision: Some(0),
+            })),
+            Err(CoreError::StaleRevision {
+                expected: 0,
+                actual: 1,
+            })
+        ));
+        assert!(matches!(
+            core.dispatch(Request::Query(Query::Profile))
+                .expect("the Profile should remain authoritative after a stale command"),
+            Response::Profile(ProfileState {
+                plugin_developer_mode: Some(true),
+                revision: 1,
+                ..
+            })
+        ));
+        core.install_plugin_from_directory(&source)
+            .expect("the explicitly authorized developer package should install");
+        assert_eq!(
+            profile_store
+                .load()
+                .expect("the profile should load")
+                .expect("the profile should exist")
+                .plugin_developer_mode,
+            Some(true)
+        );
+        drop(core);
+        let mut restarted =
+            ApplicationCore::with_store_and_plugin_directory_and_job_store_and_profile_store(
+                Arc::new(InMemoryLayoutStateStore::default()),
+                &plugin_root,
+                Arc::new(velvet_job_system::InMemoryJobStateStore::default()),
+                profile_store,
+            );
+        assert!(matches!(
+            restarted
+                .dispatch(Request::Query(Query::Profile))
+                .expect("the restarted profile should be readable"),
+            Response::Profile(ProfileState {
+                plugin_developer_mode: Some(true),
+                ..
+            })
+        ));
+
+        let _ = fs::remove_dir_all(plugin_root);
     }
 
     #[test]

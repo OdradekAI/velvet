@@ -1063,6 +1063,13 @@ pub enum WireRequest {
         #[serde(rename = "expectedRevision")]
         expected_revision: Option<u64>,
     },
+    SetPluginDeveloperMode {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        enabled: bool,
+        #[serde(rename = "expectedRevision")]
+        expected_revision: Option<u64>,
+    },
     StageRelease {
         #[serde(rename = "protocolVersion")]
         protocol_version: u16,
@@ -1561,6 +1568,17 @@ impl WireRequest {
                 validate_inner_protocol(outer_protocol_version, protocol_version)?;
                 Ok(Request::Command(Command::SetLocale {
                     locale,
+                    expected_revision,
+                }))
+            }
+            Self::SetPluginDeveloperMode {
+                protocol_version,
+                enabled,
+                expected_revision,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Command(Command::SetPluginDeveloperMode {
+                    enabled,
                     expected_revision,
                 }))
             }
@@ -4331,6 +4349,31 @@ mod tests {
         );
         assert_eq!(value["response"]["resource"]["locale"], "zh-Hans");
         assert!(value["response"]["resource"]["bytes"].is_array());
+    }
+
+    #[test]
+    fn wire_profile_developer_mode_request_preserves_revision_guard() {
+        let envelope: WireRequestEnvelope = serde_json::from_value(serde_json::json!({
+            "protocolVersion": 1,
+            "requestId": 32,
+            "request": {
+                "kind": "set-plugin-developer-mode",
+                "protocolVersion": 1,
+                "enabled": true,
+                "expectedRevision": 7
+            }
+        }))
+        .expect("the Profile trust request should deserialize");
+        assert!(matches!(
+            envelope
+                .request
+                .into_core(1)
+                .expect("the Profile trust request should map"),
+            Request::Command(Command::SetPluginDeveloperMode {
+                enabled: true,
+                expected_revision: Some(7)
+            })
+        ));
     }
 
     #[test]

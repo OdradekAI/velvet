@@ -741,6 +741,7 @@ mod tests {
         legacy_profile
             .save(&ProfileState {
                 locale: "zh-Hans".into(),
+                plugin_developer_mode: None,
                 ..ProfileState::default()
             })
             .expect("legacy profile should save");

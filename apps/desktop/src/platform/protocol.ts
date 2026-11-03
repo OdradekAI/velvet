@@ -434,6 +434,12 @@ export type CoreRequest =
     }
   | {
       readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'set-plugin-developer-mode';
+      readonly enabled: boolean;
+      readonly expectedRevision?: number;
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
       readonly kind: 'stage-release';
       readonly transactionId: string;
       readonly manifest: CoreReleaseManifest;
@@ -1233,6 +1239,8 @@ export interface CoreProfileState {
   readonly schemaVersion: ProfileSchemaVersion;
   readonly revision: number;
   readonly locale: string;
+  /** Explicit Profile authorization for unsigned local extension packages. */
+  readonly pluginDeveloperMode?: boolean;
 }
 
 export interface CorePluginResource {

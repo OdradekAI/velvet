@@ -88,7 +88,11 @@ from the signature-envelope schema. `ApplicationCore` treats a corrupt store
 as an optional component failure so the workbench still starts, while a write
 failure blocks the package mutation before its manifest is published. Native composition
 wires `plugin-trust.json`, uses developer mode only for debug builds and
-requires signatures for release builds; uninstall retains trust evidence.
+requires signatures for release builds; uninstall retains trust evidence. The
+Profile projection now carries an optional `pluginDeveloperMode` authorization
+with revision-checked mutation. Missing legacy fields are migrated as an
+unspecified setting, and the active release policy still has final authority
+over whether unsigned packages can be accepted.
 Profile-scoped developer mode, publisher-key provisioning/rotation and signed
 freshness metadata remain release gates.
 

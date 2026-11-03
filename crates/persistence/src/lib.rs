@@ -678,6 +678,7 @@ mod tests {
             schema_version: velvet_workbench_protocol::PROFILE_SCHEMA_VERSION,
             revision: 3,
             locale: "zh-Hans".into(),
+            plugin_developer_mode: Some(false),
         };
 
         store.save(&state).expect("profile should be written");

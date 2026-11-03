@@ -255,6 +255,11 @@ pub struct ProfileState {
     pub schema_version: u16,
     pub revision: u64,
     pub locale: String,
+    /// Explicit Profile authorization for unsigned local extension packages.
+    /// `None` preserves legacy profiles and lets the composition policy decide
+    /// the default; it is never treated as a production trust grant.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plugin_developer_mode: Option<bool>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -274,6 +279,7 @@ impl Default for ProfileState {
             schema_version: PROFILE_SCHEMA_VERSION,
             revision: 0,
             locale: "en".into(),
+            plugin_developer_mode: None,
         }
     }
 }
@@ -1691,6 +1697,10 @@ pub enum Command {
         locale: String,
         expected_revision: Option<u64>,
     },
+    SetPluginDeveloperMode {
+        enabled: bool,
+        expected_revision: Option<u64>,
+    },
     StageRelease {
         transaction_id: String,
         manifest: Box<ReleaseManifestDto>,
@@ -1821,6 +1831,10 @@ pub fn request_idempotency_scope(request: &Request) -> Option<&'static str> {
             expected_revision: Some(_),
             ..
         }) => Some("set-locale-at-revision"),
+        Request::Command(Command::SetPluginDeveloperMode {
+            expected_revision: Some(_),
+            ..
+        }) => Some("set-plugin-developer-mode-at-revision"),
         Request::Command(Command::CommitReleaseHealth { .. }) => Some("commit-release-health"),
         Request::Command(Command::RollbackRelease { .. }) => Some("rollback-release"),
         Request::Command(_) | Request::Query(_) => None,
@@ -1981,21 +1995,31 @@ mod tests {
             schema_version: PROFILE_SCHEMA_VERSION,
             revision: 4,
             locale: "zh-Hans".into(),
+            plugin_developer_mode: Some(true),
         };
 
         let json = serde_json::to_value(&state).expect("profile state should serialize");
         assert_eq!(json["schemaVersion"], PROFILE_SCHEMA_VERSION);
         assert_eq!(json["revision"], 4);
         assert_eq!(json["locale"], "zh-Hans");
+        assert_eq!(json["pluginDeveloperMode"], true);
         assert!(json.get("schema_version").is_none());
 
         let decoded: ProfileState =
             serde_json::from_value(json).expect("profile state should deserialize");
         assert_eq!(decoded, state);
+        let legacy: ProfileState = serde_json::from_value(serde_json::json!({
+            "schemaVersion": PROFILE_SCHEMA_VERSION,
+            "revision": 2,
+            "locale": "en"
+        }))
+        .expect("legacy profiles should default the optional trust setting");
+        assert_eq!(legacy.plugin_developer_mode, None);
         assert!(serde_json::from_value::<ProfileState>(serde_json::json!({
             "schemaVersion": PROFILE_SCHEMA_VERSION,
             "revision": 4,
             "locale": "zh-Hans",
+            "pluginDeveloperMode": true,
             "unexpected": true
         }))
         .is_err());
