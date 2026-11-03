@@ -146,7 +146,10 @@ seam for permanent Asset deletion: it accepts only opaque AssetIds, requires a
 trusted fingerprint, revalidates it immediately before deletion, relies on the
 source resolver for canonical path/root/volume checks before trusting the
 fingerprint, and makes no undo or destination claim. Move, overwrite, trash
-and remote providers remain open.
+and remote providers remain open. `ApplicationCore::file_asset_operation_provider`
+composes it with the same Rust-owned source resolver used by Preview, so a
+future Tauri adapter can expose it without creating a second path or permission
+owner.
 
 The versioned `PortableBundle` and `ImportPlan` contracts now validate bounded,
 path-free metadata, section ownership, integrity digests, schema compatibility

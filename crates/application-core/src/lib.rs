@@ -681,6 +681,13 @@ impl ApplicationCore {
         OperationCoordinator::new(self.operation_receipts.clone())
     }
 
+    /// Builds the concrete file provider against the same source owner used by
+    /// Preview. The provider borrows the resolver so every operation repeats
+    /// canonical path, approved-root and volume validation at commit time.
+    pub fn file_asset_operation_provider(&self) -> FileAssetOperationProvider<'_> {
+        FileAssetOperationProvider::new(self.preview_locations.as_ref())
+    }
+
     pub fn recovery_projection(&self) -> velvet_workbench_protocol::RecoveryProjection {
         let mut projection = self.recovery.projection();
         projection.durability_report = self.durability_report.clone();
