@@ -165,6 +165,13 @@ while keeping queries and recovery actions available. Startup load failure
 marks the state degraded without writing a default Profile or Layout back over
 the unavailable store.
 
+The native wire boundary now denies unknown fields on both the request envelope
+and tagged request variants before dispatch. This keeps path-, shell-, URL- and
+process-shaped additions from becoming silently accepted capabilities. Open
+JSON remains an explicit owner contract: extension manifest metadata is still
+captured by its declared namespace, and plugin command arguments remain opaque
+until the owning command schema validates them.
+
 The versioned `PortableBundle` and `ImportPlan` contracts now validate bounded,
 path-free metadata, section ownership, integrity digests, schema compatibility
 and plan expiry. `PortableBundleInspector` verifies selected section bytes and

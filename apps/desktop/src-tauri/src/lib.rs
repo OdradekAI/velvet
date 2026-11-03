@@ -57,7 +57,6 @@ use velvet_tauri_adapter::{
 use velvet_workbench_protocol::{
     ActivationRequest, ActivationTarget, ActivationTargetKind, Command, CoreError, CoreTransport,
     CrashCaptureEvidence, CrashCaptureKind, Event,
-    OperationError, OperationErrorCode,
     PlatformCapabilityStatus,
     PlatformPreflightEvidence, PluginDisableReason, RecoveryFailureClass, Request,
     ProtocolHandshakeRequest, ProtocolHandshakeResponse, RequestId, Response, ResponseEnvelope,
@@ -680,7 +679,7 @@ impl From<UpdateCoordinatorError> for WireError {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WireRequestEnvelope {
     pub protocol_version: u16,
     pub request_id: u64,
@@ -749,7 +748,7 @@ impl TryFrom<WirePluginManifest> for ExtensionManifest {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(tag = "kind", rename_all = "kebab-case")]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum WireRequest {
     QueryLayout {
         #[serde(rename = "protocolVersion")]
@@ -3472,6 +3471,31 @@ fn extension_state_name(state: &velvet_plugin_api::ExtensionState) -> &'static s
 #[cfg(test)]
 mod tests {
     use super::*;
+    use velvet_workbench_protocol::{OperationError, OperationErrorCode};
+
+    #[test]
+    fn wire_requests_reject_unknown_fields_before_dispatch() {
+        let error = serde_json::from_value::<WireRequestEnvelope>(serde_json::json!({
+            "protocolVersion": 1,
+            "requestId": 6,
+            "request": {
+                "kind": "query-profile",
+                "protocolVersion": 1,
+                "sourcePath": "/tmp/should-never-be-a-command-capability"
+            }
+        }))
+        .expect_err("path-shaped fields must not be silently accepted by a typed request");
+        assert!(error.to_string().contains("unknown field"));
+
+        let error = serde_json::from_value::<WireRequestEnvelope>(serde_json::json!({
+            "protocolVersion": 1,
+            "requestId": 7,
+            "request": { "kind": "query-profile", "protocolVersion": 1 },
+            "shellCommand": "sh -c destructive-side-effect"
+        }))
+        .expect_err("unknown envelope fields must not bypass the transport boundary");
+        assert!(error.to_string().contains("unknown field"));
+    }
 
     #[test]
     fn wire_transport_envelope_preserves_optional_session_and_handshake_shape() {
@@ -4476,16 +4500,19 @@ mod tests {
             ("restore-plugin-state", 31, "restore"),
             ("quarantine-plugin-state", 32, "quarantine"),
         ] {
-            let request: WireRequestEnvelope = serde_json::from_value(serde_json::json!({
+            let mut request_value = serde_json::json!({
                 "protocolVersion": 1,
                 "requestId": request_id,
                 "request": {
                     "kind": kind,
                     "protocolVersion": 1,
-                    "extensionId": "velvet.example.echo",
-                    "generation": 4
+                    "extensionId": "velvet.example.echo"
                 }
-            }))
+            });
+            if expected == "quarantine" {
+                request_value["request"]["generation"] = serde_json::json!(4);
+            }
+            let request: WireRequestEnvelope = serde_json::from_value(request_value)
             .expect("the plugin storage action should deserialize");
             let mapped = request
                 .request
