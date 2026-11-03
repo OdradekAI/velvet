@@ -138,6 +138,12 @@ impl<'a> FileAssetOperationProvider<'a> {
     }
 
     fn current_fingerprint(&self, asset_id: &AssetId) -> Result<String, OperationProviderError> {
+        // Revalidate path, approved root and volume before trusting the
+        // source-owned fingerprint. Fingerprint lookup alone is metadata-only
+        // and must not become a capability check.
+        self.resolver
+            .resolve(asset_id)
+            .map_err(|_| OperationProviderError::Failed("asset source is unavailable".into()))?;
         self.resolver
             .fingerprint(asset_id)
             .map_err(|_| OperationProviderError::Failed("asset source is unavailable".into()))?
@@ -781,5 +787,41 @@ mod tests {
         ));
         assert!(path.exists());
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn file_asset_provider_fails_closed_after_source_root_revocation() {
+        let root = temporary_path("file-operation-root");
+        std::fs::create_dir_all(&root).expect("root should exist");
+        let path = root.join("asset.txt");
+        std::fs::write(&path, b"asset").expect("asset should exist");
+        let store = Arc::new(velvet_persistence::InMemoryAssetSourceLocationStore::default());
+        let resolver = crate::PersistentAssetSourceLocationResolver::new(store);
+        let approved_root = resolver
+            .add_approved_root(&root)
+            .expect("root should be approved");
+        resolver
+            .register_with_approved_root(
+                AssetId("asset-1".into()),
+                &path,
+                velvet_asset_core::ContentKindId("text/plain".into()),
+                Some(velvet_asset_core::ContentFingerprint("sha256:asset".into())),
+                Some(&approved_root),
+            )
+            .expect("asset should register");
+        resolver
+            .remove_approved_root(&approved_root)
+            .expect("root revocation should succeed");
+
+        let receipts = Arc::new(InMemoryOperationReceiptStore::default());
+        let coordinator = OperationCoordinator::new(receipts.clone());
+        let mut provider = FileAssetOperationProvider::new(&resolver);
+        assert!(matches!(
+            coordinator.commit(&file_delete_plan("sha256:asset"), 10, &mut provider),
+            Err(OperationCoordinatorError::ProviderFailed { .. })
+        ));
+        assert!(path.exists());
+        assert!(receipts.load().expect("receipts should load").is_empty());
+        let _ = std::fs::remove_dir_all(root);
     }
 }
