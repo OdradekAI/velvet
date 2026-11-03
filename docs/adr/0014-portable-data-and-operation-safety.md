@@ -158,6 +158,12 @@ stale targets, recorded operations, reconciliation-required outcomes,
 provider failures/unknown outcomes and persistence failures; callers do not
 need to parse Rust debug strings to choose a recovery action.
 
+The session transport records mutating command outcomes by `(clientId,
+requestId)`. Only commands with a declared idempotency scope may return the
+cached result. Reusing a request id for an unscoped mutation, or with a
+different scope, is rejected before dispatch so a repeated submission cannot
+silently apply a side effect twice.
+
 The host also projects the shared `StorageAvailability` vocabulary into the
 recovery projection. A read-only, full, unavailable or unknown Profile/Core
 storage state is propagated to `JobSystem` and blocks new persistent mutations

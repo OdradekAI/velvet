@@ -150,14 +150,18 @@ impl TauriTransport {
             .iter()
             .find(|((owner, id), _, _)| owner == &cache_key.0 && *id == request_id.0)
         {
-            if scope.is_some() && *existing_scope != scope {
-                return Err(CoreError::RequestIdReuse {
-                    request_id: request_id.0,
-                });
+            if let (Some(current_scope), Some(previous_scope)) = (scope, *existing_scope) {
+                if current_scope == previous_scope {
+                    return Ok(response.clone());
+                }
             }
-            if scope.is_some() {
-                return Ok(response.clone());
-            }
+            // A request id is still a correlation key for commands that are
+            // not safe to replay. Seeing it again must never dispatch the
+            // command a second time, even when neither request declares an
+            // idempotency scope.
+            return Err(CoreError::RequestIdReuse {
+                request_id: request_id.0,
+            });
         }
 
         let record_outcome = matches!(&request, Request::Command(_));
@@ -823,6 +827,19 @@ mod tests {
             .expect("duplicate should return the cached result");
         assert_eq!(first, duplicate);
         assert_eq!(sink.events().len(), 1);
+
+        let mutation = Request::Command(Command::SetLocale {
+            locale: "zh-CN".into(),
+            expected_revision: None,
+        });
+        transport
+            .dispatch_session(&session, RequestId(48), mutation.clone())
+            .expect("unscoped mutation should succeed once");
+        assert!(matches!(
+            transport.dispatch_session(&session, RequestId(48), mutation),
+            Err(CoreError::RequestIdReuse { request_id: 48 })
+        ));
+
         assert!(matches!(
             transport.dispatch_session(
                 &session,
