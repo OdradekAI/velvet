@@ -170,9 +170,12 @@ metadata snapshot into the native composition's default `RecoverySet` remains
 separate owner work because the current source registry still owns content
 kind and fingerprint. Extension failures can now be retained by the bounded
 `ImportQuarantineStore` as inert bytes with provenance; without that adapter
-the receipt says the bytes were explicitly discarded. Native composition and
-user actions for listing, retrying or deleting quarantined bundle sections
-remain follow-up work.
+the receipt says the bytes were explicitly discarded. `ApplicationCore` now
+composes that optional store without exposing it as a second persistence owner,
+and the Tauri composition creates a durable atomic `import-quarantine.json`
+adapter beside the other application stores. User actions for listing,
+retrying or deleting quarantined bundle sections remain a separate host
+management slice.
 
 ## Consequences
 

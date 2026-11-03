@@ -60,6 +60,7 @@ pub struct ApplicationRecoveryStores {
     pub release_packages: Option<Arc<dyn velvet_persistence::ReleasePackageStore>>,
     pub release_trust: Option<ReleaseTrustPolicy>,
     pub operation_receipts: Option<Arc<dyn velvet_persistence::OperationReceiptStore>>,
+    pub import_quarantine: Option<Arc<dyn velvet_persistence::ImportQuarantineStore>>,
 }
 
 impl ApplicationRecoveryStores {
@@ -79,6 +80,7 @@ impl ApplicationRecoveryStores {
             release_packages: None,
             release_trust: None,
             operation_receipts: None,
+            import_quarantine: None,
         }
     }
 
@@ -129,6 +131,14 @@ impl ApplicationRecoveryStores {
         self
     }
 
+    pub fn with_import_quarantine(
+        mut self,
+        store: Arc<dyn velvet_persistence::ImportQuarantineStore>,
+    ) -> Self {
+        self.import_quarantine = Some(store);
+        self
+    }
+
     pub fn journal_only(journal: Arc<dyn RecoveryJournalStore>) -> Self {
         Self::new(journal, None, None)
     }
@@ -167,11 +177,12 @@ use velvet_preview_core::{
     ResolvedPreviewAugmentation,
 };
 use velvet_workbench_protocol::{
-    Command, CoreError, CoreTransport, CrashCaptureEvidence, PlatformPreflightEvidence,
-    PluginDiagnosticEvent, PluginDiagnosticKind as WirePluginDiagnosticKind, PluginDisableReason,
-    PluginInstallPreviewDto, PluginProjectionDto, PluginResourceDto, PluginRuntimeRecoveryDto,
-    PluginRuntimeRecoveryState, PluginStorageRecoveryDto, PluginStorageRecoveryStatus,
-    ProfileState, Query, Request, RequestEnvelope, RequestId, Response, ResponseEnvelope,
+    Command, CoreError, CoreTransport, CrashCaptureEvidence, ImportPlan, ImportReceipt,
+    PlatformPreflightEvidence, PluginDiagnosticEvent,
+    PluginDiagnosticKind as WirePluginDiagnosticKind, PluginDisableReason, PluginInstallPreviewDto,
+    PluginProjectionDto, PluginResourceDto, PluginRuntimeRecoveryDto, PluginRuntimeRecoveryState,
+    PluginStorageRecoveryDto, PluginStorageRecoveryStatus, PortableBundle, ProfileState, Query,
+    Request, RequestEnvelope, RequestId, Response, ResponseEnvelope,
     PLUGIN_DIAGNOSTIC_SCHEMA_VERSION, PLUGIN_RESOURCE_SCHEMA_VERSION, PROFILE_SCHEMA_VERSION,
     PROTOCOL_VERSION,
 };
@@ -195,6 +206,7 @@ pub struct ApplicationCore {
     release_updates: Option<ReleaseUpdateManager>,
     diagnostic_store: Option<Arc<dyn DiagnosticEventStore>>,
     operation_receipts: Arc<dyn velvet_persistence::OperationReceiptStore>,
+    import_quarantine: Option<Arc<dyn velvet_persistence::ImportQuarantineStore>>,
     plugin_diagnostics: VecDeque<PluginDiagnosticEvent>,
     diagnostic_history: VecDeque<PluginDiagnosticEvent>,
     diagnostics_degraded: bool,
@@ -519,6 +531,7 @@ impl ApplicationCore {
             release_packages,
             release_trust,
             operation_receipts,
+            import_quarantine,
         } = recovery_stores;
         let recovery = RecoverySupervisor::new(recovery_journal, Arc::new(SystemRecoveryClock));
         let launch_started = recovery.begin_launch(env!("CARGO_PKG_VERSION"));
@@ -653,6 +666,7 @@ impl ApplicationCore {
             operation_receipts: operation_receipts.unwrap_or_else(|| {
                 Arc::new(velvet_persistence::InMemoryOperationReceiptStore::default())
             }),
+            import_quarantine,
             plugin_diagnostics: VecDeque::new(),
             diagnostic_history: diagnostic_history.into_iter().collect(),
             diagnostics_degraded,
@@ -686,6 +700,40 @@ impl ApplicationCore {
     /// canonical path, approved-root and volume validation at commit time.
     pub fn file_asset_operation_provider(&self) -> FileAssetOperationProvider<'_> {
         FileAssetOperationProvider::new(self.preview_locations.as_ref())
+    }
+
+    /// Imports a portable bundle through the application-owned snapshot and
+    /// recovery-set stores. The Tauri layer can expose this seam as a typed
+    /// command without gaining a second persistence owner or direct access to
+    /// extension bytes.
+    pub fn import_portable_bundle(
+        &self,
+        bundle: &PortableBundle,
+        plan: &ImportPlan,
+        participants: &[&dyn BundleImportParticipant],
+        now_ms: u64,
+    ) -> Result<ImportReceipt, BundleImportError> {
+        let Some(snapshots) = self.recovery_snapshots.as_deref() else {
+            return Err(BundleImportError::Snapshot(
+                velvet_persistence::SnapshotError::Unavailable(
+                    "recovery snapshots are unavailable in this composition".into(),
+                ),
+            ));
+        };
+        let Some(recovery_sets) = self.recovery_sets.as_deref() else {
+            return Err(BundleImportError::RecoverySet(
+                velvet_persistence::RecoverySetError::Unavailable(
+                    "recovery set index is unavailable in this composition".into(),
+                ),
+            ));
+        };
+        let importer = PortableBundleImporter::new(snapshots, recovery_sets);
+        let importer = if let Some(quarantine) = self.import_quarantine.as_deref() {
+            importer.with_quarantine_store(quarantine)
+        } else {
+            importer
+        };
+        importer.import(bundle, plan, participants, now_ms)
     }
 
     pub fn recovery_projection(&self) -> velvet_workbench_protocol::RecoveryProjection {
@@ -2859,6 +2907,8 @@ impl CoreTransport for InProcessCoreTransport {
 mod tests {
     use super::*;
     use ed25519_dalek::SigningKey;
+    use sha2::{Digest, Sha256};
+    use std::collections::{BTreeMap, BTreeSet};
     use std::fs;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -2868,12 +2918,13 @@ mod tests {
         LayoutCommand, LayoutState, WorkbenchAppId, WorkbenchPart, WorkbenchZone,
     };
     use velvet_persistence::{
-        InMemoryAssetSourceLocationStore, InMemoryDiagnosticEventStore, InMemoryLayoutStateStore,
-        InMemoryProfileStateStore, InMemoryRecoveryJournalStore, InMemoryRecoverySetStore,
-        InMemoryReleaseUpdateStore, InMemoryStateSnapshotStore, JsonFileAssetSourceLocationStore,
-        JsonFileDiagnosticEventStore, JsonFileJobStateStore, JsonFileLayoutStateStore,
-        LayoutStateStore, ReleaseUpdateStore, SnapshotError, SnapshotJobStateStore,
-        SnapshotLayoutStateStore, SnapshotProfileStateStore, StateSnapshot, StateSnapshotStore,
+        ImportQuarantineStore, InMemoryAssetSourceLocationStore, InMemoryDiagnosticEventStore,
+        InMemoryImportQuarantineStore, InMemoryLayoutStateStore, InMemoryProfileStateStore,
+        InMemoryRecoveryJournalStore, InMemoryRecoverySetStore, InMemoryReleaseUpdateStore,
+        InMemoryStateSnapshotStore, JsonFileAssetSourceLocationStore, JsonFileDiagnosticEventStore,
+        JsonFileJobStateStore, JsonFileLayoutStateStore, LayoutStateStore, ReleaseUpdateStore,
+        SnapshotError, SnapshotJobStateStore, SnapshotLayoutStateStore, SnapshotProfileStateStore,
+        StateSnapshot, StateSnapshotStore,
     };
     use velvet_plugin_api::{
         ContributionDescriptor, ContributionKind, ContributionScope, ExtensionId,
@@ -2885,6 +2936,9 @@ mod tests {
     use velvet_plugin_host::{
         PluginInvocation, PluginInvocationResult, PluginRuntime, RuntimeError, RuntimeHealth,
         RuntimeProcess,
+    };
+    use velvet_workbench_protocol::{
+        PortableBundle, PortableBundleScope, PortableBundleSection, PORTABLE_BUNDLE_SCHEMA_VERSION,
     };
     static NEXT_TEST_FILE: AtomicU64 = AtomicU64::new(0);
 
@@ -4824,6 +4878,109 @@ mod tests {
 
         let _ = fs::remove_file(layout_path);
         let _ = fs::remove_file(jobs_path);
+    }
+
+    #[test]
+    fn portable_import_composition_persists_failed_extension_bytes() {
+        struct FailingExtension;
+
+        impl BundleImportParticipant for FailingExtension {
+            fn owner_id(&self) -> &str {
+                "sample.extension"
+            }
+
+            fn snapshot_scope(&self) -> &str {
+                "settings"
+            }
+
+            fn bundle_scope(&self) -> PortableBundleScope {
+                PortableBundleScope::Extension
+            }
+
+            fn schema_version(&self) -> u16 {
+                1
+            }
+
+            fn import_payload(
+                &self,
+                _section: &PortableBundleSection,
+                _existing: Option<&StateSnapshot>,
+                _migration: Option<&velvet_workbench_protocol::ImportMigration>,
+            ) -> Result<Vec<u8>, BundleImportParticipantError> {
+                Err(BundleImportParticipantError::Unavailable(
+                    "extension is disabled".into(),
+                ))
+            }
+        }
+
+        let snapshots = Arc::new(InMemoryStateSnapshotStore::default());
+        let recovery_sets = Arc::new(InMemoryRecoverySetStore::default());
+        let quarantine = Arc::new(InMemoryImportQuarantineStore::default());
+        let plugin_root = temporary_layout_path().with_extension("plugins");
+        let payload = br#"{"settings":{"theme":"dark"}}"#.to_vec();
+        let bundle = PortableBundle {
+            schema_version: PORTABLE_BUNDLE_SCHEMA_VERSION,
+            bundle_id: "bundle-composition-1".into(),
+            created_at_ms: 1,
+            source_build: "0.0.4".into(),
+            sections: vec![PortableBundleSection {
+                section_id: "extension-settings".into(),
+                scope: PortableBundleScope::Extension,
+                owner_id: "sample.extension".into(),
+                schema_version: 1,
+                required: false,
+                extension_id: Some("sample.extension".into()),
+                sha256: format!("{:x}", Sha256::digest(&payload)),
+                payload,
+            }],
+        };
+        let plan = PortableBundleInspector::inspect(
+            &bundle,
+            "plan-composition-1",
+            &["extension-settings".into()],
+            &BundleInspectionContext {
+                now_ms: 10,
+                plan_ttl_ms: 100,
+                supported_owner_schemas: BTreeMap::from([("sample.extension".into(), 1)]),
+                trusted_extensions: BTreeSet::from(["sample.extension".into()]),
+            },
+        )
+        .expect("extension plan should be valid");
+        let core = ApplicationCore::with_store_and_plugin_directory_and_job_store_and_profile_store_and_asset_source_store_and_recovery_stores(
+            Arc::new(SnapshotLayoutStateStore::new(
+                snapshots.clone(),
+                Some(recovery_sets.clone()),
+            )),
+            &plugin_root,
+            Arc::new(SnapshotJobStateStore::new(
+                snapshots.clone(),
+                Some(recovery_sets.clone()),
+            )),
+            Arc::new(SnapshotProfileStateStore::new(
+                snapshots.clone(),
+                Some(recovery_sets.clone()),
+            )),
+            Arc::new(InMemoryAssetSourceLocationStore::default()),
+            ApplicationRecoveryStores::new(
+                Arc::new(InMemoryRecoveryJournalStore::default()),
+                Some(snapshots),
+                Some(recovery_sets),
+            )
+            .with_import_quarantine(quarantine.clone()),
+        );
+
+        let participant = FailingExtension;
+        let receipt = core
+            .import_portable_bundle(&bundle, &plan, &[&participant], 20)
+            .expect("extension failure should be isolated");
+        assert_eq!(
+            receipt.status,
+            velvet_workbench_protocol::ImportReceiptStatus::Partial
+        );
+        let quarantined = quarantine.load().expect("quarantine should load");
+        assert_eq!(quarantined.len(), 1);
+        assert_eq!(quarantined[0].payload, bundle.sections[0].payload);
+        let _ = fs::remove_dir_all(plugin_root);
     }
 
     #[test]

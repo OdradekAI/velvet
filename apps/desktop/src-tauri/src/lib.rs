@@ -42,7 +42,8 @@ use velvet_plugin_host::JsonFileRuntimeLeaseStore;
 use velvet_persistence::{
     DurabilityMode, JsonFileAssetSourceLocationStore, JsonFileDiagnosticEventStore,
     DurabilityReportStore, JsonFileDurabilityReportStore, JsonFileRecoveryJournalStore,
-    JsonFileOperationReceiptStore, JsonFileRecoverySetStore, JsonFileStateSnapshotStore,
+    JsonFileImportQuarantineStore, JsonFileOperationReceiptStore, JsonFileRecoverySetStore,
+    JsonFileStateSnapshotStore,
     LegacyJobMigrationParticipant,
     LegacyLayoutMigrationParticipant, LegacyProfileMigrationParticipant,
     JsonFileReleasePackageStore, JsonFileReleaseUpdateStore, OwnerMigrationParticipant,
@@ -2590,6 +2591,7 @@ pub fn run() {
             let asset_sources_path = app_data_dir.join("asset-sources.json");
             let recovery_path = app_data_dir.join("recovery-journal.json");
             let operation_receipts_path = app_data_dir.join("operation-receipts.json");
+            let import_quarantine_path = app_data_dir.join("import-quarantine.json");
             let diagnostic_events_path = app_data_dir.join("diagnostic-events.json");
             let durability_report_path = app_data_dir.join("durability-report.json");
             let snapshot_root = app_data_dir.join("snapshots");
@@ -2664,6 +2666,12 @@ pub fn run() {
                 .with_operation_receipts(Arc::new(
                     JsonFileOperationReceiptStore::with_durability(
                         operation_receipts_path,
+                        durability,
+                    ),
+                ))
+                .with_import_quarantine(Arc::new(
+                    JsonFileImportQuarantineStore::with_durability(
+                        import_quarantine_path,
                         durability,
                     ),
                 ))
