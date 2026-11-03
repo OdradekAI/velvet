@@ -2,14 +2,15 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use sha2::{Digest, Sha256};
 use velvet_persistence::{
-    RecoverySetError, RecoverySetStore, RecoverySetTransaction, SnapshotError, StateSnapshot,
-    StateSnapshotStore, CORE_RECOVERY_SET_ID, MAX_STATE_SNAPSHOT_BYTES,
+    ImportQuarantineStore, RecoverySetError, RecoverySetStore, RecoverySetTransaction,
+    SnapshotError, StateSnapshot, StateSnapshotStore, CORE_RECOVERY_SET_ID,
+    MAX_STATE_SNAPSHOT_BYTES,
 };
 use velvet_workbench_protocol::{
     ImportConflict, ImportMigration, ImportOwnerReceipt, ImportOwnerStatus, ImportPlan,
-    ImportPlanError, ImportReceipt, ImportReceiptStatus, PortableBundle, PortableBundleError,
-    PortableBundleScope, PortableBundleSection, IMPORT_PLAN_SCHEMA_VERSION,
-    IMPORT_RECEIPT_SCHEMA_VERSION,
+    ImportPlanError, ImportQuarantineEntry, ImportReceipt, ImportReceiptStatus, PortableBundle,
+    PortableBundleError, PortableBundleScope, PortableBundleSection, IMPORT_PLAN_SCHEMA_VERSION,
+    IMPORT_QUARANTINE_SCHEMA_VERSION, IMPORT_RECEIPT_SCHEMA_VERSION,
 };
 
 const DEFAULT_IMPORT_PLAN_TTL_MS: u64 = 5 * 60 * 1000;
@@ -245,6 +246,7 @@ pub enum BundleImportError {
 struct PreparedSnapshot {
     owner_id: String,
     scope: String,
+    section: PortableBundleSection,
     snapshot: StateSnapshot,
 }
 
@@ -255,6 +257,7 @@ struct PreparedSnapshot {
 pub struct PortableBundleImporter<'a> {
     snapshots: &'a dyn StateSnapshotStore,
     recovery_sets: &'a dyn RecoverySetStore,
+    quarantine: Option<&'a dyn ImportQuarantineStore>,
 }
 
 impl<'a> PortableBundleImporter<'a> {
@@ -265,7 +268,16 @@ impl<'a> PortableBundleImporter<'a> {
         Self {
             snapshots,
             recovery_sets,
+            quarantine: None,
         }
+    }
+
+    /// Enables durable retention of failed optional sections. Without this
+    /// adapter the importer still isolates the extension and records an
+    /// explicit discard in the receipt; it never executes the bytes.
+    pub fn with_quarantine_store(mut self, quarantine: &'a dyn ImportQuarantineStore) -> Self {
+        self.quarantine = Some(quarantine);
+        self
     }
 
     pub fn import(
@@ -359,35 +371,54 @@ impl<'a> PortableBundleImporter<'a> {
                 core_snapshots.push(PreparedSnapshot {
                     owner_id: participant.owner_id().into(),
                     scope: participant.snapshot_scope().into(),
+                    section: (*section).clone(),
                     snapshot: make_snapshot(participant, existing.as_ref(), now_ms, payload)?,
                 });
                 continue;
             }
 
             let Some(participant) = participant else {
-                owner_receipts.push(skipped_extension_receipt(
+                let message = self.quarantine_extension_section(
+                    bundle,
+                    plan,
                     section,
+                    now_ms,
                     "extension participant is unavailable",
-                ));
+                );
+                owner_receipts.push(skipped_extension_receipt(section, &message));
                 continue;
             };
             if !verify_digest(section) {
+                let message = self.quarantine_extension_section(
+                    bundle,
+                    plan,
+                    section,
+                    now_ms,
+                    "extension section integrity check failed",
+                );
                 owner_receipts.push(ImportOwnerReceipt {
                     owner_id: participant.owner_id().into(),
                     scope: participant.snapshot_scope().into(),
                     status: ImportOwnerStatus::Quarantined,
                     generation: None,
-                    message: Some("extension section integrity check failed".into()),
+                    message: Some(message),
                 });
                 continue;
             }
             if section.schema_version > participant.schema_version() {
+                let message = self.quarantine_extension_section(
+                    bundle,
+                    plan,
+                    section,
+                    now_ms,
+                    "extension schema is newer than the participant",
+                );
                 owner_receipts.push(ImportOwnerReceipt {
                     owner_id: participant.owner_id().into(),
                     scope: participant.snapshot_scope().into(),
                     status: ImportOwnerStatus::Quarantined,
                     generation: None,
-                    message: Some("extension schema is newer than the participant".into()),
+                    message: Some(message),
                 });
                 continue;
             }
@@ -407,12 +438,19 @@ impl<'a> PortableBundleImporter<'a> {
             {
                 Ok(existing) => existing,
                 Err(error) => {
+                    let message = self.quarantine_extension_section(
+                        bundle,
+                        plan,
+                        section,
+                        now_ms,
+                        &format!("extension state could not be loaded: {error:?}"),
+                    );
                     owner_receipts.push(ImportOwnerReceipt {
                         owner_id: participant.owner_id().into(),
                         scope: participant.snapshot_scope().into(),
                         status: ImportOwnerStatus::Quarantined,
                         generation: None,
-                        message: Some(format!("extension state could not be loaded: {error:?}")),
+                        message: Some(message),
                     });
                     continue;
                 }
@@ -424,12 +462,19 @@ impl<'a> PortableBundleImporter<'a> {
             ) {
                 Ok(payload) => payload,
                 Err(error) => {
+                    let message = self.quarantine_extension_section(
+                        bundle,
+                        plan,
+                        section,
+                        now_ms,
+                        &format!("extension import failed: {error:?}"),
+                    );
                     owner_receipts.push(ImportOwnerReceipt {
                         owner_id: participant.owner_id().into(),
                         scope: participant.snapshot_scope().into(),
                         status: ImportOwnerStatus::Quarantined,
                         generation: None,
-                        message: Some(format!("extension import failed: {error:?}")),
+                        message: Some(message),
                     });
                     continue;
                 }
@@ -438,15 +483,23 @@ impl<'a> PortableBundleImporter<'a> {
                 Ok(snapshot) => extension_snapshots.push(PreparedSnapshot {
                     owner_id: participant.owner_id().into(),
                     scope: participant.snapshot_scope().into(),
+                    section: (*section).clone(),
                     snapshot,
                 }),
                 Err(BundleImportError::PayloadTooLarge { .. }) => {
+                    let message = self.quarantine_extension_section(
+                        bundle,
+                        plan,
+                        section,
+                        now_ms,
+                        "extension payload exceeds snapshot limit",
+                    );
                     owner_receipts.push(ImportOwnerReceipt {
                         owner_id: participant.owner_id().into(),
                         scope: participant.snapshot_scope().into(),
                         status: ImportOwnerStatus::Quarantined,
                         generation: None,
-                        message: Some("extension payload exceeds snapshot limit".into()),
+                        message: Some(message),
                     });
                 }
                 Err(error) => return Err(error),
@@ -523,15 +576,22 @@ impl<'a> PortableBundleImporter<'a> {
                     generation: Some(generation),
                     message: None,
                 },
-                Err(error) => ImportOwnerReceipt {
-                    owner_id,
-                    scope,
-                    status: ImportOwnerStatus::Quarantined,
-                    generation: None,
-                    message: Some(format!(
-                        "extension snapshot could not be committed: {error:?}"
-                    )),
-                },
+                Err(error) => {
+                    let message = self.quarantine_extension_section(
+                        bundle,
+                        plan,
+                        &prepared.section,
+                        now_ms,
+                        &format!("extension snapshot could not be committed: {error:?}"),
+                    );
+                    ImportOwnerReceipt {
+                        owner_id,
+                        scope,
+                        status: ImportOwnerStatus::Quarantined,
+                        generation: None,
+                        message: Some(message),
+                    }
+                }
             });
         }
 
@@ -552,6 +612,76 @@ impl<'a> PortableBundleImporter<'a> {
             recovery_set_generation: recovery_set.map(|set| set.generation),
             owners: owner_receipts,
         })
+    }
+
+    fn quarantine_extension_section(
+        &self,
+        bundle: &PortableBundle,
+        plan: &ImportPlan,
+        section: &PortableBundleSection,
+        now_ms: u64,
+        reason: &str,
+    ) -> String {
+        let reason = bounded_text(
+            reason,
+            velvet_workbench_protocol::IMPORT_QUARANTINE_MAX_REASON_BYTES,
+        );
+        let Some(store) = self.quarantine else {
+            return format!("{reason}; extension bytes were discarded");
+        };
+        let entry = ImportQuarantineEntry {
+            schema_version: IMPORT_QUARANTINE_SCHEMA_VERSION,
+            bundle_id: bundle.bundle_id.clone(),
+            plan_id: plan.plan_id.clone(),
+            section_id: section.section_id.clone(),
+            owner_id: section
+                .extension_id
+                .clone()
+                .unwrap_or_else(|| section.owner_id.clone()),
+            section_schema_version: section.schema_version,
+            quarantined_at_ms: now_ms,
+            reason: reason.clone(),
+            payload: section.payload.clone(),
+        };
+        let mut entries = match store.load() {
+            Ok(entries) => entries,
+            Err(error) => {
+                return format!(
+                    "{reason}; quarantine store unavailable ({error:?}), extension bytes were discarded"
+                )
+            }
+        };
+        if entries.iter().all(|existing| {
+            existing.bundle_id != entry.bundle_id
+                || existing.plan_id != entry.plan_id
+                || existing.section_id != entry.section_id
+        }) {
+            entries.push(entry);
+        }
+        match store.save(&entries) {
+            Ok(()) => format!("{reason}; extension bytes retained in quarantine"),
+            Err(error) => format!(
+                "{reason}; quarantine store rejected the bytes ({error:?}), extension bytes were discarded"
+            ),
+        }
+    }
+}
+
+fn bounded_text(value: &str, max_bytes: usize) -> String {
+    let mut output = String::new();
+    for character in value.chars() {
+        if character == '\0' {
+            continue;
+        }
+        if output.len() + character.len_utf8() > max_bytes {
+            break;
+        }
+        output.push(character);
+    }
+    if output.is_empty() {
+        "extension import failed".into()
+    } else {
+        output
     }
 }
 
@@ -620,10 +750,10 @@ fn encode_hex(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
     use velvet_persistence::{
-        commit_current_recovery_set, InMemoryRecoverySetStore, InMemoryStateSnapshotStore,
-        StateSnapshotStore, CORE_RECOVERY_SET_ID, JOB_SNAPSHOT_OWNER, JOB_SNAPSHOT_SCOPE,
-        LAYOUT_SNAPSHOT_OWNER, LAYOUT_SNAPSHOT_SCOPE, PROFILE_SNAPSHOT_OWNER,
-        PROFILE_SNAPSHOT_SCOPE,
+        commit_current_recovery_set, ImportQuarantineStore, InMemoryImportQuarantineStore,
+        InMemoryRecoverySetStore, InMemoryStateSnapshotStore, StateSnapshotStore,
+        CORE_RECOVERY_SET_ID, JOB_SNAPSHOT_OWNER, JOB_SNAPSHOT_SCOPE, LAYOUT_SNAPSHOT_OWNER,
+        LAYOUT_SNAPSHOT_SCOPE, PROFILE_SNAPSHOT_OWNER, PROFILE_SNAPSHOT_SCOPE,
     };
     use velvet_workbench_protocol::{
         PortableAssetMetadata, PortableAssetRecord, PortableBundleSection, SourceAvailability,
@@ -1083,7 +1213,9 @@ mod tests {
                 "extension is disabled".into(),
             )),
         };
+        let quarantine = InMemoryImportQuarantineStore::default();
         let receipt = PortableBundleImporter::new(&snapshots, &recovery_sets)
+            .with_quarantine_store(&quarantine)
             .import(&bundle, &plan, &[&profile, &extension], 20)
             .expect("core import should survive extension failure");
         assert_eq!(receipt.status, ImportReceiptStatus::Partial);
@@ -1093,5 +1225,9 @@ mod tests {
             .iter()
             .any(|owner| owner.owner_id == "sample.extension"
                 && owner.status == ImportOwnerStatus::Quarantined));
+        let entries = quarantine.load().expect("quarantine should load");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].section_id, "extension-sample");
+        assert_eq!(entries[0].payload, br#"{"settings":{}}"#);
     }
 }

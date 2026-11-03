@@ -297,6 +297,10 @@ ContentFingerprint 和导出端的 SourceAvailability；schema 拒绝 sourcePath
 
 因损坏、schema 不兼容或迁移失败而暂时移出正常启动路径的原始状态。QuarantinedState 保留有限诊断元数据和原始字节，等待重试、恢复、导出或用户删除；它不应阻塞核心 Workbench 启动。
 
+PortableBundle 的扩展 section 也可以进入这个状态：`ImportQuarantineStore` 只保存
+有界 bytes 和 bundle/plan/section provenance，不解码或执行它们；如果没有配置该 store，
+导入 receipt 必须明确记录 bytes 已丢弃。
+
 ## Profile locale
 
 由 Rust Profile state 持有的工作台显示语言和 revision。桌面 LocalizationService 通过 CoreTransport 查询、设置并投影该状态；插件 bundle 只提供扩展自己的消息资源，不拥有全局 locale。

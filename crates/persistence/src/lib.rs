@@ -12,6 +12,7 @@ use velvet_workbench_protocol::{
 use crate::durability::write_atomic;
 
 mod durability;
+mod import_quarantine;
 mod operation;
 mod owner_snapshots;
 mod recovery_set;
@@ -23,6 +24,10 @@ pub use durability::{
     JsonFileDurabilityReportStore, DURABILITY_REPORT_SCHEMA_VERSION,
 };
 
+pub use import_quarantine::{
+    ImportQuarantineStore, InMemoryImportQuarantineStore, JsonFileImportQuarantineStore,
+    MAX_IMPORT_QUARANTINE_ENTRIES, MAX_IMPORT_QUARANTINE_STORE_BYTES,
+};
 pub use operation::{
     InMemoryOperationReceiptStore, JsonFileOperationReceiptStore, OperationReceiptStore,
     MAX_OPERATION_RECEIPTS, MAX_OPERATION_RECEIPT_ITEMS, MAX_OPERATION_RECEIPT_STORE_BYTES,

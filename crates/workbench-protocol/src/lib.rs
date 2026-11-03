@@ -41,6 +41,7 @@ pub const PORTABLE_BUNDLE_SCHEMA_VERSION: u16 = 1;
 pub const IMPORT_PLAN_SCHEMA_VERSION: u16 = 1;
 pub const IMPORT_RECEIPT_SCHEMA_VERSION: u16 = 1;
 pub const ASSET_BUNDLE_SCHEMA_VERSION: u16 = 1;
+pub const IMPORT_QUARANTINE_SCHEMA_VERSION: u16 = 1;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -155,6 +156,7 @@ pub fn supported_schema_versions() -> BTreeMap<String, u16> {
         ("asset-bundle".into(), ASSET_BUNDLE_SCHEMA_VERSION),
         ("import-plan".into(), IMPORT_PLAN_SCHEMA_VERSION),
         ("import-receipt".into(), IMPORT_RECEIPT_SCHEMA_VERSION),
+        ("import-quarantine".into(), IMPORT_QUARANTINE_SCHEMA_VERSION),
     ])
 }
 
@@ -1323,6 +1325,67 @@ pub enum ImportReceiptError {
     DuplicateOwner(String),
 }
 
+pub const IMPORT_QUARANTINE_MAX_REASON_BYTES: usize = 4096;
+
+/// An inert extension section retained after an import could not safely
+/// activate or commit it. The payload is never executable and is only exposed
+/// through an explicit host recovery path.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ImportQuarantineEntry {
+    pub schema_version: u16,
+    pub bundle_id: String,
+    pub plan_id: String,
+    pub section_id: String,
+    pub owner_id: String,
+    pub section_schema_version: u16,
+    pub quarantined_at_ms: u64,
+    pub reason: String,
+    pub payload: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ImportQuarantineError {
+    UnsupportedSchema { schema_version: u16 },
+    InvalidField(&'static str),
+    OversizedPayload,
+}
+
+impl ImportQuarantineEntry {
+    pub fn validate(&self) -> Result<(), ImportQuarantineError> {
+        if self.schema_version != IMPORT_QUARANTINE_SCHEMA_VERSION {
+            return Err(ImportQuarantineError::UnsupportedSchema {
+                schema_version: self.schema_version,
+            });
+        }
+        for (field, value) in [
+            ("bundleId", self.bundle_id.as_str()),
+            ("planId", self.plan_id.as_str()),
+            ("sectionId", self.section_id.as_str()),
+            ("ownerId", self.owner_id.as_str()),
+        ] {
+            if value.is_empty()
+                || value.len() > PortableBundle::MAX_ID_BYTES
+                || value.contains('\0')
+                || value.contains('/')
+                || value.contains('\\')
+            {
+                return Err(ImportQuarantineError::InvalidField(field));
+            }
+        }
+        if self.reason.is_empty()
+            || self.reason.len() > IMPORT_QUARANTINE_MAX_REASON_BYTES
+            || self.reason.contains('\0')
+        {
+            return Err(ImportQuarantineError::InvalidField("reason"));
+        }
+        if self.payload.len() > PORTABLE_BUNDLE_MAX_SECTION_BYTES {
+            return Err(ImportQuarantineError::OversizedPayload);
+        }
+        Ok(())
+    }
+}
+
 impl ImportReceipt {
     pub fn validate(&self) -> Result<(), ImportReceiptError> {
         if self.schema_version != IMPORT_RECEIPT_SCHEMA_VERSION {
@@ -2264,6 +2327,40 @@ mod tests {
             }
             .validate(),
             Err(PortableAssetMetadataError::DuplicateAsset("asset-1".into()))
+        );
+    }
+
+    #[test]
+    fn import_quarantine_entry_is_bounded_and_path_free() {
+        let entry = ImportQuarantineEntry {
+            schema_version: IMPORT_QUARANTINE_SCHEMA_VERSION,
+            bundle_id: "bundle-1".into(),
+            plan_id: "plan-1".into(),
+            section_id: "extension-sample".into(),
+            owner_id: "sample.extension".into(),
+            section_schema_version: 1,
+            quarantined_at_ms: 42,
+            reason: "participant unavailable".into(),
+            payload: vec![1, 2, 3],
+        };
+        entry.validate().expect("quarantine entry should validate");
+        let json = serde_json::to_value(&entry).expect("quarantine entry should serialize");
+        assert_eq!(json["schemaVersion"], IMPORT_QUARANTINE_SCHEMA_VERSION);
+        assert!(json.get("path").is_none());
+        assert!(
+            serde_json::from_value::<ImportQuarantineEntry>(serde_json::json!({
+                "schemaVersion": IMPORT_QUARANTINE_SCHEMA_VERSION,
+                "bundleId": "bundle-1",
+                "planId": "plan-1",
+                "sectionId": "extension-sample",
+                "ownerId": "sample.extension",
+                "sectionSchemaVersion": 1,
+                "quarantinedAtMs": 42,
+                "reason": "participant unavailable",
+                "payload": [],
+                "sourcePath": "/tmp/unsafe"
+            }))
+            .is_err()
         );
     }
 

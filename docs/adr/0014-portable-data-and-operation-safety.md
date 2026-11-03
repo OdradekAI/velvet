@@ -158,8 +158,13 @@ optional fingerprint; unknown fields such as `sourcePath`, approved roots and
 volume identities are rejected, and imported source availability is normalized
 to `Unknown` until the local Asset source owner revalidates a registration.
 The participant does not write the source-location registry. Wiring the Asset
-metadata snapshot into the native composition's default `RecoverySet`, and
-durable extension quarantine storage, remain separate owner work.
+metadata snapshot into the native composition's default `RecoverySet` remains
+separate owner work because the current source registry still owns content
+kind and fingerprint. Extension failures can now be retained by the bounded
+`ImportQuarantineStore` as inert bytes with provenance; without that adapter
+the receipt says the bytes were explicitly discarded. Native composition and
+user actions for listing, retrying or deleting quarantined bundle sections
+remain follow-up work.
 
 ## Consequences
 

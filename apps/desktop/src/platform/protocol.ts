@@ -32,6 +32,7 @@ export const PORTABLE_BUNDLE_SCHEMA_VERSION = 1 as const;
 export const IMPORT_PLAN_SCHEMA_VERSION = 1 as const;
 export const IMPORT_RECEIPT_SCHEMA_VERSION = 1 as const;
 export const ASSET_BUNDLE_SCHEMA_VERSION = 1 as const;
+export const IMPORT_QUARANTINE_SCHEMA_VERSION = 1 as const;
 export const NATIVE_UPDATE_SCHEMA_VERSION = 1 as const;
 export type WorkbenchAppId = string;
 
@@ -47,6 +48,18 @@ export interface PortableAssetRecord {
 export interface PortableAssetMetadata {
   readonly schemaVersion: typeof ASSET_BUNDLE_SCHEMA_VERSION;
   readonly assets: readonly PortableAssetRecord[];
+}
+
+export interface ImportQuarantineEntry {
+  readonly schemaVersion: typeof IMPORT_QUARANTINE_SCHEMA_VERSION;
+  readonly bundleId: string;
+  readonly planId: string;
+  readonly sectionId: string;
+  readonly ownerId: string;
+  readonly sectionSchemaVersion: number;
+  readonly quarantinedAtMs: number;
+  readonly reason: string;
+  readonly payload: readonly number[];
 }
 
 export type CoreActivationTargetKind = 'file-path' | 'deep-link';
