@@ -11,8 +11,9 @@ mod recovery;
 mod release;
 
 pub use operation::{
-    OperationCoordinator, OperationCoordinatorError, OperationExecution, OperationPhase,
-    OperationProvider, OperationProviderError,
+    FileAssetOperationProvider, OperationCoordinator, OperationCoordinatorError,
+    OperationExecution, OperationPhase, OperationProvider, OperationProviderError,
+    ASSET_OPERATION_OWNER,
 };
 
 pub use bundle::{

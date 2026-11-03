@@ -1,11 +1,17 @@
 use std::collections::BTreeSet;
+use std::fs;
 use std::sync::{Arc, Mutex};
 
+use velvet_asset_core::AssetId;
 use velvet_persistence::{OperationReceiptStore, PersistenceError};
 use velvet_workbench_protocol::{
-    OperationItemReceipt, OperationPlan, OperationPlanError, OperationReceipt,
+    OperationItemReceipt, OperationKind, OperationPlan, OperationPlanError, OperationReceipt,
     OperationReceiptStatus, OperationTarget, OperationUndoCapability, OPERATION_SCHEMA_VERSION,
 };
+
+use crate::AssetSourceLocationResolver;
+
+pub const ASSET_OPERATION_OWNER: &str = "asset";
 
 /// The point in the provider lifecycle where an operation failed or became
 /// ambiguous. Keeping this explicit prevents an execution failure from being
@@ -86,6 +92,130 @@ pub trait OperationProvider {
         &mut self,
         plan: &OperationPlan,
     ) -> Result<OperationExecution, OperationProviderError>;
+}
+
+/// Minimal concrete file provider for irreversible Asset deletion.
+///
+/// The provider receives only opaque AssetIds and obtains a canonical path
+/// through the application-owned source resolver. It intentionally does not
+/// implement move, overwrite, trash or arbitrary command execution until
+/// those operations have a typed destination/compensation contract.
+pub struct FileAssetOperationProvider<'a> {
+    resolver: &'a dyn AssetSourceLocationResolver,
+}
+
+impl<'a> FileAssetOperationProvider<'a> {
+    pub fn new(resolver: &'a dyn AssetSourceLocationResolver) -> Self {
+        Self { resolver }
+    }
+
+    fn validate_plan(&self, plan: &OperationPlan) -> Result<(), OperationProviderError> {
+        if plan.owner_id != ASSET_OPERATION_OWNER {
+            return Err(OperationProviderError::Failed(
+                "file provider accepts only asset-owned operations".into(),
+            ));
+        }
+        if plan.kind != OperationKind::Delete {
+            return Err(OperationProviderError::Failed(
+                "file provider supports only delete".into(),
+            ));
+        }
+        if !matches!(plan.undo, OperationUndoCapability::None) {
+            return Err(OperationProviderError::Failed(
+                "file provider does not claim an undo capability".into(),
+            ));
+        }
+        if plan
+            .targets
+            .iter()
+            .any(|target| target.expected_fingerprint.is_none())
+        {
+            return Err(OperationProviderError::Failed(
+                "file deletion requires a trusted target fingerprint".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn current_fingerprint(&self, asset_id: &AssetId) -> Result<String, OperationProviderError> {
+        self.resolver
+            .fingerprint(asset_id)
+            .map_err(|_| OperationProviderError::Failed("asset source is unavailable".into()))?
+            .map(|fingerprint| fingerprint.0)
+            .ok_or_else(|| {
+                OperationProviderError::Failed("asset has no trusted fingerprint".into())
+            })
+    }
+}
+
+impl OperationProvider for FileAssetOperationProvider<'_> {
+    fn observe(
+        &mut self,
+        plan: &OperationPlan,
+    ) -> Result<Vec<OperationTarget>, OperationProviderError> {
+        self.validate_plan(plan)?;
+        plan.targets
+            .iter()
+            .map(|target| {
+                let asset_id = AssetId(target.target_id.clone());
+                let fingerprint = self.current_fingerprint(&asset_id)?;
+                Ok(OperationTarget {
+                    target_id: target.target_id.clone(),
+                    expected_revision: None,
+                    expected_fingerprint: Some(fingerprint),
+                })
+            })
+            .collect()
+    }
+
+    fn execute(
+        &mut self,
+        plan: &OperationPlan,
+    ) -> Result<OperationExecution, OperationProviderError> {
+        self.validate_plan(plan)?;
+        let mut items = Vec::with_capacity(plan.targets.len());
+        let mut any_failed = false;
+        for target in &plan.targets {
+            let asset_id = AssetId(target.target_id.clone());
+            let expected = target
+                .expected_fingerprint
+                .as_deref()
+                .expect("validate_plan ensures a fingerprint");
+            let current = self.current_fingerprint(&asset_id)?;
+            if current != expected {
+                any_failed = true;
+                items.push(OperationItemReceipt {
+                    target_id: target.target_id.clone(),
+                    status: OperationReceiptStatus::Partial,
+                    message: Some("asset changed before delete".into()),
+                });
+                continue;
+            }
+            let path = self.resolver.resolve(&asset_id).map_err(|_| {
+                OperationProviderError::Failed("asset source is unavailable".into())
+            })?;
+            match fs::remove_file(path) {
+                Ok(()) => items.push(OperationItemReceipt {
+                    target_id: target.target_id.clone(),
+                    status: OperationReceiptStatus::Committed,
+                    message: None,
+                }),
+                Err(_) => {
+                    any_failed = true;
+                    items.push(OperationItemReceipt {
+                        target_id: target.target_id.clone(),
+                        status: OperationReceiptStatus::Partial,
+                        message: Some("asset delete failed".into()),
+                    });
+                }
+            }
+        }
+        if any_failed {
+            Ok(OperationExecution::partial(items, None))
+        } else {
+            Ok(OperationExecution::committed(items, None))
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -315,10 +445,60 @@ fn validate_execution(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
     use velvet_persistence::{InMemoryOperationReceiptStore, OperationReceiptStore};
+    use velvet_preview_core::PreviewSourceError;
     use velvet_workbench_protocol::{
         OperationKind, OperationRetryPolicy, OperationUndoCapability, OPERATION_SCHEMA_VERSION,
     };
+
+    struct TestAssetResolver {
+        path: PathBuf,
+        fingerprint: String,
+    }
+
+    impl AssetSourceLocationResolver for TestAssetResolver {
+        fn resolve(&self, _asset_id: &AssetId) -> Result<PathBuf, PreviewSourceError> {
+            Ok(self.path.clone())
+        }
+
+        fn fingerprint(
+            &self,
+            _asset_id: &AssetId,
+        ) -> Result<Option<velvet_asset_core::ContentFingerprint>, PreviewSourceError> {
+            Ok(Some(velvet_asset_core::ContentFingerprint(
+                self.fingerprint.clone(),
+            )))
+        }
+    }
+
+    fn temporary_path(label: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be after epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("velvet-{label}-{nonce}.txt"))
+    }
+
+    fn file_delete_plan(fingerprint: &str) -> OperationPlan {
+        OperationPlan {
+            schema_version: OPERATION_SCHEMA_VERSION,
+            plan_id: "plan-file-delete".into(),
+            operation_id: "operation-file-delete".into(),
+            owner_id: ASSET_OPERATION_OWNER.into(),
+            kind: OperationKind::Delete,
+            targets: vec![OperationTarget {
+                target_id: "asset-1".into(),
+                expected_revision: None,
+                expected_fingerprint: Some(fingerprint.into()),
+            }],
+            created_at_ms: 1,
+            expires_at_ms: 100,
+            retry_policy: OperationRetryPolicy::Never,
+            undo: OperationUndoCapability::None,
+        }
+    }
 
     struct FakeProvider {
         observed: Vec<OperationTarget>,
@@ -546,5 +726,60 @@ mod tests {
             coordinator.commit(&no_undo_plan, 10, &mut no_undo_provider),
             Err(OperationCoordinatorError::InvalidExecution(_))
         ));
+    }
+
+    #[test]
+    fn file_asset_provider_deletes_only_a_fingerprint_bound_target() {
+        let path = temporary_path("file-operation");
+        std::fs::write(&path, b"asset").expect("asset should exist");
+        let resolver = TestAssetResolver {
+            path: path.clone(),
+            fingerprint: "sha256:asset".into(),
+        };
+        let receipts = Arc::new(InMemoryOperationReceiptStore::default());
+        let coordinator = OperationCoordinator::new(receipts.clone());
+        let mut provider = FileAssetOperationProvider::new(&resolver);
+        let receipt = coordinator
+            .commit(&file_delete_plan("sha256:asset"), 10, &mut provider)
+            .expect("file delete should commit");
+        assert_eq!(receipt.status, OperationReceiptStatus::Committed);
+        assert!(!path.exists());
+        assert_eq!(receipts.load().expect("receipt should load").len(), 1);
+    }
+
+    #[test]
+    fn file_asset_provider_rejects_stale_or_untrusted_targets_before_side_effects() {
+        let path = temporary_path("file-operation-stale");
+        std::fs::write(&path, b"asset").expect("asset should exist");
+        let resolver = TestAssetResolver {
+            path: path.clone(),
+            fingerprint: "sha256:current".into(),
+        };
+        let receipts = Arc::new(InMemoryOperationReceiptStore::default());
+        let coordinator = OperationCoordinator::new(receipts.clone());
+        let mut provider = FileAssetOperationProvider::new(&resolver);
+        assert!(matches!(
+            coordinator.commit(&file_delete_plan("sha256:stale"), 10, &mut provider),
+            Err(OperationCoordinatorError::Plan(
+                OperationPlanError::StaleTarget(_)
+            ))
+        ));
+        assert!(path.exists());
+        assert!(receipts.load().expect("receipts should load").is_empty());
+
+        let no_fingerprint_plan = OperationPlan {
+            targets: vec![OperationTarget {
+                target_id: "asset-1".into(),
+                expected_revision: Some(1),
+                expected_fingerprint: None,
+            }],
+            ..file_delete_plan("sha256:current")
+        };
+        assert!(matches!(
+            coordinator.commit(&no_fingerprint_plan, 10, &mut provider),
+            Err(OperationCoordinatorError::ProviderFailed { .. })
+        ));
+        assert!(path.exists());
+        let _ = std::fs::remove_file(path);
     }
 }

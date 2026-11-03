@@ -141,7 +141,11 @@ targets, serializes receipt transitions, writes `started` before invoking a
 provider, preserves `unknown` outcomes after restart and blocks replay until
 reconciliation. The coordinator still does not infer idempotency, grant file
 or remote authority, or decide compensation validity; those remain provider
-owner work.
+owner work. A minimal `FileAssetOperationProvider` now exercises the provider
+seam for permanent Asset deletion: it accepts only opaque AssetIds, requires a
+trusted fingerprint, revalidates it immediately before deletion, relies on the
+source resolver for canonical path/root/volume checks, and makes no undo or
+destination claim. Move, overwrite, trash and remote providers remain open.
 
 The versioned `PortableBundle` and `ImportPlan` contracts now validate bounded,
 path-free metadata, section ownership, integrity digests, schema compatibility
