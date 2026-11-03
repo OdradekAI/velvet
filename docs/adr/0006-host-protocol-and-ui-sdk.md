@@ -72,6 +72,13 @@ authoritative state and retries with the same key only when the command
 contract permits it; a request id does not make an external side effect
 idempotent, and such effects are never replayed blindly.
 
+The desktop allocates request ids monotonically for each client. When the
+bounded window evicts an older command outcome, the transport retains a
+per-client consumed floor and rejects command ids at or below that floor;
+queries remain repeatable and may still report the evicted outcome as unknown.
+This keeps bounded memory from turning an old request id into a new mutation
+key.
+
 Reconnect creates a fresh session, retains the last valid read-only projection
 while degraded, performs bounded backoff and then requests a complete
 authoritative snapshot resynchronization. Events and handles from the old

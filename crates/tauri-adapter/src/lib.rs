@@ -52,6 +52,7 @@ pub struct TauriTransport {
     event_sink: Arc<dyn CoreEventSink>,
     sessions: Arc<Mutex<HashMap<String, String>>>,
     request_outcomes: Arc<Mutex<RequestOutcomeCache>>,
+    evicted_request_floor: Arc<Mutex<HashMap<String, u64>>>,
 }
 
 impl TauriTransport {
@@ -68,6 +69,7 @@ impl TauriTransport {
             event_sink: Arc::new(event_sink),
             sessions: Arc::new(Mutex::new(HashMap::new())),
             request_outcomes: Arc::new(Mutex::new(VecDeque::new())),
+            evicted_request_floor: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -168,6 +170,24 @@ impl TauriTransport {
             });
         }
 
+        if matches!(&request, Request::Command(_))
+            && self
+                .evicted_request_floor
+                .lock()
+                .map_err(|_| {
+                    CoreError::InvalidCommand("request outcome store is unavailable".into())
+                })?
+                .get(&cache_key.0)
+                .is_some_and(|floor| request_id.0 <= *floor)
+        {
+            // Request ids are monotonically allocated by the desktop client.
+            // Once the bounded result window evicts an older command, that id
+            // remains consumed even though its detailed outcome is gone.
+            return Err(CoreError::RequestIdReuse {
+                request_id: request_id.0,
+            });
+        }
+
         let record_outcome = matches!(&request, Request::Command(_));
         let response = match self.dispatch(request_id, request) {
             Ok(response) => {
@@ -201,7 +221,15 @@ impl TauriTransport {
         outcomes.retain(|(key, _, _)| key != &cache_key);
         outcomes.push_back((cache_key, scope, response));
         while outcomes.len() > MAX_REQUEST_OUTCOMES {
-            outcomes.pop_front();
+            if let Some(((owner, request_id), _, _)) = outcomes.pop_front() {
+                let mut floors = self.evicted_request_floor.lock().map_err(|_| {
+                    CoreError::InvalidCommand("request outcome store is unavailable".into())
+                })?;
+                floors
+                    .entry(owner)
+                    .and_modify(|floor| *floor = (*floor).max(request_id))
+                    .or_insert(request_id);
+            }
         }
         Ok(())
     }
@@ -950,6 +978,54 @@ mod tests {
             ),
             Ok(Response::RequestOutcome(RequestOutcome {
                 status: RequestOutcomeStatus::Completed,
+                ..
+            }))
+        ));
+    }
+
+    #[test]
+    fn evicted_command_outcomes_keep_old_request_ids_consumed() {
+        let transport = TauriTransport::new(ApplicationCore::default());
+        let session = transport
+            .negotiate_handshake(ProtocolHandshakeRequest {
+                client_id: "eviction-test".into(),
+                protocol_major: velvet_workbench_protocol::PROTOCOL_MAJOR,
+                protocol_minor: velvet_workbench_protocol::PROTOCOL_MINOR,
+                features: Vec::new(),
+                schema_versions: std::collections::BTreeMap::new(),
+            })
+            .expect("handshake should succeed")
+            .session_id;
+
+        let mutation = || {
+            Request::Command(Command::SetLocale {
+                locale: "en-US".into(),
+                expected_revision: None,
+            })
+        };
+        transport
+            .dispatch_session(&session, RequestId(1), mutation())
+            .expect("first mutation should succeed");
+        for request_id in 2..=(MAX_REQUEST_OUTCOMES as u64 + 1) {
+            transport
+                .dispatch_session(&session, RequestId(request_id), mutation())
+                .expect("mutation should remain dispatchable within the window");
+        }
+
+        assert!(matches!(
+            transport.dispatch_session(&session, RequestId(1), mutation()),
+            Err(CoreError::RequestIdReuse { request_id: 1 })
+        ));
+        assert!(matches!(
+            transport.dispatch_session(
+                &session,
+                RequestId(MAX_REQUEST_OUTCOMES as u64 + 2),
+                Request::Query(Query::RequestOutcome {
+                    request_id: RequestId(1),
+                })
+            ),
+            Ok(Response::RequestOutcome(RequestOutcome {
+                status: RequestOutcomeStatus::Unknown,
                 ..
             }))
         ));

@@ -164,7 +164,9 @@ cached result. Reusing a request id for an unscoped mutation, or with a
 different scope, is rejected before dispatch so a repeated submission cannot
 silently apply a side effect twice. A command error is retained as an
 `unknown` tombstone for the same purpose: `query-request-outcome` exposes the
-uncertain result, while the original request id remains consumed.
+uncertain result, while the original request id remains consumed. The bounded
+Tauri window also keeps a per-client consumed floor for evicted command ids;
+an old id cannot become a fresh mutation key after cache eviction.
 
 The host also projects the shared `StorageAvailability` vocabulary into the
 recovery projection. A read-only, full, unavailable or unknown Profile/Core
