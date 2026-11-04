@@ -9,7 +9,7 @@ const bridge = {
       schemaVersion: 1,
       state: command === 'velvet_update_check' ? 'available' : 'restart-required',
       channel: 'preview',
-      currentVersion: '0.0.4',
+      currentVersion: '0.0.5',
       version: '0.0.5',
       target: 'macos-aarch64',
       releaseSequence: 5,

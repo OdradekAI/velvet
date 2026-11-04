@@ -4,6 +4,19 @@ All notable changes to Velvet (白翎) are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses [Semantic Versioning](https://semver.org/).
 
+## [0.0.5] - 2026-11-04
+
+### Added
+
+- Added native foundation recovery, persistence, protocol and operation-safety hardening across the Rust core and Tauri boundary.
+- Added signed plugin package verification, persistent trust evidence, Profile-scoped developer mode and overlap-signed publisher key rotation.
+- Added protected publisher trust provisioning with a pinned publisher root, expiry, monotonic sequence and atomic verified storage.
+
+### Changed
+
+- Updated the desktop, Tauri and Rust workspace versions to `0.0.5`.
+- Kept release publication and installer qualification as a later `0.1.0` milestone.
+
 ## [0.0.4] - 2026-10-31
 
 ### Added

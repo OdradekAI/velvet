@@ -449,7 +449,7 @@ mod tests {
 
     #[test]
     fn status_has_stable_wire_shape() {
-        let status = UpdateCoordinator::new("0.0.4", ReleaseChannel::Preview)
+        let status = UpdateCoordinator::new("0.0.5", ReleaseChannel::Preview)
             .base_status(NativeUpdateState::Disabled, Some("not configured".into()));
         let json = serde_json::to_value(status).expect("status should serialize");
         assert_eq!(json["schemaVersion"], 1);
