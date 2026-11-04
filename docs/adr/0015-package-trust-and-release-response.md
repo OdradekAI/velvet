@@ -98,10 +98,18 @@ versioned rotation statement signed by both the currently trusted key and its
 successor, enforces a monotonic sequence per key lineage, and admits the
 successor while the old key remains available for overlap. Exact replay is
 idempotent; conflicting, forged, stale or revoked-key rotations fail before any
-package is published. This is a host policy seam, not a durable or renderer-
-controlled key source: native release composition still needs a protected,
-pinned publisher-key provisioning path, rotation distribution and signed
-freshness metadata before those gates can be claimed complete.
+package is published. `PluginPublisherTrustDocument` adds the protected
+provisioning path: a bounded document is signed by a publisher root key pinned
+by native release composition, carries its own expiry and monotonic sequence,
+and is installed or loaded only through verified store methods. The native
+composition uses a root distinct from the application release root and keeps
+release startup usable when the document is absent, corrupt, stale or expired;
+the effective package policy then has no trusted publisher keys and records an
+optional-component diagnostic. The atomic store retains the last accepted
+sequence and rejects local rollback or same-sequence replacement. Renderer
+commands and Profile state have no path to install a publisher document.
+Signed incident freshness/revocation notices, protected key distribution and
+target release qualification remain open.
 
 ### Offline incident response
 

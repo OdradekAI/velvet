@@ -497,6 +497,13 @@ Profile/Core 持久化区域对 owner 的有界状态：`writable`、`read-only`
 重叠期可用、旧 key 可单独撤销，并拒绝伪造、冲突或过期的轮换；它不等于
 应用自身的 release signer，也不替代受保护的 key provisioning 来源。
 
+## PluginPublisherTrustDocument
+
+由 pinned publisher root 签名的、带 schema、sequence、有效期、初始 publisher
+key set 和 successor rotation 的信任文档。它只能通过宿主的 verified store
+加载或安装；文档损坏、过期、伪造或回退时，Core 继续启动但 release 插件不
+获得 publisher trust。
+
 ## ProfileDeveloperMode
 
 由当前 Profile 明确授权的本地插件开发模式。它只允许宿主在当前发布策略

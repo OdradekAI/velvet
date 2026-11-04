@@ -38,7 +38,10 @@ use velvet_plugin_api::{
     ZonePermissionSet,
     validate_reserved_metadata,
 };
-use velvet_plugin_host::{JsonFilePluginTrustStore, JsonFileRuntimeLeaseStore, PluginTrustPolicy};
+use velvet_plugin_host::{
+    JsonFilePluginPublisherTrustStore, JsonFilePluginTrustStore, JsonFileRuntimeLeaseStore,
+    PluginPublisherTrustStore, PluginTrustPolicy,
+};
 use velvet_persistence::{
     DurabilityMode, JsonFileAssetSourceLocationStore, JsonFileDiagnosticEventStore,
     DurabilityReportStore, JsonFileDurabilityReportStore, JsonFileRecoveryJournalStore,
@@ -2742,6 +2745,7 @@ pub fn run() {
             let recovery_set_root = app_data_dir.join("recovery-sets");
             let runtime_leases_path = app_data_dir.join("runtime-leases.json");
             let plugin_trust_path = app_data_dir.join("plugin-trust.json");
+            let plugin_publisher_trust_path = app_data_dir.join("plugin-publisher-trust.json");
             let release_transaction_path = app_data_dir.join("release-transaction.json");
             let release_package_root = app_data_dir.join("release-packages");
             let crash_receipts_path = app_data_dir.join(crash_capture::CRASH_RECEIPTS_FILE);
@@ -2751,6 +2755,31 @@ pub fn run() {
             } else {
                 DurabilityMode::AtomicRenameOnly
             };
+            let (plugin_trust_policy, plugin_publisher_trust_issue) =
+                if cfg!(debug_assertions) {
+                    (PluginTrustPolicy::developer_mode(), None)
+                } else {
+                    let publisher_store = JsonFilePluginPublisherTrustStore::with_durability(
+                        plugin_publisher_trust_path,
+                        durability,
+                    );
+                    let (root_key_id, root_key) = release_policy::preview_plugin_publisher_root();
+                    let now = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .map(|duration| duration.as_secs())
+                        .unwrap_or_default();
+                    match publisher_store.load_verified(root_key_id, &root_key, now) {
+                        Ok(Some(policy)) => (policy, None),
+                        Ok(None) => (
+                            PluginTrustPolicy::require_signed(),
+                            Some("publisher trust document is not provisioned".to_owned()),
+                        ),
+                        Err(error) => (
+                            PluginTrustPolicy::require_signed(),
+                            Some(format!("publisher trust document is unavailable: {error:?}")),
+                        ),
+                    }
+                };
             let snapshot_store = Arc::new(JsonFileStateSnapshotStore::with_durability(
                 snapshot_root,
                 durability,
@@ -2841,11 +2870,10 @@ pub fn run() {
                 )))
                 .with_durability_report(protocol_durability_report(&durability_report)),
             );
-            core.set_plugin_trust_policy(if cfg!(debug_assertions) {
-                PluginTrustPolicy::developer_mode()
-            } else {
-                PluginTrustPolicy::require_signed()
-            });
+            core.set_plugin_trust_policy(plugin_trust_policy);
+            if let Some(error) = plugin_publisher_trust_issue {
+                core.record_recovery_failure(RecoveryFailureClass::OptionalComponent, error);
+            }
             if let Err(error) = migration_result {
                 core.record_recovery_failure(
                     RecoveryFailureClass::CoreMigration,

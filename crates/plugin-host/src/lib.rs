@@ -31,6 +31,7 @@ use velvet_plugin_api::{
 
 mod extension_storage;
 mod platform_process;
+mod publisher_trust;
 mod runtime_lease;
 mod trust_store;
 
@@ -39,6 +40,13 @@ pub use extension_storage::{
     ExtensionStorageRecovery, ExtensionStorageRecoveryStatus, ExtensionStorageTransaction,
     ExtensionStorageView, MigrationParticipant, EXTENSION_STORAGE_SCOPE,
     MAX_EXTENSION_STORAGE_BYTES, MAX_EXTENSION_STORAGE_KEY_BYTES,
+};
+pub use publisher_trust::{
+    InMemoryPluginPublisherTrustStore, JsonFilePluginPublisherTrustStore,
+    PluginPublisherTrustDocument, PluginPublisherTrustError, PluginPublisherTrustStore,
+    MAX_PLUGIN_PUBLISHER_KEYS, MAX_PLUGIN_PUBLISHER_ROTATIONS,
+    MAX_PLUGIN_PUBLISHER_TRUST_DOCUMENT_BYTES, MAX_PLUGIN_PUBLISHER_TRUST_LIFETIME_SECONDS,
+    PLUGIN_PUBLISHER_TRUST_DOCUMENT_SCHEMA_VERSION,
 };
 pub use runtime_lease::{
     ConservativeRuntimeOrphanReconciler, InMemoryRuntimeLeaseStore, JsonFileRuntimeLeaseStore,
@@ -288,6 +296,13 @@ impl PluginTrustPolicy {
 
     pub fn is_developer_mode(&self) -> bool {
         self.developer_mode
+    }
+
+    #[cfg(test)]
+    pub(crate) fn trusts_publisher_key(&self, publisher_key_id: &str, public_key: &str) -> bool {
+        self.trusted_publishers
+            .get(publisher_key_id)
+            .is_some_and(|trusted_key| trusted_key == public_key)
     }
 
     pub fn allows_developer_mode(&self) -> bool {

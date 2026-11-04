@@ -500,8 +500,13 @@ validates an overlap-signed, monotonic `PluginPublisherKeyRotation`, so a
 successor is admitted only after both old and new keys sign the same statement;
 exact replay is idempotent and forged, conflicting, stale or revoked-key
 rotations fail closed. Uninstall retains trust evidence until explicit
-deletion. Protected publisher-key provisioning, rotation distribution, signed
-freshness metadata and native release key qualification remain P1 gates. A
+deletion. `PluginPublisherTrustDocument` now provides the provisioning seam:
+native composition pins a publisher root separate from the application release
+root, and the host accepts only root-signed, bounded, unexpired documents with
+monotonic sequence. Missing or invalid documents leave release startup usable
+with no trusted publisher keys and emit optional-component evidence; the
+renderer and Profile cannot install trust metadata. Signed incident freshness,
+protected distribution and native release qualification remain P1 gates. A
 sidecar still provides availability isolation only; it is not a security
 sandbox.
 
