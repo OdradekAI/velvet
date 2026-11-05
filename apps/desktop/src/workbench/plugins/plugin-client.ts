@@ -10,6 +10,8 @@ import {
   type CorePluginRuntimeRecovery,
   type CorePluginRegistrySnapshot,
   type CorePluginCommandSurfaceSnapshot,
+  type CorePluginLogRecord,
+  type CorePluginNotificationRecord,
   type CorePluginStorageRecovery,
   type CorePluginStorageDeclaration,
   type CorePluginDisableReason,
@@ -914,6 +916,35 @@ export class PluginClient {
       );
     }
     return response.surface;
+  }
+
+  public async queryCoreLogs(extensionId?: string): Promise<readonly CorePluginLogRecord[]> {
+    const response = await this.core.request({
+      protocolVersion: PROTOCOL_VERSION,
+      kind: 'query-plugin-logs',
+      ...(extensionId ? { extensionId } : {}),
+    });
+    if (response.kind !== 'plugin-logs') {
+      throw new PluginLifecycleError(`Expected plugin log projection, received ${response.kind}`, extensionId ?? 'core');
+    }
+    return response.logs;
+  }
+
+  public async queryCoreNotifications(
+    extensionId?: string,
+  ): Promise<readonly CorePluginNotificationRecord[]> {
+    const response = await this.core.request({
+      protocolVersion: PROTOCOL_VERSION,
+      kind: 'query-plugin-notifications',
+      ...(extensionId ? { extensionId } : {}),
+    });
+    if (response.kind !== 'plugin-notifications') {
+      throw new PluginLifecycleError(
+        `Expected plugin notification projection, received ${response.kind}`,
+        extensionId ?? 'core',
+      );
+    }
+    return response.notifications;
   }
 
   /** Projects Rust-declared views and UI surfaces through the same host registries as local plugins. */

@@ -22,6 +22,7 @@ export * from './workbench/commands/command-registry.js';
 export * from './workbench/commands/context-key-service.js';
 export * from './workbench/commands/keybinding-registry.js';
 export * from './workbench/commands/menu-registry.js';
+export * from './workbench/diagnostics/diagnostics-service.js';
 export * from './workbench/commands/layout-commands.js';
 export * from './workbench/overlays/overlay-registry.js';
 export * from './workbench/services/workspace-context.js';

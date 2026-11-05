@@ -24,6 +24,8 @@ export type PluginDiagnosticSchemaVersion = typeof PLUGIN_DIAGNOSTIC_SCHEMA_VERS
 export const PLUGIN_REGISTRY_SCHEMA_VERSION = 1 as const;
 export const PLUGIN_CAPABILITY_SCHEMA_VERSION = 1 as const;
 export const PLUGIN_COMMAND_SURFACE_SCHEMA_VERSION = 1 as const;
+export const PLUGIN_LOG_SCHEMA_VERSION = 1 as const;
+export const PLUGIN_NOTIFICATION_SCHEMA_VERSION = 1 as const;
 export const CRASH_CAPTURE_SCHEMA_VERSION = 1 as const;
 export const ACTIVATION_SCHEMA_VERSION = 1 as const;
 export type ActivationSchemaVersion = typeof ACTIVATION_SCHEMA_VERSION;
@@ -262,6 +264,16 @@ export type CoreRequest =
   | {
       readonly protocolVersion: ProtocolVersion;
       readonly kind: 'query-plugin-capability-audit';
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'query-plugin-logs';
+      readonly extensionId?: string;
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'query-plugin-notifications';
+      readonly extensionId?: string;
     }
   | {
       readonly protocolVersion: ProtocolVersion;
@@ -558,6 +570,14 @@ export type CoreResponse =
   | {
       readonly kind: 'plugin-command-surface';
       readonly surface: CorePluginCommandSurfaceSnapshot;
+    }
+  | {
+      readonly kind: 'plugin-logs';
+      readonly logs: readonly CorePluginLogRecord[];
+    }
+  | {
+      readonly kind: 'plugin-notifications';
+      readonly notifications: readonly CorePluginNotificationRecord[];
     }
   | {
       readonly kind: 'plugin-storage-recovery';
@@ -1443,6 +1463,37 @@ export interface CorePluginCommandSurfaceSnapshot {
   readonly commands: readonly CorePluginCommandProjection[];
   readonly menus: readonly CorePluginMenuProjection[];
   readonly keybindings: readonly CorePluginKeybindingProjection[];
+}
+
+export type CorePluginLogLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error';
+export type CorePluginNotificationSeverity = 'info' | 'success' | 'warning' | 'error';
+
+export interface CorePluginLogRecord {
+  readonly schemaVersion: typeof PLUGIN_LOG_SCHEMA_VERSION;
+  readonly sequence: number;
+  readonly extensionId: string;
+  readonly level: CorePluginLogLevel;
+  readonly category: string;
+  readonly message: string;
+  readonly sessionId: string | null;
+  readonly jobId: string | null;
+  readonly operationId: string | null;
+  readonly retryable: boolean;
+  readonly occurredAtMs: number;
+}
+
+export interface CorePluginNotificationRecord {
+  readonly schemaVersion: typeof PLUGIN_NOTIFICATION_SCHEMA_VERSION;
+  readonly sequence: number;
+  readonly extensionId: string;
+  readonly severity: CorePluginNotificationSeverity;
+  readonly title: string;
+  readonly message: string;
+  readonly sessionId: string | null;
+  readonly jobId: string | null;
+  readonly operationId: string | null;
+  readonly retryable: boolean;
+  readonly occurredAtMs: number;
 }
 
 export interface CorePluginCapabilityDenial {

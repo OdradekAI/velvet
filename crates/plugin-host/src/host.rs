@@ -650,6 +650,10 @@ pub const MAX_PLUGIN_ARCHIVE_UNCOMPRESSED_BYTES: u64 = 64 * 1024 * 1024;
 pub const MAX_PLUGIN_ARCHIVE_ENTRY_BYTES: u64 = 16 * 1024 * 1024;
 pub const MAX_PLUGIN_ARCHIVE_ENTRIES: usize = 4096;
 pub const MAX_PLUGIN_DIAGNOSTICS: usize = 256;
+pub const MAX_PLUGIN_LOGS: usize = 256;
+pub const MAX_PLUGIN_NOTIFICATIONS: usize = 64;
+pub const MAX_PLUGIN_LOGS_PER_MINUTE: usize = 120;
+pub const MAX_PLUGIN_NOTIFICATIONS_PER_MINUTE: usize = 16;
 pub const MAX_PLUGIN_DIAGNOSTIC_MESSAGE_BYTES: usize = 512;
 const RECOVERY_LOG_FILE: &str = ".plugin-recovery-log.json";
 const SUPPORTED_BRIDGE_API: &str = "1";
@@ -675,6 +679,79 @@ pub enum PluginDiagnosticKind {
     Storage,
     Migration,
     Shutdown,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PluginLogLevel {
+    Trace,
+    Debug,
+    Info,
+    Warn,
+    Error,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PluginLogRecord {
+    pub sequence: u64,
+    pub extension_id: ExtensionId,
+    pub level: PluginLogLevel,
+    pub category: String,
+    pub message: String,
+    pub session_id: Option<String>,
+    pub job_id: Option<String>,
+    pub operation_id: Option<String>,
+    pub retryable: bool,
+    pub occurred_at_ms: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PluginNotificationSeverity {
+    Info,
+    Success,
+    Warning,
+    Error,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PluginNotificationRecord {
+    pub sequence: u64,
+    pub extension_id: ExtensionId,
+    pub severity: PluginNotificationSeverity,
+    pub title: String,
+    pub message: String,
+    pub session_id: Option<String>,
+    pub job_id: Option<String>,
+    pub operation_id: Option<String>,
+    pub retryable: bool,
+    pub occurred_at_ms: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PluginLogInput {
+    pub extension_id: ExtensionId,
+    pub level: PluginLogLevel,
+    pub category: String,
+    pub message: String,
+    pub session_id: Option<String>,
+    pub job_id: Option<String>,
+    pub operation_id: Option<String>,
+    pub retryable: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PluginNotificationInput {
+    pub extension_id: ExtensionId,
+    pub severity: PluginNotificationSeverity,
+    pub title: String,
+    pub message: String,
+    pub session_id: Option<String>,
+    pub job_id: Option<String>,
+    pub operation_id: Option<String>,
+    pub retryable: bool,
 }
 
 /// A bounded, local-first diagnostic record owned by PluginHost.
@@ -758,6 +835,106 @@ impl PluginDiagnosticSink {
     fn drain(&mut self) -> Vec<PluginDiagnosticRecord> {
         self.records.drain(..).collect()
     }
+}
+
+#[derive(Debug, Default)]
+struct PluginLogSink {
+    next_sequence: u64,
+    records: std::collections::VecDeque<PluginLogRecord>,
+}
+
+impl PluginLogSink {
+    fn record(&mut self, input: PluginLogInput) {
+        let now = diagnostic_timestamp_ms();
+        let cutoff = now.saturating_sub(60_000);
+        let recent = self
+            .records
+            .iter()
+            .filter(|record| {
+                record.extension_id == input.extension_id && record.occurred_at_ms >= cutoff
+            })
+            .count();
+        if recent >= MAX_PLUGIN_LOGS_PER_MINUTE {
+            return;
+        }
+        let record = PluginLogRecord {
+            sequence: self.next_sequence,
+            extension_id: input.extension_id,
+            level: input.level,
+            category: bounded_category(&sanitize_plugin_diagnostic_message(&input.category)),
+            message: sanitize_plugin_diagnostic_message(&input.message),
+            session_id: input.session_id,
+            job_id: input.job_id,
+            operation_id: input.operation_id,
+            retryable: input.retryable,
+            occurred_at_ms: now,
+        };
+        self.next_sequence = self.next_sequence.saturating_add(1);
+        if self.records.len() == MAX_PLUGIN_LOGS {
+            self.records.pop_front();
+        }
+        self.records.push_back(record);
+    }
+
+    fn drain(&mut self) -> Vec<PluginLogRecord> {
+        self.records.drain(..).collect()
+    }
+
+    fn snapshot(&self) -> Vec<PluginLogRecord> {
+        self.records.iter().cloned().collect()
+    }
+}
+
+#[derive(Debug, Default)]
+struct PluginNotificationSink {
+    next_sequence: u64,
+    records: std::collections::VecDeque<PluginNotificationRecord>,
+}
+
+impl PluginNotificationSink {
+    fn record(&mut self, input: PluginNotificationInput) {
+        let now = diagnostic_timestamp_ms();
+        let cutoff = now.saturating_sub(60_000);
+        let recent = self
+            .records
+            .iter()
+            .filter(|record| {
+                record.extension_id == input.extension_id && record.occurred_at_ms >= cutoff
+            })
+            .count();
+        if recent >= MAX_PLUGIN_NOTIFICATIONS_PER_MINUTE {
+            return;
+        }
+        let record = PluginNotificationRecord {
+            sequence: self.next_sequence,
+            extension_id: input.extension_id,
+            severity: input.severity,
+            title: bounded_category(&sanitize_plugin_diagnostic_message(&input.title)),
+            message: sanitize_plugin_diagnostic_message(&input.message),
+            session_id: input.session_id,
+            job_id: input.job_id,
+            operation_id: input.operation_id,
+            retryable: input.retryable,
+            occurred_at_ms: now,
+        };
+        self.next_sequence = self.next_sequence.saturating_add(1);
+        if self.records.len() == MAX_PLUGIN_NOTIFICATIONS {
+            self.records.pop_front();
+        }
+        self.records.push_back(record);
+    }
+
+    fn drain(&mut self) -> Vec<PluginNotificationRecord> {
+        self.records.drain(..).collect()
+    }
+
+    fn snapshot(&self) -> Vec<PluginNotificationRecord> {
+        self.records.iter().cloned().collect()
+    }
+}
+
+fn bounded_category(value: &str) -> String {
+    value.chars().take(64).collect()
 }
 
 fn diagnostic_timestamp_ms() -> u64 {
@@ -2650,6 +2827,18 @@ pub trait PluginHost {
         Ok(Vec::new())
     }
     fn drain_diagnostics(&mut self) -> Vec<PluginDiagnosticRecord>;
+    fn drain_logs(&mut self) -> Vec<PluginLogRecord> {
+        Vec::new()
+    }
+    fn logs_snapshot(&self) -> Vec<PluginLogRecord> {
+        Vec::new()
+    }
+    fn drain_notifications(&mut self) -> Vec<PluginNotificationRecord> {
+        Vec::new()
+    }
+    fn notifications_snapshot(&self) -> Vec<PluginNotificationRecord> {
+        Vec::new()
+    }
     fn drain_crash_evidence(&mut self) -> Vec<RuntimeCrashEvidence> {
         Vec::new()
     }
@@ -2663,6 +2852,8 @@ pub struct InMemoryPluginHost {
     trust_store: Option<Arc<dyn PluginTrustStore>>,
     active: BTreeSet<ExtensionId>,
     capabilities: CapabilityBroker,
+    logs: Arc<Mutex<PluginLogSink>>,
+    notifications: Arc<Mutex<PluginNotificationSink>>,
     registry: ContributionRegistry,
     registrations: BTreeMap<ExtensionId, Vec<ContributionRegistrationHandle>>,
     states: BTreeMap<ExtensionId, ExtensionState>,
@@ -2708,6 +2899,8 @@ impl Default for InMemoryPluginHost {
             trust_store: None,
             active: BTreeSet::new(),
             capabilities: CapabilityBroker::default(),
+            logs: Arc::new(Mutex::new(PluginLogSink::default())),
+            notifications: Arc::new(Mutex::new(PluginNotificationSink::default())),
             registry: ContributionRegistry::default(),
             registrations: BTreeMap::new(),
             states: BTreeMap::new(),
@@ -3251,6 +3444,46 @@ impl InMemoryPluginHost {
         self.diagnostics
             .lock()
             .map(|mut sink| sink.drain())
+            .unwrap_or_default()
+    }
+
+    pub fn record_log(&self, input: PluginLogInput) {
+        if let Ok(mut sink) = self.logs.lock() {
+            sink.record(input);
+        }
+    }
+
+    pub fn record_notification(&self, input: PluginNotificationInput) {
+        if let Ok(mut sink) = self.notifications.lock() {
+            sink.record(input);
+        }
+    }
+
+    pub fn drain_logs(&mut self) -> Vec<PluginLogRecord> {
+        self.logs
+            .lock()
+            .map(|mut sink| sink.drain())
+            .unwrap_or_default()
+    }
+
+    pub fn logs_snapshot(&self) -> Vec<PluginLogRecord> {
+        self.logs
+            .lock()
+            .map(|sink| sink.snapshot())
+            .unwrap_or_default()
+    }
+
+    pub fn drain_notifications(&mut self) -> Vec<PluginNotificationRecord> {
+        self.notifications
+            .lock()
+            .map(|mut sink| sink.drain())
+            .unwrap_or_default()
+    }
+
+    pub fn notifications_snapshot(&self) -> Vec<PluginNotificationRecord> {
+        self.notifications
+            .lock()
+            .map(|sink| sink.snapshot())
             .unwrap_or_default()
     }
 
@@ -6069,6 +6302,22 @@ impl PluginHost for InMemoryPluginHost {
 
     fn drain_diagnostics(&mut self) -> Vec<PluginDiagnosticRecord> {
         InMemoryPluginHost::drain_diagnostics(self)
+    }
+
+    fn drain_logs(&mut self) -> Vec<PluginLogRecord> {
+        InMemoryPluginHost::drain_logs(self)
+    }
+
+    fn logs_snapshot(&self) -> Vec<PluginLogRecord> {
+        InMemoryPluginHost::logs_snapshot(self)
+    }
+
+    fn drain_notifications(&mut self) -> Vec<PluginNotificationRecord> {
+        InMemoryPluginHost::drain_notifications(self)
+    }
+
+    fn notifications_snapshot(&self) -> Vec<PluginNotificationRecord> {
+        InMemoryPluginHost::notifications_snapshot(self)
     }
 
     fn drain_crash_evidence(&mut self) -> Vec<RuntimeCrashEvidence> {

@@ -392,3 +392,13 @@ extension. Until a bounded cancel message and runtime token are accepted, a
 caller can stop awaiting a request and the host relies on the invocation
 deadline/runtime failure boundary; it must not pretend that dropping a UI
 promise cancels side effects.
+
+## Diagnostics implementation clarification (2026-11-06)
+
+Plugin logs and user-visible notifications use host-owned bounded sinks. Records
+carry extension, session, Job and operation correlation where available; the
+host truncates and redacts messages before projection, applies per-extension
+rate limits, and exposes versioned read projections through CoreTransport.
+These records are local diagnostics, not telemetry, crash artifacts or a
+renderer-owned persistence store. Notification projection cannot mutate core
+state, and a sink failure is isolated from layout, Asset and Preview owners.

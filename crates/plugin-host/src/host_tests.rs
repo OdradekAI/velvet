@@ -1332,6 +1332,45 @@ fn diagnostic_messages_are_bounded_at_a_utf8_boundary() {
 }
 
 #[test]
+fn structured_logs_and_notifications_are_redacted_bounded_and_rate_limited() {
+    let host = InMemoryPluginHost::default();
+    let extension_id = ExtensionId("sample.diagnostics".into());
+    for _ in 0..(MAX_PLUGIN_LOGS_PER_MINUTE + 5) {
+        host.record_log(PluginLogInput {
+            extension_id: extension_id.clone(),
+            level: PluginLogLevel::Info,
+            category: "runtime".into(),
+            message: "token=/Users/private/asset.png".into(),
+            session_id: Some("session-1".into()),
+            job_id: Some("job-1".into()),
+            operation_id: Some("operation-1".into()),
+            retryable: true,
+        });
+    }
+    for _ in 0..(MAX_PLUGIN_NOTIFICATIONS_PER_MINUTE + 5) {
+        host.record_notification(PluginNotificationInput {
+            extension_id: extension_id.clone(),
+            severity: PluginNotificationSeverity::Warning,
+            title: "Plugin warning".into(),
+            message: "path=/Users/private/asset.png".into(),
+            session_id: Some("session-1".into()),
+            job_id: Some("job-1".into()),
+            operation_id: Some("operation-1".into()),
+            retryable: true,
+        });
+    }
+    let mut host = host;
+    let logs = host.drain_logs();
+    let notifications = host.drain_notifications();
+    assert_eq!(logs.len(), MAX_PLUGIN_LOGS_PER_MINUTE);
+    assert_eq!(notifications.len(), MAX_PLUGIN_NOTIFICATIONS_PER_MINUTE);
+    assert!(logs[0].message.contains("<redacted-path>"));
+    assert!(notifications[0].message.contains("<redacted-path>"));
+    assert_eq!(logs[0].session_id.as_deref(), Some("session-1"));
+    assert_eq!(notifications[0].job_id.as_deref(), Some("job-1"));
+}
+
+#[test]
 fn valid_view_contributions_are_discoverable_and_cleaned_up() {
     let mut host = InMemoryPluginHost::default();
     host.register(view_manifest(Some(WorkbenchZone::Navigation)))

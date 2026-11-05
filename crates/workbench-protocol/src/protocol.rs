@@ -37,6 +37,8 @@ pub const PLUGIN_RESOURCE_SCHEMA_VERSION: u16 = 1;
 pub const RECOVERY_SCHEMA_VERSION: u16 = 1;
 pub const RECOVERY_DIAGNOSTIC_SCHEMA_VERSION: u16 = 1;
 pub const PLUGIN_DIAGNOSTIC_SCHEMA_VERSION: u16 = 1;
+pub const PLUGIN_LOG_SCHEMA_VERSION: u16 = 1;
+pub const PLUGIN_NOTIFICATION_SCHEMA_VERSION: u16 = 1;
 pub const PLUGIN_REGISTRY_SCHEMA_VERSION: u16 = 1;
 pub const PLUGIN_CAPABILITY_SCHEMA_VERSION: u16 = 1;
 pub const PLUGIN_COMMAND_SURFACE_SCHEMA_VERSION: u16 = 1;
@@ -185,6 +187,11 @@ pub fn supported_schema_versions() -> BTreeMap<String, u16> {
         ),
         ("plugin-resource".into(), PLUGIN_RESOURCE_SCHEMA_VERSION),
         ("plugin-diagnostic".into(), PLUGIN_DIAGNOSTIC_SCHEMA_VERSION),
+        ("plugin-log".into(), PLUGIN_LOG_SCHEMA_VERSION),
+        (
+            "plugin-notification".into(),
+            PLUGIN_NOTIFICATION_SCHEMA_VERSION,
+        ),
         ("plugin-registry".into(), PLUGIN_REGISTRY_SCHEMA_VERSION),
         ("plugin-capability".into(), PLUGIN_CAPABILITY_SCHEMA_VERSION),
         (
@@ -1108,6 +1115,57 @@ pub struct PluginDiagnosticEvent {
     pub job_id: Option<String>,
     #[serde(default)]
     pub attempt: Option<u32>,
+    pub retryable: bool,
+    pub occurred_at_ms: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PluginLogLevel {
+    Trace,
+    Debug,
+    Info,
+    Warn,
+    Error,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PluginNotificationSeverity {
+    Info,
+    Success,
+    Warning,
+    Error,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PluginLogRecordDto {
+    pub schema_version: u16,
+    pub sequence: u64,
+    pub extension_id: String,
+    pub level: PluginLogLevel,
+    pub category: String,
+    pub message: String,
+    pub session_id: Option<String>,
+    pub job_id: Option<String>,
+    pub operation_id: Option<String>,
+    pub retryable: bool,
+    pub occurred_at_ms: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PluginNotificationRecordDto {
+    pub schema_version: u16,
+    pub sequence: u64,
+    pub extension_id: String,
+    pub severity: PluginNotificationSeverity,
+    pub title: String,
+    pub message: String,
+    pub session_id: Option<String>,
+    pub job_id: Option<String>,
+    pub operation_id: Option<String>,
     pub retryable: bool,
     pub occurred_at_ms: u64,
 }
@@ -2180,6 +2238,12 @@ pub enum Query {
         extension_id: ExtensionId,
     },
     PluginCapabilityAudit,
+    PluginLogs {
+        extension_id: Option<ExtensionId>,
+    },
+    PluginNotifications {
+        extension_id: Option<ExtensionId>,
+    },
     PluginCommandSurface {
         extension_id: Option<ExtensionId>,
     },
@@ -2245,6 +2309,8 @@ pub enum Response {
     PluginRegistry(PluginRegistrySnapshotDto),
     PluginCapabilities(PluginCapabilityGrantDto),
     PluginCapabilityAudit(Vec<PluginCapabilityAuditDto>),
+    PluginLogs(Vec<PluginLogRecordDto>),
+    PluginNotifications(Vec<PluginNotificationRecordDto>),
     PluginCommandSurface(PluginCommandSurfaceSnapshotDto),
     Job(JobSnapshot),
     Jobs(Vec<JobSnapshot>),

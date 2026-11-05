@@ -205,7 +205,8 @@ use velvet_workbench_protocol::{
     PluginCapabilityAuditDto, PluginCapabilityDenyReason, PluginCapabilityGrantDto,
     PluginCommandProjectionDto, PluginCommandSurfaceSnapshotDto, PluginContributionRegistrationDto,
     PluginDiagnosticEvent, PluginDiagnosticKind as WirePluginDiagnosticKind, PluginDisableReason,
-    PluginInstallPreviewDto, PluginKeybindingProjectionDto, PluginMenuProjectionDto,
+    PluginInstallPreviewDto, PluginKeybindingProjectionDto, PluginLogLevel, PluginLogRecordDto,
+    PluginMenuProjectionDto, PluginNotificationRecordDto, PluginNotificationSeverity,
     PluginProjectionDto, PluginRegistrySnapshotDto, PluginResourceDto, PluginRuntimeRecoveryDto,
     PluginRuntimeRecoveryState, PluginStorageRecoveryDto, PluginStorageRecoveryStatus,
     PortableBundle, ProfileState, Query, Request, RequestEnvelope, RequestId, Response,
@@ -2575,6 +2576,32 @@ impl ApplicationCore {
             Request::Query(Query::PluginCapabilityAudit) => Ok(Response::PluginCapabilityAudit(
                 self.query_plugin_capability_audit(),
             )),
+            Request::Query(Query::PluginLogs { extension_id }) => Ok(Response::PluginLogs(
+                self.plugins
+                    .logs_snapshot()
+                    .into_iter()
+                    .filter(|record| {
+                        extension_id
+                            .as_ref()
+                            .is_none_or(|id| id.0 == record.extension_id.0)
+                    })
+                    .map(plugin_log_dto)
+                    .collect(),
+            )),
+            Request::Query(Query::PluginNotifications { extension_id }) => {
+                Ok(Response::PluginNotifications(
+                    self.plugins
+                        .notifications_snapshot()
+                        .into_iter()
+                        .filter(|record| {
+                            extension_id
+                                .as_ref()
+                                .is_none_or(|id| id.0 == record.extension_id.0)
+                        })
+                        .map(plugin_notification_dto)
+                        .collect(),
+                ))
+            }
             Request::Query(Query::PluginCommandSurface { extension_id }) => {
                 Ok(Response::PluginCommandSurface(
                     self.query_plugin_command_surface(extension_id.as_ref()),
@@ -3355,6 +3382,59 @@ fn plugin_capability_audit_dto(
         },
         reason: record.reason.map(plugin_capability_deny_reason),
         generation: record.generation,
+        occurred_at_ms: record.occurred_at_ms,
+    }
+}
+
+fn plugin_log_dto(record: velvet_plugin_host::PluginLogRecord) -> PluginLogRecordDto {
+    PluginLogRecordDto {
+        schema_version: velvet_workbench_protocol::PLUGIN_LOG_SCHEMA_VERSION,
+        sequence: record.sequence,
+        extension_id: record.extension_id.0,
+        level: match record.level {
+            velvet_plugin_host::PluginLogLevel::Trace => PluginLogLevel::Trace,
+            velvet_plugin_host::PluginLogLevel::Debug => PluginLogLevel::Debug,
+            velvet_plugin_host::PluginLogLevel::Info => PluginLogLevel::Info,
+            velvet_plugin_host::PluginLogLevel::Warn => PluginLogLevel::Warn,
+            velvet_plugin_host::PluginLogLevel::Error => PluginLogLevel::Error,
+        },
+        category: record.category,
+        message: record.message,
+        session_id: record.session_id,
+        job_id: record.job_id,
+        operation_id: record.operation_id,
+        retryable: record.retryable,
+        occurred_at_ms: record.occurred_at_ms,
+    }
+}
+
+fn plugin_notification_dto(
+    record: velvet_plugin_host::PluginNotificationRecord,
+) -> PluginNotificationRecordDto {
+    PluginNotificationRecordDto {
+        schema_version: velvet_workbench_protocol::PLUGIN_NOTIFICATION_SCHEMA_VERSION,
+        sequence: record.sequence,
+        extension_id: record.extension_id.0,
+        severity: match record.severity {
+            velvet_plugin_host::PluginNotificationSeverity::Info => {
+                PluginNotificationSeverity::Info
+            }
+            velvet_plugin_host::PluginNotificationSeverity::Success => {
+                PluginNotificationSeverity::Success
+            }
+            velvet_plugin_host::PluginNotificationSeverity::Warning => {
+                PluginNotificationSeverity::Warning
+            }
+            velvet_plugin_host::PluginNotificationSeverity::Error => {
+                PluginNotificationSeverity::Error
+            }
+        },
+        title: record.title,
+        message: record.message,
+        session_id: record.session_id,
+        job_id: record.job_id,
+        operation_id: record.operation_id,
+        retryable: record.retryable,
         occurred_at_ms: record.occurred_at_ms,
     }
 }

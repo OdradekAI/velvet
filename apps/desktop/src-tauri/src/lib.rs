@@ -987,6 +987,18 @@ pub enum WireRequest {
         #[serde(rename = "protocolVersion")]
         protocol_version: u16,
     },
+    QueryPluginLogs {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        #[serde(rename = "extensionId")]
+        extension_id: Option<String>,
+    },
+    QueryPluginNotifications {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        #[serde(rename = "extensionId")]
+        extension_id: Option<String>,
+    },
     QueryPluginCommandSurface {
         #[serde(rename = "protocolVersion")]
         protocol_version: u16,
@@ -1449,6 +1461,26 @@ impl WireRequest {
                 validate_inner_protocol(outer_protocol_version, protocol_version)?;
                 Ok(Request::Query(
                     velvet_workbench_protocol::Query::PluginCapabilityAudit,
+                ))
+            }
+            Self::QueryPluginLogs {
+                protocol_version,
+                extension_id,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Query(velvet_workbench_protocol::Query::PluginLogs {
+                    extension_id: extension_id.map(ExtensionId),
+                }))
+            }
+            Self::QueryPluginNotifications {
+                protocol_version,
+                extension_id,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Query(
+                    velvet_workbench_protocol::Query::PluginNotifications {
+                        extension_id: extension_id.map(ExtensionId),
+                    },
                 ))
             }
             Self::QueryPluginCommandSurface {
@@ -2189,6 +2221,12 @@ enum WireResponse {
     PluginCapabilityAudit {
         audit: Vec<velvet_workbench_protocol::PluginCapabilityAuditDto>,
     },
+    PluginLogs {
+        logs: Vec<velvet_workbench_protocol::PluginLogRecordDto>,
+    },
+    PluginNotifications {
+        notifications: Vec<velvet_workbench_protocol::PluginNotificationRecordDto>,
+    },
     PluginCommandSurface {
         surface: velvet_workbench_protocol::PluginCommandSurfaceSnapshotDto,
     },
@@ -2270,6 +2308,10 @@ impl WireResponseEnvelope {
                 WireResponse::PluginCapabilities { capabilities }
             }
             Response::PluginCapabilityAudit(audit) => WireResponse::PluginCapabilityAudit { audit },
+            Response::PluginLogs(logs) => WireResponse::PluginLogs { logs },
+            Response::PluginNotifications(notifications) => {
+                WireResponse::PluginNotifications { notifications }
+            }
             Response::PluginCommandSurface(surface) => WireResponse::PluginCommandSurface { surface },
             Response::PluginStorageRecovery(recovery) => {
                 WireResponse::PluginStorageRecovery { recovery }
@@ -4486,6 +4528,32 @@ mod tests {
         let value = serde_json::to_value(response).expect("surface should serialize");
         assert_eq!(value["response"]["kind"], "plugin-command-surface");
         assert_eq!(value["response"]["surface"]["schemaVersion"], 1);
+    }
+
+    #[test]
+    fn wire_plugin_diagnostics_projection_is_bounded_and_typed() {
+        let response = WireResponseEnvelope::from_core(ResponseEnvelope {
+            protocol_version: 1,
+            request_id: RequestId(5),
+            response: Response::PluginLogs(vec![
+                velvet_workbench_protocol::PluginLogRecordDto {
+                    schema_version: velvet_workbench_protocol::PLUGIN_LOG_SCHEMA_VERSION,
+                    sequence: 1,
+                    extension_id: "sample.diagnostics".into(),
+                    level: velvet_workbench_protocol::PluginLogLevel::Warn,
+                    category: "runtime".into(),
+                    message: "redacted".into(),
+                    session_id: Some("session-1".into()),
+                    job_id: Some("job-1".into()),
+                    operation_id: None,
+                    retryable: true,
+                    occurred_at_ms: 1,
+                },
+            ]),
+        });
+        let value = serde_json::to_value(response).expect("log projection should serialize");
+        assert_eq!(value["response"]["kind"], "plugin-logs");
+        assert_eq!(value["response"]["logs"][0]["level"], "warn");
     }
 
     #[test]
