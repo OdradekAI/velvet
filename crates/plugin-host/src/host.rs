@@ -1371,14 +1371,23 @@ fn default_job_cancellation_grace_ms() -> u64 {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PluginJobResult {
+    #[serde(default = "default_plugin_job_schema_version")]
+    pub schema_version: u16,
     pub content_type: String,
     pub payload: Value,
+}
+
+fn default_plugin_job_schema_version() -> u16 {
+    JOB_SCHEMA_VERSION
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PluginJobExecution {
     pub result: PluginJobResult,
     pub events: Vec<PluginInvocationEvent>,
+    /// The plugin may cooperatively stop its own work by returning a bounded
+    /// `cancelled` event. The host still owns the durable Job transition.
+    pub cancelled: bool,
 }
 
 /// A thread-safe handle to one active plugin runtime process. It is an
@@ -1424,7 +1433,7 @@ impl PluginJobHandle {
             command_id: self.job_kind.clone(),
             args,
             context,
-            deadline_ms: None,
+            deadline_ms: invocation.deadline_ms,
         };
         validate_runtime_payload(
             &plugin_invocation.extension_id,
@@ -1500,8 +1509,27 @@ impl PluginJobHandle {
                 message: format!("invalid job result: {error}"),
             }
         })?;
+        if job_result.schema_version != JOB_SCHEMA_VERSION {
+            self.record_diagnostic(
+                "job-result-schema-unsupported",
+                &format!(
+                    "plugin Job result schema {} is unsupported; expected {}",
+                    job_result.schema_version, JOB_SCHEMA_VERSION
+                ),
+                &invocation,
+                false,
+            );
+            return Err(PluginError::RuntimeInvocation {
+                extension_id: self.extension_id.clone(),
+                message: format!(
+                    "plugin Job result schema {} is unsupported; expected {}",
+                    job_result.schema_version, JOB_SCHEMA_VERSION
+                ),
+            });
+        }
         Ok(PluginJobExecution {
             result: job_result,
+            cancelled: result.events.iter().any(|event| event.kind == "cancelled"),
             events: result.events,
         })
     }
@@ -1978,6 +2006,7 @@ impl RuntimeProcess for ChildRuntimeProcess {
             context: &invocation.context,
             schema_id: schema_id.as_deref(),
             schema_version,
+            deadline_ms: invocation.deadline_ms,
         };
         let line = serde_json::to_string(&request)
             .map_err(|error| RuntimeError::InvocationFailed(error.to_string()))?;
@@ -2214,6 +2243,8 @@ struct RuntimeInvocationRequest<'a> {
     schema_id: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     schema_version: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    deadline_ms: Option<u64>,
 }
 
 #[derive(Deserialize)]

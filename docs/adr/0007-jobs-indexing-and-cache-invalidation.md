@@ -45,8 +45,10 @@ cancelled before the runtime is shut down. A runner receives an opaque `JobExecu
 attempt, input, provenance, progress reporter and cooperative cancellation
 handle; it returns a typed content type and JSON payload or a typed failure. A
 plugin-backed runner uses the isolated runtime's `invoke-job`/`job.run` seam;
-runtime input and result payloads are size-checked, progress events are bounded
-and projected through the same reporter.
+runtime input and result payloads are size-checked, result schema versions are
+validated, and progress/checkpoint/cancelled events are bounded and projected
+through the same reporter. A plugin-owned `cancelled` event is cooperative
+self-cancellation; the durable transition remains owned by `JobSystem`.
 The `JobSystem` supplies a deterministic runner only for Jobs owned by `core`;
 an extension-owned Job with a missing runner becomes a retryable diagnosed
 failure instead of executing under another owner or the host fallback. It

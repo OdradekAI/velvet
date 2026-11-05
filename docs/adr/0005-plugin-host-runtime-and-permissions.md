@@ -209,9 +209,12 @@ Preview actions now also carry the host-owned action-envelope reference
 the typed `PreviewActionContext` in `ApplicationCore`; the schema reference
 does not grant a command, path or native capability and does not pretend to
 validate extension-specific action arguments.
-The response contains a typed result (`contentType` plus JSON `payload`) with
-bounds-checked input/result projections and a bounded list of `progress`
-events. `PluginHost` exposes this process through a
+The response contains a typed, schema-versioned result (`schemaVersion`,
+`contentType` plus JSON `payload`) with bounds-checked input/result projections
+and a bounded list of `progress`, `checkpoint` or `cancelled` events. A
+`cancelled` event is a plugin-owned cooperative self-cancellation signal; the
+host maps it to the Rust Job cancellation transition and keeps durable state in
+`JobSystem`. `PluginHost` exposes this process through a
 thread-safe `PluginJobHandle`; `ApplicationCore` adapts the handle to the
 Rust-owned `JobRunner` registry. Job cancellation is cooperative at the host
 boundary in protocol v1: the runner checks cancellation before invocation and

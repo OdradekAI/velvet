@@ -279,6 +279,9 @@ impl JobRunner for PluginJobRunner {
             .invoke(invocation)
             .map_err(|error| JobExecutionError::Failed(format!("{error:?}")))?;
         for event in execution.events {
+            if event.kind == "cancelled" {
+                return Err(JobExecutionError::Cancelled);
+            }
             if event.kind == "checkpoint" {
                 let payload = event.checkpoint.ok_or_else(|| {
                     JobExecutionError::Failed(
@@ -305,6 +308,9 @@ impl JobRunner for PluginJobRunner {
             if !context.report_progress(progress, event.message.unwrap_or_default()) {
                 return Err(JobExecutionError::Cancelled);
             }
+        }
+        if execution.cancelled {
+            return Err(JobExecutionError::Cancelled);
         }
         if context.is_paused() {
             return Err(JobExecutionError::Paused);

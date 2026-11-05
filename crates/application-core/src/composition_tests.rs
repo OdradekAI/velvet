@@ -176,6 +176,11 @@ impl RuntimeProcess for PreviewProcess {
             if self.job_delay_ms > 0 {
                 std::thread::sleep(Duration::from_millis(self.job_delay_ms));
             }
+            let cancelled = invocation
+                .args
+                .get("cancel")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
             return Ok(PluginInvocationResult {
                 result: Some(serde_json::json!({
                     "contentType": "application/json",
@@ -186,9 +191,13 @@ impl RuntimeProcess for PreviewProcess {
                 })),
                 error: None,
                 events: vec![velvet_plugin_host::PluginInvocationEvent {
-                    kind: "progress".into(),
-                    progress: Some(100),
-                    message: Some("Completed".into()),
+                    kind: if cancelled { "cancelled" } else { "progress" }.into(),
+                    progress: (!cancelled).then_some(100),
+                    message: Some(if cancelled {
+                        "Plugin cancelled its Job".into()
+                    } else {
+                        "Completed".into()
+                    }),
                     checkpoint: None,
                 }],
             });
@@ -625,6 +634,71 @@ fn preview_action_hands_job_creation_to_the_rust_job_system() {
     }
     panic!(
         "plugin Job runner did not complete: {:?}",
+        core.job_snapshots()
+    );
+}
+
+#[test]
+fn plugin_job_self_cancellation_stays_inside_the_job_projection() {
+    let mut core = ApplicationCore::with_plugin_runtime(
+        Arc::new(InMemoryLayoutStateStore::default()),
+        Box::new(PreviewRuntime {
+            fail_augmentation: false,
+            reject_action: false,
+            job_delay_ms: 0,
+        }),
+    );
+    let manifest = preview_manifest();
+    let id = manifest.id.clone();
+    core.register_plugin(manifest)
+        .expect("preview action provider should register");
+    core.activate_plugin(&id)
+        .expect("preview action provider should activate");
+    core.dispatch(Request::Query(Query::ResolvePreview {
+        asset_id: velvet_asset_core::AssetId("asset-1".into()),
+        content_kind: "image".into(),
+        intent: velvet_preview_core::PreviewIntent::Quick,
+        surface: velvet_preview_core::PreviewSurface::Workspace,
+    }))
+    .expect("preview session should authorize its actions");
+
+    let response = core
+        .dispatch(Request::Command(Command::InvokePreviewAction {
+            extension_id: id,
+            command_id: "preview.analyze".into(),
+            args: serde_json::json!({ "scope": "metadata", "cancel": true }),
+            context: velvet_plugin_api::PreviewActionContext {
+                session_id: "preview.example:metadata:asset-1".into(),
+                provider_id: "preview.example.preview.metadata".into(),
+                asset_id: "asset-1".into(),
+                content_kind: "image".into(),
+                intent: velvet_plugin_api::PreviewIntent::Quick,
+                surface: velvet_plugin_api::PreviewSurface::Workspace,
+            },
+        }))
+        .expect("preview action should create a Job");
+    let job_id = match response {
+        Response::Job(job) => job.id,
+        other => panic!("expected Job response, got {other:?}"),
+    };
+
+    for _ in 0..30 {
+        if let Some(job) = core
+            .job_snapshots()
+            .into_iter()
+            .find(|job| job.id == job_id)
+        {
+            if job.status == velvet_job_system::JobStatus::Cancelled {
+                assert!(job.retryable);
+                assert_eq!(job.result, None);
+                assert_eq!(job.message.as_deref(), Some("Cancelled by runner"));
+                return;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    panic!(
+        "plugin Job self-cancellation did not settle: {:?}",
         core.job_snapshots()
     );
 }

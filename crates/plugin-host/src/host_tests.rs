@@ -40,6 +40,18 @@ struct FakeProcess {
     invocation_error: Option<RuntimeError>,
 }
 
+struct JobBoundaryRuntime {
+    observed_deadline: Arc<Mutex<Option<u64>>>,
+    cancel_job: bool,
+    result_schema_version: u16,
+}
+
+struct JobBoundaryProcess {
+    observed_deadline: Arc<Mutex<Option<u64>>>,
+    cancel_job: bool,
+    result_schema_version: u16,
+}
+
 struct LeaseRuntime {
     shutdowns: Arc<Mutex<usize>>,
 }
@@ -341,6 +353,63 @@ impl RuntimeProcess for FakeProcess {
             error: None,
             events: Vec::new(),
         })
+    }
+}
+
+impl RuntimeProcess for JobBoundaryProcess {
+    fn poll(&mut self) -> RuntimeHealth {
+        RuntimeHealth::Running
+    }
+
+    fn shutdown(&mut self) -> Result<(), RuntimeError> {
+        Ok(())
+    }
+
+    fn invoke(
+        &mut self,
+        invocation: &PluginInvocation,
+    ) -> Result<PluginInvocationResult, RuntimeError> {
+        *self
+            .observed_deadline
+            .lock()
+            .expect("deadline capture should not be poisoned") = invocation.deadline_ms;
+        Ok(PluginInvocationResult {
+            result: Some(serde_json::json!({
+                "contentType": "application/json",
+                "schemaVersion": self.result_schema_version,
+                "payload": { "accepted": true },
+            })),
+            error: None,
+            events: if self.cancel_job {
+                vec![PluginInvocationEvent {
+                    kind: "cancelled".into(),
+                    progress: None,
+                    message: Some("plugin stopped after checking its input".into()),
+                    checkpoint: None,
+                }]
+            } else {
+                vec![PluginInvocationEvent {
+                    kind: "progress".into(),
+                    progress: Some(100),
+                    message: Some("Completed".into()),
+                    checkpoint: None,
+                }]
+            },
+        })
+    }
+}
+
+impl PluginRuntime for JobBoundaryRuntime {
+    fn start(
+        &mut self,
+        _manifest: &ExtensionManifest,
+        _permissions: &PermissionGrant,
+    ) -> Result<Box<dyn RuntimeProcess>, RuntimeError> {
+        Ok(Box::new(JobBoundaryProcess {
+            observed_deadline: self.observed_deadline.clone(),
+            cancel_job: self.cancel_job,
+            result_schema_version: self.result_schema_version,
+        }))
     }
 }
 
@@ -659,6 +728,105 @@ fn job_handles_use_a_thread_safe_runtime_boundary_and_project_progress() {
     assert_eq!(execution.result.payload["jobKind"], "job.example.analyze");
     assert_eq!(execution.events[0].progress, Some(100));
     assert!(host.drain_diagnostics().is_empty());
+}
+
+#[test]
+fn plugin_job_deadline_and_self_cancellation_reach_the_runtime_boundary() {
+    let observed_deadline = Arc::new(Mutex::new(None));
+    let mut host = InMemoryPluginHost::with_runtime(Box::new(JobBoundaryRuntime {
+        observed_deadline: observed_deadline.clone(),
+        cancel_job: true,
+        result_schema_version: JOB_SCHEMA_VERSION,
+    }));
+    let manifest = job_manifest(true);
+    let id = manifest.id.clone();
+    host.register(manifest)
+        .expect("Job manifest should register");
+    host.activate(&id).expect("Job extension should activate");
+    let handle = host
+        .job_handles(&id)
+        .expect("active Job contribution should expose a handle")
+        .pop()
+        .expect("Job contribution should have a handle");
+
+    let execution = handle
+        .invoke(PluginJobInvocation {
+            job_id: "job-cancelled-by-plugin".into(),
+            job_kind: "job.example.analyze".into(),
+            attempt: 1,
+            input: serde_json::json!({ "assetId": "asset-1" }),
+            provenance: JobProvenance::for_owner("job.example"),
+            budget: JobBudgetRequest::default(),
+            deadline_ms: Some(37),
+            cancellation_grace_ms: default_job_cancellation_grace_ms(),
+            checkpoint: None,
+        })
+        .expect("Job invocation should reach the runtime");
+
+    assert_eq!(
+        *observed_deadline.lock().expect("deadline capture"),
+        Some(37)
+    );
+    assert!(execution.cancelled);
+    assert_eq!(execution.events[0].kind, "cancelled");
+}
+
+#[test]
+fn plugin_job_rejects_a_result_from_an_unsupported_schema() {
+    let mut host = InMemoryPluginHost::with_runtime(Box::new(JobBoundaryRuntime {
+        observed_deadline: Arc::new(Mutex::new(None)),
+        cancel_job: false,
+        result_schema_version: JOB_SCHEMA_VERSION + 1,
+    }));
+    let manifest = job_manifest(true);
+    let id = manifest.id.clone();
+    host.register(manifest)
+        .expect("Job manifest should register");
+    host.activate(&id).expect("Job extension should activate");
+    let handle = host
+        .job_handles(&id)
+        .expect("active Job contribution should expose a handle")
+        .pop()
+        .expect("Job contribution should have a handle");
+
+    let error = handle
+        .invoke(PluginJobInvocation {
+            job_id: "job-stale-result".into(),
+            job_kind: "job.example.analyze".into(),
+            attempt: 1,
+            input: serde_json::json!({ "assetId": "asset-1" }),
+            provenance: JobProvenance::for_owner("job.example"),
+            budget: JobBudgetRequest::default(),
+            deadline_ms: None,
+            cancellation_grace_ms: default_job_cancellation_grace_ms(),
+            checkpoint: None,
+        })
+        .expect_err("unsupported result schema must be rejected");
+    assert!(matches!(
+        error,
+        PluginError::RuntimeInvocation { message, .. }
+            if message.contains("result schema") && message.contains("unsupported")
+    ));
+}
+
+#[test]
+fn runtime_job_request_serializes_deadline_and_schema_reference() {
+    let request = RuntimeInvocationRequest {
+        protocol_version: RUNTIME_PROTOCOL_VERSION,
+        kind: "invoke-job",
+        method: "job.run",
+        extension_id: "job.example",
+        command_id: "job.example.analyze",
+        args: &serde_json::json!({ "assetId": "asset-1" }),
+        context: &serde_json::json!({ "attempt": 1 }),
+        schema_id: Some("velvet.job.job.example.job.example.analyze"),
+        schema_version: Some(JOB_SCHEMA_VERSION),
+        deadline_ms: Some(37),
+    };
+    let value = serde_json::to_value(request).expect("runtime request should serialize");
+    assert_eq!(value["kind"], "invoke-job");
+    assert_eq!(value["deadlineMs"], 37);
+    assert_eq!(value["schemaVersion"], JOB_SCHEMA_VERSION);
 }
 
 #[test]
