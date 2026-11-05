@@ -188,9 +188,10 @@ use velvet_plugin_api::{
 use velvet_plugin_host::{
     sanitize_plugin_diagnostic_message, CapabilityDenyReason, CapabilityGrantSnapshot,
     DisableReason, ExtensionStorageRecovery, ExtensionStorageRecoveryStatus, InMemoryPluginHost,
-    JsonManifestDiscovery, ManifestDiscoveryError, ManifestLoadReport, PluginDiagnosticKind,
-    PluginDiagnosticRecord, PluginError, PluginHost, PluginJobHandle, PluginJobInvocation,
-    PluginResourceLoader, PluginRuntime, RuntimeCrashEvidence,
+    JsonManifestDiscovery, ManifestDiscoveryError, ManifestLoadReport, PluginConfirmationRequest,
+    PluginDiagnosticKind, PluginDiagnosticRecord, PluginError, PluginHost, PluginJobHandle,
+    PluginJobInvocation, PluginLogInput, PluginNotificationInput, PluginResourceLoader,
+    PluginRuntime, RuntimeCrashEvidence,
 };
 use velvet_preview_core::{
     BuiltinImagePreviewProvider, BuiltinTextPreviewProvider, GenericFallbackProvider,
@@ -203,16 +204,17 @@ use velvet_workbench_protocol::{
     ImportQuarantineSummary, ImportReceipt, OperationError, OperationErrorCode, OperationPlan,
     OperationReceipt, PlatformPreflightEvidence, PluginCapabilityAuditAction,
     PluginCapabilityAuditDto, PluginCapabilityDenyReason, PluginCapabilityGrantDto,
-    PluginCommandProjectionDto, PluginCommandSurfaceSnapshotDto, PluginContributionRegistrationDto,
-    PluginDiagnosticEvent, PluginDiagnosticKind as WirePluginDiagnosticKind, PluginDisableReason,
-    PluginInstallPreviewDto, PluginKeybindingProjectionDto, PluginLogLevel, PluginLogRecordDto,
-    PluginMenuProjectionDto, PluginNotificationRecordDto, PluginNotificationSeverity,
-    PluginProjectionDto, PluginRegistrySnapshotDto, PluginResourceDto, PluginRuntimeRecoveryDto,
-    PluginRuntimeRecoveryState, PluginStorageRecoveryDto, PluginStorageRecoveryStatus,
-    PortableBundle, ProfileState, Query, Request, RequestEnvelope, RequestId, Response,
-    ResponseEnvelope, PLUGIN_CAPABILITY_SCHEMA_VERSION, PLUGIN_DIAGNOSTIC_SCHEMA_VERSION,
-    PLUGIN_REGISTRY_SCHEMA_VERSION, PLUGIN_RESOURCE_SCHEMA_VERSION, PROFILE_SCHEMA_VERSION,
-    PROTOCOL_VERSION,
+    PluginCommandProjectionDto, PluginCommandSurfaceSnapshotDto, PluginConfirmationRequestDto,
+    PluginContributionRegistrationDto, PluginDiagnosticEvent,
+    PluginDiagnosticKind as WirePluginDiagnosticKind, PluginDisableReason, PluginInstallPreviewDto,
+    PluginKeybindingProjectionDto, PluginLogLevel, PluginLogRecordDto, PluginLogRequestDto,
+    PluginMenuProjectionDto, PluginNotificationRecordDto, PluginNotificationRequestDto,
+    PluginNotificationSeverity, PluginProjectionDto, PluginRegistrySnapshotDto, PluginResourceDto,
+    PluginRuntimeRecoveryDto, PluginRuntimeRecoveryState, PluginStorageRecoveryDto,
+    PluginStorageRecoveryStatus, PortableBundle, ProfileState, Query, Request, RequestEnvelope,
+    RequestId, Response, ResponseEnvelope, PLUGIN_CAPABILITY_SCHEMA_VERSION,
+    PLUGIN_DIAGNOSTIC_SCHEMA_VERSION, PLUGIN_REGISTRY_SCHEMA_VERSION,
+    PLUGIN_RESOURCE_SCHEMA_VERSION, PROFILE_SCHEMA_VERSION, PROTOCOL_VERSION,
 };
 
 pub struct ApplicationCore {
@@ -1335,12 +1337,284 @@ impl ApplicationCore {
         Ok(())
     }
 
+    fn emit_plugin_log(
+        &self,
+        extension_id: &ExtensionId,
+        request: PluginLogRequestDto,
+    ) -> Result<(), PluginError> {
+        if request.schema_version != velvet_workbench_protocol::PLUGIN_LOG_SCHEMA_VERSION {
+            return Err(PluginError::HostCapabilityUnavailable {
+                extension_id: extension_id.clone(),
+                operation: "log".into(),
+                message: format!(
+                    "unsupported plugin log schema {}; expected {}",
+                    request.schema_version,
+                    velvet_workbench_protocol::PLUGIN_LOG_SCHEMA_VERSION
+                ),
+            });
+        }
+        self.plugins.emit_log(
+            extension_id,
+            PluginLogInput {
+                extension_id: extension_id.clone(),
+                level: match request.level {
+                    PluginLogLevel::Trace => velvet_plugin_host::PluginLogLevel::Trace,
+                    PluginLogLevel::Debug => velvet_plugin_host::PluginLogLevel::Debug,
+                    PluginLogLevel::Info => velvet_plugin_host::PluginLogLevel::Info,
+                    PluginLogLevel::Warn => velvet_plugin_host::PluginLogLevel::Warn,
+                    PluginLogLevel::Error => velvet_plugin_host::PluginLogLevel::Error,
+                },
+                category: request.category,
+                message: request.message,
+                session_id: request.session_id,
+                job_id: request.job_id,
+                operation_id: request.operation_id,
+                retryable: request.retryable,
+            },
+        )
+    }
+
+    fn emit_plugin_notification(
+        &self,
+        extension_id: &ExtensionId,
+        request: PluginNotificationRequestDto,
+    ) -> Result<(), PluginError> {
+        if request.schema_version != velvet_workbench_protocol::PLUGIN_NOTIFICATION_SCHEMA_VERSION {
+            return Err(PluginError::HostCapabilityUnavailable {
+                extension_id: extension_id.clone(),
+                operation: "notification".into(),
+                message: format!(
+                    "unsupported plugin notification schema {}; expected {}",
+                    request.schema_version,
+                    velvet_workbench_protocol::PLUGIN_NOTIFICATION_SCHEMA_VERSION
+                ),
+            });
+        }
+        self.plugins.emit_notification(
+            extension_id,
+            PluginNotificationInput {
+                extension_id: extension_id.clone(),
+                severity: match request.severity {
+                    PluginNotificationSeverity::Info => {
+                        velvet_plugin_host::PluginNotificationSeverity::Info
+                    }
+                    PluginNotificationSeverity::Success => {
+                        velvet_plugin_host::PluginNotificationSeverity::Success
+                    }
+                    PluginNotificationSeverity::Warning => {
+                        velvet_plugin_host::PluginNotificationSeverity::Warning
+                    }
+                    PluginNotificationSeverity::Error => {
+                        velvet_plugin_host::PluginNotificationSeverity::Error
+                    }
+                },
+                title: request.title,
+                message: request.message,
+                session_id: request.session_id,
+                job_id: request.job_id,
+                operation_id: request.operation_id,
+                retryable: request.retryable,
+            },
+        )
+    }
+
+    fn request_plugin_confirmation(
+        &self,
+        extension_id: &ExtensionId,
+        request: PluginConfirmationRequestDto,
+    ) -> Result<bool, PluginError> {
+        if request.schema_version != velvet_workbench_protocol::PLUGIN_CONFIRMATION_SCHEMA_VERSION {
+            return Err(PluginError::HostCapabilityUnavailable {
+                extension_id: extension_id.clone(),
+                operation: "confirmation".into(),
+                message: format!(
+                    "unsupported plugin confirmation schema {}; expected {}",
+                    request.schema_version,
+                    velvet_workbench_protocol::PLUGIN_CONFIRMATION_SCHEMA_VERSION
+                ),
+            });
+        }
+        self.plugins.request_confirmation(
+            extension_id,
+            &PluginConfirmationRequest {
+                title: request.title,
+                message: request.message,
+                confirm_label: request.confirm_label,
+                cancel_label: request.cancel_label,
+                context_revision: request.context_revision,
+            },
+        )
+    }
+
+    fn submit_plugin_job(
+        &self,
+        extension_id: ExtensionId,
+        job_kind: String,
+        input: serde_json::Value,
+        mut provenance: JobProvenance,
+        policy: JobExecutionPolicy,
+        budget: JobBudgetRequest,
+    ) -> Result<velvet_job_system::JobSnapshot, PluginError> {
+        self.require_active_plugin_capability(&extension_id, Capability::JobsCreate)?;
+        let declared = self
+            .plugins
+            .active_contributions(&extension_id)?
+            .into_iter()
+            .any(|contribution| {
+                contribution.kind == ContributionKind::Job && contribution.id == job_kind
+            });
+        if !declared {
+            return Err(PluginError::InvalidContribution(format!(
+                "extension {} did not declare Job {}",
+                extension_id.0, job_kind
+            )));
+        }
+        provenance.owner_id = extension_id.0.clone();
+        if provenance.schema_version != JOB_SCHEMA_VERSION {
+            return Err(PluginError::HostCapabilityUnavailable {
+                extension_id,
+                operation: "job.submit".into(),
+                message: format!(
+                    "unsupported Job provenance schema {}; expected {}",
+                    provenance.schema_version, JOB_SCHEMA_VERSION
+                ),
+            });
+        }
+        let owner_id = ExtensionId(provenance.owner_id.clone());
+        self.jobs
+            .submit_or_reuse_with_policy_and_budget(
+                JobSpec {
+                    kind: job_kind,
+                    duration_ms: 0,
+                    will_fail: false,
+                    input,
+                    provenance,
+                },
+                policy,
+                budget,
+            )
+            .map_err(|error| PluginError::HostCapabilityUnavailable {
+                extension_id: owner_id,
+                operation: "job.submit".into(),
+                message: format!("Job submission failed: {error:?}"),
+            })
+    }
+
+    fn cancel_plugin_job(
+        &self,
+        extension_id: &ExtensionId,
+        job_id: &JobId,
+    ) -> Result<velvet_job_system::JobSnapshot, PluginError> {
+        self.require_active_plugin_capability(extension_id, Capability::JobsCreate)?;
+        let snapshot =
+            self.jobs
+                .snapshot(job_id)
+                .ok_or_else(|| PluginError::HostCapabilityUnavailable {
+                    extension_id: extension_id.clone(),
+                    operation: "job.cancel".into(),
+                    message: format!("Job {} was not found", job_id.0),
+                })?;
+        if snapshot.provenance.owner_id != extension_id.0 {
+            return Err(PluginError::CapabilityDenied {
+                extension_id: extension_id.clone(),
+                capability: Capability::JobsCreate,
+                reason: velvet_plugin_host::CapabilityDenyReason::HostPolicy,
+                retryable: false,
+            });
+        }
+        self.jobs
+            .cancel(job_id)
+            .map_err(|error| PluginError::HostCapabilityUnavailable {
+                extension_id: extension_id.clone(),
+                operation: "job.cancel".into(),
+                message: format!("Job cancellation failed: {error:?}"),
+            })
+    }
+
+    fn query_plugin_job(
+        &self,
+        extension_id: &ExtensionId,
+        job_id: &JobId,
+    ) -> Result<velvet_job_system::JobSnapshot, PluginError> {
+        self.require_active_plugin_capability(extension_id, Capability::JobsRead)?;
+        let snapshot =
+            self.jobs
+                .snapshot(job_id)
+                .ok_or_else(|| PluginError::HostCapabilityUnavailable {
+                    extension_id: extension_id.clone(),
+                    operation: "job.query".into(),
+                    message: format!("Job {} was not found", job_id.0),
+                })?;
+        if snapshot.provenance.owner_id != extension_id.0 {
+            return Err(PluginError::CapabilityDenied {
+                extension_id: extension_id.clone(),
+                capability: Capability::JobsRead,
+                reason: velvet_plugin_host::CapabilityDenyReason::HostPolicy,
+                retryable: false,
+            });
+        }
+        Ok(snapshot)
+    }
+
+    fn require_active_plugin_capability(
+        &self,
+        extension_id: &ExtensionId,
+        capability: Capability,
+    ) -> Result<(), PluginError> {
+        let state = self
+            .plugins
+            .discover()
+            .into_iter()
+            .find(|summary| &summary.id == extension_id)
+            .map(|summary| summary.state)
+            .ok_or_else(|| PluginError::NotFound(extension_id.clone()))?;
+        if state != ExtensionState::Active {
+            return Err(PluginError::InvalidState {
+                extension_id: extension_id.clone(),
+                state,
+            });
+        }
+        if !self.plugins.has_permission(
+            extension_id,
+            match capability {
+                Capability::JobsCreate => Permission::JobsCreate,
+                Capability::JobsRead => Permission::JobsRead,
+                _ => {
+                    return Err(PluginError::CapabilityDenied {
+                        extension_id: extension_id.clone(),
+                        capability,
+                        reason: velvet_plugin_host::CapabilityDenyReason::HostPolicy,
+                        retryable: false,
+                    })
+                }
+            },
+        )? {
+            return Err(PluginError::CapabilityDenied {
+                extension_id: extension_id.clone(),
+                capability,
+                reason: velvet_plugin_host::CapabilityDenyReason::UserApprovalRequired,
+                retryable: false,
+            });
+        }
+        Ok(())
+    }
+
     pub fn set_plugin_trust_policy(&mut self, policy: velvet_plugin_host::PluginTrustPolicy) {
         let mut policy = policy;
         if let Some(enabled) = self.profile.plugin_developer_mode {
             let _ = policy.set_developer_mode(enabled);
         }
         self.plugins.set_plugin_trust_policy(policy);
+    }
+
+    /// Installs the host Overlay adapter used for plugin confirmations. The
+    /// adapter is UI-owned; the core only forwards a bounded data request and
+    /// keeps the default headless behavior fail-closed.
+    pub fn set_plugin_confirmation_provider(
+        &mut self,
+        provider: Arc<dyn velvet_plugin_host::PluginConfirmationProvider>,
+    ) {
+        self.plugins.set_confirmation_provider(provider);
     }
 
     pub fn disable_plugin(
@@ -2436,6 +2710,47 @@ impl ApplicationCore {
                     }
                 }
             }
+            Request::Command(Command::EmitPluginLog {
+                extension_id,
+                request,
+            }) => {
+                self.emit_plugin_log(&extension_id, request)
+                    .map_err(plugin_error)?;
+                Ok(Response::Accepted)
+            }
+            Request::Command(Command::EmitPluginNotification {
+                extension_id,
+                request,
+            }) => {
+                self.emit_plugin_notification(&extension_id, request)
+                    .map_err(plugin_error)?;
+                Ok(Response::Accepted)
+            }
+            Request::Command(Command::RequestPluginConfirmation {
+                extension_id,
+                request,
+            }) => self
+                .request_plugin_confirmation(&extension_id, request)
+                .map(|accepted| Response::PluginConfirmation { accepted })
+                .map_err(plugin_error),
+            Request::Command(Command::SubmitPluginJob {
+                extension_id,
+                job_kind,
+                input,
+                provenance,
+                policy,
+                budget,
+            }) => self
+                .submit_plugin_job(extension_id, job_kind, input, provenance, policy, budget)
+                .map(Response::Job)
+                .map_err(plugin_error),
+            Request::Command(Command::CancelPluginJob {
+                extension_id,
+                job_id,
+            }) => self
+                .cancel_plugin_job(&extension_id, &job_id)
+                .map(Response::Job)
+                .map_err(plugin_error),
             Request::Command(Command::InvokePreviewAction {
                 extension_id,
                 command_id,
@@ -2613,6 +2928,13 @@ impl ApplicationCore {
                     self.query_plugin_command_surface(extension_id.as_ref()),
                 ))
             }
+            Request::Query(Query::PluginJob {
+                extension_id,
+                job_id,
+            }) => self
+                .query_plugin_job(&extension_id, &job_id)
+                .map(Response::Job)
+                .map_err(plugin_error),
             Request::Query(Query::ResolvePreview {
                 asset_id,
                 content_kind,
@@ -3274,6 +3596,40 @@ fn plugin_error(error: PluginError) -> CoreError {
             expected,
             actual,
         },
+        PluginError::HostCapabilityUnavailable {
+            extension_id,
+            operation,
+            ..
+        } => CoreError::PluginCommand {
+            extension_id: extension_id.0,
+            command_id: operation,
+            code: "host-capability-unavailable".into(),
+            retryable: false,
+        },
+        PluginError::HostCapabilityRateLimited {
+            extension_id,
+            operation,
+        } => CoreError::PluginCommand {
+            extension_id: extension_id.0,
+            command_id: operation,
+            code: "host-capability-rate-limited".into(),
+            retryable: true,
+        },
+        PluginError::ConfirmationDenied { extension_id } => CoreError::PluginCommand {
+            extension_id: extension_id.0,
+            command_id: "host.confirm".into(),
+            code: "confirmation-denied".into(),
+            retryable: false,
+        },
+        PluginError::InvalidState {
+            extension_id,
+            state,
+        } => CoreError::PluginCommand {
+            extension_id: extension_id.0,
+            command_id: "host.lifecycle".into(),
+            code: format!("plugin-state-{:?}", state).to_ascii_lowercase(),
+            retryable: false,
+        },
         other => CoreError::Plugin(format!("{other:?}")),
     }
 }
@@ -3317,6 +3673,12 @@ fn plugin_command_error(
                 retryable: true,
             }
         }
+        PluginError::InvalidState { state, .. } => CoreError::PluginCommand {
+            extension_id: extension_id.0.clone(),
+            command_id: command_id.into(),
+            code: format!("plugin-state-{:?}", state).to_ascii_lowercase(),
+            retryable: false,
+        },
         _ => plugin_error(error),
     }
 }

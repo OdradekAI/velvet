@@ -639,6 +639,201 @@ fn preview_action_hands_job_creation_to_the_rust_job_system() {
 }
 
 #[test]
+fn plugin_host_job_submission_checks_owner_capability_and_exposes_typed_status() {
+    let mut core = ApplicationCore::with_plugin_runtime(
+        Arc::new(InMemoryLayoutStateStore::default()),
+        Box::new(PreviewRuntime {
+            fail_augmentation: false,
+            reject_action: false,
+            job_delay_ms: 250,
+        }),
+    );
+    let mut manifest = preview_manifest();
+    manifest.permission_sets.push(ZonePermissionSet {
+        zone: WorkbenchZone::Operations,
+        permissions: vec![Permission::JobsRead],
+    });
+    let id = manifest.id.clone();
+    core.register_plugin(manifest)
+        .expect("plugin should register");
+    core.activate_plugin(&id).expect("plugin should activate");
+
+    let job = core
+        .dispatch(Request::Command(Command::SubmitPluginJob {
+            extension_id: id.clone(),
+            job_kind: "preview.metadata-analysis".into(),
+            input: serde_json::json!({"assetId": "asset-1"}),
+            provenance: velvet_job_system::JobProvenance::for_owner("spoofed-owner"),
+            policy: velvet_job_system::JobExecutionPolicy::default(),
+            budget: velvet_job_system::JobBudgetRequest::default(),
+        }))
+        .expect("active plugin should submit through JobSystem");
+    let job_id = match job {
+        Response::Job(snapshot) => {
+            assert_eq!(snapshot.provenance.owner_id, id.0);
+            snapshot.id
+        }
+        other => panic!("expected plugin Job response, got {other:?}"),
+    };
+
+    let queried = core
+        .dispatch(Request::Query(Query::PluginJob {
+            extension_id: id.clone(),
+            job_id: job_id.clone(),
+        }))
+        .expect("plugin should query its own Job");
+    assert!(matches!(queried, Response::Job(_)));
+
+    let cancelled = core
+        .dispatch(Request::Command(Command::CancelPluginJob {
+            extension_id: id.clone(),
+            job_id,
+        }))
+        .expect("plugin should cancel its own Job");
+    assert!(matches!(cancelled, Response::Job(snapshot) if matches!(
+        snapshot.status,
+        velvet_job_system::JobStatus::Cancelled | velvet_job_system::JobStatus::Cancelling
+    )));
+
+    core.disable_plugin(&id, DisableReason::User)
+        .expect("plugin disable should remain available");
+    let error = core
+        .dispatch(Request::Command(Command::SubmitPluginJob {
+            extension_id: id,
+            job_kind: "preview.metadata-analysis".into(),
+            input: serde_json::Value::Null,
+            provenance: velvet_job_system::JobProvenance::for_owner("spoofed-owner"),
+            policy: velvet_job_system::JobExecutionPolicy::default(),
+            budget: velvet_job_system::JobBudgetRequest::default(),
+        }))
+        .expect_err("disabled plugin cannot submit a Job");
+    assert!(matches!(
+        error,
+        CoreError::PluginCommand {
+            code,
+            retryable: false,
+            ..
+        } if code == "plugin-state-disabled"
+    ));
+}
+
+#[test]
+fn plugin_host_service_requests_are_typed_and_lifecycle_scoped() {
+    let mut core = ApplicationCore::with_plugin_runtime(
+        Arc::new(InMemoryLayoutStateStore::default()),
+        Box::new(PreviewRuntime {
+            fail_augmentation: false,
+            reject_action: false,
+            job_delay_ms: 0,
+        }),
+    );
+    let manifest = ExtensionManifest {
+        id: ExtensionId("services.example".into()),
+        optional_capabilities: vec![
+            Capability::LogsWrite.name().into(),
+            Capability::NotificationsShow.name().into(),
+            Capability::DialogsShow.name().into(),
+        ],
+        ..ExtensionManifest::default()
+    };
+    let id = manifest.id.clone();
+    core.register_plugin(manifest)
+        .expect("service plugin should register");
+    let generation = core
+        .query_plugin_capabilities(&id)
+        .expect("capabilities should be projected")
+        .generation;
+    core.grant_plugin_capabilities(
+        &id,
+        &[
+            Capability::LogsWrite,
+            Capability::NotificationsShow,
+            Capability::DialogsShow,
+        ],
+        Some(generation),
+    )
+    .expect("host services should be explicitly granted");
+    core.activate_plugin(&id)
+        .expect("service plugin should activate");
+
+    assert_eq!(
+        core.dispatch(Request::Command(Command::EmitPluginLog {
+            extension_id: id.clone(),
+            request: PluginLogRequestDto {
+                schema_version: velvet_workbench_protocol::PLUGIN_LOG_SCHEMA_VERSION,
+                level: PluginLogLevel::Info,
+                category: "service".into(),
+                message: "hello".into(),
+                session_id: None,
+                job_id: None,
+                operation_id: None,
+                retryable: false,
+            },
+        }))
+        .expect("active plugin should log"),
+        Response::Accepted
+    );
+    assert_eq!(
+        core.dispatch(Request::Command(Command::EmitPluginNotification {
+            extension_id: id.clone(),
+            request: PluginNotificationRequestDto {
+                schema_version: velvet_workbench_protocol::PLUGIN_NOTIFICATION_SCHEMA_VERSION,
+                severity: PluginNotificationSeverity::Info,
+                title: "Ready".into(),
+                message: "The host is ready".into(),
+                session_id: None,
+                job_id: None,
+                operation_id: None,
+                retryable: false,
+            },
+        }))
+        .expect("active plugin should notify"),
+        Response::Accepted
+    );
+    assert_eq!(
+        core.dispatch(Request::Command(Command::RequestPluginConfirmation {
+            extension_id: id.clone(),
+            request: PluginConfirmationRequestDto {
+                schema_version: velvet_workbench_protocol::PLUGIN_CONFIRMATION_SCHEMA_VERSION,
+                title: "Confirm".into(),
+                message: "Continue?".into(),
+                confirm_label: "Continue".into(),
+                cancel_label: "Cancel".into(),
+                context_revision: 4,
+            },
+        }))
+        .expect("headless confirmation should resolve to a safe denial"),
+        Response::PluginConfirmation { accepted: false }
+    );
+
+    core.disable_plugin(&id, DisableReason::User)
+        .expect("service plugin should disable");
+    let error = core
+        .dispatch(Request::Command(Command::EmitPluginNotification {
+            extension_id: id,
+            request: PluginNotificationRequestDto {
+                schema_version: velvet_workbench_protocol::PLUGIN_NOTIFICATION_SCHEMA_VERSION,
+                severity: PluginNotificationSeverity::Info,
+                title: "After disable".into(),
+                message: "must be rejected".into(),
+                session_id: None,
+                job_id: None,
+                operation_id: None,
+                retryable: false,
+            },
+        }))
+        .expect_err("disabled plugin cannot notify");
+    assert!(matches!(
+        error,
+        CoreError::PluginCommand {
+            code,
+            retryable: false,
+            ..
+        } if code == "plugin-state-disabled"
+    ));
+}
+
+#[test]
 fn plugin_job_self_cancellation_stays_inside_the_job_projection() {
     let mut core = ApplicationCore::with_plugin_runtime(
         Arc::new(InMemoryLayoutStateStore::default()),

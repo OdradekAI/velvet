@@ -26,6 +26,7 @@ export const PLUGIN_CAPABILITY_SCHEMA_VERSION = 1 as const;
 export const PLUGIN_COMMAND_SURFACE_SCHEMA_VERSION = 1 as const;
 export const PLUGIN_LOG_SCHEMA_VERSION = 1 as const;
 export const PLUGIN_NOTIFICATION_SCHEMA_VERSION = 1 as const;
+export const PLUGIN_CONFIRMATION_SCHEMA_VERSION = 1 as const;
 export const CRASH_CAPTURE_SCHEMA_VERSION = 1 as const;
 export const ACTIVATION_SCHEMA_VERSION = 1 as const;
 export type ActivationSchemaVersion = typeof ACTIVATION_SCHEMA_VERSION;
@@ -188,6 +189,38 @@ export type LayoutCommand =
 export interface CorePluginCommandContext {
   readonly activeAppId: WorkbenchAppId | null;
   readonly keys: Readonly<Record<string, string | number | boolean | null>>;
+  readonly anchor?: CorePluginContextAnchor | null;
+}
+
+export interface CorePluginLogRequest {
+  readonly schemaVersion: typeof PLUGIN_LOG_SCHEMA_VERSION;
+  readonly level: CorePluginLogLevel;
+  readonly category: string;
+  readonly message: string;
+  readonly sessionId?: string | null;
+  readonly jobId?: string | null;
+  readonly operationId?: string | null;
+  readonly retryable?: boolean;
+}
+
+export interface CorePluginNotificationRequest {
+  readonly schemaVersion: typeof PLUGIN_NOTIFICATION_SCHEMA_VERSION;
+  readonly severity: CorePluginNotificationSeverity;
+  readonly title: string;
+  readonly message: string;
+  readonly sessionId?: string | null;
+  readonly jobId?: string | null;
+  readonly operationId?: string | null;
+  readonly retryable?: boolean;
+}
+
+export interface CorePluginConfirmationRequest {
+  readonly schemaVersion: typeof PLUGIN_CONFIRMATION_SCHEMA_VERSION;
+  readonly title: string;
+  readonly message: string;
+  readonly confirmLabel: string;
+  readonly cancelLabel: string;
+  readonly contextRevision: number;
 }
 
 export interface CorePreviewActionContext {
@@ -233,6 +266,12 @@ export type CoreRequest =
       readonly kind: 'query-plugin-install-recovery-log';
     }
   | { readonly protocolVersion: ProtocolVersion; readonly kind: 'query-jobs' }
+  | {
+      readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'query-plugin-job';
+      readonly extensionId: string;
+      readonly jobId: string;
+    }
   | { readonly protocolVersion: ProtocolVersion; readonly kind: 'query-snapshot' }
   | {
       readonly protocolVersion: ProtocolVersion;
@@ -450,6 +489,40 @@ export type CoreRequest =
     }
   | {
       readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'emit-plugin-log';
+      readonly extensionId: string;
+      readonly request: CorePluginLogRequest;
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'emit-plugin-notification';
+      readonly extensionId: string;
+      readonly request: CorePluginNotificationRequest;
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'request-plugin-confirmation';
+      readonly extensionId: string;
+      readonly request: CorePluginConfirmationRequest;
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'submit-plugin-job';
+      readonly extensionId: string;
+      readonly jobKind: string;
+      readonly input: unknown;
+      readonly provenance: CoreJobProvenance;
+      readonly policy?: CoreJobExecutionPolicy;
+      readonly budget?: CoreJobBudgetRequest;
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'cancel-plugin-job';
+      readonly extensionId: string;
+      readonly jobId: string;
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
       readonly kind: 'invoke-preview-action';
       readonly extensionId: string;
       readonly commandId: string;
@@ -596,6 +669,7 @@ export type CoreResponse =
   | { readonly kind: 'operation-plan'; readonly plan: CoreOperationPlan }
   | { readonly kind: 'approved-source-roots'; readonly roots: readonly string[] }
   | { readonly kind: 'job'; readonly job: CoreJobSnapshot }
+  | { readonly kind: 'plugin-confirmation'; readonly accepted: boolean }
   | { readonly kind: 'jobs'; readonly jobs: readonly CoreJobSnapshot[] }
   | { readonly kind: 'snapshot'; readonly snapshot: CoreAuthoritativeSnapshot }
   | { readonly kind: 'request-outcome'; readonly outcome: CoreRequestOutcome }
@@ -1288,6 +1362,40 @@ export type CorePluginRequest =
   | {
       readonly kind: 'query-capabilities';
       readonly extensionId: string;
+    }
+  | {
+      readonly kind: 'log';
+      readonly extensionId: string;
+      readonly request: CorePluginLogRequest;
+    }
+  | {
+      readonly kind: 'notify';
+      readonly extensionId: string;
+      readonly request: CorePluginNotificationRequest;
+    }
+  | {
+      readonly kind: 'confirm';
+      readonly extensionId: string;
+      readonly request: CorePluginConfirmationRequest;
+    }
+  | {
+      readonly kind: 'submit-job';
+      readonly extensionId: string;
+      readonly jobKind: string;
+      readonly input: unknown;
+      readonly provenance: CoreJobProvenance;
+      readonly policy: CoreJobExecutionPolicy;
+      readonly budget: CoreJobBudgetRequest;
+    }
+  | {
+      readonly kind: 'cancel-job';
+      readonly extensionId: string;
+      readonly jobId: string;
+    }
+  | {
+      readonly kind: 'query-job';
+      readonly extensionId: string;
+      readonly jobId: string;
     };
 
 export interface CorePluginRequestEnvelope {
@@ -1301,7 +1409,9 @@ export interface CorePluginRequestEnvelope {
 export type CorePluginResponse =
   | { readonly kind: 'accepted' }
   | { readonly kind: 'projection'; readonly projection: CorePluginProjection }
-  | { readonly kind: 'capabilities'; readonly capabilities: CorePluginCapabilityGrant };
+  | { readonly kind: 'capabilities'; readonly capabilities: CorePluginCapabilityGrant }
+  | { readonly kind: 'confirmation'; readonly accepted: boolean }
+  | { readonly kind: 'job'; readonly job: CoreJobSnapshot };
 
 export interface CorePluginResponseEnvelope {
   readonly protocolVersion: PluginProtocolSchemaVersion;
@@ -1344,6 +1454,52 @@ export function toCoreRequest(envelope: CorePluginRequestEnvelope): CoreRequest 
         protocolVersion: PROTOCOL_VERSION,
         kind: 'query-plugin-capabilities',
         extensionId: envelope.message.extensionId,
+      };
+    case 'log':
+      return {
+        protocolVersion: PROTOCOL_VERSION,
+        kind: 'emit-plugin-log',
+        extensionId: envelope.message.extensionId,
+        request: envelope.message.request,
+      };
+    case 'notify':
+      return {
+        protocolVersion: PROTOCOL_VERSION,
+        kind: 'emit-plugin-notification',
+        extensionId: envelope.message.extensionId,
+        request: envelope.message.request,
+      };
+    case 'confirm':
+      return {
+        protocolVersion: PROTOCOL_VERSION,
+        kind: 'request-plugin-confirmation',
+        extensionId: envelope.message.extensionId,
+        request: envelope.message.request,
+      };
+    case 'submit-job':
+      return {
+        protocolVersion: PROTOCOL_VERSION,
+        kind: 'submit-plugin-job',
+        extensionId: envelope.message.extensionId,
+        jobKind: envelope.message.jobKind,
+        input: envelope.message.input,
+        provenance: envelope.message.provenance,
+        policy: envelope.message.policy,
+        budget: envelope.message.budget,
+      };
+    case 'cancel-job':
+      return {
+        protocolVersion: PROTOCOL_VERSION,
+        kind: 'cancel-plugin-job',
+        extensionId: envelope.message.extensionId,
+        jobId: envelope.message.jobId,
+      };
+    case 'query-job':
+      return {
+        protocolVersion: PROTOCOL_VERSION,
+        kind: 'query-plugin-job',
+        extensionId: envelope.message.extensionId,
+        jobId: envelope.message.jobId,
       };
   }
 }

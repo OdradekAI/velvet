@@ -6,6 +6,7 @@ import {
   ContextKeyService,
   type ContextKeySnapshot,
 } from './context-key-service.js';
+import type { ContextAnchor } from '../contributions/contribution-registry.js';
 
 export type CommandScope = 'workbench' | 'workbench-app';
 
@@ -13,6 +14,7 @@ export interface CommandExecutionContext {
   readonly activeAppId?: WorkbenchAppId;
   readonly keys: ContextKeySnapshot;
   readonly contextRevision?: number;
+  readonly anchor?: ContextAnchor;
   readonly preview?: CorePreviewActionContext;
 }
 

@@ -764,6 +764,34 @@ pub enum WirePluginRequest {
     },
     QueryProjection { extension_id: String },
     QueryCapabilities { extension_id: String },
+    Log {
+        extension_id: String,
+        request: velvet_workbench_protocol::PluginLogRequestDto,
+    },
+    Notify {
+        extension_id: String,
+        request: velvet_workbench_protocol::PluginNotificationRequestDto,
+    },
+    Confirm {
+        extension_id: String,
+        request: velvet_workbench_protocol::PluginConfirmationRequestDto,
+    },
+    SubmitJob {
+        extension_id: String,
+        job_kind: String,
+        input: serde_json::Value,
+        provenance: velvet_job_system::JobProvenance,
+        policy: velvet_job_system::JobExecutionPolicy,
+        budget: velvet_job_system::JobBudgetRequest,
+    },
+    CancelJob {
+        extension_id: String,
+        job_id: velvet_job_system::JobId,
+    },
+    QueryJob {
+        extension_id: String,
+        job_id: velvet_job_system::JobId,
+    },
 }
 
 #[derive(Debug, Serialize)]
@@ -833,6 +861,56 @@ impl TryFrom<WirePluginRequestEnvelope> for PluginRequestEnvelope {
                     extension_id: velvet_plugin_api::ExtensionId(extension_id),
                 }
             }
+            WirePluginRequest::Log {
+                extension_id,
+                request,
+            } => PluginRequest::Log {
+                extension_id: velvet_plugin_api::ExtensionId(extension_id),
+                request,
+            },
+            WirePluginRequest::Notify {
+                extension_id,
+                request,
+            } => PluginRequest::Notify {
+                extension_id: velvet_plugin_api::ExtensionId(extension_id),
+                request,
+            },
+            WirePluginRequest::Confirm {
+                extension_id,
+                request,
+            } => PluginRequest::Confirm {
+                extension_id: velvet_plugin_api::ExtensionId(extension_id),
+                request,
+            },
+            WirePluginRequest::SubmitJob {
+                extension_id,
+                job_kind,
+                input,
+                provenance,
+                policy,
+                budget,
+            } => PluginRequest::SubmitJob {
+                extension_id: velvet_plugin_api::ExtensionId(extension_id),
+                job_kind,
+                input,
+                provenance,
+                policy,
+                budget,
+            },
+            WirePluginRequest::CancelJob {
+                extension_id,
+                job_id,
+            } => PluginRequest::CancelJob {
+                extension_id: velvet_plugin_api::ExtensionId(extension_id),
+                job_id,
+            },
+            WirePluginRequest::QueryJob {
+                extension_id,
+                job_id,
+            } => PluginRequest::QueryJob {
+                extension_id: velvet_plugin_api::ExtensionId(extension_id),
+                job_id,
+            },
         };
         Ok(PluginRequestEnvelope {
             protocol_version: value.protocol_version,
@@ -1230,6 +1308,57 @@ pub enum WireRequest {
         deadline_ms: Option<u64>,
         #[serde(rename = "idempotencyKey", default)]
         idempotency_key: Option<String>,
+    },
+    EmitPluginLog {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        #[serde(rename = "extensionId")]
+        extension_id: String,
+        request: velvet_workbench_protocol::PluginLogRequestDto,
+    },
+    EmitPluginNotification {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        #[serde(rename = "extensionId")]
+        extension_id: String,
+        request: velvet_workbench_protocol::PluginNotificationRequestDto,
+    },
+    RequestPluginConfirmation {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        #[serde(rename = "extensionId")]
+        extension_id: String,
+        request: velvet_workbench_protocol::PluginConfirmationRequestDto,
+    },
+    SubmitPluginJob {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        #[serde(rename = "extensionId")]
+        extension_id: String,
+        #[serde(rename = "jobKind")]
+        job_kind: String,
+        input: serde_json::Value,
+        provenance: JobProvenance,
+        #[serde(default)]
+        policy: Option<JobExecutionPolicy>,
+        #[serde(default)]
+        budget: Option<JobBudgetRequest>,
+    },
+    CancelPluginJob {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        #[serde(rename = "extensionId")]
+        extension_id: String,
+        #[serde(rename = "jobId")]
+        job_id: String,
+    },
+    QueryPluginJob {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        #[serde(rename = "extensionId")]
+        extension_id: String,
+        #[serde(rename = "jobId")]
+        job_id: String,
     },
     InvokePreviewAction {
         #[serde(rename = "protocolVersion")]
@@ -1824,6 +1953,80 @@ impl WireRequest {
                     idempotency_key,
                 }))
             }
+            Self::EmitPluginLog {
+                protocol_version,
+                extension_id,
+                request,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Command(Command::EmitPluginLog {
+                    extension_id: ExtensionId(extension_id),
+                    request,
+                }))
+            }
+            Self::EmitPluginNotification {
+                protocol_version,
+                extension_id,
+                request,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Command(Command::EmitPluginNotification {
+                    extension_id: ExtensionId(extension_id),
+                    request,
+                }))
+            }
+            Self::RequestPluginConfirmation {
+                protocol_version,
+                extension_id,
+                request,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Command(Command::RequestPluginConfirmation {
+                    extension_id: ExtensionId(extension_id),
+                    request,
+                }))
+            }
+            Self::SubmitPluginJob {
+                protocol_version,
+                extension_id,
+                job_kind,
+                input,
+                provenance,
+                policy,
+                budget,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Command(Command::SubmitPluginJob {
+                    extension_id: ExtensionId(extension_id),
+                    job_kind,
+                    input,
+                    provenance,
+                    policy: policy.unwrap_or_default(),
+                    budget: budget.unwrap_or_default(),
+                }))
+            }
+            Self::CancelPluginJob {
+                protocol_version,
+                extension_id,
+                job_id,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Command(Command::CancelPluginJob {
+                    extension_id: ExtensionId(extension_id),
+                    job_id: JobId(job_id),
+                }))
+            }
+            Self::QueryPluginJob {
+                protocol_version,
+                extension_id,
+                job_id,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Query(velvet_workbench_protocol::Query::PluginJob {
+                    extension_id: ExtensionId(extension_id),
+                    job_id: JobId(job_id),
+                }))
+            }
             Self::InvokePreviewAction {
                 protocol_version,
                 extension_id,
@@ -2251,6 +2454,9 @@ enum WireResponse {
     Job {
         job: WireJobSnapshot,
     },
+    PluginConfirmation {
+        accepted: bool,
+    },
     Jobs {
         jobs: Vec<WireJobSnapshot>,
     },
@@ -2326,6 +2532,9 @@ impl WireResponseEnvelope {
             Response::Job(job) => WireResponse::Job {
                 job: WireJobSnapshot::from(job),
             },
+            Response::PluginConfirmation { accepted } => {
+                WireResponse::PluginConfirmation { accepted }
+            }
             Response::Jobs(jobs) => WireResponse::Jobs {
                 jobs: jobs.into_iter().map(WireJobSnapshot::from).collect(),
             },
@@ -2866,6 +3075,33 @@ fn velvet_core_request(
         request_id: RequestId(envelope.request_id),
         response,
     }))
+}
+
+/// Thin Tauri adapter for the plugin-only host capability envelope. Domain
+/// validation and ownership remain in CoreTransport/ApplicationCore.
+#[tauri::command]
+fn velvet_plugin_request(
+    state: State<'_, AppState>,
+    envelope: WirePluginRequestEnvelope,
+) -> Result<WirePluginResponseEnvelope, WireError> {
+    if envelope.protocol_version != velvet_workbench_protocol::PLUGIN_PROTOCOL_SCHEMA_VERSION {
+        return Err(WireError::from(CoreError::ProtocolVersionMismatch {
+            expected: velvet_workbench_protocol::PLUGIN_PROTOCOL_SCHEMA_VERSION,
+            received: envelope.protocol_version,
+        }));
+    }
+    let envelope = PluginRequestEnvelope::try_from(envelope)?;
+    let transport = state.transport.lock().map_err(|_| WireError {
+        code: "core-lock-poisoned".into(),
+        message: "The application core lock is poisoned.".into(),
+        retryable: true,
+        expected_revision: None,
+        actual_revision: None,
+    })?;
+    transport
+        .dispatch_plugin_session(envelope)
+        .map(WirePluginResponseEnvelope::from)
+        .map_err(WireError::from)
 }
 
 #[tauri::command]
@@ -3426,6 +3662,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             velvet_core_handshake,
             velvet_core_request,
+            velvet_plugin_request,
             velvet_activation_pending,
             velvet_update_check,
             velvet_update_install
@@ -4001,6 +4238,45 @@ mod tests {
         );
         let event_json = serde_json::to_value(event).expect("event should serialize");
         assert_eq!(event_json["event"]["kind"], "disabled");
+    }
+
+    #[test]
+    fn wire_plugin_host_capabilities_keep_tauri_as_a_thin_mapping() {
+        let wire: WirePluginRequestEnvelope = serde_json::from_value(serde_json::json!({
+            "protocolVersion": 1,
+            "sessionId": "core-test-1",
+            "callerExtensionId": "publisher.reader",
+            "requestId": 11,
+            "message": {
+                "kind": "confirm",
+                "extensionId": "publisher.reader",
+                "request": {
+                    "schemaVersion": 1,
+                    "title": "Confirm",
+                    "message": "Continue?",
+                    "confirmLabel": "Continue",
+                    "cancelLabel": "Cancel",
+                    "contextRevision": 4
+                }
+            }
+        }))
+        .expect("confirmation should decode through the Tauri mirror");
+        let envelope: PluginRequestEnvelope = wire.try_into().expect("confirmation should map");
+        assert!(matches!(
+            envelope.into_request(),
+            Request::Command(Command::RequestPluginConfirmation { extension_id, request })
+                if extension_id.0 == "publisher.reader" && request.context_revision == 4
+        ));
+
+        let response = WirePluginResponseEnvelope::from(PluginResponseEnvelope {
+            protocol_version: 1,
+            session_id: "core-test-1".into(),
+            request_id: RequestId(11),
+            response: PluginResponse::Confirmation { accepted: true },
+        });
+        let response_json = serde_json::to_value(response).expect("confirmation should serialize");
+        assert_eq!(response_json["response"]["kind"], "confirmation");
+        assert_eq!(response_json["response"]["accepted"], true);
     }
 
     #[test]

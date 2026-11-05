@@ -464,6 +464,18 @@ pub enum PluginError {
         expected: u64,
         actual: u64,
     },
+    HostCapabilityUnavailable {
+        extension_id: ExtensionId,
+        operation: String,
+        message: String,
+    },
+    HostCapabilityRateLimited {
+        extension_id: ExtensionId,
+        operation: String,
+    },
+    ConfirmationDenied {
+        extension_id: ExtensionId,
+    },
     InvalidState {
         extension_id: ExtensionId,
         state: ExtensionState,
@@ -504,6 +516,9 @@ impl PluginError {
             Self::RegistryUnavailable => "plugin-registry-unavailable",
             Self::CapabilityDenied { .. } => "plugin-capability-denied",
             Self::CapabilityGenerationConflict { .. } => "plugin-capability-generation-conflict",
+            Self::HostCapabilityUnavailable { .. } => "plugin-host-capability-unavailable",
+            Self::HostCapabilityRateLimited { .. } => "plugin-host-capability-rate-limited",
+            Self::ConfirmationDenied { .. } => "plugin-confirmation-denied",
             Self::InvalidState { .. } => "plugin-state-invalid",
         }
     }
@@ -520,6 +535,7 @@ impl PluginError {
                 | Self::ExtensionStorage { .. }
                 | Self::RegistryUnavailable
                 | Self::CapabilityGenerationConflict { .. }
+                | Self::HostCapabilityUnavailable { .. }
         )
     }
 }
@@ -826,6 +842,41 @@ pub struct PluginNotificationInput {
     pub retryable: bool,
 }
 
+/// A host-owned confirmation request. The request is deliberately data-only;
+/// a plugin never receives a dialog handle, DOM node or native window object.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PluginConfirmationRequest {
+    pub title: String,
+    pub message: String,
+    pub confirm_label: String,
+    pub cancel_label: String,
+    pub context_revision: u64,
+}
+
+/// UI adapters implement this seam to present a confirmation through the
+/// host Overlay stack. The default provider denies requests, keeping headless
+/// and recovery paths safe until a UI adapter is installed.
+pub trait PluginConfirmationProvider: Send + Sync {
+    fn confirm(
+        &self,
+        extension_id: &ExtensionId,
+        request: &PluginConfirmationRequest,
+    ) -> Result<bool, String>;
+}
+
+#[derive(Debug, Default)]
+pub struct DenyPluginConfirmationProvider;
+
+impl PluginConfirmationProvider for DenyPluginConfirmationProvider {
+    fn confirm(
+        &self,
+        _extension_id: &ExtensionId,
+        _request: &PluginConfirmationRequest,
+    ) -> Result<bool, String> {
+        Ok(false)
+    }
+}
+
 /// A bounded, local-first diagnostic record owned by PluginHost.
 ///
 /// Messages are normalized and path-like tokens are redacted before they
@@ -917,6 +968,10 @@ struct PluginLogSink {
 
 impl PluginLogSink {
     fn record(&mut self, input: PluginLogInput) {
+        let _ = self.record_checked(input);
+    }
+
+    fn record_checked(&mut self, input: PluginLogInput) -> Result<(), String> {
         let now = diagnostic_timestamp_ms();
         let cutoff = now.saturating_sub(60_000);
         let recent = self
@@ -927,7 +982,7 @@ impl PluginLogSink {
             })
             .count();
         if recent >= MAX_PLUGIN_LOGS_PER_MINUTE {
-            return;
+            return Err("log-rate-limit".into());
         }
         let record = PluginLogRecord {
             sequence: self.next_sequence,
@@ -946,6 +1001,7 @@ impl PluginLogSink {
             self.records.pop_front();
         }
         self.records.push_back(record);
+        Ok(())
     }
 
     fn drain(&mut self) -> Vec<PluginLogRecord> {
@@ -965,6 +1021,10 @@ struct PluginNotificationSink {
 
 impl PluginNotificationSink {
     fn record(&mut self, input: PluginNotificationInput) {
+        let _ = self.record_checked(input);
+    }
+
+    fn record_checked(&mut self, input: PluginNotificationInput) -> Result<(), String> {
         let now = diagnostic_timestamp_ms();
         let cutoff = now.saturating_sub(60_000);
         let recent = self
@@ -975,7 +1035,7 @@ impl PluginNotificationSink {
             })
             .count();
         if recent >= MAX_PLUGIN_NOTIFICATIONS_PER_MINUTE {
-            return;
+            return Err("notification-rate-limit".into());
         }
         let record = PluginNotificationRecord {
             sequence: self.next_sequence,
@@ -994,6 +1054,7 @@ impl PluginNotificationSink {
             self.records.pop_front();
         }
         self.records.push_back(record);
+        Ok(())
     }
 
     fn drain(&mut self) -> Vec<PluginNotificationRecord> {
@@ -2949,6 +3010,23 @@ pub trait PluginHost {
     fn notifications_snapshot(&self) -> Vec<PluginNotificationRecord> {
         Vec::new()
     }
+    fn emit_log(&self, _id: &ExtensionId, _input: PluginLogInput) -> Result<(), PluginError> {
+        Err(PluginError::RegistryUnavailable)
+    }
+    fn emit_notification(
+        &self,
+        _id: &ExtensionId,
+        _input: PluginNotificationInput,
+    ) -> Result<(), PluginError> {
+        Err(PluginError::RegistryUnavailable)
+    }
+    fn request_confirmation(
+        &self,
+        _id: &ExtensionId,
+        _request: &PluginConfirmationRequest,
+    ) -> Result<bool, PluginError> {
+        Err(PluginError::RegistryUnavailable)
+    }
     fn drain_crash_evidence(&mut self) -> Vec<RuntimeCrashEvidence> {
         Vec::new()
     }
@@ -2964,6 +3042,7 @@ pub struct InMemoryPluginHost {
     capabilities: CapabilityBroker,
     logs: Arc<Mutex<PluginLogSink>>,
     notifications: Arc<Mutex<PluginNotificationSink>>,
+    confirmation_provider: Arc<dyn PluginConfirmationProvider>,
     registry: ContributionRegistry,
     registrations: BTreeMap<ExtensionId, Vec<ContributionRegistrationHandle>>,
     states: BTreeMap<ExtensionId, ExtensionState>,
@@ -3011,6 +3090,7 @@ impl Default for InMemoryPluginHost {
             capabilities: CapabilityBroker::default(),
             logs: Arc::new(Mutex::new(PluginLogSink::default())),
             notifications: Arc::new(Mutex::new(PluginNotificationSink::default())),
+            confirmation_provider: Arc::new(DenyPluginConfirmationProvider),
             registry: ContributionRegistry::default(),
             registrations: BTreeMap::new(),
             states: BTreeMap::new(),
@@ -3548,6 +3628,111 @@ impl InMemoryPluginHost {
 
     pub fn set_runtime_orphan_reconciler(&mut self, reconciler: Arc<dyn RuntimeOrphanReconciler>) {
         self.orphan_reconciler = Some(reconciler);
+    }
+
+    pub fn set_confirmation_provider(&mut self, provider: Arc<dyn PluginConfirmationProvider>) {
+        self.confirmation_provider = provider;
+    }
+
+    fn ensure_host_capability(
+        &self,
+        id: &ExtensionId,
+        capability: Capability,
+    ) -> Result<(), PluginError> {
+        let state = self
+            .states
+            .get(id)
+            .cloned()
+            .ok_or_else(|| PluginError::NotFound(id.clone()))?;
+        if !self.active.contains(id) {
+            return Err(PluginError::InvalidState {
+                extension_id: id.clone(),
+                state,
+            });
+        }
+        if !self
+            .capabilities
+            .is_granted(id, &capability)
+            .map_err(|error| capability_error(id, error))?
+        {
+            return Err(PluginError::CapabilityDenied {
+                extension_id: id.clone(),
+                capability,
+                reason: CapabilityDenyReason::UserApprovalRequired,
+                retryable: false,
+            });
+        }
+        Ok(())
+    }
+
+    pub fn emit_log(&self, id: &ExtensionId, input: PluginLogInput) -> Result<(), PluginError> {
+        self.ensure_host_capability(id, Capability::LogsWrite)?;
+        if input.extension_id != *id {
+            return Err(PluginError::InvalidContribution(
+                "plugin log source does not match the active extension".into(),
+            ));
+        }
+        self.logs
+            .lock()
+            .map_err(|_| PluginError::HostCapabilityUnavailable {
+                extension_id: id.clone(),
+                operation: "log".into(),
+                message: "plugin log sink lock poisoned".into(),
+            })?
+            .record_checked(input)
+            .map_err(|rate_limited| PluginError::HostCapabilityRateLimited {
+                extension_id: id.clone(),
+                operation: rate_limited,
+            })
+    }
+
+    pub fn emit_notification(
+        &self,
+        id: &ExtensionId,
+        input: PluginNotificationInput,
+    ) -> Result<(), PluginError> {
+        self.ensure_host_capability(id, Capability::NotificationsShow)?;
+        if input.extension_id != *id {
+            return Err(PluginError::InvalidContribution(
+                "plugin notification source does not match the active extension".into(),
+            ));
+        }
+        self.notifications
+            .lock()
+            .map_err(|_| PluginError::HostCapabilityUnavailable {
+                extension_id: id.clone(),
+                operation: "notification".into(),
+                message: "plugin notification sink lock poisoned".into(),
+            })?
+            .record_checked(input)
+            .map_err(|rate_limited| PluginError::HostCapabilityRateLimited {
+                extension_id: id.clone(),
+                operation: rate_limited,
+            })
+    }
+
+    pub fn request_confirmation(
+        &self,
+        id: &ExtensionId,
+        request: &PluginConfirmationRequest,
+    ) -> Result<bool, PluginError> {
+        self.ensure_host_capability(id, Capability::DialogsShow)?;
+        if request.title.trim().is_empty() || request.message.trim().is_empty() {
+            return Err(PluginError::HostCapabilityUnavailable {
+                extension_id: id.clone(),
+                operation: "confirmation".into(),
+                message: "confirmation title and message must not be empty".into(),
+            });
+        }
+        let accepted = self
+            .confirmation_provider
+            .confirm(id, request)
+            .map_err(|message| PluginError::HostCapabilityUnavailable {
+                extension_id: id.clone(),
+                operation: "confirmation".into(),
+                message,
+            })?;
+        Ok(accepted)
     }
 
     pub fn drain_diagnostics(&mut self) -> Vec<PluginDiagnosticRecord> {
@@ -6480,6 +6665,26 @@ impl PluginHost for InMemoryPluginHost {
 
     fn notifications_snapshot(&self) -> Vec<PluginNotificationRecord> {
         InMemoryPluginHost::notifications_snapshot(self)
+    }
+
+    fn emit_log(&self, id: &ExtensionId, input: PluginLogInput) -> Result<(), PluginError> {
+        InMemoryPluginHost::emit_log(self, id, input)
+    }
+
+    fn emit_notification(
+        &self,
+        id: &ExtensionId,
+        input: PluginNotificationInput,
+    ) -> Result<(), PluginError> {
+        InMemoryPluginHost::emit_notification(self, id, input)
+    }
+
+    fn request_confirmation(
+        &self,
+        id: &ExtensionId,
+        request: &PluginConfirmationRequest,
+    ) -> Result<bool, PluginError> {
+        InMemoryPluginHost::request_confirmation(self, id, request)
     }
 
     fn drain_crash_evidence(&mut self) -> Vec<RuntimeCrashEvidence> {

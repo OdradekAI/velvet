@@ -14,7 +14,7 @@ use velvet_persistence::{
     InMemoryStateSnapshotStore, JsonFileStateSnapshotStore, StateSnapshotStore,
 };
 use velvet_plugin_api::{
-    ContextAnchor, ContributionDescriptor, ContributionScope, ExtensionId,
+    Capability, ContextAnchor, ContributionDescriptor, ContributionScope, ExtensionId,
     ExtensionStorageDeclaration, LocalizationManifest, Permission, PreviewAugmentationSlot,
     PreviewContributionDescriptor, PreviewIntent, PreviewSurface, RuntimeKind, RuntimeLaunchSpec,
     UiSurfaceDescriptor, UiSurfaceKind, VersionRange, ZonePermissionSet,
@@ -68,6 +68,20 @@ struct StorageRuntime {
 struct StorageProcess {
     observed: Arc<Mutex<Vec<PluginInvocation>>>,
     shutdowns: Arc<Mutex<usize>>,
+}
+
+struct ConfirmProvider {
+    accepted: bool,
+}
+
+impl PluginConfirmationProvider for ConfirmProvider {
+    fn confirm(
+        &self,
+        _extension_id: &ExtensionId,
+        _request: &PluginConfirmationRequest,
+    ) -> Result<bool, String> {
+        Ok(self.accepted)
+    }
 }
 
 fn temporary_manifest_dir() -> PathBuf {
@@ -693,6 +707,167 @@ fn job_manifest(with_permission: bool) -> ExtensionManifest {
         },
         ..ExtensionManifest::default()
     }
+}
+
+#[test]
+fn host_capability_services_require_active_grants_and_preserve_plugin_source() {
+    let grants = Arc::new(Mutex::new(Vec::new()));
+    let shutdowns = Arc::new(Mutex::new(0));
+    let mut host = InMemoryPluginHost::with_runtime(Box::new(FakeRuntime {
+        plans: vec![StartPlan::Process(vec![RuntimeHealth::Running])].into(),
+        grants,
+        shutdowns,
+    }));
+    let manifest = ExtensionManifest {
+        id: ExtensionId("services.example".into()),
+        optional_capabilities: vec![
+            Capability::LogsWrite.name().into(),
+            Capability::NotificationsShow.name().into(),
+            Capability::DialogsShow.name().into(),
+        ],
+        ..ExtensionManifest::default()
+    };
+    let id = manifest.id.clone();
+    host.register(manifest)
+        .expect("service manifest should register");
+    let generation = host
+        .capability_snapshot(&id)
+        .expect("capability registration should exist")
+        .generation;
+    host.grant_capabilities(
+        &id,
+        &[
+            Capability::LogsWrite,
+            Capability::NotificationsShow,
+            Capability::DialogsShow,
+        ],
+        Some(generation),
+    )
+    .expect("service capabilities should be granted before activation");
+    host.activate(&id)
+        .expect("service extension should activate");
+
+    host.emit_log(
+        &id,
+        PluginLogInput {
+            extension_id: id.clone(),
+            level: PluginLogLevel::Info,
+            category: "service".into(),
+            message: "hello".into(),
+            session_id: Some("session-1".into()),
+            job_id: None,
+            operation_id: None,
+            retryable: false,
+        },
+    )
+    .expect("active extension should be able to log");
+    host.emit_notification(
+        &id,
+        PluginNotificationInput {
+            extension_id: id.clone(),
+            severity: PluginNotificationSeverity::Info,
+            title: "Ready".into(),
+            message: "The host is ready".into(),
+            session_id: None,
+            job_id: None,
+            operation_id: None,
+            retryable: false,
+        },
+    )
+    .expect("active extension should be able to notify");
+    host.set_confirmation_provider(Arc::new(ConfirmProvider { accepted: true }));
+    assert!(host
+        .request_confirmation(
+            &id,
+            &PluginConfirmationRequest {
+                title: "Confirm".into(),
+                message: "Continue?".into(),
+                confirm_label: "Continue".into(),
+                cancel_label: "Cancel".into(),
+                context_revision: 3,
+            },
+        )
+        .expect("confirmation provider should be called"));
+    assert_eq!(host.logs_snapshot().len(), 1);
+    assert_eq!(host.notifications_snapshot().len(), 1);
+
+    host.disable(&id, DisableReason::User)
+        .expect("service extension should disable");
+    assert!(matches!(
+        host.emit_log(
+            &id,
+            PluginLogInput {
+                extension_id: id.clone(),
+                level: PluginLogLevel::Info,
+                category: "service".into(),
+                message: "after disable".into(),
+                session_id: None,
+                job_id: None,
+                operation_id: None,
+                retryable: false,
+            },
+        ),
+        Err(PluginError::InvalidState { .. })
+    ));
+}
+
+#[test]
+fn notification_rate_limit_is_a_typed_failure() {
+    let grants = Arc::new(Mutex::new(Vec::new()));
+    let shutdowns = Arc::new(Mutex::new(0));
+    let mut host = InMemoryPluginHost::with_runtime(Box::new(FakeRuntime {
+        plans: vec![StartPlan::Process(vec![RuntimeHealth::Running])].into(),
+        grants,
+        shutdowns,
+    }));
+    let manifest = ExtensionManifest {
+        id: ExtensionId("notify.example".into()),
+        optional_capabilities: vec![Capability::NotificationsShow.name().into()],
+        ..ExtensionManifest::default()
+    };
+    let id = manifest.id.clone();
+    host.register(manifest)
+        .expect("notification manifest should register");
+    let generation = host
+        .capability_snapshot(&id)
+        .expect("capability registration should exist")
+        .generation;
+    host.grant_capabilities(&id, &[Capability::NotificationsShow], Some(generation))
+        .expect("notification capability should be granted before activation");
+    host.activate(&id)
+        .expect("notification extension should activate");
+    for index in 0..MAX_PLUGIN_NOTIFICATIONS_PER_MINUTE {
+        host.emit_notification(
+            &id,
+            PluginNotificationInput {
+                extension_id: id.clone(),
+                severity: PluginNotificationSeverity::Info,
+                title: format!("Notification {index}"),
+                message: "bounded".into(),
+                session_id: None,
+                job_id: None,
+                operation_id: None,
+                retryable: false,
+            },
+        )
+        .expect("notifications below the rate limit should succeed");
+    }
+    assert!(matches!(
+        host.emit_notification(
+            &id,
+            PluginNotificationInput {
+                extension_id: id.clone(),
+                severity: PluginNotificationSeverity::Info,
+                title: "overflow".into(),
+                message: "bounded".into(),
+                session_id: None,
+                job_id: None,
+                operation_id: None,
+                retryable: false,
+            },
+        ),
+        Err(PluginError::HostCapabilityRateLimited { .. })
+    ));
 }
 
 #[test]

@@ -291,6 +291,8 @@ pub enum Capability {
     CommandRegister,
     #[serde(rename = "notifications.show")]
     NotificationsShow,
+    #[serde(rename = "dialogs.show")]
+    DialogsShow,
     #[serde(rename = "logs.write")]
     LogsWrite,
     #[serde(rename = "events.subscribe")]
@@ -329,6 +331,7 @@ impl Capability {
             Self::MenuRegister => "menu.register",
             Self::CommandRegister => "command.register",
             Self::NotificationsShow => "notifications.show",
+            Self::DialogsShow => "dialogs.show",
             Self::LogsWrite => "logs.write",
             Self::EventsSubscribe => "events.subscribe",
             Self::Filesystem => "filesystem",
@@ -361,6 +364,7 @@ impl Capability {
             "menu.register" => Self::MenuRegister,
             "command.register" => Self::CommandRegister,
             "notifications.show" => Self::NotificationsShow,
+            "dialogs.show" => Self::DialogsShow,
             "logs.write" => Self::LogsWrite,
             "events.subscribe" => Self::EventsSubscribe,
             "filesystem" => Self::Filesystem,

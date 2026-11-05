@@ -71,3 +71,21 @@ the later selector and runtime work.
 The cross-workspace evidence for this registry is listed in the
 [plugin contract matrix](plugin-contract-matrix.md). A developer-facing
 walkthrough is available in the [plugin developer guide](plugin-developer-guide.md).
+
+## Host capability calls
+
+The same owner boundary now carries the minimum host services needed by a
+runtime adapter. `PluginRequest` supports bounded log, notification,
+confirmation and Job submit/cancel/query messages. `ApplicationCore` maps those
+messages to `PluginHost` and the Rust `JobSystem`; it overwrites Job provenance
+ownership with the caller extension, checks lifecycle and capabilities on every
+call, and filters Job status by owner. The desktop `JobClient` and
+`PluginClient` expose only typed CoreTransport requests, while
+`velvet_plugin_request` is a thin Tauri adapter for a bound plugin session.
+
+Logs and notifications are redacted, bounded and rate-limited. Confirmation is
+data-only and defaults to deny in headless mode until a host Overlay adapter is
+installed. A disabled extension cannot emit new records or submit/query/cancel
+Jobs, and disabling it still cancels its owned Jobs through `JobSystem`. These
+contracts do not claim a production WASM/sidecar SDK or arbitrary runtime
+callbacks.

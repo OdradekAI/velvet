@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use velvet_asset_core::AssetId;
 use velvet_job_system::{
-    JobBudgetRequest, JobExecutionEnvironment, JobExecutionPolicy, JobId, JobSnapshot,
-    JOB_EXECUTION_ENVIRONMENT_SCHEMA_VERSION,
+    JobBudgetRequest, JobExecutionEnvironment, JobExecutionPolicy, JobId, JobProvenance,
+    JobSnapshot, JOB_EXECUTION_ENVIRONMENT_SCHEMA_VERSION,
 };
 use velvet_layout_model::{LayoutCommand, LayoutState, WorkbenchZone};
 use velvet_plugin_api::{
@@ -39,6 +39,7 @@ pub const RECOVERY_DIAGNOSTIC_SCHEMA_VERSION: u16 = 1;
 pub const PLUGIN_DIAGNOSTIC_SCHEMA_VERSION: u16 = 1;
 pub const PLUGIN_LOG_SCHEMA_VERSION: u16 = 1;
 pub const PLUGIN_NOTIFICATION_SCHEMA_VERSION: u16 = 1;
+pub const PLUGIN_CONFIRMATION_SCHEMA_VERSION: u16 = 1;
 pub const PLUGIN_REGISTRY_SCHEMA_VERSION: u16 = 1;
 pub const PLUGIN_CAPABILITY_SCHEMA_VERSION: u16 = 1;
 pub const PLUGIN_COMMAND_SURFACE_SCHEMA_VERSION: u16 = 1;
@@ -191,6 +192,10 @@ pub fn supported_schema_versions() -> BTreeMap<String, u16> {
         (
             "plugin-notification".into(),
             PLUGIN_NOTIFICATION_SCHEMA_VERSION,
+        ),
+        (
+            "plugin-confirmation".into(),
+            PLUGIN_CONFIRMATION_SCHEMA_VERSION,
         ),
         ("plugin-registry".into(), PLUGIN_REGISTRY_SCHEMA_VERSION),
         ("plugin-capability".into(), PLUGIN_CAPABILITY_SCHEMA_VERSION),
@@ -603,6 +608,51 @@ pub const PLUGIN_PROTOCOL_SCHEMA_VERSION: u16 = 1;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PluginLogRequestDto {
+    pub schema_version: u16,
+    pub level: PluginLogLevel,
+    pub category: String,
+    pub message: String,
+    #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
+    pub job_id: Option<String>,
+    #[serde(default)]
+    pub operation_id: Option<String>,
+    #[serde(default)]
+    pub retryable: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PluginNotificationRequestDto {
+    pub schema_version: u16,
+    pub severity: PluginNotificationSeverity,
+    pub title: String,
+    pub message: String,
+    #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
+    pub job_id: Option<String>,
+    #[serde(default)]
+    pub operation_id: Option<String>,
+    #[serde(default)]
+    pub retryable: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PluginConfirmationRequestDto {
+    pub schema_version: u16,
+    pub title: String,
+    pub message: String,
+    pub confirm_label: String,
+    pub cancel_label: String,
+    pub context_revision: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PluginRequestEnvelope {
     pub protocol_version: u16,
     pub session_id: String,
@@ -633,6 +683,34 @@ pub enum PluginRequest {
     QueryCapabilities {
         extension_id: ExtensionId,
     },
+    Log {
+        extension_id: ExtensionId,
+        request: PluginLogRequestDto,
+    },
+    Notify {
+        extension_id: ExtensionId,
+        request: PluginNotificationRequestDto,
+    },
+    Confirm {
+        extension_id: ExtensionId,
+        request: PluginConfirmationRequestDto,
+    },
+    SubmitJob {
+        extension_id: ExtensionId,
+        job_kind: String,
+        input: Value,
+        provenance: JobProvenance,
+        policy: JobExecutionPolicy,
+        budget: JobBudgetRequest,
+    },
+    CancelJob {
+        extension_id: ExtensionId,
+        job_id: JobId,
+    },
+    QueryJob {
+        extension_id: ExtensionId,
+        job_id: JobId,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -658,6 +736,12 @@ pub enum PluginResponse {
     },
     Capabilities {
         capabilities: Box<PluginCapabilityGrantDto>,
+    },
+    Confirmation {
+        accepted: bool,
+    },
+    Job {
+        job: Box<JobSnapshot>,
     },
 }
 
@@ -708,7 +792,13 @@ impl PluginRequestEnvelope {
         let target_extension_id = match &self.message {
             PluginRequest::InvokeCommand { extension_id, .. }
             | PluginRequest::QueryProjection { extension_id }
-            | PluginRequest::QueryCapabilities { extension_id } => extension_id,
+            | PluginRequest::QueryCapabilities { extension_id }
+            | PluginRequest::Log { extension_id, .. }
+            | PluginRequest::Notify { extension_id, .. }
+            | PluginRequest::Confirm { extension_id, .. }
+            | PluginRequest::SubmitJob { extension_id, .. }
+            | PluginRequest::CancelJob { extension_id, .. }
+            | PluginRequest::QueryJob { extension_id, .. } => extension_id,
         };
         if target_extension_id != &self.caller_extension_id {
             return Err(CoreError::InvalidCommand(
@@ -736,6 +826,12 @@ impl PluginRequestEnvelope {
             PluginRequest::InvokeCommand { .. } => None,
             PluginRequest::QueryProjection { .. } => Some("plugin-projection"),
             PluginRequest::QueryCapabilities { .. } => Some("plugin-capabilities"),
+            PluginRequest::QueryJob { .. } => Some("plugin-job"),
+            PluginRequest::Log { .. }
+            | PluginRequest::Notify { .. }
+            | PluginRequest::Confirm { .. }
+            | PluginRequest::SubmitJob { .. }
+            | PluginRequest::CancelJob { .. } => None,
         }
     }
 
@@ -761,6 +857,56 @@ impl PluginRequestEnvelope {
             PluginRequest::QueryCapabilities { extension_id } => {
                 Request::Query(Query::PluginCapabilities { extension_id })
             }
+            PluginRequest::Log {
+                extension_id,
+                request,
+            } => Request::Command(Command::EmitPluginLog {
+                extension_id,
+                request,
+            }),
+            PluginRequest::Notify {
+                extension_id,
+                request,
+            } => Request::Command(Command::EmitPluginNotification {
+                extension_id,
+                request,
+            }),
+            PluginRequest::Confirm {
+                extension_id,
+                request,
+            } => Request::Command(Command::RequestPluginConfirmation {
+                extension_id,
+                request,
+            }),
+            PluginRequest::SubmitJob {
+                extension_id,
+                job_kind,
+                input,
+                provenance,
+                policy,
+                budget,
+            } => Request::Command(Command::SubmitPluginJob {
+                extension_id,
+                job_kind,
+                input,
+                provenance,
+                policy,
+                budget,
+            }),
+            PluginRequest::CancelJob {
+                extension_id,
+                job_id,
+            } => Request::Command(Command::CancelPluginJob {
+                extension_id,
+                job_id,
+            }),
+            PluginRequest::QueryJob {
+                extension_id,
+                job_id,
+            } => Request::Query(Query::PluginJob {
+                extension_id,
+                job_id,
+            }),
         }
     }
 
@@ -786,6 +932,8 @@ impl PluginResponseEnvelope {
             Response::PluginCapabilities(capabilities) => PluginResponse::Capabilities {
                 capabilities: Box::new(capabilities),
             },
+            Response::PluginConfirmation { accepted } => PluginResponse::Confirmation { accepted },
+            Response::Job(job) => PluginResponse::Job { job: Box::new(job) },
             _ => {
                 return Err(CoreError::InvalidCommand(
                     "core response is not a plugin response".into(),
@@ -2161,6 +2309,30 @@ pub enum Command {
         deadline_ms: Option<u64>,
         idempotency_key: Option<String>,
     },
+    EmitPluginLog {
+        extension_id: ExtensionId,
+        request: PluginLogRequestDto,
+    },
+    EmitPluginNotification {
+        extension_id: ExtensionId,
+        request: PluginNotificationRequestDto,
+    },
+    RequestPluginConfirmation {
+        extension_id: ExtensionId,
+        request: PluginConfirmationRequestDto,
+    },
+    SubmitPluginJob {
+        extension_id: ExtensionId,
+        job_kind: String,
+        input: Value,
+        provenance: JobProvenance,
+        policy: JobExecutionPolicy,
+        budget: JobBudgetRequest,
+    },
+    CancelPluginJob {
+        extension_id: ExtensionId,
+        job_id: JobId,
+    },
     InvokePreviewAction {
         extension_id: ExtensionId,
         command_id: String,
@@ -2279,6 +2451,10 @@ pub enum Query {
         command_id: String,
         idempotency_key: String,
     },
+    PluginJob {
+        extension_id: ExtensionId,
+        job_id: JobId,
+    },
     ReleaseStatus,
 }
 
@@ -2312,6 +2488,7 @@ pub enum Response {
     PluginLogs(Vec<PluginLogRecordDto>),
     PluginNotifications(Vec<PluginNotificationRecordDto>),
     PluginCommandSurface(PluginCommandSurfaceSnapshotDto),
+    PluginConfirmation { accepted: bool },
     Job(JobSnapshot),
     Jobs(Vec<JobSnapshot>),
     Preview(ResolvedPreview),
@@ -2363,6 +2540,8 @@ pub fn request_idempotency_scope(request: &Request) -> Option<&'static str> {
             idempotency_key: Some(_),
             ..
         }) => Some("plugin-command"),
+        Request::Command(Command::CancelPluginJob { .. }) => Some("plugin-job-cancel"),
+        Request::Query(Query::PluginJob { .. }) => Some("plugin-job"),
         Request::Command(Command::RollbackRelease { .. }) => Some("rollback-release"),
         Request::Command(_) | Request::Query(_) => None,
     }

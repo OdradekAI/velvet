@@ -669,6 +669,7 @@ fn all_capabilities() -> BTreeSet<Capability> {
         Capability::MenuRegister,
         Capability::CommandRegister,
         Capability::NotificationsShow,
+        Capability::DialogsShow,
         Capability::LogsWrite,
         Capability::EventsSubscribe,
         Capability::Filesystem,

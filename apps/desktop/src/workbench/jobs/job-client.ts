@@ -2,6 +2,7 @@ import type {
   CoreJobExecutionEnvironment,
   CoreJobExecutionPolicy,
   CoreJobBudgetRequest,
+  CoreJobProvenance,
   CoreJobSnapshot,
   CoreResponse,
   CoreTransport,
@@ -12,6 +13,15 @@ export interface CreateJobOptions {
   readonly durationMs: number;
   readonly willFail?: boolean;
   readonly input?: unknown;
+  readonly policy?: CoreJobExecutionPolicy;
+  readonly budget?: CoreJobBudgetRequest;
+}
+
+export interface PluginJobOptions {
+  readonly extensionId: string;
+  readonly kind: string;
+  readonly input?: unknown;
+  readonly provenance: CoreJobProvenance;
   readonly policy?: CoreJobExecutionPolicy;
   readonly budget?: CoreJobBudgetRequest;
 }
@@ -90,10 +100,44 @@ export class JobClient {
     return this.acceptJobResponse(response);
   }
 
+  public async submitPlugin(options: PluginJobOptions): Promise<CoreJobSnapshot> {
+    const response = await this.core.request({
+      protocolVersion: 1,
+      kind: 'submit-plugin-job',
+      extensionId: options.extensionId,
+      jobKind: options.kind,
+      input: options.input,
+      provenance: options.provenance,
+      policy: options.policy,
+      budget: options.budget,
+    });
+    return this.acceptJobResponse(response);
+  }
+
   public async cancel(id: string): Promise<CoreJobSnapshot> {
     const response = await this.core.request({
       protocolVersion: 1,
       kind: 'cancel-job',
+      jobId: id,
+    });
+    return this.acceptJobResponse(response);
+  }
+
+  public async cancelPlugin(extensionId: string, id: string): Promise<CoreJobSnapshot> {
+    const response = await this.core.request({
+      protocolVersion: 1,
+      kind: 'cancel-plugin-job',
+      extensionId,
+      jobId: id,
+    });
+    return this.acceptJobResponse(response);
+  }
+
+  public async queryPlugin(extensionId: string, id: string): Promise<CoreJobSnapshot> {
+    const response = await this.core.request({
+      protocolVersion: 1,
+      kind: 'query-plugin-job',
+      extensionId,
       jobId: id,
     });
     return this.acceptJobResponse(response);

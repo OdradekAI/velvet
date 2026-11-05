@@ -11,6 +11,9 @@ import {
   type CorePluginRegistrySnapshot,
   type CorePluginCommandSurfaceSnapshot,
   type CorePluginLogRecord,
+  type CorePluginLogRequest,
+  type CorePluginNotificationRequest,
+  type CorePluginConfirmationRequest,
   type CorePluginNotificationRecord,
   type CorePluginStorageRecovery,
   type CorePluginStorageDeclaration,
@@ -951,6 +954,61 @@ export class PluginClient {
       );
     }
     return response.notifications;
+  }
+
+  /** Emits a bounded host-owned log record for an active extension. */
+  public async emitCoreLog(extensionId: string, request: CorePluginLogRequest): Promise<void> {
+    const response = await this.core.request({
+      protocolVersion: PROTOCOL_VERSION,
+      kind: 'emit-plugin-log',
+      extensionId,
+      request,
+    });
+    if (response.kind !== 'accepted') {
+      throw new PluginLifecycleError(
+        `Expected an accepted log response, received ${response.kind}`,
+        extensionId,
+      );
+    }
+  }
+
+  /** Requests a host notification; the renderer never writes NotificationCenter state directly. */
+  public async emitCoreNotification(
+    extensionId: string,
+    request: CorePluginNotificationRequest,
+  ): Promise<void> {
+    const response = await this.core.request({
+      protocolVersion: PROTOCOL_VERSION,
+      kind: 'emit-plugin-notification',
+      extensionId,
+      request,
+    });
+    if (response.kind !== 'accepted') {
+      throw new PluginLifecycleError(
+        `Expected an accepted notification response, received ${response.kind}`,
+        extensionId,
+      );
+    }
+  }
+
+  /** Requests a host-owned confirmation without exposing an overlay handle. */
+  public async requestCoreConfirmation(
+    extensionId: string,
+    request: CorePluginConfirmationRequest,
+  ): Promise<boolean> {
+    const response = await this.core.request({
+      protocolVersion: PROTOCOL_VERSION,
+      kind: 'request-plugin-confirmation',
+      extensionId,
+      request,
+    });
+    if (response.kind !== 'plugin-confirmation') {
+      throw new PluginLifecycleError(
+        `Expected a confirmation response, received ${response.kind}`,
+        extensionId,
+      );
+    }
+    return response.accepted;
   }
 
   /** Projects Rust-declared views and UI surfaces through the same host registries as local plugins. */
@@ -2102,6 +2160,7 @@ export class PluginClient {
           context: {
             activeAppId: context.activeAppId ?? null,
             keys: context.keys,
+            ...(context.anchor ? { anchor: context.anchor } : {}),
           },
         contextRevision: context.contextRevision ?? 0,
         deadlineMs: 30_000,

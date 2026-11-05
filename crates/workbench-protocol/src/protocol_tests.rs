@@ -122,6 +122,52 @@ fn plugin_envelope_round_trips_and_maps_to_core_request() {
 }
 
 #[test]
+fn plugin_host_capability_requests_round_trip_without_widening_the_core_boundary() {
+    let envelope = PluginRequestEnvelope {
+        protocol_version: PLUGIN_PROTOCOL_SCHEMA_VERSION,
+        session_id: "core-session".into(),
+        caller_extension_id: ExtensionId("sample.services".into()),
+        request_id: RequestId(9),
+        message: PluginRequest::SubmitJob {
+            extension_id: ExtensionId("sample.services".into()),
+            job_kind: "sample.services.inspect".into(),
+            input: serde_json::json!({"selectionRevision": 4}),
+            provenance: JobProvenance::for_owner("untrusted-owner"),
+            policy: JobExecutionPolicy::default(),
+            budget: JobBudgetRequest::default(),
+        },
+    };
+    envelope.validate().expect("host request should validate");
+    let json = serde_json::to_value(&envelope).expect("host request should serialize");
+    let decoded: PluginRequestEnvelope =
+        serde_json::from_value(json).expect("host request should deserialize");
+    assert_eq!(decoded, envelope);
+    assert!(matches!(
+        decoded.into_request(),
+        Request::Command(Command::SubmitPluginJob {
+            extension_id,
+            job_kind,
+            ..
+        }) if extension_id == ExtensionId("sample.services".into())
+            && job_kind == "sample.services.inspect"
+    ));
+
+    let response = PluginResponseEnvelope::from_core(
+        "core-session".into(),
+        ResponseEnvelope {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: RequestId(9),
+            response: Response::PluginConfirmation { accepted: true },
+        },
+    )
+    .expect("confirmation should remain a plugin response");
+    assert_eq!(
+        response.response,
+        PluginResponse::Confirmation { accepted: true }
+    );
+}
+
+#[test]
 fn plugin_query_is_repeatable_and_session_mismatch_is_rejected() {
     let envelope = PluginRequestEnvelope {
         protocol_version: PLUGIN_PROTOCOL_SCHEMA_VERSION,
