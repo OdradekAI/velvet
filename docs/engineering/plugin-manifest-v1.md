@@ -64,6 +64,10 @@ fields as capabilities.
   extension's state automatically.
 - Duplicate dependency IDs and activation references to missing contributions
   are rejected by `ExtensionManifest::validate_contract`.
+- `validate_contract` also rejects empty or path-like package versions, malformed
+  host/bridge/runtime ranges, unknown capability names and duplicate required /
+  optional capability declarations. The accepted alpha range grammar is `*`,
+  an exact numeric range, or a caret major range such as `^1`.
 - Zone, container, permission and target-app rules remain `PluginHost` policy;
   they are not silently moved into the transport crate.
 

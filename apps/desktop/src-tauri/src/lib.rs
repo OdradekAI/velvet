@@ -3876,6 +3876,7 @@ fn extension_state_name(state: &velvet_plugin_api::ExtensionState) -> &'static s
         velvet_plugin_api::ExtensionState::Active => "active",
         velvet_plugin_api::ExtensionState::Disabled => "disabled",
         velvet_plugin_api::ExtensionState::Failed => "failed",
+        velvet_plugin_api::ExtensionState::Quarantined => "quarantined",
     }
 }
 

@@ -119,7 +119,7 @@ export interface PluginWorkbenchApp {
   };
 }
 
-export type PluginStatus = 'registered' | 'active' | 'disabled' | 'failed';
+export type PluginStatus = 'registered' | 'active' | 'disabled' | 'failed' | 'quarantined';
 
 export interface PluginSummary {
   readonly id: string;
@@ -699,14 +699,19 @@ export class PluginClient {
       return;
     }
     if (record.status === 'active') {
-      await this.deactivate(summary.id, summary.state === 'failed' ? 'crash' : 'user');
+      await this.deactivate(
+        summary.id,
+        summary.state === 'failed' || summary.state === 'quarantined' ? 'crash' : 'user',
+      );
     }
     record.status = summary.state === 'failed'
       ? 'failed'
-      : summary.state === 'disabled'
-        ? 'disabled'
-        : 'registered';
-    record.error = summary.state === 'failed'
+      : summary.state === 'quarantined'
+        ? 'quarantined'
+        : summary.state === 'disabled'
+          ? 'disabled'
+          : 'registered';
+    record.error = summary.state === 'failed' || summary.state === 'quarantined'
       ? `Rust extension state: ${summary.state}`
       : undefined;
   }
@@ -958,7 +963,9 @@ export class PluginClient {
       if (existing.status === 'active') {
         await this.deactivate(
           projection.summary.id,
-          projection.summary.state === 'failed' ? 'crash' : 'incompatible',
+          projection.summary.state === 'failed' || projection.summary.state === 'quarantined'
+            ? 'crash'
+            : 'incompatible',
         );
       }
       const record = this.records.get(projection.summary.id);
@@ -982,11 +989,19 @@ export class PluginClient {
     if (record?.status === 'active') {
       await this.deactivate(
         projection.summary.id,
-        projection.summary.state === 'failed' ? 'crash' : 'user',
+        projection.summary.state === 'failed' || projection.summary.state === 'quarantined'
+          ? 'crash'
+          : 'user',
       );
     }
-    if (record && projection.summary.state === 'failed') {
+    if (
+      record &&
+      (projection.summary.state === 'failed' || projection.summary.state === 'quarantined')
+    ) {
       record.status = 'failed';
+      if (projection.summary.state === 'quarantined') {
+        record.status = 'quarantined';
+      }
       record.error = `Rust extension state: ${projection.summary.state}`;
       this.notify();
     } else if (record && projection.summary.state === 'disabled') {
@@ -2117,11 +2132,18 @@ export class PluginClient {
 
   private async syncCoreProjectionState(summary: CorePluginSummary): Promise<void> {
     let projection = this.coreProjections.get(summary.id);
-    if (summary.state === 'disabled' || summary.state === 'failed') {
+    if (
+      summary.state === 'disabled' ||
+      summary.state === 'failed' ||
+      summary.state === 'quarantined'
+    ) {
       if (projection) {
         await this.applyCoreProjection({ ...projection, summary });
       } else if (this.records.get(summary.id)?.status === 'active') {
-        await this.deactivate(summary.id, summary.state === 'failed' ? 'crash' : 'user');
+        await this.deactivate(
+          summary.id,
+          summary.state === 'failed' || summary.state === 'quarantined' ? 'crash' : 'user',
+        );
       }
       return;
     }

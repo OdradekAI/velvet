@@ -3228,6 +3228,25 @@ fn plugin_storage_recovery_dto(recovery: ExtensionStorageRecovery) -> PluginStor
 
 fn plugin_error(error: PluginError) -> CoreError {
     match error {
+        PluginError::RuntimeTimeout {
+            extension_id,
+            command_id,
+            ..
+        } => CoreError::PluginCommand {
+            extension_id: extension_id.0,
+            command_id,
+            code: "timeout".into(),
+            retryable: true,
+        },
+        PluginError::InvocationCancelled {
+            extension_id,
+            command_id,
+        } => CoreError::PluginCommand {
+            extension_id: extension_id.0,
+            command_id,
+            code: "cancelled".into(),
+            retryable: false,
+        },
         PluginError::RuntimeInvocation {
             extension_id,
             message,
@@ -3278,6 +3297,18 @@ fn plugin_command_error(
         PluginError::PermissionDenied { .. } | PluginError::CapabilityDenied { .. } => {
             plugin_error(error)
         }
+        PluginError::RuntimeTimeout { .. } => CoreError::PluginCommand {
+            extension_id: extension_id.0.clone(),
+            command_id: command_id.into(),
+            code: "timeout".into(),
+            retryable: true,
+        },
+        PluginError::InvocationCancelled { .. } => CoreError::PluginCommand {
+            extension_id: extension_id.0.clone(),
+            command_id: command_id.into(),
+            code: "cancelled".into(),
+            retryable: false,
+        },
         PluginError::RuntimeInvocation { .. } | PluginError::RuntimeCrashed { .. } => {
             CoreError::PluginCommand {
                 extension_id: extension_id.0.clone(),

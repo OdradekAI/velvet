@@ -6,6 +6,8 @@ use velvet_layout_model::WorkbenchZone;
 
 pub const MANIFEST_SCHEMA_VERSION: u16 = 1;
 pub const PREVIEW_ACTION_SCHEMA_VERSION: u16 = 1;
+pub const MAX_EXTENSION_VERSION_BYTES: usize = 128;
+pub const MAX_VERSION_RANGE_BYTES: usize = 64;
 
 #[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct ExtensionId(pub String);
@@ -17,6 +19,9 @@ impl VersionRange {
     /// Alpha compatibility semantics shared by manifest validation and host
     /// negotiation: exact versions, `*`, or a caret major range.
     pub fn is_compatible_with(&self, provided: &Self) -> bool {
+        if !self.is_valid() || !provided.is_valid() {
+            return false;
+        }
         if self.0 == "*" || self.0 == provided.0 {
             return true;
         }
@@ -25,6 +30,27 @@ impl VersionRange {
             .strip_prefix('^')
             .and_then(|range| range.split('.').next())
             == provided.0.split('.').next()
+    }
+
+    /// Returns whether the range uses one of the deliberately small alpha
+    /// grammar forms accepted by the manifest contract: `*`, an exact
+    /// numeric version, or a caret range with a numeric major version.
+    pub fn is_valid(&self) -> bool {
+        if self.0.is_empty() || self.0.len() > MAX_VERSION_RANGE_BYTES {
+            return false;
+        }
+        if self.0 == "*" {
+            return true;
+        }
+        let version = self.0.strip_prefix('^').unwrap_or(&self.0);
+        let parts = version.split('.').collect::<Vec<_>>();
+        !parts.is_empty()
+            && parts.len() <= 3
+            && parts.iter().all(|part| {
+                !part.is_empty()
+                    && part.len() <= 9
+                    && part.bytes().all(|byte| byte.is_ascii_digit())
+            })
     }
 }
 
@@ -673,6 +699,12 @@ pub enum ManifestValidationError {
     InvalidDependencyId(String),
     DuplicateDependencyId(String),
     ActivationReferencesUnknownContribution(String),
+    InvalidExtensionVersion(String),
+    InvalidHostApiRange(String),
+    InvalidBridgeApiRange(String),
+    InvalidRuntimeProtocolRange(String),
+    UnknownCapability(String),
+    DuplicateCapability(String),
 }
 
 impl std::fmt::Display for ManifestValidationError {
@@ -689,6 +721,27 @@ impl std::fmt::Display for ManifestValidationError {
                 formatter,
                 "activation event references unknown contribution {id}"
             ),
+            Self::InvalidExtensionVersion(version) => {
+                write!(formatter, "invalid extension version {version}")
+            }
+            Self::InvalidHostApiRange(range) => {
+                write!(formatter, "invalid host API range {range}")
+            }
+            Self::InvalidBridgeApiRange(range) => {
+                write!(formatter, "invalid bridge API range {range}")
+            }
+            Self::InvalidRuntimeProtocolRange(range) => {
+                write!(formatter, "invalid runtime protocol range {range}")
+            }
+            Self::UnknownCapability(capability) => {
+                write!(formatter, "unknown capability {capability}")
+            }
+            Self::DuplicateCapability(capability) => {
+                write!(
+                    formatter,
+                    "capability {capability} is declared more than once"
+                )
+            }
         }
     }
 }
@@ -705,6 +758,32 @@ impl ExtensionManifest {
             return Err(ManifestValidationError::InvalidExtensionId(
                 self.id.0.clone(),
             ));
+        }
+
+        if !is_valid_extension_version(&self.version) {
+            return Err(ManifestValidationError::InvalidExtensionVersion(
+                self.version.clone(),
+            ));
+        }
+        for (range, error) in [
+            (
+                &self.host_api,
+                ManifestValidationError::InvalidHostApiRange(self.host_api.0.clone()),
+            ),
+            (
+                &self.bridge_api,
+                ManifestValidationError::InvalidBridgeApiRange(self.bridge_api.0.clone()),
+            ),
+            (
+                &self.runtime_protocol,
+                ManifestValidationError::InvalidRuntimeProtocolRange(
+                    self.runtime_protocol.0.clone(),
+                ),
+            ),
+        ] {
+            if !range.is_valid() {
+                return Err(error);
+            }
         }
 
         let mut contribution_ids = std::collections::BTreeSet::new();
@@ -731,6 +810,24 @@ impl ExtensionManifest {
             if !dependency_ids.insert(dependency.0.clone()) {
                 return Err(ManifestValidationError::DuplicateDependencyId(
                     dependency.0.clone(),
+                ));
+            }
+        }
+
+        let mut capabilities = std::collections::BTreeSet::new();
+        for capability in self
+            .required_capabilities
+            .iter()
+            .chain(self.optional_capabilities.iter())
+        {
+            if Capability::from_name(capability).is_none() {
+                return Err(ManifestValidationError::UnknownCapability(
+                    capability.clone(),
+                ));
+            }
+            if !capabilities.insert(capability.clone()) {
+                return Err(ManifestValidationError::DuplicateCapability(
+                    capability.clone(),
                 ));
             }
         }
@@ -765,6 +862,19 @@ fn is_valid_manifest_identifier(value: &str) -> bool {
         && value.bytes().enumerate().all(|(index, byte)| {
             byte.is_ascii_alphanumeric() || (index > 0 && b"._-".contains(&byte))
         })
+}
+
+fn is_valid_extension_version(value: &str) -> bool {
+    let core = value.split(['-', '+']).next().unwrap_or_default();
+    !core.is_empty()
+        && value.len() <= MAX_EXTENSION_VERSION_BYTES
+        && !value.contains(['/', '\\', '\0'])
+        && core
+            .split('.')
+            .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+        && value
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || ".+-".contains(character))
 }
 
 #[derive(Debug, Deserialize)]
@@ -903,6 +1013,20 @@ pub enum ExtensionState {
     Active,
     Disabled,
     Failed,
+    /// The host retained evidence that a runtime identity could not be
+    /// safely reconciled. No contributions or capability handles remain
+    /// active while an extension is quarantined.
+    Quarantined,
+}
+
+impl ExtensionState {
+    pub const fn is_active(&self) -> bool {
+        matches!(self, Self::Active)
+    }
+
+    pub const fn is_recoverable(&self) -> bool {
+        matches!(self, Self::Registered | Self::Failed)
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -1097,6 +1221,46 @@ mod tests {
         assert!(VersionRange("*".into()).is_compatible_with(&provided));
         assert!(VersionRange("^1".into()).is_compatible_with(&provided));
         assert!(!VersionRange("^2".into()).is_compatible_with(&provided));
+        assert!(!VersionRange("~1".into()).is_valid());
+        assert!(!VersionRange("".into()).is_compatible_with(&provided));
+    }
+
+    #[test]
+    fn manifest_contract_rejects_invalid_versions_and_unknown_capabilities() {
+        let mut manifest = ExtensionManifest {
+            version: "1/unsafe".into(),
+            ..ExtensionManifest::default()
+        };
+        assert_eq!(
+            manifest.validate_contract(),
+            Err(ManifestValidationError::InvalidExtensionVersion(
+                "1/unsafe".into()
+            ))
+        );
+
+        manifest.version = "1.0.0".into();
+        manifest.required_capabilities = vec!["plugin.unknown".into()];
+        assert_eq!(
+            manifest.validate_contract(),
+            Err(ManifestValidationError::UnknownCapability(
+                "plugin.unknown".into()
+            ))
+        );
+    }
+
+    #[test]
+    fn manifest_contract_rejects_duplicate_capability_requests() {
+        let manifest = ExtensionManifest {
+            required_capabilities: vec!["asset.read".into()],
+            optional_capabilities: vec!["asset.read".into()],
+            ..ExtensionManifest::default()
+        };
+        assert_eq!(
+            manifest.validate_contract(),
+            Err(ManifestValidationError::DuplicateCapability(
+                "asset.read".into()
+            ))
+        );
     }
 
     #[test]

@@ -1932,7 +1932,14 @@ fn invocation_failure_isolated_to_one_extension_and_recoverable() {
             Value::Null,
         )
         .expect_err("a timed-out runtime should reject the invocation");
-    assert!(matches!(error, PluginError::RuntimeInvocation { .. }));
+    assert!(matches!(
+        error,
+        PluginError::RuntimeTimeout {
+            command_id,
+            deadline_ms: 5_000,
+            ..
+        } if command_id == "timed-out.command.run"
+    ));
     assert_eq!(host.discover()[0].state, ExtensionState::Failed);
     assert!(host.active_contributions(&id).unwrap().is_empty());
 
@@ -1949,7 +1956,7 @@ fn invocation_failure_isolated_to_one_extension_and_recoverable() {
     assert!(diagnostics.iter().any(|diagnostic| {
         diagnostic.extension_id == id
             && diagnostic.kind == PluginDiagnosticKind::Runtime
-            && diagnostic.code == "invocation-runtime-failed"
+            && diagnostic.code == "plugin-runtime-timeout"
             && diagnostic.retryable
     }));
     assert_eq!(*shutdowns.lock().unwrap(), 1);
@@ -3781,6 +3788,11 @@ fn uncertain_orphan_is_quarantined_without_termination() {
     let mut host = InMemoryPluginHost::default();
     host.set_runtime_lease_store(store.clone());
     host.set_runtime_orphan_reconciler(Arc::new(ConservativeRuntimeOrphanReconciler));
+    host.register(ExtensionManifest {
+        id: id.clone(),
+        ..ExtensionManifest::default()
+    })
+    .expect("the quarantined extension should remain projected");
 
     let reports = host
         .reconcile_runtime_orphans()
@@ -3806,6 +3818,7 @@ fn uncertain_orphan_is_quarantined_without_termination() {
         .reconcile_runtime_orphans()
         .expect("a quarantined orphan should remain inert");
     assert!(second_reports[0].quarantined);
+    assert_eq!(host.discover()[0].state, ExtensionState::Quarantined);
     let recoveries = host
         .quarantined_runtime_leases()
         .expect("quarantined lease evidence should be queryable");

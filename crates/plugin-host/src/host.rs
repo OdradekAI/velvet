@@ -407,6 +407,15 @@ pub enum PluginError {
         extension_id: ExtensionId,
         message: String,
     },
+    RuntimeTimeout {
+        extension_id: ExtensionId,
+        command_id: String,
+        deadline_ms: u64,
+    },
+    InvocationCancelled {
+        extension_id: ExtensionId,
+        command_id: String,
+    },
     RuntimeLease {
         extension_id: ExtensionId,
         message: String,
@@ -460,6 +469,68 @@ pub enum PluginError {
         state: ExtensionState,
     },
 }
+
+impl PluginError {
+    /// Stable diagnostic code used by ApplicationCore and transport adapters.
+    /// The message remains bounded and owner-local; callers should branch on
+    /// this code instead of parsing debug output.
+    pub const fn code(&self) -> &'static str {
+        match self {
+            Self::NotFound(_) => "plugin-not-found",
+            Self::AlreadyRegistered(_) => "plugin-already-registered",
+            Self::IncompatibleHostApi(_) => "plugin-host-api-incompatible",
+            Self::UnknownWorkbenchApp(_) => "plugin-workbench-app-unknown",
+            Self::InvalidNamespace(_) => "plugin-namespace-invalid",
+            Self::InvalidContribution(_) => "plugin-contribution-invalid",
+            Self::PermissionDenied { .. } => "plugin-permission-denied",
+            Self::RuntimeStart { .. } => "plugin-runtime-start-failed",
+            Self::RuntimeCrashed { .. } => "plugin-runtime-crashed",
+            Self::RuntimeShutdown { .. } => "plugin-runtime-shutdown-failed",
+            Self::RuntimeInvocation { .. } => "plugin-runtime-invocation-failed",
+            Self::RuntimeTimeout { .. } => "plugin-runtime-timeout",
+            Self::InvocationCancelled { .. } => "plugin-invocation-cancelled",
+            Self::RuntimeLease { .. } => "plugin-runtime-lease-failed",
+            Self::InstallFailed(_) => "plugin-install-failed",
+            Self::InstallConflict(_) => "plugin-install-conflict",
+            Self::TrustDenied { .. } => "plugin-trust-denied",
+            Self::TrustStore(_) => "plugin-trust-store-failed",
+            Self::TrustPolicy(_) => "plugin-trust-policy-invalid",
+            Self::VersionConflict { .. } => "plugin-version-conflict",
+            Self::UninstallFailed(_) => "plugin-uninstall-failed",
+            Self::ResourceNotFound { .. } => "plugin-resource-not-found",
+            Self::ResourceDenied { .. } => "plugin-resource-denied",
+            Self::ResourceTooLarge { .. } => "plugin-resource-too-large",
+            Self::ExtensionStorage { .. } => "plugin-storage-failed",
+            Self::RegistryUnavailable => "plugin-registry-unavailable",
+            Self::CapabilityDenied { .. } => "plugin-capability-denied",
+            Self::CapabilityGenerationConflict { .. } => "plugin-capability-generation-conflict",
+            Self::InvalidState { .. } => "plugin-state-invalid",
+        }
+    }
+
+    pub const fn retryable(&self) -> bool {
+        matches!(
+            self,
+            Self::RuntimeStart { .. }
+                | Self::RuntimeCrashed { .. }
+                | Self::RuntimeShutdown { .. }
+                | Self::RuntimeInvocation { .. }
+                | Self::RuntimeTimeout { .. }
+                | Self::RuntimeLease { .. }
+                | Self::ExtensionStorage { .. }
+                | Self::RegistryUnavailable
+                | Self::CapabilityGenerationConflict { .. }
+        )
+    }
+}
+
+impl std::fmt::Display for PluginError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{}: {:?}", self.code(), self)
+    }
+}
+
+impl std::error::Error for PluginError {}
 
 fn plugin_trust_store_error(error: PluginTrustStoreError) -> PluginError {
     PluginError::TrustStore(format!("{error:?}"))
@@ -549,6 +620,7 @@ pub enum RuntimeError {
     ShutdownFailed(String),
     InvocationFailed(String),
     InvocationTimeout,
+    InvocationCancelled,
     InvocationRejected(String),
 }
 
@@ -1457,12 +1529,19 @@ impl PluginJobHandle {
             })?
             .invoke(&plugin_invocation)
             .map_err(|error| {
-                let message = runtime_error_message(error);
-                self.record_diagnostic("job-runtime-failed", &message, &invocation, true);
-                PluginError::RuntimeInvocation {
-                    extension_id: self.extension_id.clone(),
-                    message,
-                }
+                let plugin_error = plugin_invocation_error(
+                    &self.extension_id,
+                    &self.job_kind,
+                    invocation.deadline_ms,
+                    error,
+                );
+                self.record_diagnostic(
+                    plugin_error.code(),
+                    &plugin_error.to_string(),
+                    &invocation,
+                    plugin_error.retryable(),
+                );
+                plugin_error
             })?;
         if let Some(error) = result.error {
             self.record_diagnostic("job-rejected", &error, &invocation, true);
@@ -4062,6 +4141,25 @@ impl InMemoryPluginHost {
                     message,
                 })
             }
+            Err(error @ RuntimeError::InvocationTimeout)
+            | Err(error @ RuntimeError::InvocationCancelled) => {
+                let plugin_error = plugin_invocation_error(
+                    id,
+                    &invocation.command_id,
+                    invocation.deadline_ms,
+                    error,
+                );
+                self.record_diagnostic(PluginDiagnosticInput {
+                    extension_id: id.clone(),
+                    kind: PluginDiagnosticKind::Invocation,
+                    code: plugin_error.code().into(),
+                    message: plugin_error.to_string(),
+                    job_id: None,
+                    attempt: None,
+                    retryable: plugin_error.retryable(),
+                });
+                Err(plugin_error)
+            }
             Err(error) => {
                 let message = runtime_error_message(error);
                 Err(self.fail_storage_runtime(id, method, "storage-runtime-failed", message))
@@ -4186,7 +4284,7 @@ impl InMemoryPluginHost {
         for lease in leases {
             if matches!(lease.state, RuntimeLeaseState::Quarantined) {
                 if let Some(state) = self.states.get_mut(&lease.extension_id) {
-                    *state = ExtensionState::Failed;
+                    *state = ExtensionState::Quarantined;
                 }
                 self.active.remove(&lease.extension_id);
                 self.revoke_contributions(&lease.extension_id);
@@ -4247,7 +4345,7 @@ impl InMemoryPluginHost {
                             .quarantine(&lease.extension_id, &lease.runtime_nonce)
                             .is_ok();
                         if let Some(state) = self.states.get_mut(&lease.extension_id) {
-                            *state = ExtensionState::Failed;
+                            *state = ExtensionState::Quarantined;
                         }
                         self.active.remove(&lease.extension_id);
                         self.revoke_contributions(&lease.extension_id);
@@ -4267,7 +4365,7 @@ impl InMemoryPluginHost {
                         .quarantine(&lease.extension_id, &lease.runtime_nonce)
                         .is_ok();
                     if let Some(state) = self.states.get_mut(&lease.extension_id) {
-                        *state = ExtensionState::Failed;
+                        *state = ExtensionState::Quarantined;
                     }
                     self.active.remove(&lease.extension_id);
                     self.revoke_contributions(&lease.extension_id);
@@ -5044,6 +5142,35 @@ impl InMemoryPluginHost {
                     message,
                 })
             }
+            Err(error @ RuntimeError::InvocationTimeout)
+            | Err(error @ RuntimeError::InvocationCancelled) => {
+                let plugin_error = plugin_invocation_error(
+                    id,
+                    &invocation.command_id,
+                    invocation.deadline_ms,
+                    error,
+                );
+                if let Some(process) = self.processes.remove(id) {
+                    if let Ok(mut process) = process.lock() {
+                        let _ = process.shutdown();
+                    }
+                }
+                let runtime_nonce = self.runtime_nonces.remove(id);
+                self.close_runtime_lease(id, runtime_nonce.as_deref());
+                self.active.remove(id);
+                self.revoke_contributions(id);
+                self.states.insert(id.clone(), ExtensionState::Failed);
+                self.record_diagnostic(PluginDiagnosticInput {
+                    extension_id: id.clone(),
+                    kind: PluginDiagnosticKind::Runtime,
+                    code: plugin_error.code().into(),
+                    message: plugin_error.to_string(),
+                    job_id: None,
+                    attempt: None,
+                    retryable: plugin_error.retryable(),
+                });
+                Err(plugin_error)
+            }
             Err(error) => {
                 let message = runtime_error_message(error);
                 if let Some(process) = self.processes.remove(id) {
@@ -5442,6 +5569,10 @@ impl PluginHost for InMemoryPluginHost {
                 state,
             }),
             ExtensionState::Disabled => Err(PluginError::InvalidState {
+                extension_id: id.clone(),
+                state,
+            }),
+            ExtensionState::Quarantined => Err(PluginError::InvalidState {
                 extension_id: id.clone(),
                 state,
             }),
@@ -6433,7 +6564,31 @@ fn runtime_error_message(error: RuntimeError) -> String {
         RuntimeError::StartFailed(message) | RuntimeError::ShutdownFailed(message) => message,
         RuntimeError::InvocationFailed(message) => message,
         RuntimeError::InvocationTimeout => "plugin command invocation timed out".into(),
+        RuntimeError::InvocationCancelled => "plugin invocation was cancelled".into(),
         RuntimeError::InvocationRejected(message) => message,
+    }
+}
+
+fn plugin_invocation_error(
+    extension_id: &ExtensionId,
+    command_id: &str,
+    deadline_ms: Option<u64>,
+    error: RuntimeError,
+) -> PluginError {
+    match error {
+        RuntimeError::InvocationTimeout => PluginError::RuntimeTimeout {
+            extension_id: extension_id.clone(),
+            command_id: command_id.into(),
+            deadline_ms: deadline_ms.unwrap_or(RUNTIME_INVOCATION_TIMEOUT.as_millis() as u64),
+        },
+        RuntimeError::InvocationCancelled => PluginError::InvocationCancelled {
+            extension_id: extension_id.clone(),
+            command_id: command_id.into(),
+        },
+        other => PluginError::RuntimeInvocation {
+            extension_id: extension_id.clone(),
+            message: runtime_error_message(other),
+        },
     }
 }
 

@@ -1039,7 +1039,13 @@ export interface CorePluginDiagnosticEvent {
   readonly occurredAtMs: number;
 }
 
-export type PluginState = 'registered' | 'starting' | 'active' | 'disabled' | 'failed';
+export type PluginState =
+  | 'registered'
+  | 'starting'
+  | 'active'
+  | 'disabled'
+  | 'failed'
+  | 'quarantined';
 
 export interface PluginSummary {
   readonly id: string;

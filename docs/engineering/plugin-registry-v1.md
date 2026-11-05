@@ -26,6 +26,10 @@ quarantines it.
 - Activation publishes all validated descriptors in one registry generation.
 - Disable, runtime crash, storage/runtime failure, orphan reconciliation,
   uninstall and rollback revoke every contribution for that extension.
+- An orphan whose process identity cannot be safely confirmed is projected as
+  `quarantined`; its contributions and capability handles stay revoked until a
+  host-owned recovery action resolves the lease evidence. A quarantined
+  extension is not implicitly reactivated.
 - A failed registration shuts down only the starting runtime and leaves the
   extension in `Failed`; other extensions keep their registrations.
 - `active_contributions` reads the host registry, so a disposed contribution
@@ -54,13 +58,15 @@ Workbench/View/Command/Preview/Job event bus.
 
 ## Deferred work
 
-Activation selector indexing, capability grants, deadline/cancellation tokens,
-runtime watchdogs and full lifecycle event streaming remain follow-up work in
-issues 004, 006 and 007 or a later ADR. The current slice provides exact
-activation candidate matching and dependency-topological activation, while
-leaving selector expansion and runtime policy to those later contracts. It
-establishes the registration owner, cleanup seam, projection and failure
-isolation needed by those contracts.
+Activation selector indexing, runtime watchdogs and full lifecycle event
+streaming remain follow-up work in issues 004, 006 and 007 or a later ADR. The
+current contract now validates API/capability declarations before registration,
+uses opaque generation-bound capability handles, and returns stable timeout /
+cancelled error codes for bounded runtime invocations. Job cancellation remains
+cooperative in protocol v1: the Rust JobSystem owns the durable transition and
+the runtime may report a bounded `cancelled` event. It establishes the
+registration owner, cleanup seam, projection and failure isolation needed by
+the later selector and runtime work.
 
 The cross-workspace evidence for this registry is listed in the
 [plugin contract matrix](plugin-contract-matrix.md). A developer-facing
