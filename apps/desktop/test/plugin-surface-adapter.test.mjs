@@ -72,9 +72,18 @@ assert.equal(postedMessages[0].message.type, 'velvet.ui.host');
 
 windowListeners.get('message')({
   source: iframe.contentWindow,
+  origin: 'https://evil.example',
+  data: { type: 'velvet.ui.surface', message: { type: 'surface.error', message: 'spoofed' } },
+});
+assert.deepEqual(receivedMessages, []);
+
+windowListeners.get('message')({
+  source: iframe.contentWindow,
+  origin: 'https://plugin.example',
   data: { type: 'velvet.ui.surface', message: { type: 'surface.ready', bridgeVersion: '1' } },
 });
 assert.deepEqual(receivedMessages, [{ type: 'surface.ready', bridgeVersion: '1' }]);
+assert.equal(postedMessages[0].origin, 'https://plugin.example');
 
 const nextHost = {
   replaceChildren: (child) => {

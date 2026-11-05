@@ -42,6 +42,7 @@ import {
   PluginUiRegistry,
   type PluginSurfaceDescriptor,
 } from './ui-bridge.js';
+import { DEFAULT_UI_THEME } from './ui-kit.js';
 import {
   ViewRegistry,
   type ViewContainerDescriptor,
@@ -1714,7 +1715,7 @@ export class PluginClient {
     const session = this.ui.createSession(manifest.id, surface.id);
     const lifecycle = asAppSurfaceLifecycle(session, {
       context: host.context.snapshot(),
-      theme: { scheme: 'dark', revision: 0, tokens: {} },
+      theme: DEFAULT_UI_THEME,
       size: { width: 0, height: 0 },
     } satisfies PluginSurfaceMountOptions);
     let unsubscribe: (() => void) | undefined;

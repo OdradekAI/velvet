@@ -7,14 +7,11 @@ import type {
   UiSurfaceSize,
   UiThemeSnapshot,
 } from '../../workbench/plugins/ui-bridge.js';
+import { DEFAULT_UI_THEME } from '../../workbench/plugins/ui-kit.js';
 import { createPluginSurfaceAdapter } from '../../workbench/plugins/surface-adapters.js';
 import type { WorkspaceContext } from '../../workbench/services/workspace-context.js';
 
-const DEFAULT_THEME: UiThemeSnapshot = {
-  scheme: 'dark',
-  revision: 0,
-  tokens: {},
-};
+const DEFAULT_THEME: UiThemeSnapshot = DEFAULT_UI_THEME;
 
 const INITIAL_SIZE: UiSurfaceSize = { width: 0, height: 0 };
 

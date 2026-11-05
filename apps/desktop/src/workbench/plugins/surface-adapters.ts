@@ -62,8 +62,12 @@ export function createPluginSurfaceAdapter(
 class IframeSurfaceAdapter implements PluginSurfaceAdapter {
   private iframe: HTMLIFrameElement | undefined;
   private removeHostSubscription: (() => void) | undefined;
+  private readonly allowedOrigin: string;
   private readonly onMessage = (event: MessageEvent<unknown>) => {
     if (!this.iframe || event.source !== this.iframe.contentWindow) {
+      return;
+    }
+    if (this.allowedOrigin !== '*' && event.origin !== this.allowedOrigin) {
       return;
     }
     const message = unwrapSurfaceMessage(event.data);
@@ -76,7 +80,9 @@ class IframeSurfaceAdapter implements PluginSurfaceAdapter {
   public constructor(
     private readonly descriptor: PluginSurfaceDescriptor,
     private host: HTMLElement,
-  ) {}
+  ) {
+    this.allowedOrigin = surfaceOrigin(descriptor.entrypoint);
+  }
 
   public mount(endpoint: UiBridgeEndpoint): void {
     if (this.iframe) {
@@ -89,6 +95,7 @@ class IframeSurfaceAdapter implements PluginSurfaceAdapter {
     iframe.title = this.descriptor.id;
     iframe.src = resolveIframeUrl(this.descriptor.entrypoint);
     iframe.setAttribute('sandbox', 'allow-forms allow-modals allow-popups allow-scripts');
+    iframe.setAttribute('referrerpolicy', 'no-referrer');
     iframe.setAttribute('aria-label', `${this.descriptor.id} plugin surface`);
     iframe.style.border = '0';
     iframe.style.display = 'block';
@@ -99,7 +106,7 @@ class IframeSurfaceAdapter implements PluginSurfaceAdapter {
     this.removeHostSubscription = endpoint.subscribeHost((message) => {
       iframe.contentWindow?.postMessage(
         { type: 'velvet.ui.host', message },
-        '*',
+        this.allowedOrigin,
       );
     });
     window.addEventListener('message', this.onMessage);
@@ -265,6 +272,20 @@ function resolveIframeUrl(entrypoint: string): string {
     return entrypoint;
   }
   return `about:blank#velvet-${encodeURIComponent(entrypoint)}`;
+}
+
+function surfaceOrigin(entrypoint: string): string {
+  const normalized = entrypoint.startsWith('tauri-webview://')
+    ? entrypoint.replace(/^tauri-webview:\/\//, 'https://')
+    : entrypoint;
+  if (!/^https?:\/\//.test(normalized)) {
+    return '*';
+  }
+  try {
+    return new URL(normalized).origin;
+  } catch {
+    return '*';
+  }
 }
 
 function surfaceLabel(descriptor: PluginSurfaceDescriptor): string {

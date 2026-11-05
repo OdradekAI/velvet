@@ -83,3 +83,14 @@ iframe fallback. Host messages travel through `velvet-ui-bridge-host` and
 surface messages through `velvet-ui-bridge-surface`; the Tauri child WebView
 requires the explicit unstable WebView capability and is closed on session
 disposal.
+
+The first contract slice now publishes a framework-neutral UI theme schema
+`velvet.ui.theme/1` with a semantic token allow-list, density, contrast and
+reduced-motion fields. Legacy dark-only snapshots are normalized at the host
+boundary; unknown or unsafe token values are discarded. The isolated bridge
+advertises component contract version `1`, rejects an offered incompatible
+component version, and validates entrypoint schemes before registration.
+Browser surface messages are accepted only from the entrypoint origin when the
+entrypoint has a network origin; opaque schemes retain source-window checks and
+do not receive an ambient origin. These checks are host adapters and do not
+make the current UI bridge a final third-party SDK ABI.

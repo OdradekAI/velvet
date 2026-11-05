@@ -3,6 +3,25 @@ import type {
 } from '../apps/workbench-app.js';
 import type { WorkbenchAppId } from '../../platform/protocol.js';
 import type { WorkspaceContextSnapshot } from '../services/workspace-context.js';
+import {
+  normalizeUiThemeSnapshot,
+  negotiateUiComponentVersion,
+  isAllowedUiEntrypoint,
+  SUPPORTED_UI_COMPONENT_CONTRACT_VERSION,
+  type UiThemeSnapshot,
+  type UiThemeSnapshotInput,
+} from './ui-kit.js';
+
+export type {
+  HostOnlyUiSurface,
+  PluginUiComponent,
+  UiContrast,
+  UiDensity,
+  UiSemanticToken,
+  UiThemeScheme,
+  UiThemeSnapshot,
+  UiThemeSnapshotInput,
+} from './ui-kit.js';
 
 export const SUPPORTED_UI_BRIDGE_VERSION = '1';
 export const UI_BRIDGE_HOST_EVENT = 'velvet-ui-bridge-host';
@@ -17,12 +36,6 @@ export type PluginSurfaceState =
   | 'suspended'
   | 'failed'
   | 'disposed';
-
-export interface UiThemeSnapshot {
-  readonly scheme: 'light' | 'dark';
-  readonly revision: number;
-  readonly tokens: Readonly<Record<string, string>>;
-}
 
 export interface UiSurfaceSize {
   readonly width: number;
@@ -41,6 +54,7 @@ export type HostToSurfaceMessage =
   | {
       readonly type: 'host.ready';
       readonly bridgeVersion: string;
+      readonly componentContractVersion: number;
       readonly surfaceId: string;
       readonly theme: UiThemeSnapshot;
       readonly size: UiSurfaceSize;
@@ -56,7 +70,11 @@ export type HostToSurfaceMessage =
   | { readonly type: 'host.error'; readonly code: string; readonly message: string };
 
 export type SurfaceToHostMessage =
-  | { readonly type: 'surface.ready'; readonly bridgeVersion: string }
+  | {
+      readonly type: 'surface.ready';
+      readonly bridgeVersion: string;
+      readonly componentContractVersion?: number;
+    }
   | { readonly type: 'surface.focus-request' }
   | {
       readonly type: 'surface.command';
@@ -95,7 +113,7 @@ export interface PluginSurfaceDescriptor {
 
 export interface PluginSurfaceMountOptions {
   readonly context: WorkspaceContextSnapshot;
-  readonly theme: UiThemeSnapshot;
+  readonly theme: UiThemeSnapshotInput;
   readonly size: UiSurfaceSize;
   readonly locale?: UiLocaleProjection;
 }
@@ -116,7 +134,7 @@ export interface PluginSurfaceSession {
   activate(): void;
   deactivate(): void;
   updateContext(context: WorkspaceContextSnapshot): void;
-  updateTheme(theme: UiThemeSnapshot): void;
+  updateTheme(theme: UiThemeSnapshotInput): void;
   updateLocale(locale: UiLocaleProjection): void;
   resize(size: UiSurfaceSize): void;
   dispose(reason?: 'unmount' | 'crash' | 'incompatible'): Promise<void>;
@@ -379,6 +397,12 @@ function validateUiBridgeDescriptor(descriptor: PluginSurfaceDescriptor): void {
       descriptor.id,
     );
   }
+  if (!isAllowedUiEntrypoint(descriptor.entrypoint)) {
+    throw new PluginUiBridgeError(
+      `UI surface entrypoint uses a disallowed scheme: ${descriptor.entrypoint}`,
+      descriptor.id,
+    );
+  }
   if (descriptor.namespace === 'workbench' && descriptor.appId) {
     throw new PluginUiBridgeError(
       `Global surface cannot declare an app id: ${descriptor.id}`,
@@ -421,14 +445,17 @@ class PluginSurfaceSessionImpl implements PluginSurfaceSession {
 
   public async mount(options: PluginSurfaceMountOptions, host?: HTMLElement): Promise<void> {
     this.ensureState('registered');
-    this.options = options;
+    let theme: UiThemeSnapshot;
     try {
+      theme = normalizeUiThemeSnapshot(options.theme);
+      this.options = { ...options, theme };
       await this.adapter.mount(this.endpoint, host);
       this.endpoint.send({
         type: 'host.ready',
         bridgeVersion: this.descriptor.bridgeVersion,
+        componentContractVersion: SUPPORTED_UI_COMPONENT_CONTRACT_VERSION,
         surfaceId: this.surfaceId,
-        theme: options.theme,
+        theme,
         size: options.size,
         context: options.context,
         locale: options.locale ?? this.localeProjection,
@@ -475,9 +502,9 @@ class PluginSurfaceSessionImpl implements PluginSurfaceSession {
     this.endpoint.send({ type: 'host.context', context });
   }
 
-  public updateTheme(theme: UiThemeSnapshot): void {
+  public updateTheme(theme: UiThemeSnapshotInput): void {
     this.ensureMounted();
-    this.endpoint.send({ type: 'host.theme', theme });
+    this.endpoint.send({ type: 'host.theme', theme: normalizeUiThemeSnapshot(theme) });
   }
 
   public updateLocale(locale: UiLocaleProjection): void {
@@ -521,12 +548,20 @@ class PluginSurfaceSessionImpl implements PluginSurfaceSession {
     switch (message.type) {
       case 'surface.ready':
         if (message.bridgeVersion !== this.descriptor.bridgeVersion) {
-          this.state = 'failed';
-          this.endpoint.send({
-            type: 'host.error',
-            code: 'bridge-version-mismatch',
-            message: `Expected bridge ${this.descriptor.bridgeVersion}, received ${message.bridgeVersion}`,
-          });
+          await this.failSurface(
+            'bridge-version-mismatch',
+            `Expected bridge ${this.descriptor.bridgeVersion}, received ${message.bridgeVersion}`,
+          );
+          return;
+        }
+        if (
+          message.componentContractVersion !== undefined
+          && negotiateUiComponentVersion([message.componentContractVersion]) === undefined
+        ) {
+          await this.failSurface(
+            'component-contract-version-mismatch',
+            `Unsupported UI component contract version: ${message.componentContractVersion}`,
+          );
         }
         return;
       case 'surface.focus-request':
@@ -575,6 +610,24 @@ class PluginSurfaceSessionImpl implements PluginSurfaceSession {
     ) {
       throw new PluginUiBridgeError(`Plugin surface is not mounted: ${this.surfaceId}`, this.surfaceId);
     }
+  }
+
+  private async failSurface(code: string, message: string): Promise<void> {
+    if (this.resourcesDisposed) {
+      return;
+    }
+    this.state = 'failed';
+    this.endpoint.send({ type: 'host.error', code, message });
+    try {
+      await this.adapter.unmount('incompatible');
+    } catch {
+      // The surface is already failed; cleanup remains best effort.
+    }
+    this.resourcesDisposed = true;
+    this.unsubscribe();
+    this.endpoint.close();
+    this.options = undefined;
+    this.onDisposed();
   }
 
   private ensureState(expected: PluginSurfaceState): void {

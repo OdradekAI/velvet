@@ -17,6 +17,7 @@ export * from './workbench/apps/workbench-app.js';
 export * from './workbench/contributions/contribution-registry.js';
 export * from './workbench/plugins/plugin-client.js';
 export * from './workbench/plugins/ui-bridge.js';
+export * from './workbench/plugins/ui-kit.js';
 export * from './workbench/plugins/surface-adapters.js';
 export * from './workbench/commands/command-registry.js';
 export * from './workbench/commands/context-key-service.js';
