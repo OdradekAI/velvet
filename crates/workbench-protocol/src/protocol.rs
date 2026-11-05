@@ -14,8 +14,8 @@ use velvet_job_system::{
 };
 use velvet_layout_model::{LayoutCommand, LayoutState, WorkbenchZone};
 use velvet_plugin_api::{
-    AppTarget, ContributionDescriptor, ContributionKind, ContributionScope, ExtensionId,
-    ExtensionInstallPreview, ExtensionInstallRecovery, ExtensionInstallRecoveryAction,
+    AppTarget, Capability, ContributionDescriptor, ContributionKind, ContributionScope,
+    ExtensionId, ExtensionInstallPreview, ExtensionInstallRecovery, ExtensionInstallRecoveryAction,
     ExtensionInstallRecoveryLogEntry, ExtensionKind, ExtensionManifest,
     ExtensionStorageDeclaration, ExtensionSummary, ExtensionSupport, LocalizationManifest,
     PreviewActionContext, RuntimeKind, RuntimeLaunchSpec, VersionRange, WorkbenchAppDescriptor,
@@ -38,6 +38,7 @@ pub const RECOVERY_SCHEMA_VERSION: u16 = 1;
 pub const RECOVERY_DIAGNOSTIC_SCHEMA_VERSION: u16 = 1;
 pub const PLUGIN_DIAGNOSTIC_SCHEMA_VERSION: u16 = 1;
 pub const PLUGIN_REGISTRY_SCHEMA_VERSION: u16 = 1;
+pub const PLUGIN_CAPABILITY_SCHEMA_VERSION: u16 = 1;
 pub const CRASH_CAPTURE_SCHEMA_VERSION: u16 = 1;
 pub const CORE_SNAPSHOT_SCHEMA_VERSION: u16 = 1;
 pub const ACTIVATION_SCHEMA_VERSION: u16 = 1;
@@ -184,6 +185,7 @@ pub fn supported_schema_versions() -> BTreeMap<String, u16> {
         ("plugin-resource".into(), PLUGIN_RESOURCE_SCHEMA_VERSION),
         ("plugin-diagnostic".into(), PLUGIN_DIAGNOSTIC_SCHEMA_VERSION),
         ("plugin-registry".into(), PLUGIN_REGISTRY_SCHEMA_VERSION),
+        ("plugin-capability".into(), PLUGIN_CAPABILITY_SCHEMA_VERSION),
         ("crash-capture".into(), CRASH_CAPTURE_SCHEMA_VERSION),
         ("release-manifest".into(), RELEASE_MANIFEST_SCHEMA_VERSION),
         (
@@ -432,6 +434,74 @@ pub struct PluginRegistrySnapshotDto {
     pub contributions: Vec<PluginContributionRegistrationDto>,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PluginCapabilityDenyReason {
+    NotRequested,
+    HostPolicy,
+    UserApprovalRequired,
+    Revoked,
+    Inactive,
+    Unsupported,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PluginCapabilityDenialDto {
+    pub capability: Capability,
+    pub reason: PluginCapabilityDenyReason,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PluginCapabilityGrantDto {
+    pub schema_version: u16,
+    pub extension_id: ExtensionId,
+    pub generation: u64,
+    pub session_id: Option<String>,
+    pub active: bool,
+    pub requested: Vec<Capability>,
+    pub granted: Vec<Capability>,
+    pub denied: Vec<PluginCapabilityDenialDto>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PluginCapabilityAuditAction {
+    Granted,
+    Revoked,
+    Denied,
+    Cleared,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PluginCapabilityAuditDto {
+    pub schema_version: u16,
+    pub sequence: u64,
+    pub extension_id: ExtensionId,
+    pub capability: Capability,
+    pub action: PluginCapabilityAuditAction,
+    pub reason: Option<PluginCapabilityDenyReason>,
+    pub generation: u64,
+    pub occurred_at_ms: u64,
+}
+
+impl Default for PluginCapabilityGrantDto {
+    fn default() -> Self {
+        Self {
+            schema_version: PLUGIN_CAPABILITY_SCHEMA_VERSION,
+            extension_id: ExtensionId(String::new()),
+            generation: 0,
+            session_id: None,
+            active: false,
+            requested: Vec::new(),
+            granted: Vec::new(),
+            denied: Vec::new(),
+        }
+    }
+}
+
 impl Default for PluginRegistrySnapshotDto {
     fn default() -> Self {
         Self {
@@ -454,6 +524,9 @@ pub const PLUGIN_PROTOCOL_SCHEMA_VERSION: u16 = 1;
 pub struct PluginRequestEnvelope {
     pub protocol_version: u16,
     pub session_id: String,
+    /// Identity asserted by the host runtime adapter. Validation requires the
+    /// message target to match this id before it reaches ApplicationCore.
+    pub caller_extension_id: ExtensionId,
     pub request_id: RequestId,
     pub message: PluginRequest,
 }
@@ -473,6 +546,9 @@ pub enum PluginRequest {
         context: Value,
     },
     QueryProjection {
+        extension_id: ExtensionId,
+    },
+    QueryCapabilities {
         extension_id: ExtensionId,
     },
 }
@@ -497,6 +573,9 @@ pub enum PluginResponse {
     Accepted,
     Projection {
         projection: Box<PluginProjectionDto>,
+    },
+    Capabilities {
+        capabilities: Box<PluginCapabilityGrantDto>,
     },
 }
 
@@ -544,6 +623,16 @@ impl PluginRequestEnvelope {
                 "plugin transport request id must be non-zero".into(),
             ));
         }
+        let target_extension_id = match &self.message {
+            PluginRequest::InvokeCommand { extension_id, .. }
+            | PluginRequest::QueryProjection { extension_id }
+            | PluginRequest::QueryCapabilities { extension_id } => extension_id,
+        };
+        if target_extension_id != &self.caller_extension_id {
+            return Err(CoreError::InvalidCommand(
+                "plugin caller cannot address another extension namespace".into(),
+            ));
+        }
         Ok(())
     }
 
@@ -564,6 +653,7 @@ impl PluginRequestEnvelope {
         match &self.message {
             PluginRequest::InvokeCommand { .. } => None,
             PluginRequest::QueryProjection { .. } => Some("plugin-projection"),
+            PluginRequest::QueryCapabilities { .. } => Some("plugin-capabilities"),
         }
     }
 
@@ -582,6 +672,9 @@ impl PluginRequestEnvelope {
             }),
             PluginRequest::QueryProjection { extension_id } => {
                 Request::Query(Query::PluginProjection { extension_id })
+            }
+            PluginRequest::QueryCapabilities { extension_id } => {
+                Request::Query(Query::PluginCapabilities { extension_id })
             }
         }
     }
@@ -604,6 +697,9 @@ impl PluginResponseEnvelope {
             Response::Accepted => PluginResponse::Accepted,
             Response::PluginProjection(projection) => PluginResponse::Projection {
                 projection: Box::new(projection),
+            },
+            Response::PluginCapabilities(capabilities) => PluginResponse::Capabilities {
+                capabilities: Box::new(capabilities),
             },
             _ => {
                 return Err(CoreError::InvalidCommand(
@@ -1839,6 +1935,16 @@ pub enum Command {
     RecoverPlugin {
         extension_id: ExtensionId,
     },
+    GrantPluginCapabilities {
+        extension_id: ExtensionId,
+        capabilities: Vec<Capability>,
+        expected_generation: Option<u64>,
+    },
+    RevokePluginCapabilities {
+        extension_id: ExtensionId,
+        capabilities: Vec<Capability>,
+        expected_generation: Option<u64>,
+    },
     InstallPlugin {
         source_dir: String,
     },
@@ -1989,6 +2095,10 @@ pub enum Query {
     PluginRegistry {
         extension_id: Option<ExtensionId>,
     },
+    PluginCapabilities {
+        extension_id: ExtensionId,
+    },
+    PluginCapabilityAudit,
     ResolvePreview {
         asset_id: AssetId,
         content_kind: String,
@@ -2042,6 +2152,8 @@ pub enum Response {
     OperationPlan(OperationPlan),
     PluginProjection(PluginProjectionDto),
     PluginRegistry(PluginRegistrySnapshotDto),
+    PluginCapabilities(PluginCapabilityGrantDto),
+    PluginCapabilityAudit(Vec<PluginCapabilityAuditDto>),
     Job(JobSnapshot),
     Jobs(Vec<JobSnapshot>),
     Preview(ResolvedPreview),
@@ -2138,6 +2250,17 @@ pub enum CoreError {
     InvalidCommand(String),
     Layout(String),
     Plugin(String),
+    PluginCapabilityDenied {
+        extension_id: String,
+        capability: Capability,
+        reason: PluginCapabilityDenyReason,
+        retryable: bool,
+    },
+    PluginCapabilityGenerationConflict {
+        extension_id: String,
+        expected: u64,
+        actual: u64,
+    },
     PluginRuntimeFailed {
         extension_id: String,
         message: String,

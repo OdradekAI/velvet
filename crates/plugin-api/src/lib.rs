@@ -154,6 +154,191 @@ pub enum Permission {
     Network,
 }
 
+impl Permission {
+    /// Stable capability spelling used by manifests, runtime grants and
+    /// diagnostics. The legacy zone permission remains a compatibility view
+    /// over the broader capability contract.
+    pub const fn capability_name(&self) -> &'static str {
+        match self {
+            Self::WorkspaceOpen => "workspace.open",
+            Self::LibraryRead => "library.read",
+            Self::SourceConnect => "source.connect",
+            Self::AssetRead => "asset.read",
+            Self::MetadataRead => "metadata.read",
+            Self::MetadataWrite => "metadata.write",
+            Self::PreviewRender => "preview.render",
+            Self::JobsCreate => "jobs.create",
+            Self::JobsRead => "jobs.read",
+            Self::LogsRead => "logs.read",
+            Self::ExternalProcess => "external-process",
+            Self::Network => "network",
+        }
+    }
+
+    pub fn from_capability_name(name: &str) -> Option<Self> {
+        Some(match name {
+            "workspace.open" => Self::WorkspaceOpen,
+            "library.read" => Self::LibraryRead,
+            "source.connect" => Self::SourceConnect,
+            "asset.read" => Self::AssetRead,
+            "metadata.read" => Self::MetadataRead,
+            "metadata.write" => Self::MetadataWrite,
+            "preview.render" => Self::PreviewRender,
+            "jobs.create" => Self::JobsCreate,
+            "jobs.read" => Self::JobsRead,
+            "logs.read" => Self::LogsRead,
+            "external-process" => Self::ExternalProcess,
+            "network" => Self::Network,
+            _ => return None,
+        })
+    }
+}
+
+/// Versioned host capability identifiers. `Permission` remains the manifest
+/// zone compatibility contract; this type covers capabilities that do not
+/// belong to a UI zone and must never be inferred from one.
+#[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+pub enum Capability {
+    #[serde(rename = "workspace.open")]
+    WorkspaceOpen,
+    #[serde(rename = "library.read")]
+    LibraryRead,
+    #[serde(rename = "source.connect")]
+    SourceConnect,
+    #[serde(rename = "asset.read")]
+    AssetRead,
+    #[serde(rename = "metadata.read")]
+    MetadataRead,
+    #[serde(rename = "metadata.write")]
+    MetadataWrite,
+    #[serde(rename = "preview.render")]
+    PreviewRender,
+    #[serde(rename = "jobs.create")]
+    JobsCreate,
+    #[serde(rename = "jobs.read")]
+    JobsRead,
+    #[serde(rename = "logs.read")]
+    LogsRead,
+    #[serde(rename = "external-process")]
+    ExternalProcess,
+    #[serde(rename = "network")]
+    Network,
+    #[serde(rename = "asset.facet.write")]
+    AssetFacetWrite,
+    #[serde(rename = "config.read")]
+    ConfigRead,
+    #[serde(rename = "config.write")]
+    ConfigWrite,
+    #[serde(rename = "storage.read")]
+    StorageRead,
+    #[serde(rename = "storage.write")]
+    StorageWrite,
+    #[serde(rename = "view.register")]
+    ViewRegister,
+    #[serde(rename = "menu.register")]
+    MenuRegister,
+    #[serde(rename = "command.register")]
+    CommandRegister,
+    #[serde(rename = "notifications.show")]
+    NotificationsShow,
+    #[serde(rename = "logs.write")]
+    LogsWrite,
+    #[serde(rename = "events.subscribe")]
+    EventsSubscribe,
+    #[serde(rename = "filesystem")]
+    Filesystem,
+    #[serde(rename = "process")]
+    Process,
+    #[serde(rename = "core-metadata-write")]
+    CoreMetadataWrite,
+    #[serde(rename = "secret")]
+    Secret,
+}
+
+impl Capability {
+    pub const fn name(&self) -> &'static str {
+        match self {
+            Self::WorkspaceOpen => "workspace.open",
+            Self::LibraryRead => "library.read",
+            Self::SourceConnect => "source.connect",
+            Self::AssetRead => "asset.read",
+            Self::MetadataRead => "metadata.read",
+            Self::MetadataWrite => "metadata.write",
+            Self::PreviewRender => "preview.render",
+            Self::JobsCreate => "jobs.create",
+            Self::JobsRead => "jobs.read",
+            Self::LogsRead => "logs.read",
+            Self::ExternalProcess => "external-process",
+            Self::Network => "network",
+            Self::AssetFacetWrite => "asset.facet.write",
+            Self::ConfigRead => "config.read",
+            Self::ConfigWrite => "config.write",
+            Self::StorageRead => "storage.read",
+            Self::StorageWrite => "storage.write",
+            Self::ViewRegister => "view.register",
+            Self::MenuRegister => "menu.register",
+            Self::CommandRegister => "command.register",
+            Self::NotificationsShow => "notifications.show",
+            Self::LogsWrite => "logs.write",
+            Self::EventsSubscribe => "events.subscribe",
+            Self::Filesystem => "filesystem",
+            Self::Process => "process",
+            Self::CoreMetadataWrite => "core-metadata-write",
+            Self::Secret => "secret",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        Some(match name {
+            "workspace.open" => Self::WorkspaceOpen,
+            "library.read" => Self::LibraryRead,
+            "source.connect" => Self::SourceConnect,
+            "asset.read" => Self::AssetRead,
+            "metadata.read" => Self::MetadataRead,
+            "metadata.write" => Self::MetadataWrite,
+            "preview.render" => Self::PreviewRender,
+            "jobs.create" => Self::JobsCreate,
+            "jobs.read" => Self::JobsRead,
+            "logs.read" => Self::LogsRead,
+            "external-process" => Self::ExternalProcess,
+            "network" => Self::Network,
+            "asset.facet.write" => Self::AssetFacetWrite,
+            "config.read" => Self::ConfigRead,
+            "config.write" => Self::ConfigWrite,
+            "storage.read" => Self::StorageRead,
+            "storage.write" => Self::StorageWrite,
+            "view.register" => Self::ViewRegister,
+            "menu.register" => Self::MenuRegister,
+            "command.register" => Self::CommandRegister,
+            "notifications.show" => Self::NotificationsShow,
+            "logs.write" => Self::LogsWrite,
+            "events.subscribe" => Self::EventsSubscribe,
+            "filesystem" => Self::Filesystem,
+            "process" => Self::Process,
+            "core-metadata-write" => Self::CoreMetadataWrite,
+            "secret" => Self::Secret,
+            _ => return None,
+        })
+    }
+
+    pub const fn is_high_risk(&self) -> bool {
+        matches!(
+            self,
+            Self::MetadataWrite
+                | Self::ExternalProcess
+                | Self::Network
+                | Self::Filesystem
+                | Self::Process
+                | Self::CoreMetadataWrite
+                | Self::Secret
+        )
+    }
+
+    pub fn legacy_permission(&self) -> Option<Permission> {
+        Permission::from_capability_name(self.name())
+    }
+}
+
 /// Describes the executable boundary used to host an external extension.
 ///
 /// A WASM extension points at its declared runner (for example a WASI host)
@@ -892,5 +1077,33 @@ mod tests {
                 .expect("preview action result should round-trip"),
             result
         );
+    }
+
+    #[test]
+    fn capability_names_are_stable_and_round_trip_on_the_wire() {
+        for capability in [
+            Capability::AssetRead,
+            Capability::AssetFacetWrite,
+            Capability::CoreMetadataWrite,
+            Capability::Secret,
+        ] {
+            let name = capability.name();
+            let value = serde_json::to_value(&capability).expect("capability should serialize");
+            assert_eq!(value, name);
+            assert_eq!(
+                serde_json::from_value::<Capability>(value).expect("capability should decode"),
+                capability
+            );
+            assert_eq!(Capability::from_name(name), Some(capability));
+        }
+    }
+
+    #[test]
+    fn high_risk_capabilities_are_explicit() {
+        assert!(Capability::Network.is_high_risk());
+        assert!(Capability::Filesystem.is_high_risk());
+        assert!(Capability::Secret.is_high_risk());
+        assert!(!Capability::AssetRead.is_high_risk());
+        assert!(!Capability::EventsSubscribe.is_high_risk());
     }
 }

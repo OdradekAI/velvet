@@ -20,7 +20,7 @@ use velvet_persistence::{
     SnapshotProfileStateStore, StateSnapshot, StateSnapshotStore,
 };
 use velvet_plugin_api::{
-    ContributionDescriptor, ContributionKind, ContributionScope, ExtensionId,
+    Capability, ContributionDescriptor, ContributionKind, ContributionScope, ExtensionId,
     ExtensionInstallRecoveryLogStatus, ExtensionManifest, HostContainer, LocalizationManifest,
     Permission, PreviewContributionDescriptor, PreviewIntent as ManifestPreviewIntent,
     PreviewSurface as ManifestPreviewSurface, RuntimeKind, UiSurfaceDescriptor, UiSurfaceKind,
@@ -2082,6 +2082,95 @@ fn plugin_registry_query_projects_only_active_host_registrations() {
     assert!(
         matches!(disabled, Response::PluginRegistry(snapshot) if snapshot.contributions.is_empty())
     );
+}
+
+#[test]
+fn plugin_capability_grants_are_projected_and_required_denials_are_typed() {
+    let mut core = ApplicationCore::default();
+    let manifest = ExtensionManifest {
+        id: ExtensionId("capability.reader".into()),
+        version: "1.0.0".into(),
+        host_api: VersionRange("^1".into()),
+        runtime: RuntimeKind::BuiltIn,
+        launch: None,
+        required_capabilities: vec!["network".into()],
+        ..ExtensionManifest::default()
+    };
+    let id = manifest.id.clone();
+    core.dispatch(Request::Command(Command::RegisterPlugin {
+        manifest: Box::new(manifest.into()),
+    }))
+    .expect("capability plugin should register");
+
+    let denied = core
+        .dispatch(Request::Command(Command::ActivatePlugin {
+            extension_id: id.clone(),
+        }))
+        .expect_err("required capability should require approval");
+    assert!(matches!(
+        denied,
+        CoreError::PluginCapabilityDenied {
+            extension_id,
+            capability: Capability::Network,
+            reason: velvet_workbench_protocol::PluginCapabilityDenyReason::UserApprovalRequired,
+            retryable: false,
+        } if extension_id == id.0
+    ));
+
+    let snapshot = match core
+        .dispatch(Request::Query(Query::PluginCapabilities {
+            extension_id: id.clone(),
+        }))
+        .expect("capability projection should be available")
+    {
+        Response::PluginCapabilities(snapshot) => snapshot,
+        other => panic!("unexpected capability response: {other:?}"),
+    };
+    assert!(!snapshot.active);
+    assert_eq!(snapshot.requested, vec![Capability::Network]);
+
+    let granted = core
+        .dispatch(Request::Command(Command::GrantPluginCapabilities {
+            extension_id: id.clone(),
+            capabilities: vec![Capability::Network],
+            expected_generation: Some(snapshot.generation),
+        }))
+        .expect("user approval should be projected");
+    let Response::PluginCapabilities(granted) = granted else {
+        panic!("grant should return a capability projection")
+    };
+    assert!(!granted.active);
+
+    core.dispatch(Request::Command(Command::ActivatePlugin {
+        extension_id: id.clone(),
+    }))
+    .expect("approved capability should allow activation");
+    let active = core
+        .dispatch(Request::Query(Query::PluginCapabilities {
+            extension_id: id.clone(),
+        }))
+        .expect("active capability projection should be available");
+    let Response::PluginCapabilities(active) = active else {
+        panic!("query should return a capability projection")
+    };
+    assert!(active.active);
+    assert_eq!(active.granted, vec![Capability::Network]);
+
+    let revoked = core
+        .dispatch(Request::Command(Command::RevokePluginCapabilities {
+            extension_id: id.clone(),
+            capabilities: vec![Capability::Network],
+            expected_generation: Some(active.generation),
+        }))
+        .expect("revocation should be projected");
+    let Response::PluginCapabilities(revoked) = revoked else {
+        panic!("revoke should return a capability projection")
+    };
+    assert!(revoked.granted.is_empty());
+    assert!(revoked
+        .denied
+        .iter()
+        .any(|denial| denial.capability == Capability::Network));
 }
 
 #[test]

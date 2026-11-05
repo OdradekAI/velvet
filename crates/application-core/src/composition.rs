@@ -180,17 +180,17 @@ use velvet_persistence::{
     StateSnapshotStore, CORE_RECOVERY_SET_ID, MAX_DIAGNOSTIC_EVENTS,
 };
 use velvet_plugin_api::{
-    ContributionKind, ExtensionId, ExtensionInstallPreview, ExtensionInstallRecovery,
+    Capability, ContributionKind, ExtensionId, ExtensionInstallPreview, ExtensionInstallRecovery,
     ExtensionInstallRecoveryAction, ExtensionInstallRecoveryLogEntry, ExtensionManifest,
     ExtensionState, Permission, PreviewActionContext, PreviewActionResult, PreviewIntent,
     PreviewRendererDescriptor, PreviewSurface,
 };
 use velvet_plugin_host::{
-    sanitize_plugin_diagnostic_message, DisableReason, ExtensionStorageRecovery,
-    ExtensionStorageRecoveryStatus, InMemoryPluginHost, JsonManifestDiscovery,
-    ManifestDiscoveryError, ManifestLoadReport, PluginDiagnosticKind, PluginDiagnosticRecord,
-    PluginError, PluginHost, PluginJobHandle, PluginJobInvocation, PluginResourceLoader,
-    PluginRuntime, RuntimeCrashEvidence,
+    sanitize_plugin_diagnostic_message, CapabilityDenyReason, CapabilityGrantSnapshot,
+    DisableReason, ExtensionStorageRecovery, ExtensionStorageRecoveryStatus, InMemoryPluginHost,
+    JsonManifestDiscovery, ManifestDiscoveryError, ManifestLoadReport, PluginDiagnosticKind,
+    PluginDiagnosticRecord, PluginError, PluginHost, PluginJobHandle, PluginJobInvocation,
+    PluginResourceLoader, PluginRuntime, RuntimeCrashEvidence,
 };
 use velvet_preview_core::{
     BuiltinImagePreviewProvider, BuiltinTextPreviewProvider, GenericFallbackProvider,
@@ -201,12 +201,14 @@ use velvet_preview_core::{
 use velvet_workbench_protocol::{
     Command, CoreError, CoreTransport, CrashCaptureEvidence, ImportPlan, ImportQuarantineEntry,
     ImportQuarantineSummary, ImportReceipt, OperationError, OperationErrorCode, OperationPlan,
-    OperationReceipt, PlatformPreflightEvidence, PluginContributionRegistrationDto,
-    PluginDiagnosticEvent, PluginDiagnosticKind as WirePluginDiagnosticKind, PluginDisableReason,
-    PluginInstallPreviewDto, PluginProjectionDto, PluginRegistrySnapshotDto, PluginResourceDto,
-    PluginRuntimeRecoveryDto, PluginRuntimeRecoveryState, PluginStorageRecoveryDto,
-    PluginStorageRecoveryStatus, PortableBundle, ProfileState, Query, Request, RequestEnvelope,
-    RequestId, Response, ResponseEnvelope, PLUGIN_DIAGNOSTIC_SCHEMA_VERSION,
+    OperationReceipt, PlatformPreflightEvidence, PluginCapabilityAuditAction,
+    PluginCapabilityAuditDto, PluginCapabilityDenyReason, PluginCapabilityGrantDto,
+    PluginContributionRegistrationDto, PluginDiagnosticEvent,
+    PluginDiagnosticKind as WirePluginDiagnosticKind, PluginDisableReason, PluginInstallPreviewDto,
+    PluginProjectionDto, PluginRegistrySnapshotDto, PluginResourceDto, PluginRuntimeRecoveryDto,
+    PluginRuntimeRecoveryState, PluginStorageRecoveryDto, PluginStorageRecoveryStatus,
+    PortableBundle, ProfileState, Query, Request, RequestEnvelope, RequestId, Response,
+    ResponseEnvelope, PLUGIN_CAPABILITY_SCHEMA_VERSION, PLUGIN_DIAGNOSTIC_SCHEMA_VERSION,
     PLUGIN_REGISTRY_SCHEMA_VERSION, PLUGIN_RESOURCE_SCHEMA_VERSION, PROFILE_SCHEMA_VERSION,
     PROTOCOL_VERSION,
 };
@@ -1397,6 +1399,45 @@ impl ApplicationCore {
         }
     }
 
+    pub fn query_plugin_capabilities(
+        &self,
+        extension_id: &ExtensionId,
+    ) -> Result<PluginCapabilityGrantDto, PluginError> {
+        self.plugins
+            .capability_snapshot(extension_id)
+            .map(plugin_capability_dto)
+    }
+
+    pub fn grant_plugin_capabilities(
+        &mut self,
+        extension_id: &ExtensionId,
+        capabilities: &[Capability],
+        expected_generation: Option<u64>,
+    ) -> Result<PluginCapabilityGrantDto, PluginError> {
+        self.plugins
+            .grant_capabilities(extension_id, capabilities, expected_generation)
+            .map(plugin_capability_dto)
+    }
+
+    pub fn revoke_plugin_capabilities(
+        &mut self,
+        extension_id: &ExtensionId,
+        capabilities: &[Capability],
+        expected_generation: Option<u64>,
+    ) -> Result<PluginCapabilityGrantDto, PluginError> {
+        self.plugins
+            .revoke_capabilities(extension_id, capabilities, expected_generation)
+            .map(plugin_capability_dto)
+    }
+
+    pub fn query_plugin_capability_audit(&self) -> Vec<PluginCapabilityAuditDto> {
+        self.plugins
+            .capability_audit()
+            .into_iter()
+            .map(plugin_capability_audit_dto)
+            .collect()
+    }
+
     pub fn query_plugin_storage_recovery(
         &self,
         id: &ExtensionId,
@@ -2115,6 +2156,22 @@ impl ApplicationCore {
                 self.recover_plugin(&extension_id).map_err(plugin_error)?;
                 self.extension_response(&extension_id)
             }
+            Request::Command(Command::GrantPluginCapabilities {
+                extension_id,
+                capabilities,
+                expected_generation,
+            }) => self
+                .grant_plugin_capabilities(&extension_id, &capabilities, expected_generation)
+                .map(Response::PluginCapabilities)
+                .map_err(plugin_error),
+            Request::Command(Command::RevokePluginCapabilities {
+                extension_id,
+                capabilities,
+                expected_generation,
+            }) => self
+                .revoke_plugin_capabilities(&extension_id, &capabilities, expected_generation)
+                .map(Response::PluginCapabilities)
+                .map_err(plugin_error),
             Request::Command(Command::InstallPlugin { source_dir }) => self
                 .install_plugin_from_directory(source_dir)
                 .map(Response::Extension)
@@ -2398,6 +2455,13 @@ impl ApplicationCore {
                 .map_err(plugin_error),
             Request::Query(Query::PluginRegistry { extension_id }) => Ok(Response::PluginRegistry(
                 self.query_plugin_registry(extension_id.as_ref()),
+            )),
+            Request::Query(Query::PluginCapabilities { extension_id }) => self
+                .query_plugin_capabilities(&extension_id)
+                .map(Response::PluginCapabilities)
+                .map_err(plugin_error),
+            Request::Query(Query::PluginCapabilityAudit) => Ok(Response::PluginCapabilityAudit(
+                self.query_plugin_capability_audit(),
             )),
             Request::Query(Query::ResolvePreview {
                 asset_id,
@@ -3021,7 +3085,90 @@ fn plugin_error(error: PluginError) -> CoreError {
             extension_id: extension_id.0,
             message,
         },
+        PluginError::CapabilityDenied {
+            extension_id,
+            capability,
+            reason,
+            retryable,
+        } => CoreError::PluginCapabilityDenied {
+            extension_id: extension_id.0,
+            capability,
+            reason: plugin_capability_deny_reason(reason),
+            retryable,
+        },
+        PluginError::CapabilityGenerationConflict {
+            extension_id,
+            expected,
+            actual,
+        } => CoreError::PluginCapabilityGenerationConflict {
+            extension_id: extension_id.0,
+            expected,
+            actual,
+        },
         other => CoreError::Plugin(format!("{other:?}")),
+    }
+}
+
+fn plugin_capability_deny_reason(reason: CapabilityDenyReason) -> PluginCapabilityDenyReason {
+    match reason {
+        CapabilityDenyReason::NotRequested => PluginCapabilityDenyReason::NotRequested,
+        CapabilityDenyReason::HostPolicy => PluginCapabilityDenyReason::HostPolicy,
+        CapabilityDenyReason::UserApprovalRequired => {
+            PluginCapabilityDenyReason::UserApprovalRequired
+        }
+        CapabilityDenyReason::Revoked => PluginCapabilityDenyReason::Revoked,
+        CapabilityDenyReason::Inactive => PluginCapabilityDenyReason::Inactive,
+        CapabilityDenyReason::Unsupported => PluginCapabilityDenyReason::Unsupported,
+    }
+}
+
+fn plugin_capability_dto(snapshot: CapabilityGrantSnapshot) -> PluginCapabilityGrantDto {
+    PluginCapabilityGrantDto {
+        schema_version: PLUGIN_CAPABILITY_SCHEMA_VERSION,
+        extension_id: snapshot.extension_id,
+        generation: snapshot.generation,
+        session_id: snapshot.session_id,
+        active: snapshot.active,
+        requested: snapshot.requested,
+        granted: snapshot.granted,
+        denied: snapshot
+            .denied
+            .into_iter()
+            .map(
+                |denial| velvet_workbench_protocol::PluginCapabilityDenialDto {
+                    capability: denial.capability,
+                    reason: plugin_capability_deny_reason(denial.reason),
+                },
+            )
+            .collect(),
+    }
+}
+
+fn plugin_capability_audit_dto(
+    record: velvet_plugin_host::CapabilityAuditRecord,
+) -> PluginCapabilityAuditDto {
+    PluginCapabilityAuditDto {
+        schema_version: velvet_plugin_host::CAPABILITY_AUDIT_SCHEMA_VERSION,
+        sequence: record.sequence,
+        extension_id: record.extension_id,
+        capability: record.capability,
+        action: match record.action {
+            velvet_plugin_host::CapabilityAuditAction::Granted => {
+                PluginCapabilityAuditAction::Granted
+            }
+            velvet_plugin_host::CapabilityAuditAction::Revoked => {
+                PluginCapabilityAuditAction::Revoked
+            }
+            velvet_plugin_host::CapabilityAuditAction::Denied => {
+                PluginCapabilityAuditAction::Denied
+            }
+            velvet_plugin_host::CapabilityAuditAction::Cleared => {
+                PluginCapabilityAuditAction::Cleared
+            }
+        },
+        reason: record.reason.map(plugin_capability_deny_reason),
+        generation: record.generation,
+        occurred_at_ms: record.occurred_at_ms,
     }
 }
 

@@ -22,6 +22,7 @@ export type RecoveryDiagnosticSchemaVersion = typeof RECOVERY_DIAGNOSTIC_SCHEMA_
 export const PLUGIN_DIAGNOSTIC_SCHEMA_VERSION = 1 as const;
 export type PluginDiagnosticSchemaVersion = typeof PLUGIN_DIAGNOSTIC_SCHEMA_VERSION;
 export const PLUGIN_REGISTRY_SCHEMA_VERSION = 1 as const;
+export const PLUGIN_CAPABILITY_SCHEMA_VERSION = 1 as const;
 export const CRASH_CAPTURE_SCHEMA_VERSION = 1 as const;
 export const ACTIVATION_SCHEMA_VERSION = 1 as const;
 export type ActivationSchemaVersion = typeof ACTIVATION_SCHEMA_VERSION;
@@ -247,6 +248,15 @@ export type CoreRequest =
     }
   | {
       readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'query-plugin-capabilities';
+      readonly extensionId: string;
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'query-plugin-capability-audit';
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
       readonly kind: 'query-plugin-storage-recovery';
       readonly extensionId: string;
     }
@@ -279,6 +289,20 @@ export type CoreRequest =
       readonly protocolVersion: ProtocolVersion;
       readonly kind: 'recover-plugin';
       readonly extensionId: string;
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'grant-plugin-capabilities';
+      readonly extensionId: string;
+      readonly capabilities: readonly CorePluginCapability[];
+      readonly expectedGeneration?: number;
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'revoke-plugin-capabilities';
+      readonly extensionId: string;
+      readonly capabilities: readonly CorePluginCapability[];
+      readonly expectedGeneration?: number;
     }
   | {
       readonly protocolVersion: ProtocolVersion;
@@ -507,6 +531,14 @@ export type CoreResponse =
     }
   | { readonly kind: 'plugin-projection'; readonly projection: CorePluginProjection }
   | { readonly kind: 'plugin-registry'; readonly registry: CorePluginRegistrySnapshot }
+  | {
+      readonly kind: 'plugin-capabilities';
+      readonly capabilities: CorePluginCapabilityGrant;
+    }
+  | {
+      readonly kind: 'plugin-capability-audit';
+      readonly audit: readonly CorePluginCapabilityAudit[];
+    }
   | {
       readonly kind: 'plugin-storage-recovery';
       readonly recovery: CorePluginStorageRecovery;
@@ -1031,6 +1063,30 @@ export type CorePluginPermission =
   | 'logs-read'
   | 'external-process'
   | 'network';
+export type CorePluginCapability =
+  | CorePluginPermission
+  | 'asset.facet.write'
+  | 'config.read'
+  | 'config.write'
+  | 'storage.read'
+  | 'storage.write'
+  | 'view.register'
+  | 'menu.register'
+  | 'command.register'
+  | 'notifications.show'
+  | 'logs.write'
+  | 'events.subscribe'
+  | 'filesystem'
+  | 'process'
+  | 'core-metadata-write'
+  | 'secret';
+export type CorePluginCapabilityDenyReason =
+  | 'not-requested'
+  | 'host-policy'
+  | 'user-approval-required'
+  | 'revoked'
+  | 'inactive'
+  | 'unsupported';
 export type CorePluginContributionKind =
   | 'app-surface'
   | 'activity-bar-entry'
@@ -1177,18 +1233,24 @@ export type CorePluginRequest =
   | {
       readonly kind: 'query-projection';
       readonly extensionId: string;
+    }
+  | {
+      readonly kind: 'query-capabilities';
+      readonly extensionId: string;
     };
 
 export interface CorePluginRequestEnvelope {
   readonly protocolVersion: PluginProtocolSchemaVersion;
   readonly sessionId: string;
+  readonly callerExtensionId: string;
   readonly requestId: number;
   readonly message: CorePluginRequest;
 }
 
 export type CorePluginResponse =
   | { readonly kind: 'accepted' }
-  | { readonly kind: 'projection'; readonly projection: CorePluginProjection };
+  | { readonly kind: 'projection'; readonly projection: CorePluginProjection }
+  | { readonly kind: 'capabilities'; readonly capabilities: CorePluginCapabilityGrant };
 
 export interface CorePluginResponseEnvelope {
   readonly protocolVersion: PluginProtocolSchemaVersion;
@@ -1224,6 +1286,12 @@ export function toCoreRequest(envelope: CorePluginRequestEnvelope): CoreRequest 
       return {
         protocolVersion: PROTOCOL_VERSION,
         kind: 'query-plugin-projection',
+        extensionId: envelope.message.extensionId,
+      };
+    case 'query-capabilities':
+      return {
+        protocolVersion: PROTOCOL_VERSION,
+        kind: 'query-plugin-capabilities',
         extensionId: envelope.message.extensionId,
       };
   }
@@ -1293,6 +1361,35 @@ export interface CorePluginRegistrySnapshot {
   readonly schemaVersion: number;
   readonly generation: number;
   readonly contributions: readonly CorePluginContributionRegistration[];
+}
+
+export interface CorePluginCapabilityDenial {
+  readonly capability: CorePluginCapability;
+  readonly reason: CorePluginCapabilityDenyReason;
+}
+
+export interface CorePluginCapabilityGrant {
+  readonly schemaVersion: typeof PLUGIN_CAPABILITY_SCHEMA_VERSION;
+  readonly extensionId: string;
+  readonly generation: number;
+  readonly sessionId: string | null;
+  readonly active: boolean;
+  readonly requested: readonly CorePluginCapability[];
+  readonly granted: readonly CorePluginCapability[];
+  readonly denied: readonly CorePluginCapabilityDenial[];
+}
+
+export type CorePluginCapabilityAuditAction = 'granted' | 'revoked' | 'denied' | 'cleared';
+
+export interface CorePluginCapabilityAudit {
+  readonly schemaVersion: number;
+  readonly sequence: number;
+  readonly extensionId: string;
+  readonly capability: CorePluginCapability;
+  readonly action: CorePluginCapabilityAuditAction;
+  readonly reason: CorePluginCapabilityDenyReason | null;
+  readonly generation: number;
+  readonly occurredAtMs: number;
 }
 
 export type CorePluginStorageRecoveryStatus = 'available' | 'empty' | 'corrupt' | 'unavailable';

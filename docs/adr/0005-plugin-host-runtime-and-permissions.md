@@ -541,6 +541,34 @@ Costs:
   convenience APIs cannot hide the fact that sidecars and built-ins have
   different security guarantees.
 
+## Implementation clarification (2026-11-05)
+
+The first capability broker slice keeps the decision `Proposed` and makes the
+boundary executable without claiming a platform sandbox. `PluginHost` owns a
+versioned `CapabilityGrantSnapshot`, opaque session/generation-bound handles,
+revocation and a bounded audit queue. A requested capability is effective only
+when it is declared by the manifest, permitted by host policy and present in
+the current user grant. Explicit `requiredCapabilities` and
+`optionalCapabilities` declarations require an explicit grant; legacy
+`permissionSets` retain the alpha compatibility behavior for low-risk reads so
+existing manifests can migrate without gaining filesystem, process, network,
+secret or core-metadata-write access. High-risk capabilities always require an
+explicit grant.
+
+Capability grants are projected through `CoreTransport` as
+`query-plugin-capabilities`, `grant-plugin-capabilities` and
+`revoke-plugin-capabilities`. The current slice keeps the user grant in the
+process-owned broker; disable, crash and failed activation clear both effective
+handles and user grants, so reactivation requires a fresh approval. Profile
+persistence, a user account service and a cross-platform sandbox remain
+deferred decisions. Runtime adapters receive a bounded capability-name
+environment projection and continue to use the same host invocation checks. No
+database handle, filesystem path, Tauri `AppHandle`, renderer object or other
+extension namespace crosses this boundary. Plugin-only transport sessions are
+bound by the host adapter to the extension identity derived from the runtime
+lease/package context; `callerExtensionId` is an adapter assertion and must not
+be accepted as an untrusted plugin payload.
+
 ## Deferred decisions
 
 - Is there a marketplace in the first release or only local installation?

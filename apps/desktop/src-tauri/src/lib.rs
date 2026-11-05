@@ -32,7 +32,8 @@ use velvet_layout_model::{
     LayoutCommand, LayoutState, ViewContainerState, ViewState, WorkbenchAppId, WorkbenchPart,
 };
 use velvet_plugin_api::{
-    ActivationEvent, AppTarget, ContributionDescriptor, ExtensionId, ExtensionInstallRecoveryAction,
+    ActivationEvent, AppTarget, Capability, ContributionDescriptor, ExtensionId,
+    ExtensionInstallRecoveryAction,
     ExtensionKind, ExtensionManifest, ExtensionSupport, LocalizationManifest, RuntimeKind,
     PreviewActionContext, RuntimeLaunchSpec, VersionRange, WorkbenchAppDescriptor,
     ZonePermissionSet,
@@ -650,6 +651,34 @@ impl From<CoreError> for WireError {
                 expected_revision: None,
                 actual_revision: None,
             },
+            CoreError::PluginCapabilityDenied {
+                extension_id,
+                capability,
+                reason,
+                retryable,
+            } => Self {
+                code: "plugin-capability-denied".into(),
+                message: format!(
+                    "Plugin {extension_id} capability {} denied ({reason:?})",
+                    capability.name()
+                ),
+                retryable,
+                expected_revision: None,
+                actual_revision: None,
+            },
+            CoreError::PluginCapabilityGenerationConflict {
+                extension_id,
+                expected,
+                actual,
+            } => Self {
+                code: "plugin-capability-generation-conflict".into(),
+                message: format!(
+                    "Plugin {extension_id} capability generation expected {expected}, received {actual}"
+                ),
+                retryable: true,
+                expected_revision: Some(expected),
+                actual_revision: Some(actual),
+            },
             other => Self {
                 code: "core-error".into(),
                 message: format!("{other:?}"),
@@ -702,6 +731,7 @@ pub struct WireRequestEnvelope {
 pub struct WirePluginRequestEnvelope {
     pub protocol_version: u16,
     pub session_id: String,
+    pub caller_extension_id: String,
     pub request_id: u64,
     pub message: WirePluginRequest,
 }
@@ -721,6 +751,7 @@ pub enum WirePluginRequest {
         context: serde_json::Value,
     },
     QueryProjection { extension_id: String },
+    QueryCapabilities { extension_id: String },
 }
 
 #[derive(Debug, Serialize)]
@@ -784,10 +815,16 @@ impl TryFrom<WirePluginRequestEnvelope> for PluginRequestEnvelope {
                     extension_id: velvet_plugin_api::ExtensionId(extension_id),
                 }
             }
+            WirePluginRequest::QueryCapabilities { extension_id } => {
+                PluginRequest::QueryCapabilities {
+                    extension_id: velvet_plugin_api::ExtensionId(extension_id),
+                }
+            }
         };
         Ok(PluginRequestEnvelope {
             protocol_version: value.protocol_version,
             session_id: value.session_id,
+            caller_extension_id: velvet_plugin_api::ExtensionId(value.caller_extension_id),
             request_id: RequestId(value.request_id),
             message,
         })
@@ -917,6 +954,16 @@ pub enum WireRequest {
         #[serde(rename = "extensionId")]
         extension_id: Option<String>,
     },
+    QueryPluginCapabilities {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        #[serde(rename = "extensionId")]
+        extension_id: String,
+    },
+    QueryPluginCapabilityAudit {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+    },
     QueryPluginStorageRecovery {
         #[serde(rename = "protocolVersion")]
         protocol_version: u16,
@@ -968,6 +1015,24 @@ pub enum WireRequest {
         protocol_version: u16,
         #[serde(rename = "extensionId")]
         extension_id: String,
+    },
+    GrantPluginCapabilities {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        #[serde(rename = "extensionId")]
+        extension_id: String,
+        capabilities: Vec<Capability>,
+        #[serde(rename = "expectedGeneration")]
+        expected_generation: Option<u64>,
+    },
+    RevokePluginCapabilities {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        #[serde(rename = "extensionId")]
+        extension_id: String,
+        capabilities: Vec<Capability>,
+        #[serde(rename = "expectedGeneration")]
+        expected_generation: Option<u64>,
     },
     RestorePluginState {
         #[serde(rename = "protocolVersion")]
@@ -1319,6 +1384,23 @@ impl WireRequest {
                     },
                 ))
             }
+            Self::QueryPluginCapabilities {
+                protocol_version,
+                extension_id,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Query(
+                    velvet_workbench_protocol::Query::PluginCapabilities {
+                        extension_id: ExtensionId(extension_id),
+                    },
+                ))
+            }
+            Self::QueryPluginCapabilityAudit { protocol_version } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Query(
+                    velvet_workbench_protocol::Query::PluginCapabilityAudit,
+                ))
+            }
             Self::QueryPluginStorageRecovery {
                 protocol_version,
                 extension_id,
@@ -1408,6 +1490,32 @@ impl WireRequest {
                 validate_inner_protocol(outer_protocol_version, protocol_version)?;
                 Ok(Request::Command(Command::RecoverPlugin {
                     extension_id: ExtensionId(extension_id),
+                }))
+            }
+            Self::GrantPluginCapabilities {
+                protocol_version,
+                extension_id,
+                capabilities,
+                expected_generation,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Command(Command::GrantPluginCapabilities {
+                    extension_id: ExtensionId(extension_id),
+                    capabilities,
+                    expected_generation,
+                }))
+            }
+            Self::RevokePluginCapabilities {
+                protocol_version,
+                extension_id,
+                capabilities,
+                expected_generation,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Command(Command::RevokePluginCapabilities {
+                    extension_id: ExtensionId(extension_id),
+                    capabilities,
+                    expected_generation,
                 }))
             }
             Self::RestorePluginState {
@@ -2008,6 +2116,12 @@ enum WireResponse {
     PluginRegistry {
         registry: velvet_workbench_protocol::PluginRegistrySnapshotDto,
     },
+    PluginCapabilities {
+        capabilities: velvet_workbench_protocol::PluginCapabilityGrantDto,
+    },
+    PluginCapabilityAudit {
+        audit: Vec<velvet_workbench_protocol::PluginCapabilityAuditDto>,
+    },
     PluginStorageRecovery {
         recovery: velvet_workbench_protocol::PluginStorageRecoveryDto,
     },
@@ -2082,6 +2196,10 @@ impl WireResponseEnvelope {
             Response::PluginInstallRecoveryLog(log) => WireResponse::PluginInstallRecoveryLog { log },
             Response::PluginProjection(projection) => WireResponse::PluginProjection { projection },
             Response::PluginRegistry(registry) => WireResponse::PluginRegistry { registry },
+            Response::PluginCapabilities(capabilities) => {
+                WireResponse::PluginCapabilities { capabilities }
+            }
+            Response::PluginCapabilityAudit(audit) => WireResponse::PluginCapabilityAudit { audit },
             Response::PluginStorageRecovery(recovery) => {
                 WireResponse::PluginStorageRecovery { recovery }
             }
@@ -3706,6 +3824,7 @@ mod tests {
         let wire: WirePluginRequestEnvelope = serde_json::from_value(serde_json::json!({
             "protocolVersion": 1,
             "sessionId": "core-test-1",
+            "callerExtensionId": "publisher.reader",
             "requestId": 9,
             "message": {
                 "kind": "invoke-command",
@@ -3733,6 +3852,7 @@ mod tests {
         let error = serde_json::from_value::<WirePluginRequestEnvelope>(serde_json::json!({
             "protocolVersion": 1,
             "sessionId": "core-test-1",
+            "callerExtensionId": "publisher.reader",
             "requestId": 10,
             "message": {
                 "kind": "query-projection",
@@ -4174,6 +4294,96 @@ mod tests {
         let value = serde_json::to_value(response).expect("operation plan should serialize");
         assert_eq!(value["response"]["kind"], "operation-plan");
         assert_eq!(value["response"]["plan"]["operationId"], "operation-delete");
+    }
+
+    #[test]
+    fn wire_plugin_capability_requests_and_projection_use_stable_names() {
+        let query: WireRequestEnvelope = serde_json::from_value(serde_json::json!({
+            "protocolVersion": 1,
+            "requestId": 1,
+            "request": {
+                "kind": "query-plugin-capabilities",
+                "protocolVersion": 1,
+                "extensionId": "sample.reader"
+            }
+        }))
+        .expect("capability query should decode");
+        assert!(matches!(
+            query.request,
+            WireRequest::QueryPluginCapabilities { .. }
+        ));
+        let request = query.request.into_core(1).expect("query should map");
+        assert_eq!(
+            request,
+            Request::Query(velvet_workbench_protocol::Query::PluginCapabilities {
+                extension_id: ExtensionId("sample.reader".into())
+            })
+        );
+
+        let grant: WireRequestEnvelope = serde_json::from_value(serde_json::json!({
+            "protocolVersion": 1,
+            "requestId": 2,
+            "request": {
+                "kind": "grant-plugin-capabilities",
+                "protocolVersion": 1,
+                "extensionId": "sample.reader",
+                "capabilities": ["network"],
+                "expectedGeneration": 3
+            }
+        }))
+        .expect("capability grant should decode");
+        let request = grant.request.into_core(1).expect("grant should map");
+        assert_eq!(
+            request,
+            Request::Command(Command::GrantPluginCapabilities {
+                extension_id: ExtensionId("sample.reader".into()),
+                capabilities: vec![Capability::Network],
+                expected_generation: Some(3),
+            })
+        );
+
+        let response = WireResponseEnvelope::from_core(ResponseEnvelope {
+            protocol_version: 1,
+            request_id: RequestId(3),
+            response: Response::PluginCapabilities(
+                velvet_workbench_protocol::PluginCapabilityGrantDto {
+                    schema_version: 1,
+                    extension_id: ExtensionId("sample.reader".into()),
+                    generation: 4,
+                    session_id: Some("sample.reader:capability:4".into()),
+                    active: true,
+                    requested: vec![Capability::Network],
+                    granted: Vec::new(),
+                    denied: vec![velvet_workbench_protocol::PluginCapabilityDenialDto {
+                        capability: Capability::Network,
+                        reason: velvet_workbench_protocol::PluginCapabilityDenyReason::HostPolicy,
+                    }],
+                },
+            ),
+        });
+        let value = serde_json::to_value(response).expect("projection should serialize");
+        assert_eq!(value["response"]["kind"], "plugin-capabilities");
+        assert_eq!(value["response"]["capabilities"]["denied"][0]["capability"], "network");
+    }
+
+    #[test]
+    fn wire_plugin_capability_errors_are_typed_and_retryable_only_when_safe() {
+        let error = WireError::from(CoreError::PluginCapabilityDenied {
+            extension_id: "sample.reader".into(),
+            capability: Capability::Network,
+            reason: velvet_workbench_protocol::PluginCapabilityDenyReason::UserApprovalRequired,
+            retryable: false,
+        });
+        assert_eq!(error.code, "plugin-capability-denied");
+        assert!(!error.retryable);
+        let conflict = WireError::from(CoreError::PluginCapabilityGenerationConflict {
+            extension_id: "sample.reader".into(),
+            expected: 1,
+            actual: 2,
+        });
+        assert_eq!(conflict.code, "plugin-capability-generation-conflict");
+        assert_eq!(conflict.expected_revision, Some(1));
+        assert_eq!(conflict.actual_revision, Some(2));
     }
 
     #[test]

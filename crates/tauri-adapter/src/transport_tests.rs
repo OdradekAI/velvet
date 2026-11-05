@@ -480,11 +480,15 @@ fn plugin_envelope_uses_the_same_session_dispatch_path() {
         })
         .expect("handshake should succeed")
         .session_id;
+    transport
+        .bind_plugin_session(&session, "missing.extension".into())
+        .expect("plugin runtime identity should bind before dispatch");
 
     let error = transport
         .dispatch_plugin_session(velvet_workbench_protocol::PluginRequestEnvelope {
             protocol_version: velvet_workbench_protocol::PLUGIN_PROTOCOL_SCHEMA_VERSION,
             session_id: session,
+            caller_extension_id: ExtensionId("missing.extension".into()),
             request_id: RequestId(90),
             message: velvet_workbench_protocol::PluginRequest::QueryProjection {
                 extension_id: ExtensionId("missing.extension".into()),
@@ -492,6 +496,30 @@ fn plugin_envelope_uses_the_same_session_dispatch_path() {
         })
         .expect_err("unknown projection should stay inside the plugin boundary");
     assert!(matches!(error, CoreError::Plugin(_)));
+
+    let unbound_transport = TauriTransport::new(ApplicationCore::default());
+    let unbound_session = unbound_transport
+        .negotiate_handshake(ProtocolHandshakeRequest {
+            client_id: "unbound-plugin-contract-test".into(),
+            protocol_major: velvet_workbench_protocol::PROTOCOL_MAJOR,
+            protocol_minor: velvet_workbench_protocol::PROTOCOL_MINOR,
+            features: Vec::new(),
+            schema_versions: std::collections::BTreeMap::new(),
+        })
+        .expect("handshake should succeed")
+        .session_id;
+    let unbound_error = unbound_transport
+        .dispatch_plugin_session(velvet_workbench_protocol::PluginRequestEnvelope {
+            protocol_version: velvet_workbench_protocol::PLUGIN_PROTOCOL_SCHEMA_VERSION,
+            session_id: unbound_session,
+            caller_extension_id: ExtensionId("missing.extension".into()),
+            request_id: RequestId(91),
+            message: velvet_workbench_protocol::PluginRequest::QueryProjection {
+                extension_id: ExtensionId("missing.extension".into()),
+            },
+        })
+        .expect_err("unbound plugin sessions must fail closed");
+    assert!(matches!(unbound_error, CoreError::SessionExpired { .. }));
 }
 
 #[test]

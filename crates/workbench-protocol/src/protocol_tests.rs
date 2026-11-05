@@ -78,6 +78,7 @@ fn plugin_envelope_round_trips_and_maps_to_core_request() {
     let envelope = PluginRequestEnvelope {
         protocol_version: PLUGIN_PROTOCOL_SCHEMA_VERSION,
         session_id: "core-session".into(),
+        caller_extension_id: ExtensionId("publisher.reader".into()),
         request_id: RequestId(7),
         message: PluginRequest::InvokeCommand {
             extension_id: ExtensionId("publisher.reader".into()),
@@ -94,6 +95,7 @@ fn plugin_envelope_round_trips_and_maps_to_core_request() {
     let json = serde_json::to_value(&envelope).expect("plugin envelope should serialize");
     assert_eq!(json["protocolVersion"], PLUGIN_PROTOCOL_SCHEMA_VERSION);
     assert_eq!(json["requestId"], 7);
+    assert_eq!(json["callerExtensionId"], "publisher.reader");
     assert_eq!(json["message"]["kind"], "invoke-command");
     assert_eq!(json["message"]["extensionId"], "publisher.reader");
 
@@ -116,6 +118,7 @@ fn plugin_query_is_repeatable_and_session_mismatch_is_rejected() {
     let envelope = PluginRequestEnvelope {
         protocol_version: PLUGIN_PROTOCOL_SCHEMA_VERSION,
         session_id: "core-session".into(),
+        caller_extension_id: ExtensionId("publisher.reader".into()),
         request_id: RequestId(8),
         message: PluginRequest::QueryProjection {
             extension_id: ExtensionId("publisher.reader".into()),
@@ -137,6 +140,25 @@ fn plugin_query_is_repeatable_and_session_mismatch_is_rejected() {
         Request::Query(Query::PluginProjection {
             extension_id: ExtensionId("publisher.reader".into()),
         })
+    );
+}
+
+#[test]
+fn plugin_envelope_cannot_address_another_extension_namespace() {
+    let envelope = PluginRequestEnvelope {
+        protocol_version: PLUGIN_PROTOCOL_SCHEMA_VERSION,
+        session_id: "core-session".into(),
+        caller_extension_id: ExtensionId("publisher.reader".into()),
+        request_id: RequestId(9),
+        message: PluginRequest::QueryCapabilities {
+            extension_id: ExtensionId("other.publisher".into()),
+        },
+    };
+    assert_eq!(
+        envelope.validate(),
+        Err(CoreError::InvalidCommand(
+            "plugin caller cannot address another extension namespace".into()
+        ))
     );
 }
 
@@ -211,6 +233,7 @@ fn core_transport_plugin_dispatch_uses_the_public_envelope_only() {
         .dispatch_plugin(PluginRequestEnvelope {
             protocol_version: PLUGIN_PROTOCOL_SCHEMA_VERSION,
             session_id: "fake-session".into(),
+            caller_extension_id: ExtensionId("publisher.reader".into()),
             request_id: RequestId(10),
             message: PluginRequest::InvokeCommand {
                 extension_id: ExtensionId("publisher.reader".into()),

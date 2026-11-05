@@ -27,12 +27,13 @@ use sha2::{Digest, Sha256};
 use velvet_job_system::{JobBudgetRequest, JobProvenance, JOB_SCHEMA_VERSION};
 use velvet_layout_model::WorkbenchZone;
 use velvet_plugin_api::{
-    validate_reserved_metadata, ActivationEvent, AppTarget, ContributionKind, ContributionScope,
-    ExtensionId, ExtensionInstallOperation, ExtensionInstallPreview, ExtensionInstallRecovery,
-    ExtensionInstallRecoveryAction, ExtensionInstallRecoveryKind, ExtensionInstallRecoveryLogEntry,
-    ExtensionInstallRecoveryLogStatus, ExtensionManifest, ExtensionProjection, ExtensionState,
-    ExtensionSummary, HostContainer, Permission, PreviewActionContext, RuntimeKind,
-    RuntimeLaunchSpec, VersionRange, MANIFEST_SCHEMA_VERSION, PREVIEW_ACTION_SCHEMA_VERSION,
+    validate_reserved_metadata, ActivationEvent, AppTarget, Capability, ContributionKind,
+    ContributionScope, ExtensionId, ExtensionInstallOperation, ExtensionInstallPreview,
+    ExtensionInstallRecovery, ExtensionInstallRecoveryAction, ExtensionInstallRecoveryKind,
+    ExtensionInstallRecoveryLogEntry, ExtensionInstallRecoveryLogStatus, ExtensionManifest,
+    ExtensionProjection, ExtensionState, ExtensionSummary, HostContainer, Permission,
+    PreviewActionContext, RuntimeKind, RuntimeLaunchSpec, VersionRange, MANIFEST_SCHEMA_VERSION,
+    PREVIEW_ACTION_SCHEMA_VERSION,
 };
 
 use crate::registry::{
@@ -40,6 +41,8 @@ use crate::registry::{
     RegistryError,
 };
 
+#[path = "capabilities.rs"]
+mod capabilities;
 #[path = "extension_storage.rs"]
 mod extension_storage;
 #[path = "platform_process.rs"]
@@ -51,6 +54,11 @@ mod runtime_lease;
 #[path = "trust_store.rs"]
 mod trust_store;
 
+pub use self::capabilities::{
+    CapabilityAuditAction, CapabilityAuditRecord, CapabilityBroker, CapabilityBrokerError,
+    CapabilityDenial, CapabilityDenyReason, CapabilityGrantSnapshot, CapabilityHandle,
+    CapabilityPolicy, CAPABILITY_AUDIT_SCHEMA_VERSION, CAPABILITY_SCHEMA_VERSION,
+};
 pub use extension_storage::{
     BackupParticipant, ExtensionStorage, ExtensionStorageError, ExtensionStorageExport,
     ExtensionStorageRecovery, ExtensionStorageRecoveryStatus, ExtensionStorageTransaction,
@@ -436,6 +444,17 @@ pub enum PluginError {
         message: String,
     },
     RegistryUnavailable,
+    CapabilityDenied {
+        extension_id: ExtensionId,
+        capability: Capability,
+        reason: CapabilityDenyReason,
+        retryable: bool,
+    },
+    CapabilityGenerationConflict {
+        extension_id: ExtensionId,
+        expected: u64,
+        actual: u64,
+    },
     InvalidState {
         extension_id: ExtensionId,
         state: ExtensionState,
@@ -444,6 +463,66 @@ pub enum PluginError {
 
 fn plugin_trust_store_error(error: PluginTrustStoreError) -> PluginError {
     PluginError::TrustStore(format!("{error:?}"))
+}
+
+fn capability_error(id: &ExtensionId, error: CapabilityBrokerError) -> PluginError {
+    match error {
+        CapabilityBrokerError::UnknownExtension(extension_id) => {
+            PluginError::NotFound(extension_id)
+        }
+        CapabilityBrokerError::UnknownCapability(name) => {
+            PluginError::InvalidContribution(format!("unsupported capability identifier {name}"))
+        }
+        CapabilityBrokerError::NotRequested(capability) => PluginError::CapabilityDenied {
+            extension_id: id.clone(),
+            capability,
+            reason: CapabilityDenyReason::NotRequested,
+            retryable: false,
+        },
+        CapabilityBrokerError::HostPolicyDenied(capability) => PluginError::CapabilityDenied {
+            extension_id: id.clone(),
+            capability,
+            reason: CapabilityDenyReason::HostPolicy,
+            retryable: false,
+        },
+        CapabilityBrokerError::UserApprovalRequired(capability) => PluginError::CapabilityDenied {
+            extension_id: id.clone(),
+            capability,
+            reason: CapabilityDenyReason::UserApprovalRequired,
+            retryable: false,
+        },
+        CapabilityBrokerError::CapabilityRevoked(capability) => PluginError::CapabilityDenied {
+            extension_id: id.clone(),
+            capability,
+            reason: CapabilityDenyReason::Revoked,
+            retryable: false,
+        },
+        CapabilityBrokerError::Inactive {
+            extension_id,
+            capability,
+        } => PluginError::CapabilityDenied {
+            extension_id,
+            capability,
+            reason: CapabilityDenyReason::Inactive,
+            retryable: true,
+        },
+        CapabilityBrokerError::InvalidHandle | CapabilityBrokerError::SessionMismatch => {
+            PluginError::InvalidContribution("capability handle is no longer valid".into())
+        }
+        CapabilityBrokerError::GenerationConflict { expected, actual } => {
+            PluginError::CapabilityGenerationConflict {
+                extension_id: id.clone(),
+                expected,
+                actual,
+            }
+        }
+        CapabilityBrokerError::RequiredDenied(capability) => PluginError::CapabilityDenied {
+            extension_id: id.clone(),
+            capability,
+            reason: CapabilityDenyReason::UserApprovalRequired,
+            retryable: false,
+        },
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1304,6 +1383,7 @@ pub trait PluginRuntime: Send {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct PermissionGrant {
     permissions: BTreeSet<Permission>,
+    capabilities: BTreeSet<Capability>,
 }
 
 impl PermissionGrant {
@@ -1315,13 +1395,33 @@ impl PermissionGrant {
         self.permissions.iter()
     }
 
-    fn from_manifest(manifest: &ExtensionManifest) -> Self {
+    pub fn capabilities(&self) -> impl Iterator<Item = &Capability> {
+        self.capabilities.iter()
+    }
+
+    fn from_permissions(permissions: impl IntoIterator<Item = Permission>) -> Self {
+        let permissions = permissions.into_iter().collect::<BTreeSet<_>>();
         Self {
-            permissions: manifest
-                .permission_sets
+            capabilities: permissions
                 .iter()
-                .flat_map(|set| set.permissions.iter().cloned())
+                .map(|permission| {
+                    Capability::from_name(permission.capability_name())
+                        .expect("legacy permission identifiers map to capabilities")
+                })
                 .collect(),
+            permissions,
+        }
+    }
+
+    fn from_capabilities(capabilities: impl IntoIterator<Item = Capability>) -> Self {
+        let capabilities = capabilities.into_iter().collect::<BTreeSet<_>>();
+        let permissions = capabilities
+            .iter()
+            .filter_map(Capability::legacy_permission)
+            .collect();
+        Self {
+            permissions,
+            capabilities,
         }
     }
 
@@ -1329,6 +1429,14 @@ impl PermissionGrant {
         self.permissions
             .iter()
             .map(permission_name)
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+
+    fn as_capability_env_value(&self) -> String {
+        self.capabilities
+            .iter()
+            .map(Capability::name)
             .collect::<Vec<_>>()
             .join(",")
     }
@@ -1454,6 +1562,10 @@ impl PluginRuntime for ProcessPluginRuntime {
             .args(&spec.args)
             .env("VELVET_EXTENSION_ID", &manifest.id.0)
             .env("VELVET_PLUGIN_PERMISSIONS", permissions.as_env_value())
+            .env(
+                "VELVET_PLUGIN_CAPABILITIES",
+                permissions.as_capability_env_value(),
+            )
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -2371,6 +2483,34 @@ pub trait PluginHost {
     ) -> Result<bool, PluginError> {
         Err(PluginError::RegistryUnavailable)
     }
+    fn capability_snapshot(
+        &self,
+        _id: &ExtensionId,
+    ) -> Result<CapabilityGrantSnapshot, PluginError> {
+        Err(PluginError::RegistryUnavailable)
+    }
+    fn grant_capabilities(
+        &mut self,
+        _id: &ExtensionId,
+        _capabilities: &[Capability],
+        _expected_generation: Option<u64>,
+    ) -> Result<CapabilityGrantSnapshot, PluginError> {
+        Err(PluginError::RegistryUnavailable)
+    }
+    fn revoke_capabilities(
+        &mut self,
+        _id: &ExtensionId,
+        _capabilities: &[Capability],
+        _expected_generation: Option<u64>,
+    ) -> Result<CapabilityGrantSnapshot, PluginError> {
+        Err(PluginError::RegistryUnavailable)
+    }
+    fn capability_audit(&self) -> Vec<CapabilityAuditRecord> {
+        Vec::new()
+    }
+    fn drain_capability_audit(&mut self) -> Vec<CapabilityAuditRecord> {
+        Vec::new()
+    }
     fn job_handles(&self, id: &ExtensionId) -> Result<Vec<PluginJobHandle>, PluginError>;
     fn check_health(&mut self, id: &ExtensionId) -> Result<ExtensionState, PluginError>;
     fn recover(&mut self, id: &ExtensionId) -> Result<(), PluginError>;
@@ -2514,6 +2654,7 @@ pub struct InMemoryPluginHost {
     trust_records: BTreeMap<ExtensionId, PluginTrustRecord>,
     trust_store: Option<Arc<dyn PluginTrustStore>>,
     active: BTreeSet<ExtensionId>,
+    capabilities: CapabilityBroker,
     registry: ContributionRegistry,
     registrations: BTreeMap<ExtensionId, Vec<ContributionRegistrationHandle>>,
     states: BTreeMap<ExtensionId, ExtensionState>,
@@ -2558,6 +2699,7 @@ impl Default for InMemoryPluginHost {
             trust_records: BTreeMap::new(),
             trust_store: None,
             active: BTreeSet::new(),
+            capabilities: CapabilityBroker::default(),
             registry: ContributionRegistry::default(),
             registrations: BTreeMap::new(),
             states: BTreeMap::new(),
@@ -2630,6 +2772,102 @@ impl InMemoryPluginHost {
             }
         }
         Ok(removed)
+    }
+
+    /// Replaces host policy for capability recomputation. User grants remain
+    /// owned by the broker; changing host policy can only reduce effective
+    /// grants and never creates a new user approval. Active extensions are
+    /// disabled when the new policy invalidates their effective session so a
+    /// running runtime cannot continue with stale capability assumptions.
+    pub fn set_capability_policy(&mut self, policy: CapabilityPolicy) {
+        let active = self
+            .active
+            .iter()
+            .cloned()
+            .map(|id| {
+                let granted = self
+                    .capabilities
+                    .snapshot(&id)
+                    .map(|snapshot| snapshot.granted.into_iter().collect::<BTreeSet<_>>())
+                    .unwrap_or_default();
+                (id, granted)
+            })
+            .collect::<Vec<_>>();
+        self.capabilities.set_policy(policy);
+        for (id, previous_granted) in active {
+            let invalid = self
+                .capabilities
+                .snapshot(&id)
+                .map(|snapshot| {
+                    !snapshot.active
+                        || previous_granted
+                            .iter()
+                            .any(|capability| !snapshot.granted.contains(capability))
+                })
+                .unwrap_or(true);
+            if invalid {
+                let _ = self.disable(&id, DisableReason::Incompatible);
+            }
+        }
+    }
+
+    pub fn capability_snapshot(
+        &self,
+        id: &ExtensionId,
+    ) -> Result<CapabilityGrantSnapshot, PluginError> {
+        self.capabilities
+            .snapshot(id)
+            .map_err(|error| capability_error(id, error))
+    }
+
+    pub fn grant_capabilities(
+        &mut self,
+        id: &ExtensionId,
+        capabilities: &[Capability],
+        expected_generation: Option<u64>,
+    ) -> Result<CapabilityGrantSnapshot, PluginError> {
+        self.capabilities
+            .grant(id, capabilities, expected_generation)
+            .map_err(|error| capability_error(id, error))
+    }
+
+    pub fn revoke_capabilities(
+        &mut self,
+        id: &ExtensionId,
+        capabilities: &[Capability],
+        expected_generation: Option<u64>,
+    ) -> Result<CapabilityGrantSnapshot, PluginError> {
+        self.capabilities
+            .revoke(id, capabilities, expected_generation)
+            .map_err(|error| capability_error(id, error))
+    }
+
+    pub fn capability_handle(
+        &self,
+        id: &ExtensionId,
+        capability: &Capability,
+    ) -> Result<CapabilityHandle, PluginError> {
+        self.capabilities
+            .handle(id, capability)
+            .map_err(|error| capability_error(id, error))
+    }
+
+    pub fn check_capability_handle(
+        &self,
+        id: &ExtensionId,
+        handle: &CapabilityHandle,
+    ) -> Result<(), PluginError> {
+        self.capabilities
+            .check_handle(id, handle)
+            .map_err(|error| capability_error(id, error))
+    }
+
+    pub fn drain_capability_audit(&mut self) -> Vec<CapabilityAuditRecord> {
+        self.capabilities.drain_audit()
+    }
+
+    pub fn capability_audit(&self) -> Vec<CapabilityAuditRecord> {
+        self.capabilities.audit_snapshot()
     }
 
     /// Returns deterministic candidates for a lazy activation trigger.
@@ -2719,13 +2957,41 @@ impl InMemoryPluginHost {
         let storage_migration_required = match self.runtime_storage_migration_required(&manifest) {
             Ok(required) => required,
             Err(error) => {
+                self.capabilities.deactivate(id);
                 self.states.insert(id.clone(), ExtensionState::Failed);
                 return Err(error);
             }
         };
 
         self.states.insert(id.clone(), ExtensionState::Starting);
-        let permissions = PermissionGrant::from_manifest(&manifest);
+        let (capability_snapshot, granted_permissions) = match self.capabilities.activate(id) {
+            Ok(grant) => grant,
+            Err(error) => {
+                self.capabilities.deactivate(id);
+                self.states.insert(id.clone(), ExtensionState::Failed);
+                let plugin_error = capability_error(id, error);
+                self.record_diagnostic(PluginDiagnosticInput {
+                    extension_id: id.clone(),
+                    kind: PluginDiagnosticKind::Activation,
+                    code: "capability-grant-denied".into(),
+                    message: format!("{plugin_error:?}"),
+                    job_id: None,
+                    attempt: None,
+                    retryable: matches!(
+                        plugin_error,
+                        PluginError::CapabilityDenied {
+                            retryable: true,
+                            ..
+                        }
+                    ),
+                });
+                return Err(plugin_error);
+            }
+        };
+        let mut permissions = PermissionGrant::from_capabilities(capability_snapshot.granted);
+        if permissions.permissions.is_empty() && !granted_permissions.is_empty() {
+            permissions = PermissionGrant::from_permissions(granted_permissions);
+        }
         let package_root = self.package_roots.get(id).cloned();
         let runtime_lease = if self.runtime_lease_enabled(&manifest) {
             let runtime_nonce = next_runtime_nonce(id);
@@ -2748,6 +3014,7 @@ impl InMemoryPluginHost {
                 .expect("runtime lease is enabled only with a store")
                 .clone();
             if let Err(error) = store.publish(lease.clone()) {
+                self.capabilities.deactivate(id);
                 self.states.insert(id.clone(), ExtensionState::Failed);
                 let message = format!("runtime lease could not be published: {error:?}");
                 self.record_diagnostic(PluginDiagnosticInput {
@@ -2802,6 +3069,7 @@ impl InMemoryPluginHost {
                     let Some(identity) = process.identity() else {
                         let _ = process.shutdown();
                         let _ = store.close(id, &lease.runtime_nonce);
+                        self.capabilities.deactivate(id);
                         self.states.insert(id.clone(), ExtensionState::Failed);
                         let message =
                             "external runtime did not provide a process identity for its lease"
@@ -2824,6 +3092,7 @@ impl InMemoryPluginHost {
                     if let Err(error) = store.publish(lease.running(identity)) {
                         let _ = process.shutdown();
                         let _ = store.close(id, &runtime_nonce);
+                        self.capabilities.deactivate(id);
                         self.states.insert(id.clone(), ExtensionState::Failed);
                         let message = format!("runtime lease could not be committed: {error:?}");
                         self.record_diagnostic(PluginDiagnosticInput {
@@ -2852,6 +3121,7 @@ impl InMemoryPluginHost {
                     }
                     let runtime_nonce = self.runtime_nonces.remove(id);
                     self.close_runtime_lease(id, runtime_nonce.as_deref());
+                    self.capabilities.deactivate(id);
                     self.states.insert(id.clone(), ExtensionState::Failed);
                     self.record_diagnostic(PluginDiagnosticInput {
                         extension_id: id.clone(),
@@ -2890,6 +3160,7 @@ impl InMemoryPluginHost {
                         });
                     }
                 }
+                self.capabilities.deactivate(id);
                 self.states.insert(id.clone(), ExtensionState::Failed);
                 let message = runtime_error_message(error);
                 self.record_diagnostic(PluginDiagnosticInput {
@@ -3808,10 +4079,16 @@ impl InMemoryPluginHost {
         let trust_record = package_root
             .map(|package_root| self.verify_package_trust(&manifest, package_root))
             .transpose()?;
+        self.capabilities
+            .register(&manifest)
+            .map_err(|error| capability_error(&manifest.id, error))?;
         if let Some(trust_record) = &trust_record {
             let mut records = self.trust_records.clone();
             records.insert(manifest.id.clone(), trust_record.clone());
-            self.persist_trust_records(&records)?;
+            if let Err(error) = self.persist_trust_records(&records) {
+                self.capabilities.unregister(&manifest.id);
+                return Err(error);
+            }
         }
         if let Some(package_root) = package_root {
             self.package_roots
@@ -4318,6 +4595,7 @@ impl InMemoryPluginHost {
 
     fn remove_registration(&mut self, id: &ExtensionId) {
         self.revoke_contributions(id);
+        self.capabilities.unregister(id);
         let runtime_nonce = self.runtime_nonces.remove(id);
         self.close_runtime_lease(id, runtime_nonce.as_deref());
         self.manifests.remove(id);
@@ -4345,6 +4623,7 @@ impl InMemoryPluginHost {
     }
 
     fn revoke_contributions(&mut self, id: &ExtensionId) {
+        self.capabilities.deactivate(id);
         self.registry.revoke_extension(id);
         self.registrations.remove(id);
     }
@@ -4528,12 +4807,7 @@ impl InMemoryPluginHost {
                 contribution_id,
             )));
         }
-        if !manifest
-            .permission_sets
-            .iter()
-            .flat_map(|set| set.permissions.iter())
-            .any(|permission| permission == &Permission::PreviewRender)
-        {
+        if !self.has_permission(id, Permission::PreviewRender)? {
             return Err(PluginError::PermissionDenied {
                 extension_id: id.clone(),
                 zone: WorkbenchZone::Contextual,
@@ -4585,15 +4859,11 @@ impl InMemoryPluginHost {
         id: &ExtensionId,
         permission: Permission,
     ) -> Result<bool, PluginError> {
-        let manifest = self
-            .manifests
-            .get(id)
-            .ok_or_else(|| PluginError::NotFound(id.clone()))?;
-        Ok(manifest
-            .permission_sets
-            .iter()
-            .flat_map(|set| set.permissions.iter())
-            .any(|candidate| candidate == &permission))
+        let capability = Capability::from_name(permission.capability_name())
+            .expect("every legacy permission has a capability identifier");
+        self.capabilities
+            .is_granted(id, &capability)
+            .map_err(|error| capability_error(id, error))
     }
 }
 
@@ -4718,6 +4988,39 @@ impl PluginHost for InMemoryPluginHost {
         InMemoryPluginHost::dispose_contribution(self, handle)
     }
 
+    fn capability_snapshot(
+        &self,
+        id: &ExtensionId,
+    ) -> Result<CapabilityGrantSnapshot, PluginError> {
+        InMemoryPluginHost::capability_snapshot(self, id)
+    }
+
+    fn grant_capabilities(
+        &mut self,
+        id: &ExtensionId,
+        capabilities: &[Capability],
+        expected_generation: Option<u64>,
+    ) -> Result<CapabilityGrantSnapshot, PluginError> {
+        InMemoryPluginHost::grant_capabilities(self, id, capabilities, expected_generation)
+    }
+
+    fn revoke_capabilities(
+        &mut self,
+        id: &ExtensionId,
+        capabilities: &[Capability],
+        expected_generation: Option<u64>,
+    ) -> Result<CapabilityGrantSnapshot, PluginError> {
+        InMemoryPluginHost::revoke_capabilities(self, id, capabilities, expected_generation)
+    }
+
+    fn capability_audit(&self) -> Vec<CapabilityAuditRecord> {
+        InMemoryPluginHost::capability_audit(self)
+    }
+
+    fn drain_capability_audit(&mut self) -> Vec<CapabilityAuditRecord> {
+        InMemoryPluginHost::drain_capability_audit(self)
+    }
+
     fn job_handles(&self, id: &ExtensionId) -> Result<Vec<PluginJobHandle>, PluginError> {
         let state = self
             .states
@@ -4738,10 +5041,6 @@ impl PluginHost for InMemoryPluginHost {
                 extension_id: id.clone(),
                 state: ExtensionState::Failed,
             })?;
-        let manifest = self
-            .manifests
-            .get(id)
-            .ok_or_else(|| PluginError::NotFound(id.clone()))?;
         let job_kinds = self
             .active_contributions(id)?
             .iter()
@@ -4751,12 +5050,7 @@ impl PluginHost for InMemoryPluginHost {
         if job_kinds.is_empty() {
             return Ok(Vec::new());
         }
-        if !manifest
-            .permission_sets
-            .iter()
-            .flat_map(|set| set.permissions.iter())
-            .any(|permission| permission == &Permission::JobsCreate)
-        {
+        if !self.has_permission(id, Permission::JobsCreate)? {
             return Err(PluginError::PermissionDenied {
                 extension_id: id.clone(),
                 zone: WorkbenchZone::Operations,
@@ -5645,6 +5939,7 @@ impl PluginHost for InMemoryPluginHost {
         self.manifests.remove(id);
         self.active.remove(id);
         self.revoke_contributions(id);
+        self.capabilities.unregister(id);
         self.states.remove(id);
         self.processes.remove(id);
         let runtime_nonce = self.runtime_nonces.remove(id);

@@ -58,6 +58,7 @@ pub struct TauriTransport {
     inner: InProcessCoreTransport,
     event_sink: Arc<dyn CoreEventSink>,
     sessions: Arc<Mutex<HashMap<String, String>>>,
+    plugin_sessions: Arc<Mutex<HashMap<String, String>>>,
     request_outcomes: Arc<Mutex<RequestOutcomeCache>>,
     evicted_request_floor: Arc<Mutex<HashMap<String, u64>>>,
 }
@@ -75,6 +76,7 @@ impl TauriTransport {
             inner: InProcessCoreTransport::new(core),
             event_sink: Arc::new(event_sink),
             sessions: Arc::new(Mutex::new(HashMap::new())),
+            plugin_sessions: Arc::new(Mutex::new(HashMap::new())),
             request_outcomes: Arc::new(Mutex::new(VecDeque::new())),
             evicted_request_floor: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -225,6 +227,22 @@ impl TauriTransport {
         envelope.validate()?;
         let session_id = envelope.session_id.clone();
         self.validate_session(Some(&session_id))?;
+        let bound_extension_id = self
+            .plugin_sessions
+            .lock()
+            .map_err(|_| {
+                CoreError::InvalidCommand("plugin session registry is unavailable".into())
+            })?
+            .get(&session_id)
+            .cloned()
+            .ok_or_else(|| CoreError::SessionExpired {
+                session_id: session_id.clone(),
+            })?;
+        if bound_extension_id != envelope.caller_extension_id.0 {
+            return Err(CoreError::InvalidCommand(
+                "plugin session identity does not match the caller extension".into(),
+            ));
+        }
         let request_id = envelope.request_id.clone();
         let response =
             self.dispatch_session(&session_id, request_id.clone(), envelope.into_request())?;
@@ -236,6 +254,35 @@ impl TauriTransport {
                 response,
             },
         )
+    }
+
+    /// Binds a trusted runtime session to one extension before accepting
+    /// plugin-only requests. Runtime adapters must derive the extension id
+    /// from their host-owned lease/package identity rather than an untrusted
+    /// plugin payload.
+    pub fn bind_plugin_session(
+        &self,
+        session_id: &str,
+        extension_id: String,
+    ) -> Result<(), CoreError> {
+        self.validate_session(Some(session_id))?;
+        self.plugin_sessions
+            .lock()
+            .map_err(|_| {
+                CoreError::InvalidCommand("plugin session registry is unavailable".into())
+            })?
+            .insert(session_id.into(), extension_id);
+        Ok(())
+    }
+
+    pub fn unbind_plugin_session(&self, session_id: &str) -> Result<(), CoreError> {
+        self.plugin_sessions
+            .lock()
+            .map_err(|_| {
+                CoreError::InvalidCommand("plugin session registry is unavailable".into())
+            })?
+            .remove(session_id);
+        Ok(())
     }
 
     fn remember_outcome(
