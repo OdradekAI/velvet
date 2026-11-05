@@ -1,0 +1,156 @@
+{
+  "manifestSchema": 1,
+  "id": "com.acme.asset-inspector",
+  "version": "0.1.0",
+  "hostApi": "^1",
+  "bridgeApi": "^1",
+  "runtimeProtocol": "^1",
+  "runtime": "built-in",
+  "extensionKind": ["ui", "capability"],
+  "launch": null,
+  "activationEvents": [
+    { "kind": "onApp", "appId": "asset-manager" },
+    { "kind": "onView", "contributionId": "com.acme.asset-inspector.view.inspector" },
+    { "kind": "onCommand", "contributionId": "com.acme.asset-inspector.command.analyze-selection" },
+    { "kind": "onPreview", "selector": "asset/*" },
+    { "kind": "onJob", "jobKind": "com.acme.asset-inspector.job.asset-quality-analysis" }
+  ],
+  "extensionDependencies": [],
+  "targetApp": { "appId": "asset-manager", "api": "^1" },
+  "support": {
+    "trustedWorkspace": true,
+    "virtualWorkspace": false,
+    "profiles": true
+  },
+  "requiredCapabilities": [
+    "asset.read",
+    "metadata.read",
+    "asset.facet.write",
+    "jobs.create",
+    "jobs.read",
+    "logs.read",
+    "preview.render"
+  ],
+  "optionalCapabilities": [],
+  "localization": null,
+  "storage": { "schemaVersion": 1, "quotaBytes": 1048576 },
+  "workbenchApp": null,
+  "contributions": [
+    {
+      "id": "com.acme.asset-inspector.container",
+      "kind": "view-container",
+      "scope": { "kind": "workbench-app", "appId": "asset-manager" },
+      "namespace": "workbench.app.asset-manager",
+      "container": "primary-sidebar",
+      "zone": "navigation",
+      "title": "Asset Inspector",
+      "icon": "scan-search",
+      "order": 30,
+      "defaultVisible": true,
+      "activityBar": { "title": "Asset Inspector", "icon": "scan-search", "order": 30 }
+    },
+    {
+      "id": "com.acme.asset-inspector.view.results",
+      "kind": "view",
+      "scope": { "kind": "workbench-app", "appId": "asset-manager" },
+      "namespace": "workbench.app.asset-manager",
+      "container": "primary-sidebar",
+      "zone": "navigation",
+      "title": "Quality Results",
+      "icon": "list-checks",
+      "order": 30,
+      "defaultVisible": true,
+      "viewContainerId": "com.acme.asset-inspector.container"
+    },
+    {
+      "id": "com.acme.asset-inspector.view.inspector",
+      "kind": "view",
+      "scope": { "kind": "workbench-app", "appId": "asset-manager" },
+      "namespace": "workbench.app.asset-manager",
+      "container": "auxiliary-sidebar",
+      "zone": "contextual",
+      "title": "Quality Inspector",
+      "icon": "scan-search",
+      "order": 30,
+      "defaultVisible": true,
+      "ui": {
+        "kind": "view",
+        "entrypoint": "data:text/html,%3C!doctype%20html%3E%3Cmeta%20charset%3Dutf-8%3E%3Cbody%3EAsset%20Inspector%20surface%3C%2Fbody%3E",
+        "bridgeVersion": "1"
+      }
+    },
+    {
+      "id": "com.acme.asset-inspector.view.jobs",
+      "kind": "operation-view",
+      "scope": { "kind": "workbench" },
+      "namespace": "workbench",
+      "container": "operations-panel",
+      "zone": "operations",
+      "title": "Asset Analysis Jobs",
+      "icon": "list-checks",
+      "order": 30
+    },
+    {
+      "id": "com.acme.asset-inspector.command.analyze-selection",
+      "kind": "command",
+      "scope": { "kind": "workbench-app", "appId": "asset-manager" },
+      "namespace": "workbench.app.asset-manager",
+      "title": "Analyze selected assets",
+      "when": "asset.selection.count",
+      "requiredCapabilities": ["asset.read", "jobs.create"]
+    },
+    {
+      "id": "com.acme.asset-inspector.menu.asset.analyze",
+      "kind": "context-menu",
+      "scope": { "kind": "workbench-app", "appId": "asset-manager" },
+      "namespace": "workbench.app.asset-manager",
+      "container": "context-menu",
+      "zone": "contextual",
+      "anchor": "asset",
+      "label": "Analyze asset quality",
+      "commandId": "com.acme.asset-inspector.command.analyze-selection",
+      "group": "asset-inspector",
+      "when": "asset.selection.count"
+    },
+    {
+      "id": "com.acme.asset-inspector.keybinding.analyze-selection",
+      "kind": "keybinding",
+      "scope": { "kind": "workbench-app", "appId": "asset-manager" },
+      "namespace": "workbench.app.asset-manager",
+      "commandId": "com.acme.asset-inspector.command.analyze-selection",
+      "keybinding": "Mod+Alt+A",
+      "keybindingPlatform": "any",
+      "when": "asset.selection.count"
+    },
+    {
+      "id": "com.acme.asset-inspector.preview.quality",
+      "kind": "preview-augmentation",
+      "scope": { "kind": "capability" },
+      "namespace": "capability.com.acme.asset-inspector",
+      "preview": {
+        "contentKinds": ["image", "text/plain"],
+        "intents": ["quick", "inspect"],
+        "surfaces": ["inspector"],
+        "priority": 10,
+        "slot": "metadata"
+      }
+    },
+    {
+      "id": "com.acme.asset-inspector.job.asset-quality-analysis",
+      "kind": "job",
+      "scope": { "kind": "capability" },
+      "namespace": "capability.com.acme.asset-inspector",
+      "requiredCapabilities": ["asset.read", "jobs.create", "asset.facet.write"]
+    }
+  ],
+  "permissionSets": [
+    {
+      "zone": "contextual",
+      "permissions": ["asset-read", "metadata-read", "preview-render"]
+    },
+    {
+      "zone": "operations",
+      "permissions": ["jobs-create", "jobs-read", "logs-read"]
+    }
+  ]
+}

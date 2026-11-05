@@ -63,7 +63,12 @@ impl Default for ExtensionSupport {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
 pub enum ActivationEvent {
     #[serde(rename = "onWorkbenchReady")]
     WorkbenchReady,
@@ -1198,5 +1203,25 @@ mod tests {
                 .expect("descriptor should decode"),
             descriptor
         );
+    }
+
+    #[test]
+    fn asset_inspector_fixture_uses_the_public_manifest_contract() {
+        let manifest: ExtensionManifest = serde_json::from_str(include_str!(
+            "../../../examples/plugins/asset-inspector/manifest.json"
+        ))
+        .expect("Asset Inspector fixture manifest should decode");
+        manifest
+            .validate_contract()
+            .expect("Asset Inspector fixture manifest should validate");
+        assert_eq!(manifest.id.0, "com.acme.asset-inspector");
+        assert!(manifest
+            .required_capabilities
+            .iter()
+            .any(|capability| capability == "asset.facet.write"));
+        assert!(manifest
+            .activation_events
+            .iter()
+            .any(|event| matches!(event, ActivationEvent::Job { .. })));
     }
 }
