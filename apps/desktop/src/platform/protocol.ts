@@ -4,6 +4,8 @@
  */
 export const PROTOCOL_VERSION = 1 as const;
 export type ProtocolVersion = typeof PROTOCOL_VERSION;
+export const PLUGIN_PROTOCOL_SCHEMA_VERSION = 1 as const;
+export type PluginProtocolSchemaVersion = typeof PLUGIN_PROTOCOL_SCHEMA_VERSION;
 export const PROTOCOL_MAJOR = 1 as const;
 export const PROTOCOL_MINOR = 0 as const;
 export const TRANSPORT_FEATURE_SESSION_V1 = 'session-v1' as const;
@@ -1154,6 +1156,70 @@ export interface CorePluginManifest {
   readonly workbenchApp: CorePluginWorkbenchApp | null;
   readonly contributions: readonly CorePluginManifestContribution[];
   readonly permissionSets: readonly CorePluginPermissionSet[];
+}
+
+/** Narrow plugin messages mapped onto the general CoreTransport seam. */
+export type CorePluginRequest =
+  | {
+      readonly kind: 'invoke-command';
+      readonly extensionId: string;
+      readonly commandId: string;
+      readonly args: unknown;
+      readonly context: CorePluginCommandContext;
+    }
+  | {
+      readonly kind: 'query-projection';
+      readonly extensionId: string;
+    };
+
+export interface CorePluginRequestEnvelope {
+  readonly protocolVersion: PluginProtocolSchemaVersion;
+  readonly sessionId: string;
+  readonly requestId: number;
+  readonly message: CorePluginRequest;
+}
+
+export type CorePluginResponse =
+  | { readonly kind: 'accepted' }
+  | { readonly kind: 'projection'; readonly projection: CorePluginProjection };
+
+export interface CorePluginResponseEnvelope {
+  readonly protocolVersion: PluginProtocolSchemaVersion;
+  readonly sessionId: string;
+  readonly requestId: number;
+  readonly response: CorePluginResponse;
+}
+
+export type CorePluginEvent =
+  | { readonly kind: 'disabled'; readonly extensionId: string; readonly reason: string }
+  | { readonly kind: 'diagnostic'; readonly diagnostic: CorePluginDiagnosticEvent };
+
+export interface CorePluginEventEnvelope {
+  readonly protocolVersion: PluginProtocolSchemaVersion;
+  readonly sessionId: string;
+  readonly sequence: number;
+  readonly event: CorePluginEvent;
+}
+
+/** Converts a plugin request into the existing typed CoreTransport request. */
+export function toCoreRequest(envelope: CorePluginRequestEnvelope): CoreRequest {
+  switch (envelope.message.kind) {
+    case 'invoke-command':
+      return {
+        protocolVersion: PROTOCOL_VERSION,
+        kind: 'invoke-plugin-command',
+        extensionId: envelope.message.extensionId,
+        commandId: envelope.message.commandId,
+        args: envelope.message.args,
+        context: envelope.message.context,
+      };
+    case 'query-projection':
+      return {
+        protocolVersion: PROTOCOL_VERSION,
+        kind: 'query-plugin-projection',
+        extensionId: envelope.message.extensionId,
+      };
+  }
 }
 
 export interface CorePluginSummary {

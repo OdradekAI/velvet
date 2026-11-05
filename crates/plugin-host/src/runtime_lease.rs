@@ -476,7 +476,7 @@ fn inspect_process(pid: u32) -> Option<RuntimeProcessIdentity> {
 #[cfg(all(unix, not(target_os = "linux")))]
 fn inspect_process(pid: u32) -> Option<RuntimeProcessIdentity> {
     #[cfg(target_os = "macos")]
-    return crate::platform_process::inspect_process(pid);
+    return super::platform_process::inspect_process(pid);
 
     #[cfg(not(target_os = "macos"))]
     {
@@ -494,7 +494,7 @@ fn inspect_process(pid: u32) -> Option<RuntimeProcessIdentity> {
 
 #[cfg(windows)]
 fn inspect_process(pid: u32) -> Option<RuntimeProcessIdentity> {
-    crate::platform_process::inspect_process(pid)
+    super::platform_process::inspect_process(pid)
 }
 
 #[cfg(all(not(unix), not(windows)))]

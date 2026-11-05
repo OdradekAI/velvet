@@ -61,7 +61,8 @@ use velvet_workbench_protocol::{
     ActivationRequest, ActivationTarget, ActivationTargetKind, Command, CoreError, CoreTransport,
     CrashCaptureEvidence, CrashCaptureKind, Event,
     PlatformCapabilityStatus,
-    PlatformPreflightEvidence, PluginDisableReason, RecoveryFailureClass, Request,
+    PlatformPreflightEvidence, PluginDisableReason, PluginEventEnvelope, PluginRequest,
+    PluginRequestEnvelope, PluginResponse, PluginResponseEnvelope, RecoveryFailureClass, Request,
     ProtocolHandshakeRequest, ProtocolHandshakeResponse, RequestId, Response, ResponseEnvelope,
     StartupPhase,
     PROTOCOL_VERSION,
@@ -689,6 +690,108 @@ pub struct WireRequestEnvelope {
     #[serde(default)]
     pub session_id: Option<String>,
     pub request: WireRequest,
+}
+
+/// Explicit Tauri mapping for the plugin-only CoreTransport envelope.
+///
+/// The normal `velvet_core_request` command still accepts the general request
+/// envelope. This mirror is kept as a narrow fixture seam so plugin callers do
+/// not gain a direct dependency on ApplicationCore or runtime internals.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WirePluginRequestEnvelope {
+    pub protocol_version: u16,
+    pub session_id: String,
+    pub request_id: u64,
+    pub message: WirePluginRequest,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum WirePluginRequest {
+    InvokeCommand {
+        extension_id: String,
+        command_id: String,
+        args: serde_json::Value,
+        context: serde_json::Value,
+    },
+    QueryProjection { extension_id: String },
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WirePluginResponseEnvelope {
+    pub protocol_version: u16,
+    pub session_id: String,
+    pub request_id: u64,
+    pub response: PluginResponse,
+}
+
+impl From<PluginResponseEnvelope> for WirePluginResponseEnvelope {
+    fn from(value: PluginResponseEnvelope) -> Self {
+        Self {
+            protocol_version: value.protocol_version,
+            session_id: value.session_id,
+            request_id: value.request_id.0,
+            response: value.response,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WirePluginEventEnvelope {
+    pub protocol_version: u16,
+    pub session_id: String,
+    pub sequence: u64,
+    pub event: velvet_workbench_protocol::PluginEvent,
+}
+
+impl From<PluginEventEnvelope> for WirePluginEventEnvelope {
+    fn from(value: PluginEventEnvelope) -> Self {
+        Self {
+            protocol_version: value.protocol_version,
+            session_id: value.session_id,
+            sequence: value.sequence,
+            event: value.event,
+        }
+    }
+}
+
+impl TryFrom<WirePluginRequestEnvelope> for PluginRequestEnvelope {
+    type Error = WireError;
+
+    fn try_from(value: WirePluginRequestEnvelope) -> Result<Self, Self::Error> {
+        let message = match value.message {
+            WirePluginRequest::InvokeCommand {
+                extension_id,
+                command_id,
+                args,
+                context,
+            } => PluginRequest::InvokeCommand {
+                extension_id: velvet_plugin_api::ExtensionId(extension_id),
+                command_id,
+                args,
+                context,
+            },
+            WirePluginRequest::QueryProjection { extension_id } => {
+                PluginRequest::QueryProjection {
+                    extension_id: velvet_plugin_api::ExtensionId(extension_id),
+                }
+            }
+        };
+        Ok(PluginRequestEnvelope {
+            protocol_version: value.protocol_version,
+            session_id: value.session_id,
+            request_id: RequestId(value.request_id),
+            message,
+        })
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -3575,6 +3678,74 @@ mod tests {
         let json = serde_json::to_value(handshake).expect("handshake should use wire names");
         assert_eq!(json["protocolMajor"], 1);
         assert_eq!(json["schemaVersions"]["profile"], 1);
+    }
+
+    #[test]
+    fn wire_plugin_envelope_maps_only_the_public_plugin_messages() {
+        let wire: WirePluginRequestEnvelope = serde_json::from_value(serde_json::json!({
+            "protocolVersion": 1,
+            "sessionId": "core-test-1",
+            "requestId": 9,
+            "message": {
+                "kind": "invoke-command",
+                "extensionId": "publisher.reader",
+                "commandId": "reader.inspect",
+                "args": { "assetId": "asset-1" },
+                "context": { "zone": "contextual" }
+            }
+        }))
+        .expect("plugin envelope should deserialize through the Tauri mirror");
+        let envelope: PluginRequestEnvelope = wire
+            .try_into()
+            .expect("Tauri plugin mapping should preserve the public contract");
+        assert_eq!(envelope.protocol_version, 1);
+        assert_eq!(envelope.session_id, "core-test-1");
+        assert!(matches!(
+            envelope.message,
+            PluginRequest::InvokeCommand {
+                extension_id,
+                command_id,
+                ..
+            } if extension_id.0 == "publisher.reader" && command_id == "reader.inspect"
+        ));
+
+        let error = serde_json::from_value::<WirePluginRequestEnvelope>(serde_json::json!({
+            "protocolVersion": 1,
+            "sessionId": "core-test-1",
+            "requestId": 10,
+            "message": {
+                "kind": "query-projection",
+                "extensionId": "publisher.reader",
+                "sourcePath": "/tmp/escape"
+            }
+        }))
+        .expect_err("plugin messages must reject unknown capability-shaped fields");
+        assert!(error.to_string().contains("unknown field"));
+
+        let response = WirePluginResponseEnvelope::from(
+            PluginResponseEnvelope {
+                protocol_version: 1,
+                session_id: "core-test-1".into(),
+                request_id: RequestId(9),
+                response: PluginResponse::Accepted,
+            },
+        );
+        let response_json = serde_json::to_value(response).expect("response should serialize");
+        assert_eq!(response_json["response"]["kind"], "accepted");
+
+        let event = WirePluginEventEnvelope::from(
+            PluginEventEnvelope::from_core(
+                "core-test-1".into(),
+                4,
+                Event::PluginDisabled {
+                    extension_id: "publisher.reader".into(),
+                    reason: "crash".into(),
+                },
+            )
+            .expect("plugin event should map"),
+        );
+        let event_json = serde_json::to_value(event).expect("event should serialize");
+        assert_eq!(event_json["event"]["kind"], "disabled");
     }
 
     #[test]

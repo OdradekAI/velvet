@@ -13,6 +13,21 @@ pub struct ExtensionId(pub String);
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct VersionRange(pub String);
 
+impl VersionRange {
+    /// Alpha compatibility semantics shared by manifest validation and host
+    /// negotiation: exact versions, `*`, or a caret major range.
+    pub fn is_compatible_with(&self, provided: &Self) -> bool {
+        if self.0 == "*" || self.0 == provided.0 {
+            return true;
+        }
+
+        self.0
+            .strip_prefix('^')
+            .and_then(|range| range.split('.').next())
+            == provided.0.split('.').next()
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum RuntimeKind {
@@ -398,6 +413,108 @@ pub struct ExtensionManifest {
     pub extensions: BTreeMap<String, Value>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ManifestValidationError {
+    InvalidExtensionId(String),
+    InvalidContributionId(String),
+    DuplicateContributionId(String),
+    InvalidDependencyId(String),
+    DuplicateDependencyId(String),
+    ActivationReferencesUnknownContribution(String),
+}
+
+impl std::fmt::Display for ManifestValidationError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidExtensionId(id) => write!(formatter, "invalid extension id {id}"),
+            Self::InvalidContributionId(id) => write!(formatter, "invalid contribution id {id}"),
+            Self::DuplicateContributionId(id) => {
+                write!(formatter, "duplicate contribution id {id}")
+            }
+            Self::InvalidDependencyId(id) => write!(formatter, "invalid dependency id {id}"),
+            Self::DuplicateDependencyId(id) => write!(formatter, "duplicate dependency id {id}"),
+            Self::ActivationReferencesUnknownContribution(id) => write!(
+                formatter,
+                "activation event references unknown contribution {id}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ManifestValidationError {}
+
+impl ExtensionManifest {
+    /// Validates identifiers and manifest-local references before host policy.
+    ///
+    /// This deliberately does not validate runtime availability, permissions,
+    /// zones or target applications; those belong to `PluginHost` policy.
+    pub fn validate_contract(&self) -> Result<(), ManifestValidationError> {
+        if !is_valid_manifest_identifier(&self.id.0) {
+            return Err(ManifestValidationError::InvalidExtensionId(
+                self.id.0.clone(),
+            ));
+        }
+
+        let mut contribution_ids = std::collections::BTreeSet::new();
+        for contribution in &self.contributions {
+            if !is_valid_manifest_identifier(&contribution.id) {
+                return Err(ManifestValidationError::InvalidContributionId(
+                    contribution.id.clone(),
+                ));
+            }
+            if !contribution_ids.insert(contribution.id.clone()) {
+                return Err(ManifestValidationError::DuplicateContributionId(
+                    contribution.id.clone(),
+                ));
+            }
+        }
+
+        let mut dependency_ids = std::collections::BTreeSet::new();
+        for dependency in &self.extension_dependencies {
+            if !is_valid_manifest_identifier(&dependency.0) {
+                return Err(ManifestValidationError::InvalidDependencyId(
+                    dependency.0.clone(),
+                ));
+            }
+            if !dependency_ids.insert(dependency.0.clone()) {
+                return Err(ManifestValidationError::DuplicateDependencyId(
+                    dependency.0.clone(),
+                ));
+            }
+        }
+
+        for activation in &self.activation_events {
+            let contribution_id = match activation {
+                ActivationEvent::View { contribution_id }
+                | ActivationEvent::Command { contribution_id } => Some(contribution_id),
+                ActivationEvent::WorkbenchReady
+                | ActivationEvent::App { .. }
+                | ActivationEvent::Preview { .. }
+                | ActivationEvent::Job { .. } => None,
+            };
+            if let Some(contribution_id) = contribution_id {
+                if !contribution_ids.contains(contribution_id) {
+                    return Err(
+                        ManifestValidationError::ActivationReferencesUnknownContribution(
+                            contribution_id.clone(),
+                        ),
+                    );
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+fn is_valid_manifest_identifier(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value.bytes().enumerate().all(|(index, byte)| {
+            byte.is_ascii_alphanumeric() || (index > 0 && b"._-".contains(&byte))
+        })
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RawExtensionManifest {
@@ -636,6 +753,93 @@ mod tests {
         let manifest: ExtensionManifest =
             serde_json::from_value(value).expect("reserved metadata should be accepted");
         assert_eq!(manifest.extensions["x-vendor"]["feature"], true);
+    }
+
+    #[test]
+    fn manifest_contract_requires_stable_unique_identifiers() {
+        let mut manifest = ExtensionManifest {
+            id: ExtensionId("publisher.reader".into()),
+            contributions: vec![ContributionDescriptor {
+                id: "reader.command".into(),
+                kind: ContributionKind::Command,
+                scope: ContributionScope::Capability,
+                namespace: None,
+                container: None,
+                zone: None,
+                title: None,
+                title_key: None,
+                icon: None,
+                order: None,
+                default_visible: None,
+                view_container_id: None,
+                activity_bar: None,
+                label: None,
+                label_key: None,
+                command_id: None,
+                group: None,
+                when: None,
+                anchor: None,
+                ui: None,
+                preview: None,
+            }],
+            ..ExtensionManifest::default()
+        };
+        manifest
+            .validate_contract()
+            .expect("valid manifest identifiers should pass");
+
+        manifest
+            .contributions
+            .push(manifest.contributions[0].clone());
+        assert_eq!(
+            manifest.validate_contract(),
+            Err(ManifestValidationError::DuplicateContributionId(
+                "reader.command".into()
+            ))
+        );
+    }
+
+    #[test]
+    fn manifest_contract_rejects_unknown_activation_targets() {
+        let manifest = ExtensionManifest {
+            activation_events: vec![ActivationEvent::Command {
+                contribution_id: "reader.missing".into(),
+            }],
+            ..ExtensionManifest::default()
+        };
+
+        assert_eq!(
+            manifest.validate_contract(),
+            Err(
+                ManifestValidationError::ActivationReferencesUnknownContribution(
+                    "reader.missing".into()
+                )
+            )
+        );
+    }
+
+    #[test]
+    fn manifest_contract_rejects_invalid_dependency_identifiers() {
+        let manifest = ExtensionManifest {
+            extension_dependencies: vec![ExtensionId("../unsafe".into())],
+            ..ExtensionManifest::default()
+        };
+
+        assert_eq!(
+            manifest.validate_contract(),
+            Err(ManifestValidationError::InvalidDependencyId(
+                "../unsafe".into()
+            ))
+        );
+    }
+
+    #[test]
+    fn version_ranges_support_exact_wildcard_and_caret_major_matching() {
+        let provided = VersionRange("1".into());
+        assert!(VersionRange("1".into()).is_compatible_with(&provided));
+        assert!(VersionRange("*".into()).is_compatible_with(&provided));
+        assert!(VersionRange("^1".into()).is_compatible_with(&provided));
+        assert!(!VersionRange("^2".into()).is_compatible_with(&provided));
     }
 
     #[test]

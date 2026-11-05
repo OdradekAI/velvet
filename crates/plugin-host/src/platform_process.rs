@@ -1,5 +1,5 @@
 #[cfg(any(target_os = "macos", windows))]
-use crate::runtime_lease::RuntimeProcessIdentity;
+use super::runtime_lease::RuntimeProcessIdentity;
 
 /// Platform-owned lifetime handle for an isolated runtime process tree.
 /// Unix uses the existing process-group path; Windows uses a Job Object whose

@@ -3,6 +3,33 @@ import {
   CoreTransportError,
   TauriCoreTransport,
 } from '/tmp/velvet-plugin-tests/platform/tauri-transport.js';
+import {
+  PLUGIN_PROTOCOL_SCHEMA_VERSION,
+  toCoreRequest,
+} from '/tmp/velvet-plugin-tests/platform/protocol.js';
+
+assert.deepEqual(
+  toCoreRequest({
+    protocolVersion: PLUGIN_PROTOCOL_SCHEMA_VERSION,
+    sessionId: 'core-test-1',
+    requestId: 9,
+    message: {
+      kind: 'invoke-command',
+      extensionId: 'publisher.reader',
+      commandId: 'reader.inspect',
+      args: { assetId: 'asset-1' },
+      context: { activeAppId: 'asset-manager', keys: {} },
+    },
+  }),
+  {
+    protocolVersion: 1,
+    kind: 'invoke-plugin-command',
+    extensionId: 'publisher.reader',
+    commandId: 'reader.inspect',
+    args: { assetId: 'asset-1' },
+    context: { activeAppId: 'asset-manager', keys: {} },
+  },
+);
 
 const calls = [];
 let eventListener;
