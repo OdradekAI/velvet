@@ -362,3 +362,33 @@ authority for the typed context and command authorization. This proves the
 envelope boundary without pretending that extension-specific command or
 action arguments already have a host-understood schema; those remain separate
 owner decisions with their own validation fixtures.
+
+## Command surface implementation clarification (2026-11-06)
+
+The host registry now validates command, menu/context-menu and keybinding
+contributions before activation. Menu entries reference a declared command id,
+context menus use an explicit or legacy-inferred `context-menu` location, and
+keybindings carry a normalized sequence plus platform scope. Conflicting
+keybindings are rejected by the host registry. `ApplicationCore` projects a
+versioned command-surface snapshot containing commands, menus and keybindings;
+the desktop consumes that projection through the existing CoreTransport seam.
+
+Plugin invocation metadata carries a context revision, bounded deadline and
+optional idempotency key. The desktop command registry rejects stale context
+revisions before execution; CoreTransport preserves request/session outcome
+handling and Rust validates the metadata bounds. This remains an additive
+implementation clarification and does not promote the ADR or expose arbitrary
+ApplicationCore requests as a plugin API.
+
+Legacy manifests that omit contribution-level capability declarations retain
+the alpha compatibility path. New command/menu/keybinding contributions may
+declare `requiredCapabilities`; those declarations are checked against the
+active host grant before registration. A future manifest migration can make
+the corresponding registration capabilities mandatory once built-in manifests
+have adopted them.
+
+Command cancellation is intentionally still a follow-up runtime-protocol
+extension. Until a bounded cancel message and runtime token are accepted, a
+caller can stop awaiting a request and the host relies on the invocation
+deadline/runtime failure boundary; it must not pretend that dropping a UI
+promise cancels side effects.

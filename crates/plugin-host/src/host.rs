@@ -1127,6 +1127,8 @@ pub struct PluginInvocation {
     pub command_id: String,
     pub args: Value,
     pub context: Value,
+    #[serde(default)]
+    pub deadline_ms: Option<u64>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -1245,6 +1247,7 @@ impl PluginJobHandle {
             command_id: self.job_kind.clone(),
             args,
             context,
+            deadline_ms: None,
         };
         validate_runtime_payload(
             &plugin_invocation.extension_id,
@@ -1817,7 +1820,12 @@ impl RuntimeProcess for ChildRuntimeProcess {
             .map_err(|_| RuntimeError::InvocationFailed("runtime I/O worker stopped".into()))?;
 
         let response = response_receiver
-            .recv_timeout(RUNTIME_INVOCATION_TIMEOUT)
+            .recv_timeout(
+                invocation
+                    .deadline_ms
+                    .map(Duration::from_millis)
+                    .unwrap_or(RUNTIME_INVOCATION_TIMEOUT),
+            )
             .map_err(|error| match error {
                 mpsc::RecvTimeoutError::Timeout => RuntimeError::InvocationTimeout,
                 mpsc::RecvTimeoutError::Disconnected => {
@@ -3757,6 +3765,7 @@ impl InMemoryPluginHost {
                 "capability": "extension-storage",
                 "operation": method,
             }),
+            deadline_ms: None,
         };
         validate_runtime_payload(
             &invocation.extension_id,
@@ -4610,13 +4619,36 @@ impl InMemoryPluginHost {
         id: &ExtensionId,
         contributions: &[velvet_plugin_api::ContributionDescriptor],
     ) -> Result<(), PluginError> {
+        for contribution in contributions {
+            for capability_name in &contribution.required_capabilities {
+                let capability = Capability::from_name(capability_name).ok_or_else(|| {
+                    PluginError::InvalidContribution(format!(
+                        "contribution {} declares unknown capability {}",
+                        contribution.id, capability_name
+                    ))
+                })?;
+                if !self
+                    .capabilities
+                    .is_granted(id, &capability)
+                    .map_err(|error| capability_error(id, error))?
+                {
+                    return Err(PluginError::CapabilityDenied {
+                        extension_id: id.clone(),
+                        capability,
+                        reason: CapabilityDenyReason::UserApprovalRequired,
+                        retryable: false,
+                    });
+                }
+            }
+        }
         let handles = self
             .registry
             .register_extension(id, contributions)
             .map_err(|error| match error {
-                RegistryError::Duplicate(key) | RegistryError::InvalidNamespace(key) => {
-                    PluginError::InvalidContribution(key)
-                }
+                RegistryError::Duplicate(key)
+                | RegistryError::InvalidNamespace(key)
+                | RegistryError::InvalidCommandSurface(key)
+                | RegistryError::KeybindingConflict(key) => PluginError::InvalidContribution(key),
             })?;
         self.registrations.insert(id.clone(), handles);
         Ok(())
@@ -4673,12 +4705,14 @@ impl InMemoryPluginHost {
             )));
         }
 
+        let deadline_ms = command_deadline_ms(&context);
         let invocation = PluginInvocation {
             extension_id: id.clone(),
             method: method.into(),
             command_id: contribution_id,
             args,
             context,
+            deadline_ms,
         };
         validate_runtime_payload(
             &invocation.extension_id,
@@ -6121,6 +6155,13 @@ fn runtime_error_message(error: RuntimeError) -> String {
         RuntimeError::InvocationTimeout => "plugin command invocation timed out".into(),
         RuntimeError::InvocationRejected(message) => message,
     }
+}
+
+fn command_deadline_ms(context: &Value) -> Option<u64> {
+    context
+        .get("_velvet")
+        .and_then(|metadata| metadata.get("deadlineMs"))
+        .and_then(Value::as_u64)
 }
 
 fn next_runtime_nonce(id: &ExtensionId) -> String {

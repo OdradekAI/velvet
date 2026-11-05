@@ -17,9 +17,9 @@ use velvet_plugin_api::{
     AppTarget, Capability, ContributionDescriptor, ContributionKind, ContributionScope,
     ExtensionId, ExtensionInstallPreview, ExtensionInstallRecovery, ExtensionInstallRecoveryAction,
     ExtensionInstallRecoveryLogEntry, ExtensionKind, ExtensionManifest,
-    ExtensionStorageDeclaration, ExtensionSummary, ExtensionSupport, LocalizationManifest,
-    PreviewActionContext, RuntimeKind, RuntimeLaunchSpec, VersionRange, WorkbenchAppDescriptor,
-    ZonePermissionSet,
+    ExtensionStorageDeclaration, ExtensionSummary, ExtensionSupport, KeybindingPlatform,
+    LocalizationManifest, MenuLocation, PreviewActionContext, RuntimeKind, RuntimeLaunchSpec,
+    VersionRange, WorkbenchAppDescriptor, ZonePermissionSet,
 };
 use velvet_preview_core::{PreviewIntent, PreviewSurface, ResolvedPreview};
 
@@ -39,6 +39,7 @@ pub const RECOVERY_DIAGNOSTIC_SCHEMA_VERSION: u16 = 1;
 pub const PLUGIN_DIAGNOSTIC_SCHEMA_VERSION: u16 = 1;
 pub const PLUGIN_REGISTRY_SCHEMA_VERSION: u16 = 1;
 pub const PLUGIN_CAPABILITY_SCHEMA_VERSION: u16 = 1;
+pub const PLUGIN_COMMAND_SURFACE_SCHEMA_VERSION: u16 = 1;
 pub const CRASH_CAPTURE_SCHEMA_VERSION: u16 = 1;
 pub const CORE_SNAPSHOT_SCHEMA_VERSION: u16 = 1;
 pub const ACTIVATION_SCHEMA_VERSION: u16 = 1;
@@ -186,6 +187,10 @@ pub fn supported_schema_versions() -> BTreeMap<String, u16> {
         ("plugin-diagnostic".into(), PLUGIN_DIAGNOSTIC_SCHEMA_VERSION),
         ("plugin-registry".into(), PLUGIN_REGISTRY_SCHEMA_VERSION),
         ("plugin-capability".into(), PLUGIN_CAPABILITY_SCHEMA_VERSION),
+        (
+            "plugin-command-surface".into(),
+            PLUGIN_COMMAND_SURFACE_SCHEMA_VERSION,
+        ),
         ("crash-capture".into(), CRASH_CAPTURE_SCHEMA_VERSION),
         ("release-manifest".into(), RELEASE_MANIFEST_SCHEMA_VERSION),
         (
@@ -512,6 +517,76 @@ impl Default for PluginRegistrySnapshotDto {
     }
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PluginCommandProjectionDto {
+    pub extension_id: ExtensionId,
+    pub id: String,
+    pub namespace: String,
+    pub scope: ContributionScope,
+    pub title: Option<String>,
+    pub title_key: Option<String>,
+    pub when: Option<String>,
+    pub enablement: Option<String>,
+    pub order: Option<u32>,
+    pub required_capabilities: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PluginMenuProjectionDto {
+    pub extension_id: ExtensionId,
+    pub id: String,
+    pub namespace: String,
+    pub scope: ContributionScope,
+    pub location: MenuLocation,
+    pub command_id: String,
+    pub label: Option<String>,
+    pub label_key: Option<String>,
+    pub group: Option<String>,
+    pub order: Option<u32>,
+    pub when: Option<String>,
+    pub anchor: Option<velvet_plugin_api::ContextAnchor>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PluginKeybindingProjectionDto {
+    pub extension_id: ExtensionId,
+    pub id: String,
+    pub namespace: String,
+    pub scope: ContributionScope,
+    pub command_id: String,
+    pub keybinding: String,
+    pub platform: KeybindingPlatform,
+    pub when: Option<String>,
+    pub order: Option<u32>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PluginCommandSurfaceSnapshotDto {
+    pub schema_version: u16,
+    pub generation: u64,
+    pub context_revision: u64,
+    pub commands: Vec<PluginCommandProjectionDto>,
+    pub menus: Vec<PluginMenuProjectionDto>,
+    pub keybindings: Vec<PluginKeybindingProjectionDto>,
+}
+
+impl Default for PluginCommandSurfaceSnapshotDto {
+    fn default() -> Self {
+        Self {
+            schema_version: PLUGIN_COMMAND_SURFACE_SCHEMA_VERSION,
+            generation: 0,
+            context_revision: 0,
+            commands: Vec::new(),
+            menus: Vec::new(),
+            keybindings: Vec::new(),
+        }
+    }
+}
+
 /// Versioned plugin-specific messages carried by the CoreTransport seam.
 ///
 /// The envelope is intentionally narrower than the general CoreTransport
@@ -669,6 +744,9 @@ impl PluginRequestEnvelope {
                 command_id,
                 args,
                 context,
+                context_revision: 0,
+                deadline_ms: None,
+                idempotency_key: None,
             }),
             PluginRequest::QueryProjection { extension_id } => {
                 Request::Query(Query::PluginProjection { extension_id })
@@ -2021,6 +2099,9 @@ pub enum Command {
         command_id: String,
         args: Value,
         context: Value,
+        context_revision: u64,
+        deadline_ms: Option<u64>,
+        idempotency_key: Option<String>,
     },
     InvokePreviewAction {
         extension_id: ExtensionId,
@@ -2099,6 +2180,9 @@ pub enum Query {
         extension_id: ExtensionId,
     },
     PluginCapabilityAudit,
+    PluginCommandSurface {
+        extension_id: Option<ExtensionId>,
+    },
     ResolvePreview {
         asset_id: AssetId,
         content_kind: String,
@@ -2123,6 +2207,13 @@ pub enum Query {
     Snapshot,
     RequestOutcome {
         request_id: RequestId,
+    },
+    /// Adapter-owned outcome lookup for string idempotency keys. Core-only
+    /// transports may return `Unknown` until they provide the same cache.
+    PluginCommandOutcome {
+        extension_id: ExtensionId,
+        command_id: String,
+        idempotency_key: String,
     },
     ReleaseStatus,
 }
@@ -2154,6 +2245,7 @@ pub enum Response {
     PluginRegistry(PluginRegistrySnapshotDto),
     PluginCapabilities(PluginCapabilityGrantDto),
     PluginCapabilityAudit(Vec<PluginCapabilityAuditDto>),
+    PluginCommandSurface(PluginCommandSurfaceSnapshotDto),
     Job(JobSnapshot),
     Jobs(Vec<JobSnapshot>),
     Preview(ResolvedPreview),
@@ -2201,6 +2293,10 @@ pub fn request_idempotency_scope(request: &Request) -> Option<&'static str> {
             ..
         }) => Some("set-plugin-developer-mode-at-revision"),
         Request::Command(Command::CommitReleaseHealth { .. }) => Some("commit-release-health"),
+        Request::Command(Command::InvokePluginCommand {
+            idempotency_key: Some(_),
+            ..
+        }) => Some("plugin-command"),
         Request::Command(Command::RollbackRelease { .. }) => Some("rollback-release"),
         Request::Command(_) | Request::Query(_) => None,
     }
@@ -2250,6 +2346,12 @@ pub enum CoreError {
     InvalidCommand(String),
     Layout(String),
     Plugin(String),
+    PluginCommand {
+        extension_id: String,
+        command_id: String,
+        code: String,
+        retryable: bool,
+    },
     PluginCapabilityDenied {
         extension_id: String,
         capability: Capability,

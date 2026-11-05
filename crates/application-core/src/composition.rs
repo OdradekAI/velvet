@@ -203,8 +203,9 @@ use velvet_workbench_protocol::{
     ImportQuarantineSummary, ImportReceipt, OperationError, OperationErrorCode, OperationPlan,
     OperationReceipt, PlatformPreflightEvidence, PluginCapabilityAuditAction,
     PluginCapabilityAuditDto, PluginCapabilityDenyReason, PluginCapabilityGrantDto,
-    PluginContributionRegistrationDto, PluginDiagnosticEvent,
-    PluginDiagnosticKind as WirePluginDiagnosticKind, PluginDisableReason, PluginInstallPreviewDto,
+    PluginCommandProjectionDto, PluginCommandSurfaceSnapshotDto, PluginContributionRegistrationDto,
+    PluginDiagnosticEvent, PluginDiagnosticKind as WirePluginDiagnosticKind, PluginDisableReason,
+    PluginInstallPreviewDto, PluginKeybindingProjectionDto, PluginMenuProjectionDto,
     PluginProjectionDto, PluginRegistrySnapshotDto, PluginResourceDto, PluginRuntimeRecoveryDto,
     PluginRuntimeRecoveryState, PluginStorageRecoveryDto, PluginStorageRecoveryStatus,
     PortableBundle, ProfileState, Query, Request, RequestEnvelope, RequestId, Response,
@@ -1399,6 +1400,92 @@ impl ApplicationCore {
         }
     }
 
+    pub fn query_plugin_command_surface(
+        &self,
+        extension_id: Option<&ExtensionId>,
+    ) -> PluginCommandSurfaceSnapshotDto {
+        let snapshot = self.plugins.registry_snapshot();
+        let mut surface = PluginCommandSurfaceSnapshotDto {
+            schema_version: velvet_workbench_protocol::PLUGIN_COMMAND_SURFACE_SCHEMA_VERSION,
+            generation: snapshot.generation,
+            context_revision: 0,
+            ..PluginCommandSurfaceSnapshotDto::default()
+        };
+        for registration in snapshot
+            .contributions
+            .into_iter()
+            .filter(|registration| extension_id.is_none_or(|id| id == &registration.extension_id))
+        {
+            let descriptor = registration.descriptor;
+            match registration.kind {
+                ContributionKind::Command => surface.commands.push(PluginCommandProjectionDto {
+                    extension_id: registration.extension_id,
+                    id: registration.contribution_id,
+                    namespace: registration.namespace,
+                    scope: registration.scope,
+                    title: descriptor.title,
+                    title_key: descriptor.title_key,
+                    when: descriptor.when,
+                    enablement: descriptor.enablement,
+                    order: descriptor.order,
+                    required_capabilities: descriptor.required_capabilities,
+                }),
+                ContributionKind::Menu | ContributionKind::ContextMenu => {
+                    if let (Some(command_id), Some(location)) = (
+                        descriptor.command_id,
+                        descriptor.menu_location.or_else(|| {
+                            (registration.kind == ContributionKind::ContextMenu)
+                                .then_some(velvet_plugin_api::MenuLocation::ContextMenu)
+                        }),
+                    ) {
+                        surface.menus.push(PluginMenuProjectionDto {
+                            extension_id: registration.extension_id,
+                            id: registration.contribution_id,
+                            namespace: registration.namespace,
+                            scope: registration.scope,
+                            location,
+                            command_id,
+                            label: descriptor.label,
+                            label_key: descriptor.label_key,
+                            group: descriptor.group,
+                            order: descriptor.order,
+                            when: descriptor.when,
+                            anchor: descriptor.anchor,
+                        });
+                    }
+                }
+                ContributionKind::Keybinding => {
+                    if let (Some(keybinding), Some(command_id)) =
+                        (descriptor.keybinding, descriptor.command_id)
+                    {
+                        surface.keybindings.push(PluginKeybindingProjectionDto {
+                            extension_id: registration.extension_id,
+                            id: registration.contribution_id,
+                            namespace: registration.namespace,
+                            scope: registration.scope,
+                            command_id,
+                            keybinding,
+                            platform: descriptor
+                                .keybinding_platform
+                                .unwrap_or(velvet_plugin_api::KeybindingPlatform::Any),
+                            when: descriptor.when,
+                            order: descriptor.order,
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+        surface
+            .commands
+            .sort_by(|left, right| left.id.cmp(&right.id));
+        surface.menus.sort_by(|left, right| left.id.cmp(&right.id));
+        surface
+            .keybindings
+            .sort_by(|left, right| left.id.cmp(&right.id));
+        surface
+    }
+
     pub fn query_plugin_capabilities(
         &self,
         extension_id: &ExtensionId,
@@ -2299,7 +2386,22 @@ impl ApplicationCore {
                 command_id,
                 args,
                 context,
+                context_revision,
+                deadline_ms,
+                idempotency_key,
             }) => {
+                let command_id_for_error = command_id.clone();
+                let context =
+                    plugin_command_context(context, context_revision, deadline_ms, idempotency_key)
+                        .map_err(|error| match error {
+                            CoreError::InvalidCommand(_) => CoreError::PluginCommand {
+                                extension_id: extension_id.0.clone(),
+                                command_id: command_id_for_error.clone(),
+                                code: "command-metadata-invalid".into(),
+                                retryable: false,
+                            },
+                            other => other,
+                        })?;
                 match self
                     .plugins
                     .invoke_command(&extension_id, command_id, args, context)
@@ -2319,7 +2421,11 @@ impl ApplicationCore {
                                 format!("plugin {} runtime invocation failed", extension_id.0),
                             );
                         }
-                        Err(plugin_error(error))
+                        Err(plugin_command_error(
+                            &extension_id,
+                            &command_id_for_error,
+                            error,
+                        ))
                     }
                 }
             }
@@ -2444,6 +2550,12 @@ impl ApplicationCore {
                     status: velvet_workbench_protocol::RequestOutcomeStatus::Unknown,
                 },
             )),
+            Request::Query(Query::PluginCommandOutcome { .. }) => Ok(Response::RequestOutcome(
+                velvet_workbench_protocol::RequestOutcome {
+                    request_id: RequestId(0),
+                    status: velvet_workbench_protocol::RequestOutcomeStatus::Unknown,
+                },
+            )),
             Request::Query(Query::ReleaseStatus) => {
                 self.release_status().map(Response::ReleaseStatus)
             }
@@ -2463,6 +2575,11 @@ impl ApplicationCore {
             Request::Query(Query::PluginCapabilityAudit) => Ok(Response::PluginCapabilityAudit(
                 self.query_plugin_capability_audit(),
             )),
+            Request::Query(Query::PluginCommandSurface { extension_id }) => {
+                Ok(Response::PluginCommandSurface(
+                    self.query_plugin_command_surface(extension_id.as_ref()),
+                ))
+            }
             Request::Query(Query::ResolvePreview {
                 asset_id,
                 content_kind,
@@ -3106,6 +3223,76 @@ fn plugin_error(error: PluginError) -> CoreError {
             actual,
         },
         other => CoreError::Plugin(format!("{other:?}")),
+    }
+}
+
+fn plugin_command_error(
+    extension_id: &ExtensionId,
+    command_id: &str,
+    error: PluginError,
+) -> CoreError {
+    match &error {
+        PluginError::InvalidContribution(message) => CoreError::PluginCommand {
+            extension_id: extension_id.0.clone(),
+            command_id: command_id.into(),
+            code: if message.contains("not declared") {
+                "unknown-command".into()
+            } else {
+                "command-invalid".into()
+            },
+            retryable: false,
+        },
+        PluginError::PermissionDenied { .. } | PluginError::CapabilityDenied { .. } => {
+            plugin_error(error)
+        }
+        PluginError::RuntimeInvocation { .. } | PluginError::RuntimeCrashed { .. } => {
+            CoreError::PluginCommand {
+                extension_id: extension_id.0.clone(),
+                command_id: command_id.into(),
+                code: "command-runtime-failed".into(),
+                retryable: true,
+            }
+        }
+        _ => plugin_error(error),
+    }
+}
+
+fn plugin_command_context(
+    context: serde_json::Value,
+    context_revision: u64,
+    deadline_ms: Option<u64>,
+    idempotency_key: Option<String>,
+) -> Result<serde_json::Value, CoreError> {
+    if deadline_ms.is_some_and(|deadline| !(1..=120_000).contains(&deadline)) {
+        return Err(CoreError::InvalidCommand(
+            "plugin command deadline must be between 1 and 120000 ms".into(),
+        ));
+    }
+    if idempotency_key
+        .as_deref()
+        .is_some_and(|key| key.is_empty() || key.len() > 128 || key.contains('\0'))
+    {
+        return Err(CoreError::InvalidCommand(
+            "plugin command idempotency key must contain 1..=128 bytes".into(),
+        ));
+    }
+    let mut metadata = serde_json::Map::new();
+    metadata.insert("contextRevision".into(), context_revision.into());
+    if let Some(deadline) = deadline_ms {
+        metadata.insert("deadlineMs".into(), deadline.into());
+    }
+    if let Some(key) = idempotency_key {
+        metadata.insert("idempotencyKey".into(), key.into());
+    }
+    match context {
+        serde_json::Value::Object(mut object) => {
+            object.insert("_velvet".into(), serde_json::Value::Object(metadata));
+            Ok(serde_json::Value::Object(object))
+        }
+        payload => Ok(serde_json::json!({
+            "payload": payload,
+            "_velvet": metadata,
+        })),
     }
 }
 

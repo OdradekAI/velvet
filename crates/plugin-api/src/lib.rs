@@ -137,6 +137,25 @@ pub enum HostContainer {
     CommandPalette,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum MenuLocation {
+    TitleBar,
+    ContextMenu,
+    CommandPalette,
+    AppToolbar,
+    StatusBar,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum KeybindingPlatform {
+    Any,
+    Macos,
+    Windows,
+    Linux,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Permission {
@@ -548,11 +567,54 @@ pub struct ContributionDescriptor {
     #[serde(default)]
     pub when: Option<String>,
     #[serde(default)]
+    pub enablement: Option<String>,
+    #[serde(default)]
+    pub keybinding: Option<String>,
+    #[serde(default)]
+    pub keybinding_platform: Option<KeybindingPlatform>,
+    #[serde(default)]
+    pub menu_location: Option<MenuLocation>,
+    #[serde(default)]
+    pub required_capabilities: Vec<String>,
+    #[serde(default)]
     pub anchor: Option<ContextAnchor>,
     #[serde(default)]
     pub ui: Option<UiSurfaceDescriptor>,
     #[serde(default)]
     pub preview: Option<PreviewContributionDescriptor>,
+}
+
+impl Default for ContributionDescriptor {
+    fn default() -> Self {
+        Self {
+            id: "builtin.contribution".into(),
+            kind: ContributionKind::Command,
+            scope: ContributionScope::Workbench,
+            namespace: None,
+            container: None,
+            zone: None,
+            title: None,
+            title_key: None,
+            icon: None,
+            order: None,
+            default_visible: None,
+            view_container_id: None,
+            activity_bar: None,
+            label: None,
+            label_key: None,
+            command_id: None,
+            group: None,
+            when: None,
+            enablement: None,
+            keybinding: None,
+            keybinding_platform: None,
+            menu_location: None,
+            required_capabilities: Vec::new(),
+            anchor: None,
+            ui: None,
+            preview: None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -963,6 +1025,11 @@ mod tests {
                 command_id: None,
                 group: None,
                 when: None,
+                enablement: None,
+                keybinding: None,
+                keybinding_platform: None,
+                menu_location: None,
+                required_capabilities: Vec::new(),
                 anchor: None,
                 ui: None,
                 preview: None,
@@ -1105,5 +1172,31 @@ mod tests {
         assert!(Capability::Secret.is_high_risk());
         assert!(!Capability::AssetRead.is_high_risk());
         assert!(!Capability::EventsSubscribe.is_high_risk());
+    }
+
+    #[test]
+    fn command_surface_fields_round_trip_as_stable_manifest_data() {
+        let descriptor = ContributionDescriptor {
+            id: "sample.inspect".into(),
+            kind: ContributionKind::Command,
+            scope: ContributionScope::Workbench,
+            namespace: Some("workbench".into()),
+            title: Some("Inspect".into()),
+            enablement: Some("asset.selected".into()),
+            keybinding: Some("ctrl+shift+i".into()),
+            keybinding_platform: Some(KeybindingPlatform::Any),
+            menu_location: Some(MenuLocation::CommandPalette),
+            required_capabilities: vec!["command.register".into()],
+            ..ContributionDescriptor::default()
+        };
+        let value = serde_json::to_value(&descriptor).expect("descriptor should serialize");
+        assert_eq!(value["enablement"], "asset.selected");
+        assert_eq!(value["keybindingPlatform"], "any");
+        assert_eq!(value["menuLocation"], "command-palette");
+        assert_eq!(
+            serde_json::from_value::<ContributionDescriptor>(value)
+                .expect("descriptor should decode"),
+            descriptor
+        );
     }
 }

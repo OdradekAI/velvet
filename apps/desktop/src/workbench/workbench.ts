@@ -101,6 +101,7 @@ export class Workbench {
       this.overlays,
       this.localization,
       this.previewRegistry,
+      this.keybindings,
     );
     this.jobs = new JobClient(core);
     this.pluginUi = this.plugins.ui;

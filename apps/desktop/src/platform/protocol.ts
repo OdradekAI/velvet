@@ -23,6 +23,7 @@ export const PLUGIN_DIAGNOSTIC_SCHEMA_VERSION = 1 as const;
 export type PluginDiagnosticSchemaVersion = typeof PLUGIN_DIAGNOSTIC_SCHEMA_VERSION;
 export const PLUGIN_REGISTRY_SCHEMA_VERSION = 1 as const;
 export const PLUGIN_CAPABILITY_SCHEMA_VERSION = 1 as const;
+export const PLUGIN_COMMAND_SURFACE_SCHEMA_VERSION = 1 as const;
 export const CRASH_CAPTURE_SCHEMA_VERSION = 1 as const;
 export const ACTIVATION_SCHEMA_VERSION = 1 as const;
 export type ActivationSchemaVersion = typeof ACTIVATION_SCHEMA_VERSION;
@@ -238,6 +239,13 @@ export type CoreRequest =
     }
   | {
       readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'query-plugin-command-outcome';
+      readonly extensionId: string;
+      readonly commandId: string;
+      readonly idempotencyKey: string;
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
       readonly kind: 'query-plugin-projection';
       readonly extensionId: string;
     }
@@ -254,6 +262,11 @@ export type CoreRequest =
   | {
       readonly protocolVersion: ProtocolVersion;
       readonly kind: 'query-plugin-capability-audit';
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'query-plugin-command-surface';
+      readonly extensionId?: string;
     }
   | {
       readonly protocolVersion: ProtocolVersion;
@@ -419,6 +432,9 @@ export type CoreRequest =
       readonly commandId: string;
       readonly args: unknown;
       readonly context: CorePluginCommandContext;
+      readonly contextRevision?: number;
+      readonly deadlineMs?: number;
+      readonly idempotencyKey?: string;
     }
   | {
       readonly protocolVersion: ProtocolVersion;
@@ -538,6 +554,10 @@ export type CoreResponse =
   | {
       readonly kind: 'plugin-capability-audit';
       readonly audit: readonly CorePluginCapabilityAudit[];
+    }
+  | {
+      readonly kind: 'plugin-command-surface';
+      readonly surface: CorePluginCommandSurfaceSnapshot;
     }
   | {
       readonly kind: 'plugin-storage-recovery';
@@ -1157,6 +1177,11 @@ export interface CorePluginContribution {
   readonly commandId: string | null;
   readonly group: string | null;
   readonly when: string | null;
+  readonly enablement: string | null;
+  readonly keybinding: string | null;
+  readonly keybindingPlatform: CorePluginKeybindingPlatform | null;
+  readonly menuLocation: CorePluginMenuLocation | null;
+  readonly requiredCapabilities: readonly string[];
   readonly anchor: CorePluginContextAnchor | null;
   readonly ui: {
     readonly kind: CorePluginUiSurfaceKind;
@@ -1361,6 +1386,63 @@ export interface CorePluginRegistrySnapshot {
   readonly schemaVersion: number;
   readonly generation: number;
   readonly contributions: readonly CorePluginContributionRegistration[];
+}
+
+export type CorePluginMenuLocation =
+  | 'title-bar'
+  | 'context-menu'
+  | 'command-palette'
+  | 'app-toolbar'
+  | 'status-bar';
+export type CorePluginKeybindingPlatform = 'any' | 'macos' | 'windows' | 'linux';
+
+export interface CorePluginCommandProjection {
+  readonly extensionId: string;
+  readonly id: string;
+  readonly namespace: string;
+  readonly scope: CorePluginContributionScope;
+  readonly title: string | null;
+  readonly titleKey: string | null;
+  readonly when: string | null;
+  readonly enablement: string | null;
+  readonly order: number | null;
+  readonly requiredCapabilities: readonly string[];
+}
+
+export interface CorePluginMenuProjection {
+  readonly extensionId: string;
+  readonly id: string;
+  readonly namespace: string;
+  readonly scope: CorePluginContributionScope;
+  readonly location: CorePluginMenuLocation;
+  readonly commandId: string;
+  readonly label: string | null;
+  readonly labelKey: string | null;
+  readonly group: string | null;
+  readonly order: number | null;
+  readonly when: string | null;
+  readonly anchor: CorePluginContextAnchor | null;
+}
+
+export interface CorePluginKeybindingProjection {
+  readonly extensionId: string;
+  readonly id: string;
+  readonly namespace: string;
+  readonly scope: CorePluginContributionScope;
+  readonly commandId: string;
+  readonly keybinding: string;
+  readonly platform: CorePluginKeybindingPlatform;
+  readonly when: string | null;
+  readonly order: number | null;
+}
+
+export interface CorePluginCommandSurfaceSnapshot {
+  readonly schemaVersion: typeof PLUGIN_COMMAND_SURFACE_SCHEMA_VERSION;
+  readonly generation: number;
+  readonly contextRevision: number;
+  readonly commands: readonly CorePluginCommandProjection[];
+  readonly menus: readonly CorePluginMenuProjection[];
+  readonly keybindings: readonly CorePluginKeybindingProjection[];
 }
 
 export interface CorePluginCapabilityDenial {

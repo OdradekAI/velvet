@@ -12,6 +12,7 @@ export type CommandScope = 'workbench' | 'workbench-app';
 export interface CommandExecutionContext {
   readonly activeAppId?: WorkbenchAppId;
   readonly keys: ContextKeySnapshot;
+  readonly contextRevision?: number;
   readonly preview?: CorePreviewActionContext;
 }
 
@@ -28,6 +29,7 @@ export interface CommandDescriptor {
   readonly namespace: string;
   readonly appId?: WorkbenchAppId;
   readonly when?: string;
+  readonly enablement?: string;
   readonly keybinding?: string;
   readonly order?: number;
   readonly execute?: CommandHandler;
@@ -79,6 +81,15 @@ export class CommandRegistry {
     args: unknown,
     context: CommandExecutionContext,
   ): Promise<unknown> {
+    const currentRevision = this.contextKeys.revision();
+    if (
+      context.contextRevision !== undefined &&
+      context.contextRevision !== currentRevision
+    ) {
+      throw new Error(
+        `Command context is stale: expected ${currentRevision}, received ${context.contextRevision}`,
+      );
+    }
     const command = this.resolve(id, context.activeAppId);
     if (!command) {
       throw new Error(`Command is not visible: ${id}`);
@@ -86,11 +97,17 @@ export class CommandRegistry {
     if (!this.contextKeys.evaluate(command.when, context.keys)) {
       throw new Error(`Command is disabled by its context: ${id}`);
     }
+    if (!this.contextKeys.evaluate(command.enablement, context.keys)) {
+      throw new Error(`Command is disabled by its enablement: ${id}`);
+    }
     if (!command.execute) {
       throw new Error(`Command has no host handler: ${id}`);
     }
 
-    return command.execute(args, context);
+    return command.execute(args, {
+      ...context,
+      contextRevision: currentRevision,
+    });
   }
 
   private validate(command: CommandDescriptor): void {

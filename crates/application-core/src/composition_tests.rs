@@ -272,6 +272,11 @@ fn preview_command(id: &str, title: &str) -> ContributionDescriptor {
         command_id: None,
         group: None,
         when: None,
+        enablement: None,
+        keybinding: None,
+        keybinding_platform: None,
+        menu_location: None,
+        required_capabilities: Vec::new(),
         anchor: None,
         ui: None,
         preview: None,
@@ -315,6 +320,11 @@ fn preview_manifest() -> ExtensionManifest {
                 command_id: None,
                 group: None,
                 when: None,
+                enablement: None,
+                keybinding: None,
+                keybinding_platform: None,
+                menu_location: None,
+                required_capabilities: Vec::new(),
                 anchor: None,
                 ui: None,
                 preview: Some(PreviewContributionDescriptor {
@@ -344,6 +354,11 @@ fn preview_manifest() -> ExtensionManifest {
                 command_id: None,
                 group: None,
                 when: None,
+                enablement: None,
+                keybinding: None,
+                keybinding_platform: None,
+                menu_location: None,
+                required_capabilities: Vec::new(),
                 anchor: None,
                 ui: None,
                 preview: Some(PreviewContributionDescriptor {
@@ -1903,6 +1918,11 @@ fn plugin_command_dispatch_reaches_the_active_runtime() {
             command_id: None,
             group: None,
             when: None,
+            enablement: None,
+            keybinding: None,
+            keybinding_platform: None,
+            menu_location: None,
+            required_capabilities: Vec::new(),
             anchor: None,
             ui: None,
             preview: None,
@@ -1930,9 +1950,44 @@ fn plugin_command_dispatch_reaches_the_active_runtime() {
                 "activeAppId": "asset-manager",
                 "keys": { "resourceKind": "asset" }
             }),
+            context_revision: 0,
+            deadline_ms: None,
+            idempotency_key: None,
         }))
         .expect("the active command should be accepted by the runtime");
     assert_eq!(response, Response::Accepted);
+}
+
+#[test]
+fn plugin_command_invocation_metadata_rejects_invalid_deadlines_and_keys() {
+    let mut core = ApplicationCore::default();
+    let invalid_deadline = core.dispatch(Request::Command(Command::InvokePluginCommand {
+        extension_id: ExtensionId("sample.command".into()),
+        command_id: "sample.open".into(),
+        args: serde_json::Value::Null,
+        context: serde_json::Value::Null,
+        context_revision: 3,
+        deadline_ms: Some(0),
+        idempotency_key: None,
+    }));
+    assert!(matches!(
+        invalid_deadline,
+        Err(CoreError::PluginCommand { code, .. }) if code == "command-metadata-invalid"
+    ));
+
+    let invalid_key = core.dispatch(Request::Command(Command::InvokePluginCommand {
+        extension_id: ExtensionId("sample.command".into()),
+        command_id: "sample.open".into(),
+        args: serde_json::Value::Null,
+        context: serde_json::Value::Null,
+        context_revision: 3,
+        deadline_ms: Some(1_000),
+        idempotency_key: Some("\0".into()),
+    }));
+    assert!(matches!(
+        invalid_key,
+        Err(CoreError::PluginCommand { code, .. }) if code == "command-metadata-invalid"
+    ));
 }
 
 #[test]
@@ -1964,6 +2019,11 @@ fn plugin_projection_query_returns_active_view_and_ui_bridge_metadata() {
             command_id: None,
             group: None,
             when: None,
+            enablement: None,
+            keybinding: None,
+            keybinding_platform: None,
+            menu_location: None,
+            required_capabilities: Vec::new(),
             anchor: None,
             ui: Some(UiSurfaceDescriptor {
                 kind: UiSurfaceKind::View,
@@ -2031,6 +2091,11 @@ fn plugin_registry_query_projects_only_active_host_registrations() {
             command_id: None,
             group: None,
             when: None,
+            enablement: None,
+            keybinding: None,
+            keybinding_platform: None,
+            menu_location: None,
+            required_capabilities: Vec::new(),
             anchor: None,
             ui: None,
             preview: None,
@@ -2082,6 +2147,65 @@ fn plugin_registry_query_projects_only_active_host_registrations() {
     assert!(
         matches!(disabled, Response::PluginRegistry(snapshot) if snapshot.contributions.is_empty())
     );
+}
+
+#[test]
+fn plugin_command_surface_query_projects_host_validated_commands_menus_and_keybindings() {
+    let mut core = ApplicationCore::default();
+    let command = ContributionDescriptor {
+        id: "surface.open".into(),
+        namespace: Some("workbench".into()),
+        title: Some("Open surface".into()),
+        enablement: Some("asset.selected".into()),
+        ..ContributionDescriptor::default()
+    };
+    let menu = ContributionDescriptor {
+        id: "surface.menu".into(),
+        kind: ContributionKind::ContextMenu,
+        namespace: Some("workbench".into()),
+        title: Some("Open surface".into()),
+        command_id: Some("surface.open".into()),
+        menu_location: Some(velvet_plugin_api::MenuLocation::ContextMenu),
+        anchor: Some(velvet_plugin_api::ContextAnchor::Asset),
+        ..ContributionDescriptor::default()
+    };
+    let keybinding = ContributionDescriptor {
+        id: "surface.keybinding".into(),
+        kind: ContributionKind::Keybinding,
+        namespace: Some("workbench".into()),
+        command_id: Some("surface.open".into()),
+        keybinding: Some("ctrl+shift+o".into()),
+        keybinding_platform: Some(velvet_plugin_api::KeybindingPlatform::Any),
+        ..ContributionDescriptor::default()
+    };
+    let manifest = ExtensionManifest {
+        id: ExtensionId("surface.example".into()),
+        version: "1.0.0".into(),
+        host_api: VersionRange("^1".into()),
+        runtime: RuntimeKind::BuiltIn,
+        launch: None,
+        contributions: vec![command, menu, keybinding],
+        ..ExtensionManifest::default()
+    };
+    let id = manifest.id.clone();
+    core.register_plugin(manifest)
+        .expect("surface plugin should register");
+    core.activate_plugin(&id)
+        .expect("surface plugin should activate");
+
+    let response = core
+        .dispatch(Request::Query(Query::PluginCommandSurface {
+            extension_id: Some(id),
+        }))
+        .expect("command surface query should succeed");
+    let Response::PluginCommandSurface(surface) = response else {
+        panic!("expected command surface projection")
+    };
+    assert_eq!(surface.commands.len(), 1);
+    assert_eq!(surface.menus.len(), 1);
+    assert_eq!(surface.keybindings.len(), 1);
+    assert_eq!(surface.menus[0].command_id, "surface.open");
+    assert_eq!(surface.keybindings[0].keybinding, "ctrl+shift+o");
 }
 
 #[test]

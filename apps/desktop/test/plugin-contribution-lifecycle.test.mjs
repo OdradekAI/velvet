@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { CommandRegistry } from '/tmp/velvet-plugin-tests/workbench/commands/command-registry.js';
 import { ContextKeyService } from '/tmp/velvet-plugin-tests/workbench/commands/context-key-service.js';
 import { MenuRegistry } from '/tmp/velvet-plugin-tests/workbench/commands/menu-registry.js';
+import { KeybindingRegistry } from '/tmp/velvet-plugin-tests/workbench/commands/keybinding-registry.js';
 import { ContributionRegistry } from '/tmp/velvet-plugin-tests/workbench/contributions/contribution-registry.js';
 import { OverlayRegistry } from '/tmp/velvet-plugin-tests/workbench/overlays/overlay-registry.js';
 import { PluginClient } from '/tmp/velvet-plugin-tests/workbench/plugins/plugin-client.js';
@@ -13,6 +14,7 @@ import { PreviewRegistry } from '/tmp/velvet-plugin-tests/workbench/preview/prev
 const contextKeys = new ContextKeyService();
 const commands = new CommandRegistry(contextKeys);
 const menus = new MenuRegistry(commands, contextKeys);
+const keybindings = new KeybindingRegistry(commands, contextKeys);
 const overlays = new OverlayRegistry(contextKeys);
 const previewRegistry = new PreviewRegistry();
 const ui = new PluginUiRegistry();
@@ -34,6 +36,7 @@ const client = new PluginClient(
   overlays,
   undefined,
   previewRegistry,
+  keybindings,
 );
 
 const appManifest = {
@@ -176,6 +179,13 @@ const manifest = {
       title: 'Open dialog',
     },
     {
+      id: 'open-dialog-keybinding',
+      scope: 'workbench',
+      kind: 'keybinding',
+      commandId: 'open-dialog',
+      keybinding: 'ctrl+shift+o',
+    },
+    {
       id: 'asset-menu',
       scope: 'workbench',
       kind: 'context-menu',
@@ -222,6 +232,16 @@ await commands.execute('open-dialog', undefined, {
   keys: {},
 });
 assert.equal(executedCommand, 'open-dialog');
+assert.equal(keybindings.resolve('CTRL+SHIFT+O')?.commandId, 'open-dialog');
+contextKeys.set('asset.selected', true);
+await assert.rejects(
+  commands.execute('open-dialog', undefined, {
+    activeAppId: undefined,
+    keys: contextKeys.snapshot(),
+    contextRevision: 0,
+  }),
+  /Command context is stale/,
+);
 
 assert.equal(menus.list('context-menu', { anchor: 'asset' }).length, 1);
 const instance = overlays.open('dialog');

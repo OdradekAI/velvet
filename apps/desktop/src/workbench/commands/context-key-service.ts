@@ -4,6 +4,11 @@ export type ContextKeySnapshot = Readonly<Record<string, ContextKeyValue>>;
 export class ContextKeyService {
   private readonly values = new Map<string, ContextKeyValue>();
   private readonly listeners = new Set<(snapshot: ContextKeySnapshot) => void>();
+  private currentRevision = 0;
+
+  public revision(): number {
+    return this.currentRevision;
+  }
 
   public snapshot(): ContextKeySnapshot {
     return Object.fromEntries(this.values.entries());
@@ -15,6 +20,8 @@ export class ContextKeyService {
     } else {
       this.values.set(key, value);
     }
+
+    this.currentRevision += 1;
 
     const snapshot = this.snapshot();
     for (const listener of this.listeners) {

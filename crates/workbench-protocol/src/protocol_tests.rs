@@ -47,6 +47,11 @@ fn plugin_registry_snapshot_round_trips_as_a_declarative_projection() {
         command_id: None,
         group: None,
         when: None,
+        enablement: None,
+        keybinding: None,
+        keybinding_platform: None,
+        menu_location: None,
+        required_capabilities: Vec::new(),
         anchor: None,
         ui: None,
         preview: None,
@@ -109,6 +114,9 @@ fn plugin_envelope_round_trips_and_maps_to_core_request() {
             command_id: "reader.inspect".into(),
             args: serde_json::json!({ "assetId": "asset-1" }),
             context: serde_json::json!({ "zone": "contextual" }),
+            context_revision: 0,
+            deadline_ms: None,
+            idempotency_key: None,
         })
     );
 }
@@ -872,4 +880,15 @@ fn request_outcome_contract_marks_only_declared_commands_idempotent() {
     assert!(!is_idempotent_request(&Request::Command(Command::Layout(
         LayoutCommand::ResetLayout,
     ))));
+    assert!(is_idempotent_request(&Request::Command(
+        Command::InvokePluginCommand {
+            extension_id: ExtensionId("sample".into()),
+            command_id: "sample.open".into(),
+            args: Value::Null,
+            context: Value::Null,
+            context_revision: 1,
+            deadline_ms: Some(1_000),
+            idempotency_key: Some("sample.open:1".into()),
+        }
+    )));
 }

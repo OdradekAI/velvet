@@ -510,6 +510,11 @@ fn view_manifest(zone: Option<WorkbenchZone>) -> ExtensionManifest {
             command_id: None,
             group: None,
             when: None,
+            enablement: None,
+            keybinding: None,
+            keybinding_platform: None,
+            menu_location: None,
+            required_capabilities: Vec::new(),
             anchor: None,
             ui: None,
             preview: None,
@@ -546,6 +551,11 @@ fn preview_manifest(with_permission: bool) -> ExtensionManifest {
             command_id: None,
             group: None,
             when: None,
+            enablement: None,
+            keybinding: None,
+            keybinding_platform: None,
+            menu_location: None,
+            required_capabilities: Vec::new(),
             anchor: None,
             ui: None,
             preview: Some(PreviewContributionDescriptor {
@@ -595,6 +605,11 @@ fn job_manifest(with_permission: bool) -> ExtensionManifest {
             command_id: None,
             group: None,
             when: None,
+            enablement: None,
+            keybinding: None,
+            keybinding_platform: None,
+            menu_location: None,
+            required_capabilities: Vec::new(),
             anchor: None,
             ui: None,
             preview: None,
@@ -1806,6 +1821,11 @@ fn app_namespace_requires_a_matching_installed_target() {
             command_id: Some("feed-tools.menu".into()),
             group: None,
             when: None,
+            enablement: None,
+            keybinding: None,
+            keybinding_platform: None,
+            menu_location: None,
+            required_capabilities: Vec::new(),
             anchor: Some(ContextAnchor::Asset),
             ui: None,
             preview: None,
@@ -2104,6 +2124,7 @@ fn process_runtime_executes_a_package_relative_sidecar() {
             command_id: "relative.open".into(),
             args: serde_json::json!({}),
             context: serde_json::json!({}),
+            deadline_ms: None,
         })
         .expect("the package-relative sidecar should answer");
     assert_eq!(result.result, Some(serde_json::json!({ "relative": true })));
@@ -2144,6 +2165,7 @@ fn process_runtime_invokes_a_versioned_jsonl_command() {
             command_id: "process.invocation.open".into(),
             args: serde_json::json!({ "source": "test" }),
             context: serde_json::json!({ "activeAppId": null }),
+            deadline_ms: None,
         })
         .expect("the sidecar should answer the JSONL invocation");
     assert_eq!(result.error, None);
@@ -2190,6 +2212,7 @@ fn process_runtime_carries_job_payload_schema_reference() {
                     "schemaVersion": JOB_SCHEMA_VERSION
                 }
             }),
+            deadline_ms: None,
         })
         .expect("the sidecar should receive the Job schema reference");
     assert_eq!(result.error, None);
@@ -2242,6 +2265,7 @@ fn process_runtime_carries_preview_action_schema_reference() {
                 "intent": "analyze",
                 "surface": "workspace"
             }),
+            deadline_ms: None,
         })
         .expect("the sidecar should receive the Preview action schema reference");
     assert_eq!(result.error, None);
@@ -2284,6 +2308,7 @@ fn process_runtime_rejects_unknown_response_fields() {
             command_id: "unknown.response.field".into(),
             args: serde_json::json!({}),
             context: serde_json::json!({}),
+            deadline_ms: None,
         })
         .expect_err("unknown runtime response fields must fail closed");
     assert!(matches!(
@@ -2322,6 +2347,7 @@ fn process_runtime_rejects_oversized_request_payloads() {
             command_id: "oversized.request".into(),
             args: serde_json::json!("x".repeat(MAX_RUNTIME_REQUEST_BYTES)),
             context: serde_json::json!({}),
+            deadline_ms: None,
         })
         .expect_err("oversized runtime requests must fail before IPC");
     assert!(matches!(
@@ -2372,6 +2398,7 @@ fn process_runtime_marks_storage_participants_with_the_storage_invocation_kind()
                 "capability": "extension-storage",
                 "operation": STORAGE_MIGRATE_METHOD,
             }),
+            deadline_ms: None,
         })
         .expect("the storage participant should answer the JSONL invocation");
     assert_eq!(result.error, None);

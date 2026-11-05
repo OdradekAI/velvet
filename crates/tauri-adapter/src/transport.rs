@@ -17,8 +17,11 @@ use velvet_workbench_protocol::{
 
 static NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(1);
 const MAX_REQUEST_OUTCOMES: usize = 128;
+const MAX_IDEMPOTENCY_OUTCOMES: usize = 128;
 type RequestOutcomeKey = (String, u64);
 type RequestOutcomeCache = VecDeque<(RequestOutcomeKey, Option<&'static str>, Option<Response>)>;
+type IdempotencyKey = (String, String);
+type IdempotencyCache = HashMap<IdempotencyKey, Option<Response>>;
 
 #[path = "platform_signals.rs"]
 pub mod platform_signals;
@@ -60,6 +63,7 @@ pub struct TauriTransport {
     sessions: Arc<Mutex<HashMap<String, String>>>,
     plugin_sessions: Arc<Mutex<HashMap<String, String>>>,
     request_outcomes: Arc<Mutex<RequestOutcomeCache>>,
+    idempotency_outcomes: Arc<Mutex<IdempotencyCache>>,
     evicted_request_floor: Arc<Mutex<HashMap<String, u64>>>,
 }
 
@@ -78,6 +82,7 @@ impl TauriTransport {
             sessions: Arc::new(Mutex::new(HashMap::new())),
             plugin_sessions: Arc::new(Mutex::new(HashMap::new())),
             request_outcomes: Arc::new(Mutex::new(VecDeque::new())),
+            idempotency_outcomes: Arc::new(Mutex::new(HashMap::new())),
             evicted_request_floor: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -153,9 +158,47 @@ impl TauriTransport {
                 },
             }));
         }
+        if let Request::Query(Query::PluginCommandOutcome {
+            extension_id,
+            command_id,
+            idempotency_key,
+        }) = &request
+        {
+            let key = (
+                client_id.clone(),
+                format!("{}:{}:{}", extension_id.0, command_id, idempotency_key),
+            );
+            let completed = self
+                .idempotency_outcomes
+                .lock()
+                .map_err(|_| CoreError::InvalidCommand("idempotency store is unavailable".into()))?
+                .get(&key)
+                .is_some_and(|response| response.is_some());
+            return Ok(Response::RequestOutcome(RequestOutcome {
+                request_id: RequestId(0),
+                status: if completed {
+                    RequestOutcomeStatus::Completed
+                } else {
+                    RequestOutcomeStatus::Unknown
+                },
+            }));
+        }
 
-        let cache_key = (client_id, request_id.0);
         let scope = request_idempotency_scope(&request);
+        let plugin_key = plugin_idempotency_key(&request).map(|key| (client_id.clone(), key));
+        if let Some(key) = &plugin_key {
+            if let Some(response) = self
+                .idempotency_outcomes
+                .lock()
+                .map_err(|_| CoreError::InvalidCommand("idempotency store is unavailable".into()))?
+                .get(key)
+            {
+                return response.clone().ok_or(CoreError::RequestIdReuse {
+                    request_id: request_id.0,
+                });
+            }
+        }
+        let cache_key = (client_id, request_id.0);
         if let Some((_, existing_scope, response)) = self
             .request_outcomes
             .lock()
@@ -203,6 +246,9 @@ impl TauriTransport {
                 if record_outcome {
                     self.remember_outcome(cache_key, scope, Some(response.clone()))?;
                 }
+                if let Some(key) = plugin_key {
+                    self.remember_idempotency(key, Some(response.clone()))?;
+                }
                 response
             }
             Err(error) => {
@@ -211,6 +257,9 @@ impl TauriTransport {
                     // produce a response is consumed as an unknown outcome.
                     // Retrying the same request id must not invoke it again.
                     let _ = self.remember_outcome(cache_key, scope, None);
+                }
+                if let Some(key) = plugin_key {
+                    let _ = self.remember_idempotency(key, None);
                 }
                 return Err(error);
             }
@@ -310,6 +359,24 @@ impl TauriTransport {
         Ok(())
     }
 
+    fn remember_idempotency(
+        &self,
+        key: IdempotencyKey,
+        response: Option<Response>,
+    ) -> Result<(), CoreError> {
+        let mut outcomes = self
+            .idempotency_outcomes
+            .lock()
+            .map_err(|_| CoreError::InvalidCommand("idempotency store is unavailable".into()))?;
+        if outcomes.len() >= MAX_IDEMPOTENCY_OUTCOMES && !outcomes.contains_key(&key) {
+            if let Some(oldest) = outcomes.keys().next().cloned() {
+                outcomes.remove(&oldest);
+            }
+        }
+        outcomes.insert(key, response);
+        Ok(())
+    }
+
     pub fn record_shutdown_intent(&self) -> Result<(), velvet_application_core::RecoveryError> {
         self.inner.record_shutdown_intent()
     }
@@ -383,6 +450,19 @@ impl TauriTransport {
     }
 }
 
+fn plugin_idempotency_key(request: &Request) -> Option<String> {
+    let Request::Command(Command::InvokePluginCommand {
+        extension_id,
+        command_id,
+        idempotency_key: Some(key),
+        ..
+    }) = request
+    else {
+        return None;
+    };
+    Some(format!("{}:{}:{}", extension_id.0, command_id, key))
+}
+
 impl CoreTransport for TauriTransport {
     fn dispatch(&self, request_id: RequestId, request: Request) -> Result<Response, CoreError> {
         let emits_layout_event = matches!(
@@ -409,9 +489,18 @@ impl CoreTransport for TauriTransport {
             Ok(response) => response,
             Err(error) => {
                 self.emit_pending_diagnostics();
-                if let CoreError::PluginRuntimeFailed { extension_id, .. } = &error {
+                let crashed_extension = match &error {
+                    CoreError::PluginRuntimeFailed { extension_id, .. } => {
+                        Some(extension_id.clone())
+                    }
+                    CoreError::PluginCommand {
+                        extension_id, code, ..
+                    } if code == "command-runtime-failed" => Some(extension_id.clone()),
+                    _ => None,
+                };
+                if let Some(extension_id) = crashed_extension {
                     self.event_sink.emit(Event::PluginDisabled {
-                        extension_id: extension_id.clone(),
+                        extension_id,
                         reason: "crash".into(),
                     });
                     self.event_sink.emit(Event::RecoveryChanged {

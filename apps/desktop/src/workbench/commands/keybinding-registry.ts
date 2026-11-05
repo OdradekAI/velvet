@@ -14,6 +14,7 @@ export interface KeybindingDescriptor {
   readonly id: string;
   readonly commandId: string;
   readonly keybinding: string;
+  readonly platform?: 'any' | 'macos' | 'windows' | 'linux';
   readonly scope: KeybindingScope;
   readonly namespace: string;
   readonly appId?: WorkbenchAppId;
@@ -26,9 +27,15 @@ export interface KeybindingResolutionContext {
   readonly keys?: ContextKeySnapshot;
 }
 
+export interface KeybindingOverride {
+  readonly namespace: string;
+  readonly id: string;
+}
+
 /** Host-owned keybinding resolution; it has no browser or React dependency. */
 export class KeybindingRegistry {
   private readonly keybindings = new Map<string, KeybindingDescriptor>();
+  private readonly overrides = new Map<string, KeybindingOverride | null>();
 
   public constructor(
     private readonly commands: CommandRegistry,
@@ -42,9 +49,22 @@ export class KeybindingRegistry {
       throw new Error(`Duplicate keybinding: ${key}`);
     }
 
+    const normalized = normalizeKeybinding(descriptor.keybinding);
+    const conflict = [...this.keybindings.values()].find(
+      (existing) =>
+        normalizeKeybinding(existing.keybinding) === normalized &&
+        sameScope(existing, descriptor) &&
+        platformsConflict(existing.platform, descriptor.platform),
+    );
+    if (conflict) {
+      throw new Error(
+        `Keybinding conflict: ${descriptor.keybinding} (${descriptor.id}, ${conflict.id})`,
+      );
+    }
+
     this.keybindings.set(key, {
       ...descriptor,
-      keybinding: normalizeKeybinding(descriptor.keybinding),
+      keybinding: normalized,
     });
   }
 
@@ -54,14 +74,38 @@ export class KeybindingRegistry {
     return this.keybindings.delete(keyFor(descriptor.namespace, descriptor.id));
   }
 
+  public setUserOverride(keybinding: string, override: KeybindingOverride | null): void {
+    this.overrides.set(normalizeKeybinding(keybinding), override);
+  }
+
+  public clearUserOverride(keybinding: string): void {
+    this.overrides.delete(normalizeKeybinding(keybinding));
+  }
+
   public resolve(
     keybinding: string,
     context: KeybindingResolutionContext = {},
   ): KeybindingDescriptor | undefined {
     const normalized = normalizeKeybinding(keybinding);
+    const override = this.overrides.get(normalized);
+    if (override === null) {
+      return undefined;
+    }
+    if (override) {
+      const overridden = this.keybindings.get(keyFor(override.namespace, override.id));
+      if (
+        overridden &&
+        isVisible(overridden, context.activeAppId) &&
+        isPlatformEnabled(overridden.platform) &&
+        this.contextKeys.evaluate(overridden.when, context.keys)
+      ) {
+        return overridden;
+      }
+    }
     const candidates = [...this.keybindings.values()]
       .filter((descriptor) => isVisible(descriptor, context.activeAppId))
       .filter((descriptor) => descriptor.keybinding === normalized)
+      .filter((descriptor) => isPlatformEnabled(descriptor.platform))
       .filter((descriptor) => this.contextKeys.evaluate(descriptor.when, context.keys))
       .sort((left, right) => {
         const leftApp = left.scope === 'workbench-app' ? 1 : 0;
@@ -167,3 +211,30 @@ function isVisible(
 }
 
 const MODIFIER_ORDER = ['ctrl', 'alt', 'shift', 'meta'];
+
+function sameScope(left: KeybindingDescriptor, right: KeybindingDescriptor): boolean {
+  return left.scope === right.scope && left.appId === right.appId;
+}
+
+function platformsConflict(
+  left: KeybindingDescriptor['platform'],
+  right: KeybindingDescriptor['platform'],
+): boolean {
+  return !left || !right || left === 'any' || right === 'any' || left === right;
+}
+
+function isPlatformEnabled(platform: KeybindingDescriptor['platform']): boolean {
+  if (!platform || platform === 'any') {
+    return true;
+  }
+  const navigatorPlatform = typeof navigator === 'undefined'
+    ? ''
+    : `${navigator.platform} ${navigator.userAgent}`.toLowerCase();
+  if (platform === 'macos') {
+    return navigatorPlatform.includes('mac') || navigatorPlatform.includes('darwin');
+  }
+  if (platform === 'windows') {
+    return navigatorPlatform.includes('win');
+  }
+  return navigatorPlatform.includes('linux') || navigatorPlatform.includes('x11');
+}

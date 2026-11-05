@@ -111,6 +111,9 @@ export interface ContributionDescriptor {
   readonly commandId?: string;
   readonly group?: string;
   readonly when?: string;
+  readonly keybinding?: string;
+  readonly keybindingPlatform?: 'any' | 'macos' | 'windows' | 'linux';
+  readonly menuLocation?: 'title-bar' | 'context-menu' | 'command-palette' | 'app-toolbar' | 'status-bar';
   /** Optional isolated UI surface bound to this contribution. */
   readonly ui?: PluginUiContribution;
   readonly preview?: PreviewContributionDescriptor;

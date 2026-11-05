@@ -651,6 +651,18 @@ impl From<CoreError> for WireError {
                 expected_revision: None,
                 actual_revision: None,
             },
+            CoreError::PluginCommand {
+                extension_id,
+                command_id,
+                code,
+                retryable,
+            } => Self {
+                code: format!("plugin-command-{code}"),
+                message: format!("Plugin command {extension_id}:{command_id} failed ({code})"),
+                retryable,
+                expected_revision: None,
+                actual_revision: None,
+            },
             CoreError::PluginCapabilityDenied {
                 extension_id,
                 capability,
@@ -804,6 +816,7 @@ impl TryFrom<WirePluginRequestEnvelope> for PluginRequestEnvelope {
                 command_id,
                 args,
                 context,
+                ..
             } => PluginRequest::InvokeCommand {
                 extension_id: velvet_plugin_api::ExtensionId(extension_id),
                 command_id,
@@ -942,6 +955,16 @@ pub enum WireRequest {
         #[serde(rename = "requestId")]
         request_id: u64,
     },
+    QueryPluginCommandOutcome {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        #[serde(rename = "extensionId")]
+        extension_id: String,
+        #[serde(rename = "commandId")]
+        command_id: String,
+        #[serde(rename = "idempotencyKey")]
+        idempotency_key: String,
+    },
     QueryPluginProjection {
         #[serde(rename = "protocolVersion")]
         protocol_version: u16,
@@ -963,6 +986,12 @@ pub enum WireRequest {
     QueryPluginCapabilityAudit {
         #[serde(rename = "protocolVersion")]
         protocol_version: u16,
+    },
+    QueryPluginCommandSurface {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        #[serde(rename = "extensionId")]
+        extension_id: Option<String>,
     },
     QueryPluginStorageRecovery {
         #[serde(rename = "protocolVersion")]
@@ -1183,6 +1212,12 @@ pub enum WireRequest {
         command_id: String,
         args: serde_json::Value,
         context: serde_json::Value,
+        #[serde(rename = "contextRevision", default)]
+        context_revision: u64,
+        #[serde(rename = "deadlineMs", default)]
+        deadline_ms: Option<u64>,
+        #[serde(rename = "idempotencyKey", default)]
+        idempotency_key: Option<String>,
     },
     InvokePreviewAction {
         #[serde(rename = "protocolVersion")]
@@ -1362,6 +1397,21 @@ impl WireRequest {
                     request_id: RequestId(request_id),
                 }))
             }
+            Self::QueryPluginCommandOutcome {
+                protocol_version,
+                extension_id,
+                command_id,
+                idempotency_key,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Query(
+                    velvet_workbench_protocol::Query::PluginCommandOutcome {
+                        extension_id: ExtensionId(extension_id),
+                        command_id,
+                        idempotency_key,
+                    },
+                ))
+            }
             Self::QueryPluginProjection {
                 protocol_version,
                 extension_id,
@@ -1399,6 +1449,17 @@ impl WireRequest {
                 validate_inner_protocol(outer_protocol_version, protocol_version)?;
                 Ok(Request::Query(
                     velvet_workbench_protocol::Query::PluginCapabilityAudit,
+                ))
+            }
+            Self::QueryPluginCommandSurface {
+                protocol_version,
+                extension_id,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Query(
+                    velvet_workbench_protocol::Query::PluginCommandSurface {
+                        extension_id: extension_id.map(ExtensionId),
+                    },
                 ))
             }
             Self::QueryPluginStorageRecovery {
@@ -1716,6 +1777,9 @@ impl WireRequest {
                 command_id,
                 args,
                 context,
+                context_revision,
+                deadline_ms,
+                idempotency_key,
             } => {
                 validate_inner_protocol(outer_protocol_version, protocol_version)?;
                 Ok(Request::Command(Command::InvokePluginCommand {
@@ -1723,6 +1787,9 @@ impl WireRequest {
                     command_id,
                     args,
                     context,
+                    context_revision,
+                    deadline_ms,
+                    idempotency_key,
                 }))
             }
             Self::InvokePreviewAction {
@@ -2122,6 +2189,9 @@ enum WireResponse {
     PluginCapabilityAudit {
         audit: Vec<velvet_workbench_protocol::PluginCapabilityAuditDto>,
     },
+    PluginCommandSurface {
+        surface: velvet_workbench_protocol::PluginCommandSurfaceSnapshotDto,
+    },
     PluginStorageRecovery {
         recovery: velvet_workbench_protocol::PluginStorageRecoveryDto,
     },
@@ -2200,6 +2270,7 @@ impl WireResponseEnvelope {
                 WireResponse::PluginCapabilities { capabilities }
             }
             Response::PluginCapabilityAudit(audit) => WireResponse::PluginCapabilityAudit { audit },
+            Response::PluginCommandSurface(surface) => WireResponse::PluginCommandSurface { surface },
             Response::PluginStorageRecovery(recovery) => {
                 WireResponse::PluginStorageRecovery { recovery }
             }
@@ -4387,6 +4458,37 @@ mod tests {
     }
 
     #[test]
+    fn wire_plugin_command_surface_projection_preserves_stable_contract() {
+        let query: WireRequestEnvelope = serde_json::from_value(serde_json::json!({
+            "protocolVersion": 1,
+            "requestId": 4,
+            "request": {
+                "kind": "query-plugin-command-surface",
+                "protocolVersion": 1,
+                "extensionId": "sample.commands"
+            }
+        }))
+        .expect("command surface query should decode");
+        assert_eq!(
+            query.request.into_core(1).expect("query should map"),
+            Request::Query(velvet_workbench_protocol::Query::PluginCommandSurface {
+                extension_id: Some(ExtensionId("sample.commands".into()))
+            })
+        );
+
+        let response = WireResponseEnvelope::from_core(ResponseEnvelope {
+            protocol_version: 1,
+            request_id: RequestId(4),
+            response: Response::PluginCommandSurface(
+                velvet_workbench_protocol::PluginCommandSurfaceSnapshotDto::default(),
+            ),
+        });
+        let value = serde_json::to_value(response).expect("surface should serialize");
+        assert_eq!(value["response"]["kind"], "plugin-command-surface");
+        assert_eq!(value["response"]["surface"]["schemaVersion"], 1);
+    }
+
+    #[test]
     fn wire_plugin_manifest_preserves_extension_storage_declaration() {
         let manifest = ExtensionManifest::try_from(WirePluginManifest {
             manifest_schema: 1,
@@ -5351,7 +5453,10 @@ mod tests {
                     "extensionId": "sample.reader",
                     "commandId": "sample.reader.open",
                     "args": {"source": "context-menu"},
-                    "context": {"activeAppId": "asset-manager", "keys": {"kind": "asset"}}
+                    "context": {"activeAppId": "asset-manager", "keys": {"kind": "asset"}},
+                    "contextRevision": 4,
+                    "deadlineMs": 5000,
+                    "idempotencyKey": "sample.reader.open:4"
                 }
             }"#,
         )
@@ -5367,10 +5472,17 @@ mod tests {
                 command_id,
                 args,
                 context,
+                context_revision,
+                deadline_ms,
+                idempotency_key,
+                ..
             }) if extension_id.0 == "sample.reader"
                 && command_id == "sample.reader.open"
                 && args["source"] == "context-menu"
                 && context["activeAppId"] == "asset-manager"
+                && context_revision == 4
+                && deadline_ms == Some(5000)
+                && idempotency_key.as_deref() == Some("sample.reader.open:4")
         ));
     }
 
@@ -5656,6 +5768,11 @@ mod tests {
                                 command_id: None,
                                 group: None,
                                 when: None,
+                                enablement: None,
+                                keybinding: None,
+                                keybinding_platform: None,
+                                menu_location: None,
+                                required_capabilities: Vec::new(),
                                 anchor: None,
                                 ui: Some(velvet_plugin_api::UiSurfaceDescriptor {
                                     kind: velvet_plugin_api::UiSurfaceKind::View,
@@ -5726,6 +5843,11 @@ mod tests {
             command_id: None,
             group: None,
             when: None,
+            enablement: None,
+            keybinding: None,
+            keybinding_platform: None,
+            menu_location: None,
+            required_capabilities: Vec::new(),
             anchor: None,
             ui: None,
             preview: None,

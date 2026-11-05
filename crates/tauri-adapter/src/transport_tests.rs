@@ -254,6 +254,11 @@ fn runtime_command_failure_emits_a_crash_event_for_frontend_cleanup() {
             command_id: None,
             group: None,
             when: None,
+            enablement: None,
+            keybinding: None,
+            keybinding_platform: None,
+            menu_location: None,
+            required_capabilities: Vec::new(),
             anchor: None,
             ui: None,
             preview: None,
@@ -276,12 +281,16 @@ fn runtime_command_failure_emits_a_crash_event_for_frontend_cleanup() {
                 command_id: "echo.crash".into(),
                 args: serde_json::Value::Null,
                 context: serde_json::Value::Null,
+                context_revision: 0,
+                deadline_ms: None,
+                idempotency_key: None,
             }),
         )
         .expect_err("the crashing sidecar should fail its command");
     assert!(matches!(
         error,
-        CoreError::PluginRuntimeFailed { extension_id, .. } if extension_id == id.0
+        CoreError::PluginCommand { extension_id, code, .. }
+            if extension_id == id.0 && code == "command-runtime-failed"
     ));
     let events = sink.events();
     assert!(events.iter().any(|event| matches!(

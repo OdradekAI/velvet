@@ -9,6 +9,7 @@ import {
   type CorePluginProjection,
   type CorePluginRuntimeRecovery,
   type CorePluginRegistrySnapshot,
+  type CorePluginCommandSurfaceSnapshot,
   type CorePluginStorageRecovery,
   type CorePluginStorageDeclaration,
   type CorePluginDisableReason,
@@ -56,6 +57,10 @@ import {
   type MenuContribution,
   type MenuLocation,
 } from '../commands/menu-registry.js';
+import {
+  KeybindingRegistry,
+  type KeybindingDescriptor,
+} from '../commands/keybinding-registry.js';
 import {
   OverlayRegistry,
   type OverlayDescriptor,
@@ -129,6 +134,7 @@ interface PluginRecord {
   registeredSurfaceIds: string[];
   viewSurfaceBindings: PluginViewSurfaceBinding[];
   registeredCommands: CommandDescriptor[];
+  registeredKeybindings: KeybindingDescriptor[];
   registeredMenus: MenuContribution[];
   registeredOverlays: OverlayDescriptor[];
   overlaySurfaceBindings: PluginOverlaySurfaceBinding[];
@@ -199,6 +205,7 @@ export class PluginClient {
     private readonly overlayRegistry?: OverlayRegistry,
     private readonly localization: LocalizationService = new LocalizationService(),
     private readonly previewRegistry?: PreviewRegistry,
+    private readonly keybindingRegistry?: KeybindingRegistry,
   ) {
     this.ui = ui;
     this.coreLocalizationLoader = new CoreLocalizationBundleLoader(core);
@@ -231,6 +238,7 @@ export class PluginClient {
       registeredSurfaceIds: [],
       viewSurfaceBindings: [],
       registeredCommands: [],
+      registeredKeybindings: [],
       registeredMenus: [],
       registeredOverlays: [],
       overlaySurfaceBindings: [],
@@ -254,6 +262,7 @@ export class PluginClient {
     const registeredSurfaceIds: string[] = [];
     const viewSurfaceBindings: PluginViewSurfaceBinding[] = [];
     const registeredCommands: CommandDescriptor[] = [];
+    const registeredKeybindings: KeybindingDescriptor[] = [];
     const registeredMenus: MenuContribution[] = [];
     const registeredOverlays: OverlayDescriptor[] = [];
     const overlaySurfaceBindings: PluginOverlaySurfaceBinding[] = [];
@@ -305,6 +314,18 @@ export class PluginClient {
         const command = this.toCommandDescriptor(descriptor);
         this.commandRegistry.register(command);
         registeredCommands.push(command);
+      }
+
+      for (const descriptor of descriptors.filter((candidate) => candidate.kind === 'keybinding')) {
+        if (!this.keybindingRegistry) {
+          throw new PluginLifecycleError(
+            `Keybinding registry is unavailable for ${descriptor.id}`,
+            descriptor.extensionId,
+          );
+        }
+        const keybinding = this.toKeybindingDescriptor(descriptor);
+        this.keybindingRegistry.register(keybinding);
+        registeredKeybindings.push(keybinding);
       }
 
       for (const descriptor of descriptors.filter(isMenuContribution)) {
@@ -426,6 +447,7 @@ export class PluginClient {
       record.registeredSurfaceIds = registeredSurfaceIds;
       record.viewSurfaceBindings = viewSurfaceBindings;
       record.registeredCommands = registeredCommands;
+      record.registeredKeybindings = registeredKeybindings;
       record.registeredMenus = registeredMenus;
       record.registeredOverlays = registeredOverlays;
       record.overlaySurfaceBindings = overlaySurfaceBindings;
@@ -444,6 +466,7 @@ export class PluginClient {
         registeredViews,
         registeredSurfaceIds,
         registeredCommands,
+        registeredKeybindings,
         registeredMenus,
         registeredOverlays,
       );
@@ -456,6 +479,7 @@ export class PluginClient {
       record.registeredSurfaceIds = [];
       record.viewSurfaceBindings = [];
       record.registeredCommands = [];
+      record.registeredKeybindings = [];
       record.registeredMenus = [];
       record.registeredOverlays = [];
       record.overlaySurfaceBindings = [];
@@ -513,12 +537,16 @@ export class PluginClient {
     for (const command of [...record.registeredCommands].reverse()) {
       this.commandRegistry?.unregister(command);
     }
+    for (const keybinding of [...record.registeredKeybindings].reverse()) {
+      this.keybindingRegistry?.unregister(keybinding);
+    }
     record.registered = [];
     record.registeredViewContainers = [];
     record.registeredViews = [];
     record.registeredSurfaceIds = [];
     record.viewSurfaceBindings = [];
     record.registeredCommands = [];
+    record.registeredKeybindings = [];
     record.registeredMenus = [];
     record.registeredOverlays = [];
     record.overlaySurfaceBindings = [];
@@ -868,6 +896,24 @@ export class PluginClient {
       );
     }
     return response.registry;
+  }
+
+  /** Reads the host-owned command/menu/keybinding projection for resync. */
+  public async queryCoreCommandSurface(
+    extensionId?: string,
+  ): Promise<CorePluginCommandSurfaceSnapshot> {
+    const response = await this.core.request({
+      protocolVersion: PROTOCOL_VERSION,
+      kind: 'query-plugin-command-surface',
+      ...(extensionId ? { extensionId } : {}),
+    });
+    if (response.kind !== 'plugin-command-surface') {
+      throw new PluginLifecycleError(
+        `Expected a plugin command surface response, received ${response.kind}`,
+        extensionId ?? 'core',
+      );
+    }
+    return response.surface;
   }
 
   /** Projects Rust-declared views and UI surfaces through the same host registries as local plugins. */
@@ -1766,6 +1812,7 @@ export class PluginClient {
       namespace: descriptor.namespace,
       appId: descriptor.appId,
       when: descriptor.when,
+      enablement: descriptor.enablement,
       order: descriptor.order,
       execute: async (args, context) => {
         const handler = this.commandHandlers.get(descriptor.extensionId);
@@ -1797,7 +1844,7 @@ export class PluginClient {
       id: descriptor.id,
       label: descriptor.label ?? descriptor.title!,
       labelKey: descriptor.labelKey ?? descriptor.titleKey,
-      location: 'context-menu' satisfies MenuLocation,
+      location: (descriptor.menuLocation ?? defaultMenuLocation(descriptor.kind)) as MenuLocation,
       commandId: descriptor.commandId!,
       scope: descriptor.scope as CommandScope,
       namespace: descriptor.namespace,
@@ -1806,6 +1853,26 @@ export class PluginClient {
       order: descriptor.order,
       when: descriptor.when,
       anchor: descriptor.anchor,
+    };
+  }
+
+  private toKeybindingDescriptor(descriptor: ContributionDescriptor): KeybindingDescriptor {
+    if (descriptor.kind !== 'keybinding' || !descriptor.keybinding || !descriptor.commandId) {
+      throw new PluginLifecycleError(
+        `Keybinding ${descriptor.id} must declare a key sequence and command`,
+        descriptor.extensionId,
+      );
+    }
+    return {
+      id: descriptor.id,
+      commandId: descriptor.commandId,
+      keybinding: descriptor.keybinding,
+      platform: descriptor.keybindingPlatform,
+      scope: descriptor.scope as KeybindingDescriptor['scope'],
+      namespace: descriptor.namespace,
+      appId: descriptor.appId,
+      when: descriptor.when,
+      order: descriptor.order,
     };
   }
 
@@ -1890,6 +1957,7 @@ export class PluginClient {
     registeredViews: readonly string[],
     registeredSurfaceIds: readonly string[],
     registeredCommands: readonly CommandDescriptor[],
+    registeredKeybindings: readonly KeybindingDescriptor[],
     registeredMenus: readonly MenuContribution[],
     registeredOverlays: readonly OverlayDescriptor[],
   ): void {
@@ -1910,6 +1978,9 @@ export class PluginClient {
     }
     for (const command of [...registeredCommands].reverse()) {
       this.commandRegistry?.unregister(command);
+    }
+    for (const keybinding of [...registeredKeybindings].reverse()) {
+      this.keybindingRegistry?.unregister(keybinding);
     }
     for (const contribution of [...registered].reverse()) {
       this.contributionRegistry.unregister(contribution);
@@ -1985,6 +2056,8 @@ export class PluginClient {
             activeAppId: context.activeAppId ?? null,
             keys: context.keys,
           },
+        contextRevision: context.contextRevision ?? 0,
+        deadlineMs: 30_000,
         });
     if (response.kind !== 'accepted' && response.kind !== 'job') {
       throw new PluginLifecycleError(
@@ -2164,6 +2237,11 @@ function coreContributionToManifest(
     commandId: contribution.commandId ?? undefined,
     group: contribution.group ?? undefined,
     when: contribution.when ?? undefined,
+    enablement: contribution.enablement ?? undefined,
+    keybinding: contribution.keybinding ?? undefined,
+    keybindingPlatform: contribution.keybindingPlatform ?? undefined,
+    menuLocation: contribution.menuLocation ?? undefined,
+    requiredCapabilities: contribution.requiredCapabilities,
     anchor: contribution.anchor ?? undefined,
     ui,
     preview: contribution.preview
@@ -2200,7 +2278,24 @@ function isViewContribution(
 function isMenuContribution(
   contribution: Pick<ContributionDescriptor, 'kind'>,
 ): boolean {
-  return contribution.kind === 'context-menu' || contribution.kind === 'app-context-menu';
+  return contribution.kind === 'menu' ||
+    contribution.kind === 'context-menu' ||
+    contribution.kind === 'app-toolbar' ||
+    contribution.kind === 'app-context-menu' ||
+    contribution.kind === 'title-bar-action';
+}
+
+function defaultMenuLocation(kind: ContributionDescriptor['kind']): MenuLocation {
+  switch (kind) {
+    case 'title-bar-action':
+      return 'title-bar';
+    case 'app-toolbar':
+      return 'app-toolbar';
+    case 'menu':
+      return 'command-palette';
+    default:
+      return 'context-menu';
+  }
 }
 
 function expectedSurfaceKind(
