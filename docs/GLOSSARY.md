@@ -462,6 +462,12 @@ Profile/Core 持久化区域对 owner 的有界状态：`writable`、`read-only`
 
 触发扩展按需激活的稳定工作台事件，例如 Workbench 启动、应用切换、View、Command、Preview 或 Job 事件。
 
+## Plugin protocol envelope
+
+通过 `CoreTransport` 传递插件命令、扩展 projection 查询以及插件生命周期事件的
+有版本 envelope。它携带 opaque session、request/sequence 标识和受限 payload；
+插件不能借此访问 ApplicationCore、Tauri state、数据库或文件系统内部实现。
+
 ## ExtensionContext
 
 宿主在一次扩展会话中提供的受限上下文，包括扩展身份、取消、日志、本地化以及经授权的存储、配置、URI 和能力句柄。它不包含宿主框架对象或无限制路径。
