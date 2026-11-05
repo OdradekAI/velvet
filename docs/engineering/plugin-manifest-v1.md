@@ -129,3 +129,8 @@ cannot address a database, file path, Tauri state object or runtime process.
 The fixture set intentionally proves the public seam only. It does not prove
 that a production WASM/sidecar runtime, marketplace, signing policy or SDK
 package exists.
+
+For the end-to-end evidence map and result vocabulary, see
+[plugin-contract-matrix.md](plugin-contract-matrix.md). For the developer
+walkthrough and the fixture-only HostFacade catalog, see
+[plugin-developer-guide.md](plugin-developer-guide.md).

@@ -147,6 +147,11 @@ apps/desktop/
 - [术语表](docs/GLOSSARY.md)
 - [架构决策](docs/adr/)
 - [工作台基础计划](docs/engineering/workbench-foundation-plan.md)
+- [插件开发者指南](docs/engineering/plugin-developer-guide.md)
+- [插件合同验证矩阵](docs/engineering/plugin-contract-matrix.md)
+- [插件 manifest schema](docs/engineering/plugin-manifest-v1.md)
+- [插件注册表合同](docs/engineering/plugin-registry-v1.md)
+- [UI Kit 合同](docs/engineering/ui-kit-contract-v1.md)
 - [变更记录](CHANGELOG.md)
 - [许可证](LICENSE)
 

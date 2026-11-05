@@ -61,3 +61,7 @@ activation candidate matching and dependency-topological activation, while
 leaving selector expansion and runtime policy to those later contracts. It
 establishes the registration owner, cleanup seam, projection and failure
 isolation needed by those contracts.
+
+The cross-workspace evidence for this registry is listed in the
+[plugin contract matrix](plugin-contract-matrix.md). A developer-facing
+walkthrough is available in the [plugin developer guide](plugin-developer-guide.md).

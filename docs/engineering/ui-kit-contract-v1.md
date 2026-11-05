@@ -76,3 +76,7 @@ use the existing explicit capability and lifecycle cleanup path.
 - The contract is tested by `apps/desktop/test/ui-kit-contract.test.mjs`,
   `plugin-surface-adapter.test.mjs` and the existing surface lifecycle suites.
 
+See the [plugin contract matrix](plugin-contract-matrix.md) for the complete
+Rust/Tauri/frontend validation entry points and the [plugin developer
+guide](plugin-developer-guide.md) for the plugin-facing UI boundary.
+

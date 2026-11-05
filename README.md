@@ -185,6 +185,11 @@ apps/desktop/
 - [Glossary](docs/GLOSSARY.md)
 - [Architecture decisions](docs/adr/)
 - [Workbench foundation plan](docs/engineering/workbench-foundation-plan.md)
+- [Plugin developer guide](docs/engineering/plugin-developer-guide.md)
+- [Plugin contract matrix](docs/engineering/plugin-contract-matrix.md)
+- [Plugin manifest schema](docs/engineering/plugin-manifest-v1.md)
+- [Plugin registry contract](docs/engineering/plugin-registry-v1.md)
+- [UI Kit contract](docs/engineering/ui-kit-contract-v1.md)
 - [Change history](CHANGELOG.md)
 - [License](LICENSE)
 

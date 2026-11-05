@@ -510,6 +510,16 @@ command JSONL invocation, UI metadata projection, intentional crash isolation
 and recovery. The desktop regression test consumes the same manifest, invokes
 the real Node sidecar, mounts its data URL through the UI Bridge, removes the
 surface on failure and remounts it after recovery.
+
+The final cross-workspace validation and developer entry points are recorded in
+[`plugin-contract-matrix.md`](plugin-contract-matrix.md) and
+[`plugin-developer-guide.md`](plugin-developer-guide.md). The matrix keeps the
+root Rust workspace, the independent Tauri workspace and the desktop frontend
+as separate gates, records `pass`/`partial`/`not run`/`deferred` explicitly, and
+maps every plugin contract to a repeatable fixture. The developer guide keeps
+the current Asset Inspector and Echo sidecar examples honest: their structural
+HostFacade is a fixture seam, not a published SDK or proof of a production
+WASM/sidecar sandbox.
 The native Tauri composition root now exposes a preflight and transactional
 package flow through CoreTransport. `inspect-plugin` parses and validates a
 manifest before copying anything, so the native Workbench `Extensions` dialog

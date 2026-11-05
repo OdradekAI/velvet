@@ -90,6 +90,22 @@ await session.mount({
   size: { width: 10, height: 10 },
 });
 assert.equal(hostMessages[0].componentContractVersion, SUPPORTED_UI_COMPONENT_CONTRACT_VERSION);
+session.updateTheme({
+  scheme: 'light',
+  revision: 8,
+  density: 'default',
+  contrast: 'high',
+  reducedMotion: false,
+  tokens: {
+    'surface.canvas': '#ffffff',
+    'unknown.token': '#fff',
+  },
+});
+assert.equal(hostMessages.at(-1).type, 'host.theme');
+assert.equal(hostMessages.at(-1).theme.scheme, 'light');
+assert.equal(hostMessages.at(-1).theme.revision, 8);
+assert.equal(hostMessages.at(-1).theme.tokens['surface.canvas'], '#ffffff');
+assert.equal(hostMessages.at(-1).theme.tokens['unknown.token'], undefined);
 endpoint.receive({ type: 'surface.ready', bridgeVersion: '1', componentContractVersion: 99 });
 await Promise.resolve();
 assert.equal(session.state, 'failed');
