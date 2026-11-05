@@ -911,6 +911,12 @@ pub enum WireRequest {
         #[serde(rename = "extensionId")]
         extension_id: String,
     },
+    QueryPluginRegistry {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u16,
+        #[serde(rename = "extensionId")]
+        extension_id: Option<String>,
+    },
     QueryPluginStorageRecovery {
         #[serde(rename = "protocolVersion")]
         protocol_version: u16,
@@ -1299,6 +1305,17 @@ impl WireRequest {
                 Ok(Request::Query(
                     velvet_workbench_protocol::Query::PluginProjection {
                         extension_id: ExtensionId(extension_id),
+                    },
+                ))
+            }
+            Self::QueryPluginRegistry {
+                protocol_version,
+                extension_id,
+            } => {
+                validate_inner_protocol(outer_protocol_version, protocol_version)?;
+                Ok(Request::Query(
+                    velvet_workbench_protocol::Query::PluginRegistry {
+                        extension_id: extension_id.map(ExtensionId),
                     },
                 ))
             }
@@ -1988,6 +2005,9 @@ enum WireResponse {
     PluginProjection {
         projection: velvet_workbench_protocol::PluginProjectionDto,
     },
+    PluginRegistry {
+        registry: velvet_workbench_protocol::PluginRegistrySnapshotDto,
+    },
     PluginStorageRecovery {
         recovery: velvet_workbench_protocol::PluginStorageRecoveryDto,
     },
@@ -2061,6 +2081,7 @@ impl WireResponseEnvelope {
             }
             Response::PluginInstallRecoveryLog(log) => WireResponse::PluginInstallRecoveryLog { log },
             Response::PluginProjection(projection) => WireResponse::PluginProjection { projection },
+            Response::PluginRegistry(registry) => WireResponse::PluginRegistry { registry },
             Response::PluginStorageRecovery(recovery) => {
                 WireResponse::PluginStorageRecovery { recovery }
             }
@@ -5448,6 +5469,93 @@ mod tests {
         );
         assert_eq!(
             value["response"]["projection"]["manifest"]["contributions"][0]["namespace"],
+            "workbench"
+        );
+    }
+
+    #[test]
+    fn wire_plugin_registry_query_and_response_preserve_owner_metadata() {
+        let envelope: WireRequestEnvelope = serde_json::from_str(
+            r#"{
+                "protocolVersion": 1,
+                "requestId": 17,
+                "request": {
+                    "kind": "query-plugin-registry",
+                    "protocolVersion": 1,
+                    "extensionId": "sample.reader"
+                }
+            }"#,
+        )
+        .expect("the plugin registry query should deserialize");
+        assert!(matches!(
+            envelope
+                .request
+                .into_core(1)
+                .expect("the plugin registry query should map"),
+            Request::Query(velvet_workbench_protocol::Query::PluginRegistry {
+                extension_id: Some(extension_id)
+            }) if extension_id.0 == "sample.reader"
+        ));
+
+        let descriptor = velvet_plugin_api::ContributionDescriptor {
+            id: "sample.reader.view".into(),
+            kind: velvet_plugin_api::ContributionKind::View,
+            scope: velvet_plugin_api::ContributionScope::Workbench,
+            namespace: Some("workbench".into()),
+            container: Some(velvet_plugin_api::HostContainer::PrimarySidebar),
+            zone: Some(velvet_layout_model::WorkbenchZone::Navigation),
+            title: Some("Reader".into()),
+            title_key: None,
+            icon: None,
+            order: None,
+            default_visible: Some(true),
+            view_container_id: None,
+            activity_bar: None,
+            label: None,
+            label_key: None,
+            command_id: None,
+            group: None,
+            when: None,
+            anchor: None,
+            ui: None,
+            preview: None,
+        };
+        let response = WireResponseEnvelope::from_core(
+            velvet_workbench_protocol::ResponseEnvelope {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: RequestId(17),
+                response: Response::PluginRegistry(
+                    velvet_workbench_protocol::PluginRegistrySnapshotDto {
+                        schema_version: velvet_workbench_protocol::PLUGIN_REGISTRY_SCHEMA_VERSION,
+                        generation: 3,
+                        contributions: vec![
+                            velvet_workbench_protocol::PluginContributionRegistrationDto {
+                                extension_id: velvet_plugin_api::ExtensionId(
+                                    "sample.reader".into(),
+                                ),
+                                contribution_id: descriptor.id.clone(),
+                                namespace: "workbench".into(),
+                                kind: descriptor.kind.clone(),
+                                scope: descriptor.scope.clone(),
+                                zone: descriptor.zone.clone(),
+                                schema_version:
+                                    velvet_plugin_host::CONTRIBUTION_SCHEMA_VERSION,
+                                descriptor,
+                            },
+                        ],
+                    },
+                ),
+            },
+        );
+        let value = serde_json::to_value(response).expect("plugin registry should serialize");
+        assert_eq!(value["response"]["kind"], "plugin-registry");
+        assert_eq!(value["response"]["registry"]["generation"], 3);
+        assert_eq!(
+            value["response"]["registry"]["contributions"][0]["schemaVersion"],
+            velvet_plugin_host::CONTRIBUTION_SCHEMA_VERSION
+        );
+        assert_eq!(
+            value["response"]["registry"]["contributions"][0]["descriptor"]["namespace"],
             "workbench"
         );
     }

@@ -12,13 +12,14 @@ use velvet_job_system::{
     JobBudgetRequest, JobExecutionEnvironment, JobExecutionPolicy, JobId, JobSnapshot,
     JOB_EXECUTION_ENVIRONMENT_SCHEMA_VERSION,
 };
-use velvet_layout_model::{LayoutCommand, LayoutState};
+use velvet_layout_model::{LayoutCommand, LayoutState, WorkbenchZone};
 use velvet_plugin_api::{
-    AppTarget, ContributionDescriptor, ExtensionId, ExtensionInstallPreview,
-    ExtensionInstallRecovery, ExtensionInstallRecoveryAction, ExtensionInstallRecoveryLogEntry,
-    ExtensionKind, ExtensionManifest, ExtensionStorageDeclaration, ExtensionSummary,
-    ExtensionSupport, LocalizationManifest, PreviewActionContext, RuntimeKind, RuntimeLaunchSpec,
-    VersionRange, WorkbenchAppDescriptor, ZonePermissionSet,
+    AppTarget, ContributionDescriptor, ContributionKind, ContributionScope, ExtensionId,
+    ExtensionInstallPreview, ExtensionInstallRecovery, ExtensionInstallRecoveryAction,
+    ExtensionInstallRecoveryLogEntry, ExtensionKind, ExtensionManifest,
+    ExtensionStorageDeclaration, ExtensionSummary, ExtensionSupport, LocalizationManifest,
+    PreviewActionContext, RuntimeKind, RuntimeLaunchSpec, VersionRange, WorkbenchAppDescriptor,
+    ZonePermissionSet,
 };
 use velvet_preview_core::{PreviewIntent, PreviewSurface, ResolvedPreview};
 
@@ -36,6 +37,7 @@ pub const PLUGIN_RESOURCE_SCHEMA_VERSION: u16 = 1;
 pub const RECOVERY_SCHEMA_VERSION: u16 = 1;
 pub const RECOVERY_DIAGNOSTIC_SCHEMA_VERSION: u16 = 1;
 pub const PLUGIN_DIAGNOSTIC_SCHEMA_VERSION: u16 = 1;
+pub const PLUGIN_REGISTRY_SCHEMA_VERSION: u16 = 1;
 pub const CRASH_CAPTURE_SCHEMA_VERSION: u16 = 1;
 pub const CORE_SNAPSHOT_SCHEMA_VERSION: u16 = 1;
 pub const ACTIVATION_SCHEMA_VERSION: u16 = 1;
@@ -181,6 +183,7 @@ pub fn supported_schema_versions() -> BTreeMap<String, u16> {
         ),
         ("plugin-resource".into(), PLUGIN_RESOURCE_SCHEMA_VERSION),
         ("plugin-diagnostic".into(), PLUGIN_DIAGNOSTIC_SCHEMA_VERSION),
+        ("plugin-registry".into(), PLUGIN_REGISTRY_SCHEMA_VERSION),
         ("crash-capture".into(), CRASH_CAPTURE_SCHEMA_VERSION),
         ("release-manifest".into(), RELEASE_MANIFEST_SCHEMA_VERSION),
         (
@@ -400,6 +403,41 @@ impl From<velvet_plugin_api::ExtensionProjection> for PluginProjectionDto {
         Self {
             summary: projection.summary,
             manifest: projection.manifest.into(),
+        }
+    }
+}
+
+/// Host-owned contribution registrations projected to a desktop client.
+///
+/// The descriptor remains declarative. No runtime process, framework object or
+/// registry implementation crosses the transport seam.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PluginContributionRegistrationDto {
+    pub extension_id: ExtensionId,
+    pub contribution_id: String,
+    pub namespace: String,
+    pub kind: ContributionKind,
+    pub scope: ContributionScope,
+    pub zone: Option<WorkbenchZone>,
+    pub schema_version: u16,
+    pub descriptor: ContributionDescriptor,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PluginRegistrySnapshotDto {
+    pub schema_version: u16,
+    pub generation: u64,
+    pub contributions: Vec<PluginContributionRegistrationDto>,
+}
+
+impl Default for PluginRegistrySnapshotDto {
+    fn default() -> Self {
+        Self {
+            schema_version: PLUGIN_REGISTRY_SCHEMA_VERSION,
+            generation: 0,
+            contributions: Vec::new(),
         }
     }
 }
@@ -1948,6 +1986,9 @@ pub enum Query {
     PluginProjection {
         extension_id: ExtensionId,
     },
+    PluginRegistry {
+        extension_id: Option<ExtensionId>,
+    },
     ResolvePreview {
         asset_id: AssetId,
         content_kind: String,
@@ -2000,6 +2041,7 @@ pub enum Response {
     OperationReceipts(Vec<OperationReceipt>),
     OperationPlan(OperationPlan),
     PluginProjection(PluginProjectionDto),
+    PluginRegistry(PluginRegistrySnapshotDto),
     Job(JobSnapshot),
     Jobs(Vec<JobSnapshot>),
     Preview(ResolvedPreview),

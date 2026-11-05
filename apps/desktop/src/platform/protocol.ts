@@ -21,6 +21,7 @@ export const RECOVERY_DIAGNOSTIC_SCHEMA_VERSION = 1 as const;
 export type RecoveryDiagnosticSchemaVersion = typeof RECOVERY_DIAGNOSTIC_SCHEMA_VERSION;
 export const PLUGIN_DIAGNOSTIC_SCHEMA_VERSION = 1 as const;
 export type PluginDiagnosticSchemaVersion = typeof PLUGIN_DIAGNOSTIC_SCHEMA_VERSION;
+export const PLUGIN_REGISTRY_SCHEMA_VERSION = 1 as const;
 export const CRASH_CAPTURE_SCHEMA_VERSION = 1 as const;
 export const ACTIVATION_SCHEMA_VERSION = 1 as const;
 export type ActivationSchemaVersion = typeof ACTIVATION_SCHEMA_VERSION;
@@ -238,6 +239,11 @@ export type CoreRequest =
       readonly protocolVersion: ProtocolVersion;
       readonly kind: 'query-plugin-projection';
       readonly extensionId: string;
+    }
+  | {
+      readonly protocolVersion: ProtocolVersion;
+      readonly kind: 'query-plugin-registry';
+      readonly extensionId?: string;
     }
   | {
       readonly protocolVersion: ProtocolVersion;
@@ -500,6 +506,7 @@ export type CoreResponse =
       readonly log: readonly CorePluginInstallRecoveryLogEntry[];
     }
   | { readonly kind: 'plugin-projection'; readonly projection: CorePluginProjection }
+  | { readonly kind: 'plugin-registry'; readonly registry: CorePluginRegistrySnapshot }
   | {
       readonly kind: 'plugin-storage-recovery';
       readonly recovery: CorePluginStorageRecovery;
@@ -1269,6 +1276,23 @@ export interface CorePluginInstallRecoveryLogEntry {
 export interface CorePluginProjection {
   readonly summary: CorePluginSummary;
   readonly manifest: CorePluginManifest;
+}
+
+export interface CorePluginContributionRegistration {
+  readonly extensionId: string;
+  readonly contributionId: string;
+  readonly namespace: string;
+  readonly kind: CorePluginContributionKind;
+  readonly scope: CorePluginContributionScope;
+  readonly zone: Zone | null;
+  readonly schemaVersion: number;
+  readonly descriptor: CorePluginContribution;
+}
+
+export interface CorePluginRegistrySnapshot {
+  readonly schemaVersion: number;
+  readonly generation: number;
+  readonly contributions: readonly CorePluginContributionRegistration[];
 }
 
 export type CorePluginStorageRecoveryStatus = 'available' | 'empty' | 'corrupt' | 'unavailable';

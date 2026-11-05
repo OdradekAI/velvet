@@ -8,6 +8,7 @@ import {
   type CorePluginLocalization,
   type CorePluginProjection,
   type CorePluginRuntimeRecovery,
+  type CorePluginRegistrySnapshot,
   type CorePluginStorageRecovery,
   type CorePluginStorageDeclaration,
   type CorePluginDisableReason,
@@ -851,6 +852,22 @@ export class PluginClient {
     this.coreSummaries.set(extensionId, response.projection.summary);
     this.notify();
     return response.projection;
+  }
+
+  /** Reads the host-owned contribution projection used to resync renderer registries. */
+  public async queryCoreRegistry(extensionId?: string): Promise<CorePluginRegistrySnapshot> {
+    const response = await this.core.request({
+      protocolVersion: PROTOCOL_VERSION,
+      kind: 'query-plugin-registry',
+      ...(extensionId ? { extensionId } : {}),
+    });
+    if (response.kind !== 'plugin-registry') {
+      throw new PluginLifecycleError(
+        `Expected a plugin registry response, received ${response.kind}`,
+        extensionId ?? 'core',
+      );
+    }
+    return response.registry;
   }
 
   /** Projects Rust-declared views and UI surfaces through the same host registries as local plugins. */

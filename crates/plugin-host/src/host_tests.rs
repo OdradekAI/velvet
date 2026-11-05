@@ -7,16 +7,17 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use super::*;
+use crate::{CONTRIBUTION_REGISTRY_SCHEMA_VERSION, CONTRIBUTION_SCHEMA_VERSION};
 use ed25519_dalek::{Signer, SigningKey};
 use velvet_layout_model::WorkbenchZone;
 use velvet_persistence::{
     InMemoryStateSnapshotStore, JsonFileStateSnapshotStore, StateSnapshotStore,
 };
 use velvet_plugin_api::{
-    ContextAnchor, ContributionDescriptor, ExtensionId, ExtensionStorageDeclaration,
-    LocalizationManifest, Permission, PreviewAugmentationSlot, PreviewContributionDescriptor,
-    PreviewIntent, PreviewSurface, RuntimeKind, RuntimeLaunchSpec, UiSurfaceDescriptor,
-    UiSurfaceKind, VersionRange, ZonePermissionSet,
+    ContextAnchor, ContributionDescriptor, ContributionScope, ExtensionId,
+    ExtensionStorageDeclaration, LocalizationManifest, Permission, PreviewAugmentationSlot,
+    PreviewContributionDescriptor, PreviewIntent, PreviewSurface, RuntimeKind, RuntimeLaunchSpec,
+    UiSurfaceDescriptor, UiSurfaceKind, VersionRange, ZonePermissionSet,
 };
 
 static TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -1334,6 +1335,223 @@ fn valid_view_contributions_are_discoverable_and_cleaned_up() {
         .active_contributions(&ExtensionId("example".into()))
         .unwrap()
         .is_empty());
+}
+
+#[test]
+fn registry_projection_has_owner_metadata_and_disposable_handles() {
+    let mut host = InMemoryPluginHost::default();
+    let id = ExtensionId("example".into());
+    host.register(view_manifest(Some(WorkbenchZone::Navigation)))
+        .unwrap();
+    host.activate(&id).unwrap();
+
+    let snapshot = host.registry_snapshot();
+    assert_eq!(
+        snapshot.schema_version,
+        CONTRIBUTION_REGISTRY_SCHEMA_VERSION
+    );
+    assert_eq!(snapshot.generation, 1);
+    let registration = snapshot
+        .contributions
+        .first()
+        .expect("active contribution should be projected");
+    assert_eq!(registration.extension_id, id);
+    assert_eq!(registration.contribution_id, "example.view");
+    assert_eq!(registration.namespace, "workbench");
+    assert_eq!(registration.scope, ContributionScope::Workbench);
+    assert_eq!(registration.zone, Some(WorkbenchZone::Navigation));
+    assert_eq!(registration.schema_version, CONTRIBUTION_SCHEMA_VERSION);
+
+    let handle = host
+        .contribution_handles(&id)
+        .unwrap()
+        .pop()
+        .expect("active contribution should expose a handle");
+    assert!(host.dispose_contribution(&handle).unwrap());
+    assert!(!host.dispose_contribution(&handle).unwrap());
+    assert!(host.registry_snapshot().contributions.is_empty());
+    assert!(host.active_contributions(&id).unwrap().is_empty());
+    host.disable(&id, DisableReason::User).unwrap();
+    assert!(host.registry_snapshot().contributions.is_empty());
+}
+
+#[test]
+fn registry_cleanup_is_isolated_when_one_runtime_fails() {
+    let grants = Arc::new(Mutex::new(Vec::new()));
+    let runtime = FakeRuntime {
+        plans: VecDeque::from([
+            StartPlan::ProcessWithInvocation(
+                vec![RuntimeHealth::Running],
+                RuntimeError::InvocationTimeout,
+            ),
+            StartPlan::Process(vec![RuntimeHealth::Running]),
+        ]),
+        grants,
+        shutdowns: Arc::new(Mutex::new(0)),
+    };
+    let mut host = InMemoryPluginHost::with_runtime(Box::new(runtime));
+    let mut first = view_manifest(Some(WorkbenchZone::Navigation));
+    first.id = ExtensionId("first.example".into());
+    first.contributions[0].id = "first.example.view".into();
+    first.contributions[0].kind = velvet_plugin_api::ContributionKind::Command;
+    first.contributions[0].container = None;
+    first.contributions[0].zone = None;
+    first.contributions[0].icon = None;
+    first.contributions[0].default_visible = None;
+    let first_id = first.id.clone();
+    let mut second = view_manifest(Some(WorkbenchZone::Navigation));
+    second.id = ExtensionId("second.example".into());
+    second.contributions[0].id = "second.example.view".into();
+    let second_id = second.id.clone();
+    host.register(first).unwrap();
+    host.register(second).unwrap();
+    host.activate(&first_id).unwrap();
+    host.activate(&second_id).unwrap();
+    assert_eq!(host.registry_snapshot().contributions.len(), 2);
+
+    let _ = host.invoke_command(
+        &first_id,
+        "first.example.view".into(),
+        Value::Null,
+        Value::Null,
+    );
+    assert!(host.active_contributions(&first_id).unwrap().is_empty());
+    assert_eq!(host.active_contributions(&second_id).unwrap().len(), 1);
+    assert_eq!(host.registry_snapshot().contributions.len(), 1);
+}
+
+#[test]
+fn activation_resolves_extension_dependencies_before_the_requested_extension() {
+    let runtime = FakeRuntime {
+        plans: VecDeque::from([
+            StartPlan::Process(vec![RuntimeHealth::Running]),
+            StartPlan::Fail("dependent runtime failed".into()),
+        ]),
+        grants: Arc::new(Mutex::new(Vec::new())),
+        shutdowns: Arc::new(Mutex::new(0)),
+    };
+    let mut host = InMemoryPluginHost::with_runtime(Box::new(runtime));
+
+    let mut dependency = view_manifest(Some(WorkbenchZone::Navigation));
+    dependency.id = ExtensionId("base.example".into());
+    dependency.contributions[0].id = "base.example.view".into();
+    let dependency_id = dependency.id.clone();
+
+    let mut feature = view_manifest(Some(WorkbenchZone::Contextual));
+    feature.id = ExtensionId("feature.example".into());
+    feature.contributions[0].id = "feature.example.view".into();
+    feature.extension_dependencies = vec![dependency_id.clone()];
+    let feature_id = feature.id.clone();
+
+    host.register(dependency).unwrap();
+    host.register(feature).unwrap();
+
+    assert!(matches!(
+        host.activate(&feature_id),
+        Err(PluginError::RuntimeStart { extension_id, .. }) if extension_id == feature_id
+    ));
+    assert_eq!(
+        host.discover()
+            .into_iter()
+            .find(|summary| summary.id == dependency_id)
+            .map(|summary| summary.state),
+        Some(ExtensionState::Active)
+    );
+    assert_eq!(
+        host.discover()
+            .into_iter()
+            .find(|summary| summary.id == feature_id)
+            .map(|summary| summary.state),
+        Some(ExtensionState::Failed)
+    );
+    assert_eq!(host.registry_snapshot().contributions.len(), 1);
+    assert_eq!(
+        host.registry_snapshot().contributions[0].extension_id,
+        dependency_id
+    );
+}
+
+#[test]
+fn activation_rejects_dependency_cycles_without_starting_a_runtime() {
+    let shutdowns = Arc::new(Mutex::new(0));
+    let mut host = InMemoryPluginHost::with_runtime(Box::new(FakeRuntime {
+        plans: VecDeque::from([StartPlan::Process(vec![RuntimeHealth::Running])]),
+        grants: Arc::new(Mutex::new(Vec::new())),
+        shutdowns,
+    }));
+
+    let mut first = view_manifest(Some(WorkbenchZone::Navigation));
+    first.id = ExtensionId("first.example".into());
+    first.contributions[0].id = "first.example.view".into();
+    first.extension_dependencies = vec![ExtensionId("second.example".into())];
+
+    let mut second = view_manifest(Some(WorkbenchZone::Contextual));
+    second.id = ExtensionId("second.example".into());
+    second.contributions[0].id = "second.example.view".into();
+    second.extension_dependencies = vec![ExtensionId("first.example".into())];
+    let first_id = first.id.clone();
+
+    host.register(first).unwrap();
+    host.register(second).unwrap();
+
+    assert!(matches!(
+        host.activate(&first_id),
+        Err(PluginError::InvalidContribution(message))
+            if message.contains("cyclic extension dependency")
+    ));
+    assert!(host.registry_snapshot().contributions.is_empty());
+    assert!(host
+        .discover()
+        .into_iter()
+        .all(|summary| { summary.state == ExtensionState::Registered }));
+}
+
+#[test]
+fn activation_candidates_cover_each_declared_lazy_event_shape() {
+    let mut host = InMemoryPluginHost::default();
+    let mut manifest = view_manifest(Some(WorkbenchZone::Navigation));
+    manifest.activation_events = vec![
+        ActivationEvent::WorkbenchReady,
+        ActivationEvent::App {
+            app_id: "asset-manager".into(),
+        },
+        ActivationEvent::View {
+            contribution_id: "example.view".into(),
+        },
+        ActivationEvent::Command {
+            contribution_id: "example.view".into(),
+        },
+        ActivationEvent::Preview {
+            selector: "image/*".into(),
+        },
+        ActivationEvent::Job {
+            job_kind: "asset-analysis".into(),
+        },
+    ];
+    let id = manifest.id.clone();
+    host.register(manifest).unwrap();
+
+    let events = [
+        ActivationEvent::WorkbenchReady,
+        ActivationEvent::App {
+            app_id: "asset-manager".into(),
+        },
+        ActivationEvent::View {
+            contribution_id: "example.view".into(),
+        },
+        ActivationEvent::Command {
+            contribution_id: "example.view".into(),
+        },
+        ActivationEvent::Preview {
+            selector: "image/*".into(),
+        },
+        ActivationEvent::Job {
+            job_kind: "asset-analysis".into(),
+        },
+    ];
+    for event in events {
+        assert_eq!(host.activation_candidates(&event), vec![id.clone()]);
+    }
 }
 
 #[test]
@@ -2900,6 +3118,7 @@ fn bundled_echo_sidecar_installs_and_is_rediscovered_after_restart() {
         .uninstall_from_directory(&ExtensionId("velvet.example.echo".into()), &root)
         .expect("the installed sidecar should be uninstallable");
     assert!(restarted.discover().is_empty());
+    assert!(restarted.registry_snapshot().contributions.is_empty());
     assert!(!root.join("velvet.example.echo").exists());
 
     fs::remove_dir_all(root).expect("the temporary installation should be removed");
@@ -2910,17 +3129,10 @@ fn plugin_upgrade_can_be_previewed_committed_or_rolled_back() {
     let root = temporary_manifest_dir();
     let first_source = temporary_manifest_dir();
     let upgrade_source = temporary_manifest_dir();
-    let mut first = ExtensionManifest {
-        id: ExtensionId("transactional.plugin".into()),
-        version: "0.1.0".into(),
-        host_api: VersionRange("^1".into()),
-        runtime: RuntimeKind::BuiltIn,
-        launch: None,
-        target_app: None,
-        contributions: Vec::new(),
-        permission_sets: Vec::new(),
-        ..ExtensionManifest::default()
-    };
+    let mut first = view_manifest(Some(WorkbenchZone::Navigation));
+    first.id = ExtensionId("transactional.plugin".into());
+    first.version = "0.1.0".into();
+    first.contributions[0].id = "transactional.plugin.view".into();
     write_package(&first_source, &first);
     let mut host = InMemoryPluginHost::default();
     host.install_from_directory(&first_source, &root)
@@ -2929,6 +3141,7 @@ fn plugin_upgrade_can_be_previewed_committed_or_rolled_back() {
         .expect("the initial package should be committed");
     host.activate(&first.id)
         .expect("the initial package should activate");
+    assert_eq!(host.registry_snapshot().contributions.len(), 1);
 
     let conflict = host
         .inspect_from_directory(&first_source)
@@ -2955,6 +3168,7 @@ fn plugin_upgrade_can_be_previewed_committed_or_rolled_back() {
     host.install_from_directory(&upgrade_source, &root)
         .expect("the upgrade should be staged");
     assert_eq!(host.projection(&first.id).unwrap().summary.version, "0.2.0");
+    assert!(host.registry_snapshot().contributions.is_empty());
     assert!(
         root.join(".transactional.plugin.rollback").exists()
             || root
@@ -2974,12 +3188,14 @@ fn plugin_upgrade_can_be_previewed_committed_or_rolled_back() {
         .expect("the previous package should be restored");
     assert_eq!(restored.summary.version, "0.1.0");
     assert_eq!(restored.summary.state, ExtensionState::Active);
+    assert_eq!(host.registry_snapshot().contributions.len(), 1);
 
     host.install_from_directory(&upgrade_source, &root)
         .expect("the upgrade should be stageable again");
     host.commit_install(&first.id, &root)
         .expect("the upgrade should be committed");
     assert_eq!(host.projection(&first.id).unwrap().summary.version, "0.2.0");
+    assert!(host.registry_snapshot().contributions.is_empty());
     assert!(!root
         .read_dir()
         .expect("the install root should be readable")

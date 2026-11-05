@@ -27,6 +27,53 @@ fn canonical_manifest_dto_round_trips_without_becoming_the_domain_owner() {
 }
 
 #[test]
+fn plugin_registry_snapshot_round_trips_as_a_declarative_projection() {
+    let descriptor = ContributionDescriptor {
+        id: "sample.reader.view".into(),
+        kind: velvet_plugin_api::ContributionKind::View,
+        scope: velvet_plugin_api::ContributionScope::Workbench,
+        namespace: Some("workbench".into()),
+        container: Some(velvet_plugin_api::HostContainer::PrimarySidebar),
+        zone: Some(velvet_layout_model::WorkbenchZone::Navigation),
+        title: Some("Reader".into()),
+        title_key: None,
+        icon: None,
+        order: None,
+        default_visible: Some(true),
+        view_container_id: None,
+        activity_bar: None,
+        label: None,
+        label_key: None,
+        command_id: None,
+        group: None,
+        when: None,
+        anchor: None,
+        ui: None,
+        preview: None,
+    };
+    let snapshot = PluginRegistrySnapshotDto {
+        schema_version: PLUGIN_REGISTRY_SCHEMA_VERSION,
+        generation: 2,
+        contributions: vec![PluginContributionRegistrationDto {
+            extension_id: ExtensionId("sample.reader".into()),
+            contribution_id: descriptor.id.clone(),
+            namespace: "workbench".into(),
+            kind: descriptor.kind.clone(),
+            scope: descriptor.scope.clone(),
+            zone: descriptor.zone.clone(),
+            schema_version: 1,
+            descriptor,
+        }],
+    };
+    let value = serde_json::to_value(&snapshot).expect("registry snapshot should serialize");
+    assert_eq!(value["schemaVersion"], PLUGIN_REGISTRY_SCHEMA_VERSION);
+    assert_eq!(value["contributions"][0]["schemaVersion"], 1);
+    let decoded: PluginRegistrySnapshotDto =
+        serde_json::from_value(value).expect("registry snapshot should deserialize");
+    assert_eq!(decoded, snapshot);
+}
+
+#[test]
 fn plugin_envelope_round_trips_and_maps_to_core_request() {
     let envelope = PluginRequestEnvelope {
         protocol_version: PLUGIN_PROTOCOL_SCHEMA_VERSION,

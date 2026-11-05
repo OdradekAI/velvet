@@ -201,12 +201,13 @@ use velvet_preview_core::{
 use velvet_workbench_protocol::{
     Command, CoreError, CoreTransport, CrashCaptureEvidence, ImportPlan, ImportQuarantineEntry,
     ImportQuarantineSummary, ImportReceipt, OperationError, OperationErrorCode, OperationPlan,
-    OperationReceipt, PlatformPreflightEvidence, PluginDiagnosticEvent,
-    PluginDiagnosticKind as WirePluginDiagnosticKind, PluginDisableReason, PluginInstallPreviewDto,
-    PluginProjectionDto, PluginResourceDto, PluginRuntimeRecoveryDto, PluginRuntimeRecoveryState,
-    PluginStorageRecoveryDto, PluginStorageRecoveryStatus, PortableBundle, ProfileState, Query,
-    Request, RequestEnvelope, RequestId, Response, ResponseEnvelope,
-    PLUGIN_DIAGNOSTIC_SCHEMA_VERSION, PLUGIN_RESOURCE_SCHEMA_VERSION, PROFILE_SCHEMA_VERSION,
+    OperationReceipt, PlatformPreflightEvidence, PluginContributionRegistrationDto,
+    PluginDiagnosticEvent, PluginDiagnosticKind as WirePluginDiagnosticKind, PluginDisableReason,
+    PluginInstallPreviewDto, PluginProjectionDto, PluginRegistrySnapshotDto, PluginResourceDto,
+    PluginRuntimeRecoveryDto, PluginRuntimeRecoveryState, PluginStorageRecoveryDto,
+    PluginStorageRecoveryStatus, PortableBundle, ProfileState, Query, Request, RequestEnvelope,
+    RequestId, Response, ResponseEnvelope, PLUGIN_DIAGNOSTIC_SCHEMA_VERSION,
+    PLUGIN_REGISTRY_SCHEMA_VERSION, PLUGIN_RESOURCE_SCHEMA_VERSION, PROFILE_SCHEMA_VERSION,
     PROTOCOL_VERSION,
 };
 
@@ -1367,6 +1368,35 @@ impl ApplicationCore {
         self.plugins.discover()
     }
 
+    /// Projects the authoritative PluginHost registry without exposing its
+    /// internal map or runtime handles to the transport client.
+    pub fn query_plugin_registry(
+        &self,
+        extension_id: Option<&ExtensionId>,
+    ) -> PluginRegistrySnapshotDto {
+        let snapshot = self.plugins.registry_snapshot();
+        let contributions = snapshot
+            .contributions
+            .into_iter()
+            .filter(|registration| extension_id.is_none_or(|id| &registration.extension_id == id))
+            .map(|registration| PluginContributionRegistrationDto {
+                extension_id: registration.extension_id,
+                contribution_id: registration.contribution_id,
+                namespace: registration.namespace,
+                kind: registration.kind,
+                scope: registration.scope,
+                zone: registration.zone,
+                schema_version: registration.schema_version,
+                descriptor: registration.descriptor,
+            })
+            .collect();
+        PluginRegistrySnapshotDto {
+            schema_version: PLUGIN_REGISTRY_SCHEMA_VERSION,
+            generation: snapshot.generation,
+            contributions,
+        }
+    }
+
     pub fn query_plugin_storage_recovery(
         &self,
         id: &ExtensionId,
@@ -2366,6 +2396,9 @@ impl ApplicationCore {
                 .map(PluginProjectionDto::from)
                 .map(Response::PluginProjection)
                 .map_err(plugin_error),
+            Request::Query(Query::PluginRegistry { extension_id }) => Ok(Response::PluginRegistry(
+                self.query_plugin_registry(extension_id.as_ref()),
+            )),
             Request::Query(Query::ResolvePreview {
                 asset_id,
                 content_kind,

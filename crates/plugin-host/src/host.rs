@@ -27,12 +27,17 @@ use sha2::{Digest, Sha256};
 use velvet_job_system::{JobBudgetRequest, JobProvenance, JOB_SCHEMA_VERSION};
 use velvet_layout_model::WorkbenchZone;
 use velvet_plugin_api::{
-    validate_reserved_metadata, AppTarget, ContributionKind, ContributionScope, ExtensionId,
-    ExtensionInstallOperation, ExtensionInstallPreview, ExtensionInstallRecovery,
+    validate_reserved_metadata, ActivationEvent, AppTarget, ContributionKind, ContributionScope,
+    ExtensionId, ExtensionInstallOperation, ExtensionInstallPreview, ExtensionInstallRecovery,
     ExtensionInstallRecoveryAction, ExtensionInstallRecoveryKind, ExtensionInstallRecoveryLogEntry,
     ExtensionInstallRecoveryLogStatus, ExtensionManifest, ExtensionProjection, ExtensionState,
     ExtensionSummary, HostContainer, Permission, PreviewActionContext, RuntimeKind,
     RuntimeLaunchSpec, VersionRange, MANIFEST_SCHEMA_VERSION, PREVIEW_ACTION_SCHEMA_VERSION,
+};
+
+use crate::registry::{
+    ContributionRegistrationHandle, ContributionRegistry, ContributionRegistrySnapshot,
+    RegistryError,
 };
 
 #[path = "extension_storage.rs"]
@@ -430,6 +435,7 @@ pub enum PluginError {
         extension_id: ExtensionId,
         message: String,
     },
+    RegistryUnavailable,
     InvalidState {
         extension_id: ExtensionId,
         state: ExtensionState,
@@ -445,6 +451,15 @@ pub enum DisableReason {
     User,
     Crash,
     Incompatible,
+}
+
+/// Result of one lazy activation request. A failure is recorded for the
+/// extension only; callers can continue processing the remaining outcomes.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PluginActivationOutcome {
+    pub extension_id: ExtensionId,
+    pub activated: bool,
+    pub error: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2337,6 +2352,25 @@ pub trait PluginHost {
         &self,
         id: &ExtensionId,
     ) -> Result<Vec<velvet_plugin_api::ContributionDescriptor>, PluginError>;
+    /// Returns the host-owned contribution projection used by transport
+    /// adapters and reconnecting clients. Implementations that do not expose
+    /// a registry report `RegistryUnavailable` rather than inventing a second
+    /// empty state owner.
+    fn registry_snapshot(&self) -> Result<ContributionRegistrySnapshot, PluginError> {
+        Err(PluginError::RegistryUnavailable)
+    }
+    fn contribution_handles(
+        &self,
+        _id: &ExtensionId,
+    ) -> Result<Vec<ContributionRegistrationHandle>, PluginError> {
+        Err(PluginError::RegistryUnavailable)
+    }
+    fn dispose_contribution(
+        &mut self,
+        _handle: &ContributionRegistrationHandle,
+    ) -> Result<bool, PluginError> {
+        Err(PluginError::RegistryUnavailable)
+    }
     fn job_handles(&self, id: &ExtensionId) -> Result<Vec<PluginJobHandle>, PluginError>;
     fn check_health(&mut self, id: &ExtensionId) -> Result<ExtensionState, PluginError>;
     fn recover(&mut self, id: &ExtensionId) -> Result<(), PluginError>;
@@ -2480,6 +2514,8 @@ pub struct InMemoryPluginHost {
     trust_records: BTreeMap<ExtensionId, PluginTrustRecord>,
     trust_store: Option<Arc<dyn PluginTrustStore>>,
     active: BTreeSet<ExtensionId>,
+    registry: ContributionRegistry,
+    registrations: BTreeMap<ExtensionId, Vec<ContributionRegistrationHandle>>,
     states: BTreeMap<ExtensionId, ExtensionState>,
     processes: BTreeMap<ExtensionId, Arc<Mutex<Box<dyn RuntimeProcess>>>>,
     runtime_nonces: BTreeMap<ExtensionId, String>,
@@ -2522,6 +2558,8 @@ impl Default for InMemoryPluginHost {
             trust_records: BTreeMap::new(),
             trust_store: None,
             active: BTreeSet::new(),
+            registry: ContributionRegistry::default(),
+            registrations: BTreeMap::new(),
             states: BTreeMap::new(),
             processes: BTreeMap::new(),
             runtime_nonces: BTreeMap::new(),
@@ -2553,6 +2591,321 @@ impl InMemoryPluginHost {
         Self {
             runtime,
             ..Self::default()
+        }
+    }
+
+    /// Returns the authoritative host-owned contribution projection.
+    ///
+    /// Frontend registries may cache this projection, but they do not own it.
+    /// A new generation is published whenever a contribution is registered or
+    /// revoked, which gives reconnecting clients a cheap resync check.
+    pub fn registry_snapshot(&self) -> ContributionRegistrySnapshot {
+        self.registry.snapshot()
+    }
+
+    /// Returns opaque disposable handles for one active extension.
+    pub fn contribution_handles(
+        &self,
+        id: &ExtensionId,
+    ) -> Result<Vec<ContributionRegistrationHandle>, PluginError> {
+        if !self.manifests.contains_key(id) {
+            return Err(PluginError::NotFound(id.clone()));
+        }
+        Ok(self.registrations.get(id).cloned().unwrap_or_default())
+    }
+
+    /// Disposes one registration without changing the extension lifecycle.
+    /// Repeating the same handle is intentionally idempotent.
+    pub fn dispose_contribution(
+        &mut self,
+        handle: &ContributionRegistrationHandle,
+    ) -> Result<bool, PluginError> {
+        if !self.manifests.contains_key(handle.extension_id()) {
+            return Err(PluginError::NotFound(handle.extension_id().clone()));
+        }
+        let removed = self.registry.dispose(handle);
+        if removed {
+            if let Some(handles) = self.registrations.get_mut(handle.extension_id()) {
+                handles.retain(|candidate| candidate != handle);
+            }
+        }
+        Ok(removed)
+    }
+
+    /// Returns deterministic candidates for a lazy activation trigger.
+    /// Matching is deliberately exact; selector expansion belongs to the
+    /// owner that defines the event topic, not to the registry.
+    pub fn activation_candidates(&self, event: &ActivationEvent) -> Vec<ExtensionId> {
+        self.manifests
+            .values()
+            .filter(|manifest| {
+                manifest
+                    .activation_events
+                    .iter()
+                    .any(|candidate| candidate == event)
+            })
+            .map(|manifest| manifest.id.clone())
+            .collect()
+    }
+
+    /// Activates every candidate for a trigger while isolating one extension's
+    /// failure from the other candidates.
+    pub fn activate_for_event(&mut self, event: &ActivationEvent) -> Vec<PluginActivationOutcome> {
+        self.activation_candidates(event)
+            .into_iter()
+            .map(|extension_id| match self.activate(&extension_id) {
+                Ok(()) => PluginActivationOutcome {
+                    extension_id,
+                    activated: true,
+                    error: None,
+                },
+                Err(error) => PluginActivationOutcome {
+                    extension_id,
+                    activated: false,
+                    error: Some(format!("{error:?}")),
+                },
+            })
+            .collect()
+    }
+
+    fn activation_order(&self, id: &ExtensionId) -> Result<Vec<ExtensionId>, PluginError> {
+        fn visit(
+            host: &InMemoryPluginHost,
+            id: &ExtensionId,
+            visiting: &mut BTreeSet<ExtensionId>,
+            visited: &mut BTreeSet<ExtensionId>,
+            order: &mut Vec<ExtensionId>,
+        ) -> Result<(), PluginError> {
+            if visited.contains(id) {
+                return Ok(());
+            }
+            if !visiting.insert(id.clone()) {
+                return Err(PluginError::InvalidContribution(format!(
+                    "cyclic extension dependency involving {}",
+                    id.0
+                )));
+            }
+            let manifest = host
+                .manifests
+                .get(id)
+                .ok_or_else(|| PluginError::NotFound(id.clone()))?;
+            let mut dependencies = manifest.extension_dependencies.clone();
+            dependencies.sort();
+            for dependency in dependencies {
+                visit(host, &dependency, visiting, visited, order)?;
+            }
+            visiting.remove(id);
+            visited.insert(id.clone());
+            order.push(id.clone());
+            Ok(())
+        }
+
+        let mut visiting = BTreeSet::new();
+        let mut visited = BTreeSet::new();
+        let mut order = Vec::new();
+        visit(self, id, &mut visiting, &mut visited, &mut order)?;
+        Ok(order)
+    }
+
+    fn activate_runtime(&mut self, id: &ExtensionId) -> Result<(), PluginError> {
+        let Some(manifest) = self.manifests.get(id).cloned() else {
+            return Err(PluginError::NotFound(id.clone()));
+        };
+
+        if self.active.contains(id) {
+            return Ok(());
+        }
+
+        let storage_migration_required = match self.runtime_storage_migration_required(&manifest) {
+            Ok(required) => required,
+            Err(error) => {
+                self.states.insert(id.clone(), ExtensionState::Failed);
+                return Err(error);
+            }
+        };
+
+        self.states.insert(id.clone(), ExtensionState::Starting);
+        let permissions = PermissionGrant::from_manifest(&manifest);
+        let package_root = self.package_roots.get(id).cloned();
+        let runtime_lease = if self.runtime_lease_enabled(&manifest) {
+            let runtime_nonce = next_runtime_nonce(id);
+            let lease = RuntimeLease::starting(
+                manifest.id.clone(),
+                manifest.version.clone(),
+                package_root.clone(),
+                runtime_nonce.clone(),
+            );
+            let lease = if let (Some(instance_id), Some(attempt_id)) =
+                (self.host_instance_id.clone(), self.launch_attempt_id)
+            {
+                lease.with_host_context(instance_id, attempt_id)
+            } else {
+                lease
+            };
+            let store = self
+                .runtime_leases
+                .as_ref()
+                .expect("runtime lease is enabled only with a store")
+                .clone();
+            if let Err(error) = store.publish(lease.clone()) {
+                self.states.insert(id.clone(), ExtensionState::Failed);
+                let message = format!("runtime lease could not be published: {error:?}");
+                self.record_diagnostic(PluginDiagnosticInput {
+                    extension_id: id.clone(),
+                    kind: PluginDiagnosticKind::Activation,
+                    code: "runtime-lease-publish-failed".into(),
+                    message: message.clone(),
+                    job_id: None,
+                    attempt: None,
+                    retryable: true,
+                });
+                return Err(PluginError::RuntimeLease {
+                    extension_id: id.clone(),
+                    message,
+                });
+            }
+            Some((store, lease))
+        } else {
+            None
+        };
+        let launch_context = package_root
+            .as_deref()
+            .map(RuntimeLaunchContext::package)
+            .unwrap_or_default();
+        let launch_context = runtime_lease
+            .as_ref()
+            .map(|(_, lease)| {
+                launch_context
+                    .clone()
+                    .with_runtime_nonce(lease.runtime_nonce.clone())
+            })
+            .unwrap_or(launch_context);
+        let launch_context = if let (Some(instance_id), Some(attempt_id)) =
+            (self.host_instance_id.clone(), self.launch_attempt_id)
+        {
+            launch_context
+                .with_host_context(instance_id, attempt_id)
+                .with_crash_receipt_path(
+                    self.crash_receipt_path
+                        .clone()
+                        .unwrap_or_else(|| PathBuf::from("crash-receipts.json")),
+                )
+        } else {
+            launch_context
+        };
+        match self
+            .runtime
+            .start_with_context(&manifest, &permissions, &launch_context)
+        {
+            Ok(mut process) => {
+                if let Some((store, lease)) = runtime_lease {
+                    let Some(identity) = process.identity() else {
+                        let _ = process.shutdown();
+                        let _ = store.close(id, &lease.runtime_nonce);
+                        self.states.insert(id.clone(), ExtensionState::Failed);
+                        let message =
+                            "external runtime did not provide a process identity for its lease"
+                                .to_owned();
+                        self.record_diagnostic(PluginDiagnosticInput {
+                            extension_id: id.clone(),
+                            kind: PluginDiagnosticKind::Activation,
+                            code: "runtime-lease-identity-missing".into(),
+                            message: message.clone(),
+                            job_id: None,
+                            attempt: None,
+                            retryable: true,
+                        });
+                        return Err(PluginError::RuntimeLease {
+                            extension_id: id.clone(),
+                            message,
+                        });
+                    };
+                    let runtime_nonce = lease.runtime_nonce.clone();
+                    if let Err(error) = store.publish(lease.running(identity)) {
+                        let _ = process.shutdown();
+                        let _ = store.close(id, &runtime_nonce);
+                        self.states.insert(id.clone(), ExtensionState::Failed);
+                        let message = format!("runtime lease could not be committed: {error:?}");
+                        self.record_diagnostic(PluginDiagnosticInput {
+                            extension_id: id.clone(),
+                            kind: PluginDiagnosticKind::Activation,
+                            code: "runtime-lease-commit-failed".into(),
+                            message: message.clone(),
+                            job_id: None,
+                            attempt: None,
+                            retryable: true,
+                        });
+                        return Err(PluginError::RuntimeLease {
+                            extension_id: id.clone(),
+                            message,
+                        });
+                    }
+                    self.runtime_nonces.insert(id.clone(), runtime_nonce);
+                }
+                self.processes
+                    .insert(id.clone(), Arc::new(Mutex::new(process)));
+                if let Err(error) = self.register_contributions(id, &manifest.contributions) {
+                    if let Some(process) = self.processes.remove(id) {
+                        if let Ok(mut process) = process.lock() {
+                            let _ = process.shutdown();
+                        }
+                    }
+                    let runtime_nonce = self.runtime_nonces.remove(id);
+                    self.close_runtime_lease(id, runtime_nonce.as_deref());
+                    self.states.insert(id.clone(), ExtensionState::Failed);
+                    self.record_diagnostic(PluginDiagnosticInput {
+                        extension_id: id.clone(),
+                        kind: PluginDiagnosticKind::Activation,
+                        code: "registry-registration-failed".into(),
+                        message: format!("contributions could not be registered: {error:?}"),
+                        job_id: None,
+                        attempt: None,
+                        retryable: false,
+                    });
+                    return Err(error);
+                }
+                self.active.insert(id.clone());
+                self.states.insert(id.clone(), ExtensionState::Active);
+                if storage_migration_required {
+                    if let Err(error) = self.migrate_extension_state_from_runtime(id) {
+                        if self.active.contains(id) {
+                            self.abort_runtime_activation(id);
+                        }
+                        return Err(error);
+                    }
+                }
+                Ok(())
+            }
+            Err(error) => {
+                if let Some((store, lease)) = runtime_lease {
+                    if let Err(close_error) = store.close(id, &lease.runtime_nonce) {
+                        self.record_diagnostic(PluginDiagnosticInput {
+                            extension_id: id.clone(),
+                            kind: PluginDiagnosticKind::Runtime,
+                            code: "runtime-lease-close-failed".into(),
+                            message: format!("failed to close start lease: {close_error:?}"),
+                            job_id: None,
+                            attempt: None,
+                            retryable: true,
+                        });
+                    }
+                }
+                self.states.insert(id.clone(), ExtensionState::Failed);
+                let message = runtime_error_message(error);
+                self.record_diagnostic(PluginDiagnosticInput {
+                    extension_id: id.clone(),
+                    kind: PluginDiagnosticKind::Activation,
+                    code: "activation-failed".into(),
+                    message: message.clone(),
+                    job_id: None,
+                    attempt: None,
+                    retryable: true,
+                });
+                Err(PluginError::RuntimeStart {
+                    extension_id: id.clone(),
+                    message,
+                })
+            }
         }
     }
 
@@ -3053,6 +3406,8 @@ impl InMemoryPluginHost {
         if let Some(state) = self.states.get_mut(extension_id) {
             *state = ExtensionState::Failed;
         }
+        self.active.remove(extension_id);
+        self.revoke_contributions(extension_id);
         self.record_diagnostic(PluginDiagnosticInput {
             extension_id: extension_id.clone(),
             kind: PluginDiagnosticKind::Runtime,
@@ -3222,6 +3577,7 @@ impl InMemoryPluginHost {
         let runtime_nonce = self.runtime_nonces.remove(id);
         self.close_runtime_lease(id, runtime_nonce.as_deref());
         self.active.remove(id);
+        self.revoke_contributions(id);
         self.states.insert(id.clone(), ExtensionState::Failed);
         self.record_diagnostic(PluginDiagnosticInput {
             extension_id: id.clone(),
@@ -3264,6 +3620,7 @@ impl InMemoryPluginHost {
         let runtime_nonce = self.runtime_nonces.remove(id);
         self.close_runtime_lease(id, runtime_nonce.as_deref());
         self.active.remove(id);
+        self.revoke_contributions(id);
         self.states.insert(id.clone(), ExtensionState::Failed);
     }
 
@@ -3272,10 +3629,9 @@ impl InMemoryPluginHost {
     }
 
     pub fn reconcile_runtime_orphans(&mut self) -> Result<Vec<RuntimeOrphanReport>, PluginError> {
-        let (Some(store), Some(reconciler)) = (
-            self.runtime_leases.as_ref(),
-            self.orphan_reconciler.as_ref(),
-        ) else {
+        let (Some(store), Some(reconciler)) =
+            (self.runtime_leases.clone(), self.orphan_reconciler.clone())
+        else {
             return Ok(Vec::new());
         };
         let leases = store.load().map_err(|error| PluginError::RuntimeLease {
@@ -3288,6 +3644,8 @@ impl InMemoryPluginHost {
                 if let Some(state) = self.states.get_mut(&lease.extension_id) {
                     *state = ExtensionState::Failed;
                 }
+                self.active.remove(&lease.extension_id);
+                self.revoke_contributions(&lease.extension_id);
                 reports.push(RuntimeOrphanReport {
                     extension_id: lease.extension_id,
                     runtime_nonce: lease.runtime_nonce,
@@ -3308,6 +3666,8 @@ impl InMemoryPluginHost {
                     if let Some(state) = self.states.get_mut(&lease.extension_id) {
                         *state = ExtensionState::Failed;
                     }
+                    self.active.remove(&lease.extension_id);
+                    self.revoke_contributions(&lease.extension_id);
                     self.record_diagnostic(PluginDiagnosticInput {
                         extension_id: lease.extension_id.clone(),
                         kind: PluginDiagnosticKind::Runtime,
@@ -3326,6 +3686,8 @@ impl InMemoryPluginHost {
                         if let Some(state) = self.states.get_mut(&lease.extension_id) {
                             *state = ExtensionState::Failed;
                         }
+                        self.active.remove(&lease.extension_id);
+                        self.revoke_contributions(&lease.extension_id);
                         self.record_diagnostic(PluginDiagnosticInput {
                             extension_id: lease.extension_id.clone(),
                             kind: PluginDiagnosticKind::Runtime,
@@ -3343,6 +3705,8 @@ impl InMemoryPluginHost {
                         if let Some(state) = self.states.get_mut(&lease.extension_id) {
                             *state = ExtensionState::Failed;
                         }
+                        self.active.remove(&lease.extension_id);
+                        self.revoke_contributions(&lease.extension_id);
                         self.record_diagnostic(PluginDiagnosticInput {
                             extension_id: lease.extension_id.clone(),
                             kind: PluginDiagnosticKind::Runtime,
@@ -3361,6 +3725,8 @@ impl InMemoryPluginHost {
                     if let Some(state) = self.states.get_mut(&lease.extension_id) {
                         *state = ExtensionState::Failed;
                     }
+                    self.active.remove(&lease.extension_id);
+                    self.revoke_contributions(&lease.extension_id);
                     self.record_diagnostic(PluginDiagnosticInput {
                         extension_id: lease.extension_id.clone(),
                         kind: PluginDiagnosticKind::Runtime,
@@ -3951,6 +4317,7 @@ impl InMemoryPluginHost {
     }
 
     fn remove_registration(&mut self, id: &ExtensionId) {
+        self.revoke_contributions(id);
         let runtime_nonce = self.runtime_nonces.remove(id);
         self.close_runtime_lease(id, runtime_nonce.as_deref());
         self.manifests.remove(id);
@@ -3958,6 +4325,37 @@ impl InMemoryPluginHost {
         self.active.remove(id);
         self.states.remove(id);
         self.processes.remove(id);
+    }
+
+    fn register_contributions(
+        &mut self,
+        id: &ExtensionId,
+        contributions: &[velvet_plugin_api::ContributionDescriptor],
+    ) -> Result<(), PluginError> {
+        let handles = self
+            .registry
+            .register_extension(id, contributions)
+            .map_err(|error| match error {
+                RegistryError::Duplicate(key) | RegistryError::InvalidNamespace(key) => {
+                    PluginError::InvalidContribution(key)
+                }
+            })?;
+        self.registrations.insert(id.clone(), handles);
+        Ok(())
+    }
+
+    fn revoke_contributions(&mut self, id: &ExtensionId) {
+        self.registry.revoke_extension(id);
+        self.registrations.remove(id);
+    }
+
+    fn contribution_is_active(
+        &self,
+        id: &ExtensionId,
+        contribution_id: &str,
+        kind: &ContributionKind,
+    ) -> bool {
+        self.registry.contains(id, contribution_id, kind)
     }
 
     fn restore_state(&mut self, id: &ExtensionId, state: ExtensionState) {
@@ -3989,13 +4387,7 @@ impl InMemoryPluginHost {
             });
         }
 
-        let manifest = self
-            .manifests
-            .get(id)
-            .ok_or_else(|| PluginError::NotFound(id.clone()))?;
-        if !manifest.contributions.iter().any(|contribution| {
-            contribution.id == contribution_id && contribution.kind == expected_kind
-        }) {
+        if !self.contribution_is_active(id, &contribution_id, &expected_kind) {
             return Err(PluginError::InvalidContribution(format!(
                 "contribution {} is not declared by extension {}",
                 contribution_id, id.0
@@ -4085,6 +4477,7 @@ impl InMemoryPluginHost {
                 let runtime_nonce = self.runtime_nonces.remove(id);
                 self.close_runtime_lease(id, runtime_nonce.as_deref());
                 self.active.remove(id);
+                self.revoke_contributions(id);
                 self.states.insert(id.clone(), ExtensionState::Failed);
                 self.record_diagnostic(PluginDiagnosticInput {
                     extension_id: id.clone(),
@@ -4126,7 +4519,10 @@ impl InMemoryPluginHost {
                     id.0,
                 ))
             })?;
-        if !expected_kinds.contains(&contribution.kind) || contribution.preview.is_none() {
+        if !expected_kinds.contains(&contribution.kind)
+            || contribution.preview.is_none()
+            || !self.contribution_is_active(id, &contribution_id, &contribution.kind)
+        {
             return Err(PluginError::InvalidContribution(format!(
                 "{} is not a {label} contribution",
                 contribution_id,
@@ -4247,185 +4643,13 @@ impl PluginHost for InMemoryPluginHost {
     }
 
     fn activate(&mut self, id: &ExtensionId) -> Result<(), PluginError> {
-        let Some(manifest) = self.manifests.get(id).cloned() else {
-            return Err(PluginError::NotFound(id.clone()));
-        };
-
-        if self.active.contains(id) {
-            return Ok(());
-        }
-
-        let storage_migration_required = match self.runtime_storage_migration_required(&manifest) {
-            Ok(required) => required,
-            Err(error) => {
-                self.states.insert(id.clone(), ExtensionState::Failed);
-                return Err(error);
-            }
-        };
-
-        self.states.insert(id.clone(), ExtensionState::Starting);
-        let permissions = PermissionGrant::from_manifest(&manifest);
-        let package_root = self.package_roots.get(id).cloned();
-        let runtime_lease = if self.runtime_lease_enabled(&manifest) {
-            let runtime_nonce = next_runtime_nonce(id);
-            let lease = RuntimeLease::starting(
-                manifest.id.clone(),
-                manifest.version.clone(),
-                package_root.clone(),
-                runtime_nonce.clone(),
-            );
-            let lease = if let (Some(instance_id), Some(attempt_id)) =
-                (self.host_instance_id.clone(), self.launch_attempt_id)
-            {
-                lease.with_host_context(instance_id, attempt_id)
-            } else {
-                lease
-            };
-            let store = self
-                .runtime_leases
-                .as_ref()
-                .expect("runtime lease is enabled only with a store")
-                .clone();
-            if let Err(error) = store.publish(lease.clone()) {
-                self.states.insert(id.clone(), ExtensionState::Failed);
-                let message = format!("runtime lease could not be published: {error:?}");
-                self.record_diagnostic(PluginDiagnosticInput {
-                    extension_id: id.clone(),
-                    kind: PluginDiagnosticKind::Activation,
-                    code: "runtime-lease-publish-failed".into(),
-                    message: message.clone(),
-                    job_id: None,
-                    attempt: None,
-                    retryable: true,
-                });
-                return Err(PluginError::RuntimeLease {
-                    extension_id: id.clone(),
-                    message,
-                });
-            }
-            Some((store, lease))
-        } else {
-            None
-        };
-        let launch_context = package_root
-            .as_deref()
-            .map(RuntimeLaunchContext::package)
-            .unwrap_or_default();
-        let launch_context = runtime_lease
-            .as_ref()
-            .map(|(_, lease)| {
-                launch_context
-                    .clone()
-                    .with_runtime_nonce(lease.runtime_nonce.clone())
-            })
-            .unwrap_or(launch_context);
-        let launch_context = if let (Some(instance_id), Some(attempt_id)) =
-            (self.host_instance_id.clone(), self.launch_attempt_id)
-        {
-            launch_context
-                .with_host_context(instance_id, attempt_id)
-                .with_crash_receipt_path(
-                    self.crash_receipt_path
-                        .clone()
-                        .unwrap_or_else(|| PathBuf::from("crash-receipts.json")),
-                )
-        } else {
-            launch_context
-        };
-        match self
-            .runtime
-            .start_with_context(&manifest, &permissions, &launch_context)
-        {
-            Ok(mut process) => {
-                if let Some((store, lease)) = runtime_lease {
-                    let Some(identity) = process.identity() else {
-                        let _ = process.shutdown();
-                        let _ = store.close(id, &lease.runtime_nonce);
-                        self.states.insert(id.clone(), ExtensionState::Failed);
-                        let message =
-                            "external runtime did not provide a process identity for its lease"
-                                .to_owned();
-                        self.record_diagnostic(PluginDiagnosticInput {
-                            extension_id: id.clone(),
-                            kind: PluginDiagnosticKind::Activation,
-                            code: "runtime-lease-identity-missing".into(),
-                            message: message.clone(),
-                            job_id: None,
-                            attempt: None,
-                            retryable: true,
-                        });
-                        return Err(PluginError::RuntimeLease {
-                            extension_id: id.clone(),
-                            message,
-                        });
-                    };
-                    let runtime_nonce = lease.runtime_nonce.clone();
-                    if let Err(error) = store.publish(lease.running(identity)) {
-                        let _ = process.shutdown();
-                        let _ = store.close(id, &runtime_nonce);
-                        self.states.insert(id.clone(), ExtensionState::Failed);
-                        let message = format!("runtime lease could not be committed: {error:?}");
-                        self.record_diagnostic(PluginDiagnosticInput {
-                            extension_id: id.clone(),
-                            kind: PluginDiagnosticKind::Activation,
-                            code: "runtime-lease-commit-failed".into(),
-                            message: message.clone(),
-                            job_id: None,
-                            attempt: None,
-                            retryable: true,
-                        });
-                        return Err(PluginError::RuntimeLease {
-                            extension_id: id.clone(),
-                            message,
-                        });
-                    }
-                    self.runtime_nonces.insert(id.clone(), runtime_nonce);
-                }
-                self.processes
-                    .insert(id.clone(), Arc::new(Mutex::new(process)));
-                self.active.insert(id.clone());
-                self.states.insert(id.clone(), ExtensionState::Active);
-                if storage_migration_required {
-                    if let Err(error) = self.migrate_extension_state_from_runtime(id) {
-                        if self.active.contains(id) {
-                            self.abort_runtime_activation(id);
-                        }
-                        return Err(error);
-                    }
-                }
-                Ok(())
-            }
-            Err(error) => {
-                if let Some((store, lease)) = runtime_lease {
-                    if let Err(close_error) = store.close(id, &lease.runtime_nonce) {
-                        self.record_diagnostic(PluginDiagnosticInput {
-                            extension_id: id.clone(),
-                            kind: PluginDiagnosticKind::Runtime,
-                            code: "runtime-lease-close-failed".into(),
-                            message: format!("failed to close start lease: {close_error:?}"),
-                            job_id: None,
-                            attempt: None,
-                            retryable: true,
-                        });
-                    }
-                }
-                self.states.insert(id.clone(), ExtensionState::Failed);
-                let message = runtime_error_message(error);
-                self.record_diagnostic(PluginDiagnosticInput {
-                    extension_id: id.clone(),
-                    kind: PluginDiagnosticKind::Activation,
-                    code: "activation-failed".into(),
-                    message: message.clone(),
-                    job_id: None,
-                    attempt: None,
-                    retryable: true,
-                });
-                Err(PluginError::RuntimeStart {
-                    extension_id: id.clone(),
-                    message,
-                })
+        let order = self.activation_order(id)?;
+        for dependency in order {
+            if !self.active.contains(&dependency) {
+                self.activate_runtime(&dependency)?;
             }
         }
+        Ok(())
     }
 
     fn disable(&mut self, id: &ExtensionId, _reason: DisableReason) -> Result<(), PluginError> {
@@ -4434,6 +4658,7 @@ impl PluginHost for InMemoryPluginHost {
         }
 
         self.active.remove(id);
+        self.revoke_contributions(id);
         let shutdown_error = self
             .processes
             .remove(id)
@@ -4464,15 +4689,33 @@ impl PluginHost for InMemoryPluginHost {
         &self,
         id: &ExtensionId,
     ) -> Result<Vec<velvet_plugin_api::ContributionDescriptor>, PluginError> {
-        let Some(manifest) = self.manifests.get(id) else {
+        if !self.manifests.contains_key(id) {
             return Err(PluginError::NotFound(id.clone()));
-        };
-
-        if !self.active.contains(id) {
-            return Ok(Vec::new());
         }
+        Ok(self
+            .registry
+            .for_extension(id)
+            .into_iter()
+            .map(|registration| registration.descriptor)
+            .collect())
+    }
 
-        Ok(manifest.contributions.clone())
+    fn registry_snapshot(&self) -> Result<ContributionRegistrySnapshot, PluginError> {
+        Ok(InMemoryPluginHost::registry_snapshot(self))
+    }
+
+    fn contribution_handles(
+        &self,
+        id: &ExtensionId,
+    ) -> Result<Vec<ContributionRegistrationHandle>, PluginError> {
+        InMemoryPluginHost::contribution_handles(self, id)
+    }
+
+    fn dispose_contribution(
+        &mut self,
+        handle: &ContributionRegistrationHandle,
+    ) -> Result<bool, PluginError> {
+        InMemoryPluginHost::dispose_contribution(self, handle)
     }
 
     fn job_handles(&self, id: &ExtensionId) -> Result<Vec<PluginJobHandle>, PluginError> {
@@ -4499,8 +4742,8 @@ impl PluginHost for InMemoryPluginHost {
             .manifests
             .get(id)
             .ok_or_else(|| PluginError::NotFound(id.clone()))?;
-        let job_kinds = manifest
-            .contributions
+        let job_kinds = self
+            .active_contributions(id)?
             .iter()
             .filter(|contribution| contribution.kind == ContributionKind::Job)
             .map(|contribution| contribution.id.clone())
@@ -4574,6 +4817,7 @@ impl PluginHost for InMemoryPluginHost {
                 let runtime_nonce = self.runtime_nonces.remove(id);
                 self.close_runtime_lease(id, runtime_nonce.as_deref());
                 self.active.remove(id);
+                self.revoke_contributions(id);
                 self.states.insert(id.clone(), ExtensionState::Failed);
                 self.record_diagnostic(PluginDiagnosticInput {
                     extension_id: id.clone(),
@@ -5400,6 +5644,7 @@ impl PluginHost for InMemoryPluginHost {
 
         self.manifests.remove(id);
         self.active.remove(id);
+        self.revoke_contributions(id);
         self.states.remove(id);
         self.processes.remove(id);
         let runtime_nonce = self.runtime_nonces.remove(id);

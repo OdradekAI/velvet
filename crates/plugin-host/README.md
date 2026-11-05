@@ -2,7 +2,7 @@
 
 ## Responsibility
 
-Extension lifecycle orchestration: manifest validation, registration, activation, trust, runtime leases, storage, diagnostics and failure isolation.
+Extension lifecycle orchestration: manifest validation, registration, activation, host-owned contribution registry, trust, runtime leases, storage, diagnostics and failure isolation.
 
 ## Non-goals
 
@@ -27,15 +27,15 @@ layout-model, job-system, persistence and plugin-api.
 
 ## Public interface
 
-PluginHost, InMemoryPluginHost, PluginRuntime, runtime/diagnostic/storage/trust handles and extension projections.
+PluginHost, InMemoryPluginHost, PluginRuntime, ContributionRegistrySnapshot, ContributionRegistrationHandle, runtime/diagnostic/storage/trust handles and extension projections.
 
 ## Module map
 
-Owner-named modules include extension_storage, platform_process, publisher_trust, runtime_lease and trust_store; the host facade is now separate from crate lib.rs.
+Owner-named modules include registry, extension_storage, platform_process, publisher_trust, runtime_lease and trust_store; the host facade is now separate from crate lib.rs. `registry` owns validated active contribution projections and disposable handles; it does not own frontend registry state.
 
 ## Tests
 
-Manifest, permission, package path, runtime crash, trust, storage migration and lifecycle tests; cargo test -p velvet-plugin-host.
+Manifest, registry snapshot/disposal, permission, package path, runtime crash, trust, storage migration and lifecycle tests; cargo test -p velvet-plugin-host.
 
 ## Failure boundary
 

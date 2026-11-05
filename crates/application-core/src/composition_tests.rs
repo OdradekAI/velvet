@@ -2003,6 +2003,88 @@ fn plugin_projection_query_returns_active_view_and_ui_bridge_metadata() {
 }
 
 #[test]
+fn plugin_registry_query_projects_only_active_host_registrations() {
+    let mut core = ApplicationCore::default();
+    let manifest = ExtensionManifest {
+        id: ExtensionId("registry.reader".into()),
+        version: "1.0.0".into(),
+        host_api: VersionRange("^1".into()),
+        runtime: RuntimeKind::BuiltIn,
+        launch: None,
+        target_app: None,
+        contributions: vec![ContributionDescriptor {
+            id: "registry.reader.view".into(),
+            kind: ContributionKind::View,
+            scope: ContributionScope::Workbench,
+            namespace: Some("workbench".into()),
+            container: Some(HostContainer::PrimarySidebar),
+            zone: Some(WorkbenchZone::Navigation),
+            title: Some("Registry reader".into()),
+            title_key: None,
+            icon: None,
+            order: None,
+            default_visible: Some(true),
+            view_container_id: None,
+            activity_bar: None,
+            label: None,
+            label_key: None,
+            command_id: None,
+            group: None,
+            when: None,
+            anchor: None,
+            ui: None,
+            preview: None,
+        }],
+        permission_sets: vec![],
+        ..ExtensionManifest::default()
+    };
+    let id = manifest.id.clone();
+    core.dispatch(Request::Command(Command::RegisterPlugin {
+        manifest: Box::new(manifest.into()),
+    }))
+    .expect("registry plugin should register");
+
+    let inactive = core
+        .dispatch(Request::Query(Query::PluginRegistry {
+            extension_id: Some(id.clone()),
+        }))
+        .expect("registry query should succeed before activation");
+    assert!(
+        matches!(inactive, Response::PluginRegistry(snapshot) if snapshot.contributions.is_empty())
+    );
+
+    core.dispatch(Request::Command(Command::ActivatePlugin {
+        extension_id: id.clone(),
+    }))
+    .expect("registry plugin should activate");
+    let active = core
+        .dispatch(Request::Query(Query::PluginRegistry {
+            extension_id: Some(id.clone()),
+        }))
+        .expect("registry query should project active registrations");
+    assert!(matches!(active, Response::PluginRegistry(snapshot)
+        if snapshot.schema_version == velvet_workbench_protocol::PLUGIN_REGISTRY_SCHEMA_VERSION
+            && snapshot.contributions.len() == 1
+            && snapshot.contributions[0].extension_id == id
+            && snapshot.contributions[0].schema_version == velvet_plugin_host::CONTRIBUTION_SCHEMA_VERSION
+    ));
+
+    core.dispatch(Request::Command(Command::DisablePlugin {
+        extension_id: id.clone(),
+        reason: PluginDisableReason::User,
+    }))
+    .expect("registry plugin should disable");
+    let disabled = core
+        .dispatch(Request::Query(Query::PluginRegistry {
+            extension_id: Some(id),
+        }))
+        .expect("registry query should remain available after disable");
+    assert!(
+        matches!(disabled, Response::PluginRegistry(snapshot) if snapshot.contributions.is_empty())
+    );
+}
+
+#[test]
 fn application_core_discovers_local_plugin_manifests_without_activating_them() {
     let root = temporary_layout_path().with_extension("plugins");
     fs::create_dir_all(&root).expect("the plugin directory should be writable");
