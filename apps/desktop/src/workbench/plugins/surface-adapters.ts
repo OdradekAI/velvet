@@ -94,7 +94,7 @@ class IframeSurfaceAdapter implements PluginSurfaceAdapter {
     iframe.className = 'velvet-plugin-surface-frame';
     iframe.title = this.descriptor.id;
     iframe.src = resolveIframeUrl(this.descriptor.entrypoint);
-    iframe.setAttribute('sandbox', 'allow-forms allow-modals allow-popups allow-scripts');
+    iframe.setAttribute('sandbox', 'allow-forms allow-scripts');
     iframe.setAttribute('referrerpolicy', 'no-referrer');
     iframe.setAttribute('aria-label', `${this.descriptor.id} plugin surface`);
     iframe.style.border = '0';

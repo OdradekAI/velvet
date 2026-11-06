@@ -466,6 +466,7 @@ export function WorkbenchShell({
         <nav
           aria-label="Workspaces"
           className="velvet-part velvet-part--activity"
+          data-ui-kit-region="activity-bar"
           data-velvet-focus-target={focusTargetId({ kind: 'part', part: 'activity-bar' })}
           hidden={!isPartVisible(layout, 'activity-bar')}
           id={partDomId('activity-bar')}
@@ -526,6 +527,7 @@ export function WorkbenchShell({
 
         <aside
           className="velvet-part velvet-part--primary"
+          data-ui-kit-region="navigation"
           data-velvet-focus-target={focusTargetId({ kind: 'part', part: 'primary-sidebar' })}
           hidden={
             !isPartVisible(layout, 'primary-sidebar') ||
@@ -565,6 +567,7 @@ export function WorkbenchShell({
 
         <section
           className="velvet-part velvet-part--workspace"
+          data-ui-kit-region="preview"
           data-velvet-focus-target={focusTargetId({ kind: 'part', part: 'workspace-area' })}
           id={partDomId('workspace-area')}
           tabIndex={-1}
@@ -619,6 +622,7 @@ export function WorkbenchShell({
 
         <aside
           className="velvet-part velvet-part--auxiliary"
+          data-ui-kit-region="context"
           data-velvet-focus-target={focusTargetId({ kind: 'part', part: 'auxiliary-sidebar' })}
           hidden={
             !isPartVisible(layout, 'auxiliary-sidebar') ||
@@ -651,6 +655,7 @@ export function WorkbenchShell({
 
         <section
           className="velvet-part velvet-part--operations"
+          data-ui-kit-region="operations"
           data-velvet-focus-target={focusTargetId({ kind: 'part', part: 'operations-panel' })}
           hidden={
             !isPartVisible(layout, 'operations-panel') ||

@@ -1,8 +1,9 @@
 # Velvet UI Kit contract v1
 
 Status: host contract slice. This document describes the current framework-neutral
-surface used by the desktop UI bridge. It is not a published third-party SDK and
-does not select an iframe, child WebView or native renderer for future runtimes.
+surface used by the desktop UI bridge and the host-owned renderer UI Kit. It is
+not a published third-party SDK and does not select an iframe, child WebView or
+native renderer for future runtimes.
 
 ## Version surfaces
 
@@ -13,7 +14,9 @@ does not select an iframe, child WebView or native renderer for future runtimes.
 | Component contract | `1` | The host advertises version `1`; a surface may report one offered version and is failed and disposed when it is incompatible. |
 
 The host owns layout, Activity Bar, panes, PreviewHost primary selection,
-OperationsPanel, global overlays, focus restoration and global shortcuts. A
+OperationsPanel, global overlays, focus restoration and global shortcuts. The
+host renderer implements the primitives and composite components documented in
+[the UI Kit component guide](ui-kit-component-guide.md). A
 plugin surface receives projections and typed actions; it never receives React
 elements, DOM nodes, host CSS classes, file paths or another View's
 implementation.

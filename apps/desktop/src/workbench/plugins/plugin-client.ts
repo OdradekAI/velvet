@@ -45,7 +45,11 @@ import {
   PluginUiRegistry,
   type PluginSurfaceDescriptor,
 } from './ui-bridge.js';
-import { DEFAULT_UI_THEME } from './ui-kit.js';
+import {
+  DEFAULT_UI_THEME,
+  SUPPORTED_UI_COMPONENT_CONTRACT_VERSION,
+  SUPPORTED_UI_KIT_API_VERSION,
+} from './ui-kit.js';
 import {
   ViewRegistry,
   type ViewContainerDescriptor,
@@ -1777,6 +1781,8 @@ export class PluginClient {
       entrypoint: app.surface.entrypoint,
       bridgeVersion: app.surface.bridgeVersion,
       appId: app.id,
+      uiKitApiVersion: SUPPORTED_UI_KIT_API_VERSION,
+      componentContractVersion: SUPPORTED_UI_COMPONENT_CONTRACT_VERSION,
     };
   }
 
@@ -2012,6 +2018,8 @@ export class PluginClient {
       kind: ui.kind,
       entrypoint: ui.entrypoint,
       bridgeVersion: ui.bridgeVersion,
+      uiKitApiVersion: SUPPORTED_UI_KIT_API_VERSION,
+      componentContractVersion: SUPPORTED_UI_COMPONENT_CONTRACT_VERSION,
       ...(descriptor.appId ? { appId: descriptor.appId } : {}),
     };
   }

@@ -8,8 +8,11 @@ import {
   negotiateUiComponentVersion,
   isAllowedUiEntrypoint,
   SUPPORTED_UI_COMPONENT_CONTRACT_VERSION,
+  SUPPORTED_UI_KIT_API_VERSION,
   type UiThemeSnapshot,
   type UiThemeSnapshotInput,
+  type UiOverlayRequest,
+  type UiProgressRequest,
 } from './ui-kit.js';
 
 export type {
@@ -21,6 +24,8 @@ export type {
   UiThemeScheme,
   UiThemeSnapshot,
   UiThemeSnapshotInput,
+  UiOverlayRequest,
+  UiProgressRequest,
 } from './ui-kit.js';
 
 export const SUPPORTED_UI_BRIDGE_VERSION = '1';
@@ -83,6 +88,9 @@ export type SurfaceToHostMessage =
       readonly args: unknown;
     }
   | { readonly type: 'surface.close' }
+  | { readonly type: 'surface.overlay-request'; readonly request: UiOverlayRequest }
+  | { readonly type: 'surface.notification'; readonly request: UiOverlayRequest }
+  | { readonly type: 'surface.progress'; readonly request: UiProgressRequest }
   | { readonly type: 'surface.error'; readonly message: string };
 
 export interface UiBridgeEndpoint {
@@ -109,6 +117,9 @@ export interface PluginSurfaceDescriptor {
   readonly entrypoint: string;
   readonly bridgeVersion: string;
   readonly appId?: WorkbenchAppId;
+  readonly uiKitApiVersion?: string;
+  readonly componentContractVersion?: number;
+  readonly zone?: 'navigation' | 'contextual' | 'operations';
 }
 
 export interface PluginSurfaceMountOptions {
@@ -124,6 +135,9 @@ export interface PluginSurfaceHandlers {
     args: unknown,
   ) => void | Promise<void>;
   readonly onFocusRequest?: () => void;
+  readonly onOverlayRequest?: (request: UiOverlayRequest) => void | Promise<void>;
+  readonly onNotification?: (request: UiOverlayRequest) => void | Promise<void>;
+  readonly onProgress?: (request: UiProgressRequest) => void | Promise<void>;
 }
 
 export interface PluginSurfaceSession {
@@ -397,9 +411,24 @@ function validateUiBridgeDescriptor(descriptor: PluginSurfaceDescriptor): void {
       descriptor.id,
     );
   }
+  if (descriptor.uiKitApiVersion && descriptor.uiKitApiVersion !== SUPPORTED_UI_KIT_API_VERSION) {
+    throw new PluginUiBridgeError(
+      `Unsupported UI Kit API version: ${descriptor.uiKitApiVersion}`,
+      descriptor.id,
+    );
+  }
   if (!isAllowedUiEntrypoint(descriptor.entrypoint)) {
     throw new PluginUiBridgeError(
       `UI surface entrypoint uses a disallowed scheme: ${descriptor.entrypoint}`,
+      descriptor.id,
+    );
+  }
+  if (
+    descriptor.componentContractVersion !== undefined
+    && negotiateUiComponentVersion([descriptor.componentContractVersion]) === undefined
+  ) {
+    throw new PluginUiBridgeError(
+      `Unsupported UI component contract version: ${descriptor.componentContractVersion}`,
       descriptor.id,
     );
   }
@@ -590,6 +619,55 @@ class PluginSurfaceSessionImpl implements PluginSurfaceSession {
         return;
       case 'surface.close':
         await this.dispose('unmount');
+        return;
+      case 'surface.overlay-request':
+        if (!this.handlers.onOverlayRequest) {
+          this.endpoint.send({
+            type: 'host.error',
+            code: 'overlay-handler-unavailable',
+            message: 'The host has no overlay handler for this surface',
+          });
+          return;
+        }
+        try {
+          await this.handlers.onOverlayRequest(message.request);
+        } catch (cause) {
+          this.endpoint.send({
+            type: 'host.error',
+            code: 'overlay-request-failed',
+            message: cause instanceof Error ? cause.message : String(cause),
+          });
+        }
+        return;
+      case 'surface.notification':
+        if (!this.handlers.onNotification) {
+          this.endpoint.send({
+            type: 'host.error',
+            code: 'notification-handler-unavailable',
+            message: 'The host has no notification handler for this surface',
+          });
+          return;
+        }
+        try {
+          await this.handlers.onNotification(message.request);
+        } catch (cause) {
+          this.endpoint.send({
+            type: 'host.error',
+            code: 'notification-request-failed',
+            message: cause instanceof Error ? cause.message : String(cause),
+          });
+        }
+        return;
+      case 'surface.progress':
+        try {
+          await this.handlers.onProgress?.(message.request);
+        } catch (cause) {
+          this.endpoint.send({
+            type: 'host.error',
+            code: 'progress-request-failed',
+            message: cause instanceof Error ? cause.message : String(cause),
+          });
+        }
         return;
       case 'surface.error':
         this.endpoint.send({

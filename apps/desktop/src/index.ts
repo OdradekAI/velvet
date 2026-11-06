@@ -1,6 +1,7 @@
 export * from './app/index.js';
 export * from './app/renderer/workbench-shell.js';
 export * from './app/ui/velvet-ui.js';
+export * from './app/ui/theme.js';
 export * from './app/renderer/focus-dom-adapter.js';
 export * from './app/renderer/view-renderer-registry.js';
 export * from './app/renderer/workbench-view-host.js';

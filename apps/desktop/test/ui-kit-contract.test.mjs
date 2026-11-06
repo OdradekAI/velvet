@@ -66,6 +66,8 @@ ui.register({
   entrypoint: 'https://plugin.example/view',
   bridgeVersion: '1',
   appId: 'sample',
+  uiKitApiVersion: '1.0',
+  componentContractVersion: SUPPORTED_UI_COMPONENT_CONTRACT_VERSION,
 });
 ui.bindAdapter('sample.extension', 'sample.view', {
   mount: (nextEndpoint) => {
@@ -74,7 +76,14 @@ ui.bindAdapter('sample.extension', 'sample.view', {
   },
   unmount: () => undefined,
 });
-const session = ui.createSession('sample.extension', 'sample.view');
+const overlayRequests = [];
+const notifications = [];
+const progress = [];
+const session = ui.createSession('sample.extension', 'sample.view', {
+  onOverlayRequest: (request) => overlayRequests.push(request),
+  onNotification: (request) => notifications.push(request),
+  onProgress: (request) => progress.push(request),
+});
 await session.mount({
   context: {
     revision: 0,
@@ -109,5 +118,47 @@ assert.equal(hostMessages.at(-1).theme.tokens['unknown.token'], undefined);
 endpoint.receive({ type: 'surface.ready', bridgeVersion: '1', componentContractVersion: 99 });
 await Promise.resolve();
 assert.equal(session.state, 'failed');
+
+const unsupported = new PluginUiRegistry();
+assert.throws(() => unsupported.register({
+  id: 'sample.unsupported',
+  extensionId: 'sample.extension',
+  namespace: 'workbench.app.sample',
+  kind: 'view',
+  entrypoint: 'https://plugin.example/unsupported',
+  bridgeVersion: '1',
+  appId: 'sample',
+  uiKitApiVersion: '2.0',
+}));
+
+const endpoint2 = [];
+const host = new PluginUiRegistry();
+host.register({
+  id: 'sample.requests',
+  extensionId: 'sample.extension',
+  namespace: 'workbench.app.sample',
+  kind: 'view',
+  entrypoint: 'https://plugin.example/requests',
+  bridgeVersion: '1',
+  appId: 'sample',
+});
+host.bindAdapter('sample.extension', 'sample.requests', {
+  mount: (nextEndpoint) => endpoint2.push(nextEndpoint),
+  unmount: () => undefined,
+});
+const requestSession = host.createSession('sample.extension', 'sample.requests', {
+  onOverlayRequest: (request) => endpoint2.push(request),
+});
+await requestSession.mount({
+  context: { revision: 0, activeAppId: 'sample', dataScope: null, selection: [], query: '', filters: {}, sort: [], handoff: null },
+  theme: { scheme: 'dark', revision: 0, tokens: {} },
+  size: { width: 10, height: 10 },
+});
+endpoint2[0].receive({
+  type: 'surface.overlay-request',
+  request: { requestId: 'request-1', kind: 'dialog', title: 'Confirm', actions: [] },
+});
+await Promise.resolve();
+assert.equal(endpoint2.some((value) => value.requestId === 'request-1'), true);
 
 console.log('UI Kit contract tests passed.');

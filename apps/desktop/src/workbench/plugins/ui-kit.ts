@@ -5,6 +5,7 @@
 
 export const UI_THEME_SCHEMA = 'velvet.ui.theme';
 export const UI_THEME_SCHEMA_VERSION = 1;
+export const SUPPORTED_UI_KIT_API_VERSION = '1.0';
 export const SUPPORTED_UI_COMPONENT_CONTRACT_VERSION = 1;
 export const UI_ENTRYPOINT_SCHEMES = [
   'http:',
@@ -74,7 +75,51 @@ export const DEFAULT_UI_THEME: UiThemeSnapshot = {
   contrast: 'normal',
   reducedMotion: false,
   revision: 0,
-  tokens: {},
+  tokens: {
+    'surface.canvas': '#17181a',
+    'surface.panel': '#202225',
+    'surface.raised': '#292c30',
+    'surface.overlay': '#30343a',
+    'surface.active': '#3a4048',
+    'border.subtle': '#34383e',
+    'border.strong': '#4b515b',
+    'text.primary': '#f2f4f7',
+    'text.secondary': '#b4bac4',
+    'text.muted': '#7c8490',
+    'accent.default': '#8ab4ff',
+    'status.danger': '#ff8f8f',
+    'status.warning': '#f4c979',
+    'status.success': '#9ce0b3',
+    'status.info': '#8ab4ff',
+    'focus.default': '#9cc2ff',
+    'control.height': '30px',
+    'control.radius': '4px',
+  },
+};
+
+export const LIGHT_UI_THEME: UiThemeSnapshot = {
+  ...DEFAULT_UI_THEME,
+  scheme: 'light',
+  revision: 1,
+  tokens: {
+    ...DEFAULT_UI_THEME.tokens,
+    'surface.canvas': '#f4f6f8',
+    'surface.panel': '#ffffff',
+    'surface.raised': '#e9edf2',
+    'surface.overlay': '#ffffff',
+    'surface.active': '#dce5ef',
+    'border.subtle': '#d4dbe4',
+    'border.strong': '#aeb8c5',
+    'text.primary': '#17202b',
+    'text.secondary': '#4d5b6c',
+    'text.muted': '#6d7a89',
+    'accent.default': '#2f6fbd',
+    'status.danger': '#b43838',
+    'status.warning': '#9b6500',
+    'status.success': '#187343',
+    'status.info': '#2f6fbd',
+    'focus.default': '#1e64bd',
+  },
 };
 
 export const HOST_ONLY_UI_SURFACES = [
@@ -111,6 +156,33 @@ export const PLUGIN_UI_COMPONENTS = [
 ] as const;
 
 export type PluginUiComponent = (typeof PLUGIN_UI_COMPONENTS)[number];
+
+export type UiOverlayAnchor = 'asset' | 'feed-item' | 'selection' | 'view' | 'background';
+
+export interface UiCommandAction {
+  readonly id: string;
+  readonly label: string;
+  readonly commandId: string;
+  readonly shortcutHint?: string;
+  readonly disabled?: boolean;
+}
+
+export interface UiOverlayRequest {
+  readonly requestId: string;
+  readonly kind: 'context-menu' | 'dialog' | 'notification';
+  readonly anchor?: UiOverlayAnchor;
+  readonly title?: string;
+  readonly message?: string;
+  readonly severity?: 'info' | 'success' | 'warning' | 'error' | 'danger';
+  readonly actions?: readonly UiCommandAction[];
+}
+
+export interface UiProgressRequest {
+  readonly requestId: string;
+  readonly value?: number;
+  readonly message?: string;
+  readonly state?: 'running' | 'completed' | 'failed' | 'cancelled';
+}
 
 export function isHostOnlyUiSurface(value: string): value is HostOnlyUiSurface {
   return (HOST_ONLY_UI_SURFACES as readonly string[]).includes(value);

@@ -3,6 +3,8 @@ import type { CSSProperties } from 'react';
 import type {
   PluginSurfaceSession,
   PluginSurfaceState,
+  UiOverlayRequest,
+  UiProgressRequest,
   PluginUiRegistry,
   UiSurfaceSize,
   UiThemeSnapshot,
@@ -21,6 +23,9 @@ export interface PluginSurfaceHostProps {
   readonly surfaceId: string;
   readonly context: WorkspaceContext;
   readonly theme?: UiThemeSnapshot;
+  readonly onOverlayRequest?: (request: UiOverlayRequest) => void | Promise<void>;
+  readonly onNotification?: (request: UiOverlayRequest) => void | Promise<void>;
+  readonly onProgress?: (request: UiProgressRequest) => void | Promise<void>;
 }
 
 /**
@@ -34,6 +39,9 @@ export function PluginSurfaceHost({
   surfaceId,
   context,
   theme = DEFAULT_THEME,
+  onOverlayRequest,
+  onNotification,
+  onProgress,
 }: PluginSurfaceHostProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const surfaceMountRef = useRef<HTMLDivElement>(null);
@@ -144,6 +152,9 @@ export function PluginSurfaceHost({
         }
         session = ui.createSession(extensionId, surfaceId, {
           onFocusRequest: () => hostRef.current?.focus(),
+          onOverlayRequest,
+          onNotification,
+          onProgress,
         });
       } catch (reason) {
         setState('waiting');
