@@ -1,10 +1,10 @@
 # Velvet plugin developer guide (alpha contract)
 
 This guide takes a third-party developer from a local package to the current
-fixture host. It documents the public contract that is exercised today and
-marks the parts that are still fixture-only or release-gated. It is not a
-promise that a Marketplace, a production SDK package, or an unrestricted
-in-process runtime exists.
+runnable fixture host. It documents the public contract exercised by the Asset
+Inspector demo and marks the parts that are still fixture-only or release-gated.
+It is not a promise that a Marketplace, a production SDK package, or an
+unrestricted in-process runtime exists.
 
 ## Choose a starting fixture
 
@@ -167,11 +167,12 @@ table names the structural fake used by
 understand the intended ownership boundary without mistaking it for a stable
 SDK.
 
-The fake methods only record calls and return fixture values. The last column
-describes host policy that the real PluginHost/registry/transport must enforce;
-it is not evidence that the fake itself rejects every invalid call. The
-fixture's concrete assertions are in
-`apps/desktop/test/asset-inspector-demo.test.mjs`.
+The fake methods only record calls and return bounded fixture values. The last
+column describes host policy that the real PluginHost/registry/transport must
+enforce; it is not evidence that the fake replaces the host. The fixture's
+concrete assertions are in `apps/desktop/test/asset-inspector-demo.test.mjs`,
+and `node examples/plugins/asset-inspector/run-demo.mjs` runs the same package
+without the desktop renderer.
 
 | Fixture handle | Operation | Host owner | Plugin may read/write | Capability and failure rule |
 | --- | --- | --- | --- | --- |
@@ -181,11 +182,12 @@ fixture's concrete assertions are in
 | `views.register(id)` | Register a View descriptor | View registry / Workbench | Register a declarative View | Zone, container and namespace are host-owned; no sibling View handle is exposed. |
 | `preview.registerAugmentation(id, handler)` | Register a Preview augmentation | PreviewResolver / PreviewHost | Read the bounded Preview context and return an augmentation | Provider failure becomes a typed fallback/diagnostic; it cannot replace core Asset state. |
 | `assets.readProjection(id)` | Read path-free Asset projection | Asset source owner / ApplicationCore | Read selected identity, content kind and fingerprint | Requires `asset.read`; no database, source path or raw file handle crosses the seam. |
-| `jobs.create(request)` / `jobs.wait(id)` | Submit and observe a Job | `job-system` | Submit bounded input and read its result/progress | Requires `jobs.create`/`jobs.read`; cancellation, deadline, stale provenance and retry are host policy. |
+| `jobs.create(request)` / `jobs.wait(id)` / `jobs.cancel(id)` | Submit, observe and cancel a Job | `job-system` | Submit bounded input, read progress/result and cancel an owned Job | Requires `jobs.create`/`jobs.read`; cancellation, deadline, stale provenance and retry are host policy. Cancellation is owner-scoped and Rust `JobSystem` remains authoritative. |
 | `facets.read({namespace, assetId})` | Read extension-derived data | PluginHost extension storage/facet owner | Read its namespaced facet | Namespace is host-derived; another extension's facet is inaccessible. |
 | `facets.write(record)` | Write derived facet data | PluginHost plus Asset provenance owner | Write bounded value with schema and expected fingerprint | Requires `asset.facet.write`; stale fingerprint fails closed and leaves core Asset identity unchanged. |
 | `configuration.version()` | Read configuration revision | Profile/configuration owner | Read a version token used for Job provenance | This fixture does not expose arbitrary config writes. A future write needs a versioned command and capability. |
-| `storage.migrate(from, to)` | Migrate extension-owned schema | PluginHost storage owner | Transform its own namespaced store | Migration is bounded and transactional; failure leaves the previous generation authoritative. |
+| `storage.read(key)` / `storage.write(key, value)` / `storage.migrate(from, to)` | Read/write and migrate extension-owned storage | PluginHost storage owner | Use only the plugin namespace and declared quota | `storage.read`/`storage.write` are capability checked; migration is bounded and transactional, and failure leaves the previous generation authoritative. |
+| `ui.register(surface)` / `ui.render(request)` | Negotiate and project UI Kit components | UI Bridge / Workbench | Use only declared semantic components on the plugin View | UI Kit/API and component-contract versions are negotiated before activation; the host owns DOM, focus, layout and overlay state. |
 | `diagnostics.log(record)` | Emit structured diagnostic | PluginDiagnosticSink / ApplicationCore | Send bounded redacted records | Host bounds and redacts; logs cannot include source paths, secrets or Asset payloads. |
 | `notifications.show(record)` | Request a user notification | Host notification surface | Request a typed severity/message | Host owns presentation, localization and rate limits; a plugin cannot write global UI state. |
 
@@ -215,7 +217,10 @@ Use [ui-kit-contract-v1.md](ui-kit-contract-v1.md) for the current bridge
 schema, semantic token allow-list, origin checks and component negotiation.
 The host supplies layout containers, focus restoration, overlays, global menus
 and shortcuts. A plugin surface may render token-compatible content and use
-registered commands, focus and resize requests.
+registered commands, focus and resize requests. The Asset Inspector example
+uses the public `progress`, `table`, `loading-state`, `empty-state` and
+`error-state` component names through the UI Kit adapter; it does not import
+React or inject DOM.
 
 The bridge has independent `bridgeApi`, component-contract and theme-schema
 versions. Theme changes are delivered as host-owned snapshots; the current

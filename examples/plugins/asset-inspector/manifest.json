@@ -24,12 +24,20 @@
   },
   "requiredCapabilities": [
     "asset.read",
+    "config.read",
     "metadata.read",
     "asset.facet.write",
     "jobs.create",
     "jobs.read",
     "logs.read",
-    "preview.render"
+    "preview.render",
+    "storage.read",
+    "storage.write",
+    "notifications.show",
+    "logs.write",
+    "command.register",
+    "menu.register",
+    "view.register"
   ],
   "optionalCapabilities": [],
   "localization": null,
@@ -75,7 +83,7 @@
       "defaultVisible": true,
       "ui": {
         "kind": "view",
-        "entrypoint": "data:text/html,%3C!doctype%20html%3E%3Cmeta%20charset%3Dutf-8%3E%3Cbody%3EAsset%20Inspector%20surface%3C%2Fbody%3E",
+        "entrypoint": "data:text/html,%3Cscript%3Eparent.postMessage(%7Btype%3A%27velvet.ui.surface%27%2Cmessage%3A%7Btype%3A%27surface.ready%27%2CbridgeVersion%3A%271%27%2CcomponentContractVersion%3A1%7D%7D%2C%27*%27)%3C%2Fscript%3E",
         "bridgeVersion": "1"
       }
     },
