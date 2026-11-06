@@ -659,6 +659,10 @@ pub struct PluginRequestEnvelope {
     /// Identity asserted by the host runtime adapter. Validation requires the
     /// message target to match this id before it reaches ApplicationCore.
     pub caller_extension_id: ExtensionId,
+    /// Host-issued runtime lease nonce injected into the external runtime at
+    /// activation. The Tauri adapter verifies it against the active lease
+    /// before binding the transport session to the extension.
+    pub runtime_nonce: String,
     pub request_id: RequestId,
     pub message: PluginRequest,
 }
@@ -782,6 +786,11 @@ impl PluginRequestEnvelope {
         if self.session_id.trim().is_empty() {
             return Err(CoreError::InvalidCommand(
                 "plugin transport session id must not be empty".into(),
+            ));
+        }
+        if self.runtime_nonce.trim().is_empty() || self.runtime_nonce.len() > 256 {
+            return Err(CoreError::InvalidCommand(
+                "plugin runtime nonce must be between 1 and 256 bytes".into(),
             ));
         }
         if self.request_id.0 == 0 {

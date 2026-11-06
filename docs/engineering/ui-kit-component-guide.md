@@ -6,6 +6,20 @@ The renderer UI Kit is implemented in `apps/desktop/src/app/ui/velvet-ui.tsx`
 and `apps/desktop/src/app/ui/theme.ts`. Its public behavior is semantic and
 versioned; the React implementation and CSS class names remain host-private.
 
+## Visual baseline
+
+The default host theme follows an Eagle-informed desktop workbench grammar:
+dense navigation/workspace/Inspector zones, charcoal near-flat surfaces, thin
+separators, rounded selected rows, compact system-sans typography, a restrained
+indigo/purple accent, icon-first toolbars and action-oriented empty states.
+This is design input for Velvet, not pixel compatibility or permission to copy
+Eagle assets. Light, comfortable and high-contrast modes reuse the same
+semantic states and accessibility rules.
+
+Use Velvet semantic tokens and component variants to style a surface. Tailwind
+classes, CSS variable names, DOM structure and Radix data attributes are
+implementation details and must not become extension or plugin contracts.
+
 ## Version surfaces
 
 - `UI_KIT_API_VERSION` is `1.0` for host component behavior.
@@ -30,6 +44,41 @@ internals without changing the contract.
 `VelvetDialog` and `VelvetContextMenu` are the compatibility wrappers used by
 existing Workbench surfaces and now use the same token, focus and state rules.
 
+Primitive components provide semantic props and standard React events. The host
+owns controlled selection, overlay and projection state; local form controls may
+use default state. Dialog and Context Menu keep Radix behind the Velvet wrapper.
+Future Radix primitives are admitted one host use at a time after bundle and
+interaction qualification.
+
+## Stories, contract tests and agent catalog
+
+Each component owns a `*.stories.tsx` module with typed metadata and named
+stories. Velvet maintains the story registry and runner; the first runner uses
+the current TypeScript compile path, Node and Happy DOM rather than adding a
+Storybook runtime dependency. Stories are executable fixtures, not screenshots
+that can drift away from the component API.
+
+Every interactive component covers its meaningful state matrix, keyboard
+behavior and accessibility contract: default, selected/open, focus, disabled,
+loading/error and empty states when applicable. Static layout components cover
+their semantic structure and representative variants without inventing
+interaction states. A story may use a fake host projection, but it must not
+create a second state owner or bypass CoreTransport semantics.
+
+The source of truth for discovery is a typed `ComponentMeta` record. The build
+generates a JSON catalog for developers and agents. Catalog entries describe the
+stable component id, category, ownership, semantic purpose, props and events,
+supported states, keyboard/a11y guarantees, story names and usage examples.
+They do not publish CSS class names, Radix types, private DOM structure or
+plugin-internal implementation details. The catalog is versioned with the UI
+Kit contract and generated in CI so metadata cannot silently diverge from the
+stories.
+
+The current implementation lives in `apps/desktop/src/app/ui/component-meta.ts`,
+`story-registry.ts`, `stories/velvet-ui.stories.tsx` and the generated
+`ui-kit-catalog.json`. Run `npm run generate:ui-kit-catalog` from
+`apps/desktop` after changing metadata or story names.
+
 Host-owned surfaces include Activity Bar, Navigation, Context, Operations,
 PreviewHost, global overlays and global shortcuts. Plugins can contribute to
 those surfaces through registries and bridge requests, but cannot import the
@@ -45,7 +94,9 @@ document-level keyboard listener.
 - Asset Grid exposes `role=grid`, selection and Arrow/Enter behavior. Core
   selection remains owned by the host projection.
 - Data Table exposes a labelled table, sortable headers and focusable rows.
-- Dialogs restore focus through Radix and keep actions in a host-owned footer.
+- Dialogs restore focus through Radix; controlled dialogs with an external
+  trigger pass `restoreFocusRef` so the Velvet wrapper can restore focus after
+  Escape or outside dismissal. Actions stay in a host-owned footer.
 - Loading, empty and error states use `status`/`alert` semantics; errors offer
   an explicit retry callback when available.
 - Progress is a projection of host Job state. Rendering progress cannot imply

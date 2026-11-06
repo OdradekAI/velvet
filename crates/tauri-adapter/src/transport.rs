@@ -276,22 +276,34 @@ impl TauriTransport {
         envelope.validate()?;
         let session_id = envelope.session_id.clone();
         self.validate_session(Some(&session_id))?;
-        let bound_extension_id = self
-            .plugin_sessions
-            .lock()
-            .map_err(|_| {
-                CoreError::InvalidCommand("plugin session registry is unavailable".into())
-            })?
-            .get(&session_id)
-            .cloned()
-            .ok_or_else(|| CoreError::SessionExpired {
+        let runtime_nonce = envelope.runtime_nonce.clone();
+        let extension_id = envelope.caller_extension_id.clone();
+        let expected_nonce = self.inner.with_core(|core| {
+            core.plugin_runtime_nonce(&extension_id)
+                .map_err(|error| CoreError::Plugin(format!("{error:?}")))
+        })?;
+        if expected_nonce != runtime_nonce {
+            return Err(CoreError::SessionExpired {
                 session_id: session_id.clone(),
-            })?;
-        if bound_extension_id != envelope.caller_extension_id.0 {
-            return Err(CoreError::InvalidCommand(
-                "plugin session identity does not match the caller extension".into(),
-            ));
+            });
         }
+        let mut plugin_sessions = self.plugin_sessions.lock().map_err(|_| {
+            CoreError::InvalidCommand("plugin session registry is unavailable".into())
+        })?;
+        match plugin_sessions.get(&session_id) {
+            Some(bound_extension_id) if bound_extension_id != &extension_id.0 => {
+                return Err(CoreError::InvalidCommand(
+                    "plugin session identity does not match the caller extension".into(),
+                ));
+            }
+            Some(_) => {}
+            None => {
+                // The runtime lease nonce is the host-owned binding evidence;
+                // the first valid request establishes the session mapping.
+                plugin_sessions.insert(session_id.clone(), extension_id.0.clone());
+            }
+        }
+        drop(plugin_sessions);
         let request_id = envelope.request_id.clone();
         let response =
             self.dispatch_session(&session_id, request_id.clone(), envelope.into_request())?;

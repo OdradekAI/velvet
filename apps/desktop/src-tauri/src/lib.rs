@@ -744,6 +744,7 @@ pub struct WirePluginRequestEnvelope {
     pub protocol_version: u16,
     pub session_id: String,
     pub caller_extension_id: String,
+    pub runtime_nonce: String,
     pub request_id: u64,
     pub message: WirePluginRequest,
 }
@@ -916,6 +917,7 @@ impl TryFrom<WirePluginRequestEnvelope> for PluginRequestEnvelope {
             protocol_version: value.protocol_version,
             session_id: value.session_id,
             caller_extension_id: velvet_plugin_api::ExtensionId(value.caller_extension_id),
+            runtime_nonce: value.runtime_nonce,
             request_id: RequestId(value.request_id),
             message,
         })
@@ -4176,6 +4178,7 @@ mod tests {
             "protocolVersion": 1,
             "sessionId": "core-test-1",
             "callerExtensionId": "publisher.reader",
+            "runtimeNonce": "runtime-nonce-1",
             "requestId": 9,
             "message": {
                 "kind": "invoke-command",
@@ -4191,6 +4194,7 @@ mod tests {
             .expect("Tauri plugin mapping should preserve the public contract");
         assert_eq!(envelope.protocol_version, 1);
         assert_eq!(envelope.session_id, "core-test-1");
+        assert_eq!(envelope.runtime_nonce, "runtime-nonce-1");
         assert!(matches!(
             envelope.message,
             PluginRequest::InvokeCommand {
@@ -4204,6 +4208,7 @@ mod tests {
             "protocolVersion": 1,
             "sessionId": "core-test-1",
             "callerExtensionId": "publisher.reader",
+            "runtimeNonce": "runtime-nonce-1",
             "requestId": 10,
             "message": {
                 "kind": "query-projection",
@@ -4246,6 +4251,7 @@ mod tests {
             "protocolVersion": 1,
             "sessionId": "core-test-1",
             "callerExtensionId": "publisher.reader",
+            "runtimeNonce": "runtime-nonce-1",
             "requestId": 11,
             "message": {
                 "kind": "confirm",

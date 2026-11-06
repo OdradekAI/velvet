@@ -6,6 +6,7 @@ import { NativeWorkbenchApp } from './native-workbench-app.js';
 import '../ui/tokens.css';
 import { applyUiThemeSnapshot } from '../ui/theme.js';
 import { DEFAULT_UI_THEME } from '../../workbench/plugins/ui-kit.js';
+import { VisualQualificationFixture } from './visual-qualification-fixture.js';
 
 const root = document.querySelector('#root');
 
@@ -15,8 +16,10 @@ if (!root) {
 
 applyUiThemeSnapshot(DEFAULT_UI_THEME);
 
+const isVisualQualificationFixture = new URLSearchParams(window.location.search).get('fixture') === 'eagle';
+
 createRoot(root).render(
   <StrictMode>
-    {isTauri() ? <NativeWorkbenchApp /> : <DemoApp />}
+    {isVisualQualificationFixture ? <VisualQualificationFixture /> : isTauri() ? <NativeWorkbenchApp /> : <DemoApp />}
   </StrictMode>,
 );

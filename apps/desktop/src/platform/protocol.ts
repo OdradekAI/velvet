@@ -1402,6 +1402,8 @@ export interface CorePluginRequestEnvelope {
   readonly protocolVersion: PluginProtocolSchemaVersion;
   readonly sessionId: string;
   readonly callerExtensionId: string;
+  /** Host-issued runtime lease nonce; never inferred from plugin payloads. */
+  readonly runtimeNonce: string;
   readonly requestId: number;
   readonly message: CorePluginRequest;
 }

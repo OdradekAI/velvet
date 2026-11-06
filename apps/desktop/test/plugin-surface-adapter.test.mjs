@@ -85,6 +85,43 @@ windowListeners.get('message')({
 assert.deepEqual(receivedMessages, [{ type: 'surface.ready', bridgeVersion: '1' }]);
 assert.equal(postedMessages[0].origin, 'https://plugin.example');
 
+windowListeners.get('message')({
+  source: iframe.contentWindow,
+  origin: 'https://plugin.example',
+  data: {
+    type: 'velvet.ui.surface',
+    message: {
+      type: 'surface.command',
+      requestId: 'request-1',
+      commandId: 'plugin.command',
+      args: { value: 'ok' },
+      unknown: true,
+    },
+  },
+});
+assert.deepEqual(receivedMessages.at(-1), {
+  type: 'surface.error',
+  message: 'Invalid UI Bridge message',
+});
+
+windowListeners.get('message')({
+  source: iframe.contentWindow,
+  origin: 'https://plugin.example',
+  data: {
+    type: 'velvet.ui.surface',
+    message: {
+      type: 'surface.command',
+      requestId: 'request-2',
+      commandId: 'plugin.command',
+      args: { value: 'x'.repeat(70_000) },
+    },
+  },
+});
+assert.deepEqual(receivedMessages.at(-1), {
+  type: 'surface.error',
+  message: 'Invalid UI Bridge message',
+});
+
 const nextHost = {
   replaceChildren: (child) => {
     nextHost.child = child;

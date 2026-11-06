@@ -84,6 +84,7 @@ fn plugin_envelope_round_trips_and_maps_to_core_request() {
         protocol_version: PLUGIN_PROTOCOL_SCHEMA_VERSION,
         session_id: "core-session".into(),
         caller_extension_id: ExtensionId("publisher.reader".into()),
+        runtime_nonce: "test-runtime-nonce".into(),
         request_id: RequestId(7),
         message: PluginRequest::InvokeCommand {
             extension_id: ExtensionId("publisher.reader".into()),
@@ -96,11 +97,18 @@ fn plugin_envelope_round_trips_and_maps_to_core_request() {
     envelope
         .validate()
         .expect("valid plugin envelope should pass");
+    let mut missing_nonce = envelope.clone();
+    missing_nonce.runtime_nonce.clear();
+    assert!(matches!(
+        missing_nonce.validate(),
+        Err(CoreError::InvalidCommand(message)) if message.contains("runtime nonce")
+    ));
     assert_eq!(envelope.idempotency_scope(), None);
     let json = serde_json::to_value(&envelope).expect("plugin envelope should serialize");
     assert_eq!(json["protocolVersion"], PLUGIN_PROTOCOL_SCHEMA_VERSION);
     assert_eq!(json["requestId"], 7);
     assert_eq!(json["callerExtensionId"], "publisher.reader");
+    assert_eq!(json["runtimeNonce"], "test-runtime-nonce");
     assert_eq!(json["message"]["kind"], "invoke-command");
     assert_eq!(json["message"]["extensionId"], "publisher.reader");
 
@@ -127,6 +135,7 @@ fn plugin_host_capability_requests_round_trip_without_widening_the_core_boundary
         protocol_version: PLUGIN_PROTOCOL_SCHEMA_VERSION,
         session_id: "core-session".into(),
         caller_extension_id: ExtensionId("sample.services".into()),
+        runtime_nonce: "test-runtime-nonce".into(),
         request_id: RequestId(9),
         message: PluginRequest::SubmitJob {
             extension_id: ExtensionId("sample.services".into()),
@@ -173,6 +182,7 @@ fn plugin_query_is_repeatable_and_session_mismatch_is_rejected() {
         protocol_version: PLUGIN_PROTOCOL_SCHEMA_VERSION,
         session_id: "core-session".into(),
         caller_extension_id: ExtensionId("publisher.reader".into()),
+        runtime_nonce: "test-runtime-nonce".into(),
         request_id: RequestId(8),
         message: PluginRequest::QueryProjection {
             extension_id: ExtensionId("publisher.reader".into()),
@@ -203,6 +213,7 @@ fn plugin_envelope_cannot_address_another_extension_namespace() {
         protocol_version: PLUGIN_PROTOCOL_SCHEMA_VERSION,
         session_id: "core-session".into(),
         caller_extension_id: ExtensionId("publisher.reader".into()),
+        runtime_nonce: "test-runtime-nonce".into(),
         request_id: RequestId(9),
         message: PluginRequest::QueryCapabilities {
             extension_id: ExtensionId("other.publisher".into()),
@@ -288,6 +299,7 @@ fn core_transport_plugin_dispatch_uses_the_public_envelope_only() {
             protocol_version: PLUGIN_PROTOCOL_SCHEMA_VERSION,
             session_id: "fake-session".into(),
             caller_extension_id: ExtensionId("publisher.reader".into()),
+            runtime_nonce: "test-runtime-nonce".into(),
             request_id: RequestId(10),
             message: PluginRequest::InvokeCommand {
                 extension_id: ExtensionId("publisher.reader".into()),

@@ -31,6 +31,10 @@ export type {
 export const SUPPORTED_UI_BRIDGE_VERSION = '1';
 export const UI_BRIDGE_HOST_EVENT = 'velvet-ui-bridge-host';
 export const UI_BRIDGE_SURFACE_EVENT = 'velvet-ui-bridge-surface';
+export const MAX_UI_BRIDGE_MESSAGE_BYTES = 64 * 1024;
+const MAX_UI_BRIDGE_ID_LENGTH = 256;
+const MAX_UI_BRIDGE_TEXT_LENGTH = 4096;
+const MAX_UI_BRIDGE_ACTIONS = 32;
 
 export type PluginSurfaceKind = 'app-surface' | 'view' | 'dialog' | 'popover' | 'inspector';
 
@@ -138,6 +142,59 @@ export interface PluginSurfaceHandlers {
   readonly onOverlayRequest?: (request: UiOverlayRequest) => void | Promise<void>;
   readonly onNotification?: (request: UiOverlayRequest) => void | Promise<void>;
   readonly onProgress?: (request: UiProgressRequest) => void | Promise<void>;
+}
+
+/**
+ * Validates untrusted surface messages before they enter the host session.
+ * The bridge transports semantic DTOs, so unknown fields and oversized payloads
+ * are rejected before any host handler or overlay registry is reached.
+ */
+export function validateSurfaceToHostMessage(
+  value: unknown,
+): SurfaceToHostMessage | undefined {
+  if (!isRecord(value) || typeof value.type !== 'string') {
+    return undefined;
+  }
+  if (!hasOnlyKeys(value, surfaceMessageKeys(value.type))) {
+    return undefined;
+  }
+  if (serializedByteLength(value) > MAX_UI_BRIDGE_MESSAGE_BYTES) {
+    return undefined;
+  }
+
+  switch (value.type) {
+    case 'surface.ready':
+      return typeof value.bridgeVersion === 'string'
+        && boundedText(value.bridgeVersion, 32)
+        && (value.componentContractVersion === undefined
+          || isBoundedInteger(value.componentContractVersion, 1, 100))
+        ? value as unknown as SurfaceToHostMessage
+        : undefined;
+    case 'surface.focus-request':
+    case 'surface.close':
+      return value as unknown as SurfaceToHostMessage;
+    case 'surface.command':
+      return boundedText(value.requestId, MAX_UI_BRIDGE_ID_LENGTH)
+        && boundedText(value.commandId, MAX_UI_BRIDGE_ID_LENGTH)
+        && isJsonValue(value.args)
+        ? value as unknown as SurfaceToHostMessage
+        : undefined;
+    case 'surface.overlay-request':
+    case 'surface.notification':
+      return validateUiOverlayRequest(value.request)
+        ? value as unknown as SurfaceToHostMessage
+        : undefined;
+    case 'surface.progress':
+      return validateUiProgressRequest(value.request)
+        ? value as unknown as SurfaceToHostMessage
+        : undefined;
+    case 'surface.error':
+      return boundedText(value.message, MAX_UI_BRIDGE_TEXT_LENGTH)
+        ? value as unknown as SurfaceToHostMessage
+        : undefined;
+    default:
+      return undefined;
+  }
 }
 
 export interface PluginSurfaceSession {
@@ -450,6 +507,146 @@ function validateUiBridgeDescriptor(descriptor: PluginSurfaceDescriptor): void {
   }
 }
 
+function surfaceMessageKeys(type: string): readonly string[] {
+  switch (type) {
+    case 'surface.ready':
+      return ['type', 'bridgeVersion', 'componentContractVersion'];
+    case 'surface.focus-request':
+    case 'surface.close':
+      return ['type'];
+    case 'surface.command':
+      return ['type', 'requestId', 'commandId', 'args'];
+    case 'surface.overlay-request':
+    case 'surface.notification':
+    case 'surface.progress':
+      return ['type', 'request'];
+    case 'surface.error':
+      return ['type', 'message'];
+    default:
+      return [];
+  }
+}
+
+function validateUiOverlayRequest(value: unknown): value is UiOverlayRequest {
+  if (!isRecord(value) || !hasOnlyKeys(value, [
+    'requestId',
+    'kind',
+    'anchor',
+    'title',
+    'message',
+    'severity',
+    'actions',
+  ])) {
+    return false;
+  }
+  if (!boundedText(value.requestId, MAX_UI_BRIDGE_ID_LENGTH)) {
+    return false;
+  }
+  if (!['context-menu', 'dialog', 'notification'].includes(value.kind as string)) {
+    return false;
+  }
+  if (value.anchor !== undefined && ![
+    'asset',
+    'feed-item',
+    'selection',
+    'view',
+    'background',
+  ].includes(value.anchor as string)) {
+    return false;
+  }
+  if (value.title !== undefined && !boundedText(value.title, MAX_UI_BRIDGE_TEXT_LENGTH)) {
+    return false;
+  }
+  if (value.message !== undefined && !boundedText(value.message, MAX_UI_BRIDGE_TEXT_LENGTH)) {
+    return false;
+  }
+  if (value.severity !== undefined && ![
+    'info',
+    'success',
+    'warning',
+    'error',
+    'danger',
+  ].includes(value.severity as string)) {
+    return false;
+  }
+  if (value.actions === undefined) {
+    return true;
+  }
+  return Array.isArray(value.actions)
+    && value.actions.length <= MAX_UI_BRIDGE_ACTIONS
+    && value.actions.every(validateUiCommandAction);
+}
+
+function validateUiCommandAction(value: unknown): boolean {
+  if (!isRecord(value) || !hasOnlyKeys(value, [
+    'id',
+    'label',
+    'commandId',
+    'shortcutHint',
+    'disabled',
+  ])) {
+    return false;
+  }
+  return boundedText(value.id, MAX_UI_BRIDGE_ID_LENGTH)
+    && boundedText(value.label, MAX_UI_BRIDGE_TEXT_LENGTH)
+    && boundedText(value.commandId, MAX_UI_BRIDGE_ID_LENGTH)
+    && (value.shortcutHint === undefined || boundedText(value.shortcutHint, 128))
+    && (value.disabled === undefined || typeof value.disabled === 'boolean');
+}
+
+function validateUiProgressRequest(value: unknown): value is UiProgressRequest {
+  if (!isRecord(value) || !hasOnlyKeys(value, ['requestId', 'value', 'message', 'state'])) {
+    return false;
+  }
+  return boundedText(value.requestId, MAX_UI_BRIDGE_ID_LENGTH)
+    && (value.value === undefined || (
+      typeof value.value === 'number'
+      && Number.isFinite(value.value)
+      && value.value >= 0
+      && value.value <= 1
+    ))
+    && (value.message === undefined || boundedText(value.message, MAX_UI_BRIDGE_TEXT_LENGTH))
+    && (value.state === undefined || [
+      'running',
+      'completed',
+      'failed',
+      'cancelled',
+    ].includes(value.state as string));
+}
+
+function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
+  return Object.keys(value).every((key) => allowed.includes(key));
+}
+
+function boundedText(value: unknown, maxLength: number): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= maxLength;
+}
+
+function isBoundedInteger(value: unknown, min: number, max: number): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= min && value <= max;
+}
+
+function isJsonValue(value: unknown): boolean {
+  try {
+    return JSON.stringify(value) !== undefined;
+  } catch {
+    return false;
+  }
+}
+
+function serializedByteLength(value: unknown): number {
+  try {
+    const serialized = JSON.stringify(value);
+    return serialized === undefined ? Number.POSITIVE_INFINITY : serialized.length;
+  } catch {
+    return Number.POSITIVE_INFINITY;
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
 class PluginSurfaceSessionImpl implements PluginSurfaceSession {
   public state: PluginSurfaceState = 'registered';
   public readonly surfaceId: string;
@@ -746,8 +943,19 @@ class InMemoryUiBridgeEndpoint implements UiBridgeEndpoint {
     if (this.closed) {
       throw new Error('UI bridge endpoint is closed');
     }
+    const validated = validateSurfaceToHostMessage(message);
+    if (!validated) {
+      const invalid: SurfaceToHostMessage = {
+        type: 'surface.error',
+        message: 'Invalid UI Bridge message',
+      };
+      for (const listener of this.listeners) {
+        listener(invalid);
+      }
+      return;
+    }
     for (const listener of this.listeners) {
-      listener(message);
+      listener(validated);
     }
   }
 

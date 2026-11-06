@@ -1818,6 +1818,74 @@ fn registry_cleanup_is_isolated_when_one_runtime_fails() {
 }
 
 #[test]
+fn capability_revocation_removes_only_blocked_contributions_and_regrant_restores_them() {
+    let mut manifest = view_manifest(None);
+    manifest.id = ExtensionId("capability.revoke.example".into());
+    manifest.optional_capabilities = vec![Capability::LogsWrite.name().into()];
+    let mut guarded = manifest.contributions[0].clone();
+    guarded.id = "capability.revoke.guarded".into();
+    guarded.kind = ContributionKind::Command;
+    guarded.container = None;
+    guarded.zone = None;
+    guarded.icon = None;
+    guarded.default_visible = None;
+    guarded.required_capabilities = vec![Capability::LogsWrite.name().into()];
+    let mut open = guarded.clone();
+    open.id = "capability.revoke.open".into();
+    open.required_capabilities.clear();
+    manifest.contributions = vec![guarded, open];
+    let id = manifest.id.clone();
+
+    let mut host = InMemoryPluginHost::default();
+    host.register(manifest).expect("manifest should register");
+    let generation = host
+        .capability_snapshot(&id)
+        .expect("capability registration should exist")
+        .generation;
+    host.grant_capabilities(&id, &[Capability::LogsWrite], Some(generation))
+        .expect("the guarded capability should be granted");
+    host.activate(&id).expect("extension should activate");
+    assert_eq!(host.active_contributions(&id).unwrap().len(), 2);
+
+    let generation = host.capability_snapshot(&id).unwrap().generation;
+    host.revoke_capabilities(&id, &[Capability::LogsWrite], Some(generation))
+        .expect("revocation should succeed");
+    assert_eq!(host.active_contributions(&id).unwrap().len(), 1);
+    assert!(matches!(
+        host.invoke_command(
+            &id,
+            "capability.revoke.guarded".into(),
+            Value::Null,
+            Value::Null,
+        ),
+        Err(PluginError::CapabilityDenied {
+            capability: Capability::LogsWrite,
+            reason: CapabilityDenyReason::Revoked,
+            ..
+        })
+    ));
+    host.invoke_command(
+        &id,
+        "capability.revoke.open".into(),
+        Value::Null,
+        Value::Null,
+    )
+    .expect("an unaffected contribution should remain usable");
+
+    let generation = host.capability_snapshot(&id).unwrap().generation;
+    host.grant_capabilities(&id, &[Capability::LogsWrite], Some(generation))
+        .expect("regrant should restore the blocked contribution");
+    assert_eq!(host.active_contributions(&id).unwrap().len(), 2);
+    host.invoke_command(
+        &id,
+        "capability.revoke.guarded".into(),
+        Value::Null,
+        Value::Null,
+    )
+    .expect("the guarded contribution should be usable after regrant");
+}
+
+#[test]
 fn activation_resolves_extension_dependencies_before_the_requested_extension() {
     let runtime = FakeRuntime {
         plans: VecDeque::from([
@@ -3868,6 +3936,11 @@ fn runtime_lease_is_published_during_activation_and_closed_after_disable() {
     assert_eq!(active_leases[0].extension_id, manifest.id);
     assert_eq!(active_leases[0].state, RuntimeLeaseState::Running);
     assert_eq!(active_leases[0].process.as_ref().unwrap().pid, 41_001);
+    assert_eq!(
+        host.runtime_nonce(&manifest.id)
+            .expect("active runtime nonce"),
+        active_leases[0].runtime_nonce
+    );
 
     host.disable(&manifest.id, DisableReason::User)
         .expect("the runtime should disable");
@@ -3875,6 +3948,7 @@ fn runtime_lease_is_published_during_activation_and_closed_after_disable() {
         .leases()
         .expect("the lease store should be readable")
         .is_empty());
+    assert!(host.runtime_nonce(&manifest.id).is_err());
     assert_eq!(*shutdowns.lock().unwrap(), 1);
     fs::remove_dir_all(package_root).expect("the package root should be removed");
 }

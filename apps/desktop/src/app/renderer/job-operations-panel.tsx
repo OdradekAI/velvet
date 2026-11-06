@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { CoreJobSnapshot } from '../../platform/protocol.js';
 import type { JobClient } from '../../workbench/jobs/job-client.js';
+import { VelvetBadge, VelvetButton, VelvetProgress, VelvetState, VelvetText } from '../ui/velvet-ui.js';
 
 export interface JobOperationsPanelProps {
   readonly jobs: JobClient;
@@ -66,37 +67,33 @@ export function JobOperationsPanel({ jobs }: JobOperationsPanelProps) {
     <section className="velvet-job-operations" data-job-operations aria-label="Jobs">
       <div className="velvet-job-operations__toolbar">
         <strong>Jobs</strong>
-        <button
-          className="velvet-button"
+        <VelvetButton
           data-job-create="success"
           disabled={busy}
           onClick={() => void create('Sample operation', false)}
-          type="button"
         >
           Start task
-        </button>
-        <button
-          className="velvet-button velvet-button--quiet"
+        </VelvetButton>
+        <VelvetButton
           data-job-create="failure"
           disabled={busy}
           onClick={() => void create('Sample failing operation', true)}
-          type="button"
+          variant="quiet"
         >
           Start failing task
-        </button>
-        <button
-          className="velvet-button velvet-button--quiet"
+        </VelvetButton>
+        <VelvetButton
           data-job-create="long"
           disabled={busy}
           onClick={() => void create('Long-running operation', false, 30_000)}
-          type="button"
+          variant="quiet"
         >
           Start long task
-        </button>
-        <span className="velvet-muted" data-job-count>{items.length} total</span>
+        </VelvetButton>
+        <span data-job-count><VelvetText as="span" tone="muted">{items.length} total</VelvetText></span>
       </div>
-      {error ? <p className="velvet-plugin-recovery-operations__error" data-job-error>{error}</p> : null}
-      {items.length === 0 ? <p className="velvet-muted" data-job-empty>No jobs yet.</p> : null}
+      {error ? <VelvetState kind="error" onRetry={() => void refresh()} title={error} /> : null}
+      {items.length === 0 ? <VelvetState kind="empty" title="No jobs yet." /> : null}
       {items.length > 0 ? (
         <div className="velvet-job-operations__entries" data-job-entries>
           {[...items].reverse().map((job) => (
@@ -109,34 +106,32 @@ export function JobOperationsPanel({ jobs }: JobOperationsPanelProps) {
             >
               <div className="velvet-job-operations__entry-heading">
                 <strong>{job.kind}</strong>
-                <span data-job-status>{statusLabel(job.status)}</span>
+                <span data-job-status><VelvetBadge tone={job.status === 'failed' ? 'danger' : job.status === 'completed' ? 'success' : 'info'}>{statusLabel(job.status)}</VelvetBadge></span>
                 <span>Attempt {job.attempt}</span>
                 <span>{job.progress}%</span>
                 {job.status === 'queued' || job.status === 'running' ? (
-                  <button
-                    className="velvet-button velvet-button--quiet"
+                  <VelvetButton
                     data-job-cancel
                     disabled={busy}
                     onClick={() => void update(() => jobs.cancel(job.id))}
-                    type="button"
+                    variant="quiet"
                   >
                     Cancel
-                  </button>
+                  </VelvetButton>
                 ) : null}
                 {job.retryable && (job.status === 'failed' || job.status === 'cancelled' || job.status === 'interrupted') ? (
-                  <button
-                    className="velvet-button velvet-button--quiet"
+                  <VelvetButton
                     data-job-retry
                     disabled={busy}
                     onClick={() => void update(() => jobs.retry(job.id))}
-                    type="button"
+                    variant="quiet"
                   >
                     Retry
-                  </button>
+                  </VelvetButton>
                 ) : null}
               </div>
-              <progress max={100} value={job.progress} />
-              {job.message ? <p>{job.message}</p> : null}
+              <VelvetProgress label={`${job.kind} progress`} value={job.progress} tone={job.status === 'failed' ? 'danger' : 'accent'} />
+              {job.message ? <VelvetText as="p" tone="secondary">{job.message}</VelvetText> : null}
               <div data-job-provenance>
                 <span data-job-owner>Owner: {job.provenance.ownerId}</span>
                 {job.provenance.assetId ? (

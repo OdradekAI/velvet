@@ -5,6 +5,7 @@ import type {
   CorePluginInstallRecoveryLogStatus,
 } from '../../platform/protocol.js';
 import type { PluginClient } from '../../workbench/plugins/plugin-client.js';
+import { VelvetButton, VelvetInput, VelvetSelect, VelvetState, VelvetText } from '../ui/velvet-ui.js';
 
 export interface PluginRecoveryOperationsPanelProps {
   readonly plugins: PluginClient;
@@ -125,17 +126,15 @@ export function PluginRecoveryOperationsPanel({
   return (
     <div className="velvet-plugin-recovery-operations" data-plugin-recovery-operations>
       <div className="velvet-plugin-recovery-operations__toolbar">
-        <input
-          aria-label="Filter recovery logs"
-          className="velvet-input velvet-plugin-recovery-operations__search"
-          data-plugin-recovery-log-search
+        <span data-plugin-recovery-log-search><VelvetInput
+          ariaLabel="Filter recovery logs"
+          className="velvet-plugin-recovery-operations__search"
           onChange={(event) => setSearch(event.target.value)}
           placeholder="Filter plugin, message or path"
           value={search}
-        />
-        <select
-          aria-label="Filter recovery log status"
-          className="velvet-select"
+        /></span>
+        <VelvetSelect
+          ariaLabel="Filter recovery log status"
           data-plugin-recovery-log-status
           onChange={(event) => setStatus(event.target.value as LogStatusFilter)}
           value={status}
@@ -143,10 +142,9 @@ export function PluginRecoveryOperationsPanel({
           <option value="all">All status</option>
           <option value="failed">Failed</option>
           <option value="succeeded">Succeeded</option>
-        </select>
-        <select
-          aria-label="Filter recovery log action"
-          className="velvet-select"
+        </VelvetSelect>
+        <VelvetSelect
+          ariaLabel="Filter recovery log action"
           data-plugin-recovery-log-action
           onChange={(event) => setAction(event.target.value as LogActionFilter)}
           value={action}
@@ -156,33 +154,33 @@ export function PluginRecoveryOperationsPanel({
           <option value="commit">Commit</option>
           <option value="rollback">Rollback</option>
           <option value="discard">Discard</option>
-        </select>
-        <button
-          className="velvet-button velvet-button--quiet"
+        </VelvetSelect>
+        <VelvetButton
           data-plugin-recovery-log-export
           disabled={busy || logs.length === 0}
           onClick={() => void exportLog()}
-          type="button"
+          variant="quiet"
         >
           Export
-        </button>
-        <button
-          className="velvet-button velvet-button--quiet"
+        </VelvetButton>
+        <VelvetButton
           data-plugin-recovery-log-clear
           disabled={busy || logs.length === 0}
           onClick={() => void clearLog()}
-          type="button"
+          variant="quiet"
         >
           Clear
-        </button>
+        </VelvetButton>
       </div>
-      {message ? <p className="velvet-plugin-recovery-operations__message" data-plugin-recovery-log-message>{message}</p> : null}
-      {error ? <p className="velvet-plugin-recovery-operations__error" data-plugin-recovery-log-error>{error}</p> : null}
-      {loading ? <p className="velvet-muted">Loading recovery log…</p> : null}
+      {message ? <VelvetText as="p" className="velvet-plugin-recovery-operations__message" tone="success">{message}</VelvetText> : null}
+      {error ? <VelvetState kind="error" onRetry={() => void refresh()} title={error} /> : null}
+      {loading ? <VelvetState kind="loading" title="Loading recovery log…" /> : null}
       {!loading && visibleLogs.length === 0 ? (
-        <p className="velvet-muted" data-plugin-recovery-log-empty>
-          {logs.length === 0 ? 'No plugin recovery log entries.' : 'No entries match these filters.'}
-        </p>
+        <VelvetState
+          action={<span data-plugin-recovery-log-empty />}
+          kind="empty"
+          title={logs.length === 0 ? 'No plugin recovery log entries.' : 'No entries match these filters.'}
+        />
       ) : null}
       {visibleLogs.length > 0 ? (
         <div className="velvet-plugin-recovery-operations__entries" data-plugin-recovery-log-entries>

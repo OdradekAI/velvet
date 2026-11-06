@@ -8,7 +8,7 @@ import type {
   CorePluginStorageRecovery,
 } from '../../platform/protocol.js';
 import type { PluginClient } from '../../workbench/plugins/plugin-client.js';
-import { VelvetDialog } from '../ui/velvet-ui.js';
+import { VelvetBadge, VelvetButton, VelvetDialog, VelvetInput, VelvetState, VelvetText } from '../ui/velvet-ui.js';
 
 export interface PluginManagerDialogProps {
   readonly open: boolean;
@@ -293,18 +293,17 @@ export function PluginManagerDialog({
       <div className="velvet-plugin-manager" data-plugin-manager>
         <div className="velvet-plugin-manager__toolbar">
           <span className="velvet-plugin-manager__eyebrow">Installed extensions</span>
-          <button
-            className="velvet-button velvet-button--quiet"
+          <VelvetButton
             disabled={loading || installing}
             onClick={() => void refresh()}
-            type="button"
+            variant="quiet"
           >
             {loading ? 'Refreshing…' : 'Refresh'}
-          </button>
+          </VelvetButton>
         </div>
         <div aria-live="polite" className="velvet-plugin-manager__list">
           {extensions.length === 0 && !loading ? (
-            <p className="velvet-view-placeholder">No extensions are installed.</p>
+            <VelvetState kind="empty" title="No extensions are installed." />
           ) : null}
           {extensions.map((extension) => (
             <div className="velvet-plugin-manager__item" key={extension.id}>
@@ -313,11 +312,9 @@ export function PluginManagerDialog({
                 <span>v{extension.version}</span>
               </div>
               <div className="velvet-plugin-manager__controls">
-                <span
-                  className={`velvet-plugin-manager__status velvet-plugin-manager__status--${extension.state}`}
-                >
+                <VelvetBadge tone={extension.state === 'failed' ? 'danger' : extension.state === 'active' ? 'success' : 'info'}>
                   {extension.state}
-                </span>
+                </VelvetBadge>
                 {extension.state === 'active' ? (
                   <button
                     aria-label={`Disable ${extension.id}`}
@@ -515,9 +512,8 @@ export function PluginManagerDialog({
         <form className="velvet-plugin-manager__install" onSubmit={(event) => void install(event)}>
           <label htmlFor="velvet-plugin-source">Plugin package path</label>
           <div className="velvet-plugin-manager__install-row">
-            <input
-              aria-label="Plugin package path"
-              className="velvet-input"
+            <VelvetInput
+              ariaLabel="Plugin package path"
               id="velvet-plugin-source"
               onChange={(event) => {
                 setSourceDir(event.target.value);
@@ -528,36 +524,33 @@ export function PluginManagerDialog({
               value={sourceDir}
             />
             {pickPackage ? (
-              <button
+              <VelvetButton
                 aria-label="Browse plugin directory package"
-                className="velvet-button velvet-button--quiet"
                 disabled={installing || busyExtensionId !== undefined}
                 onClick={() => void choosePackage('directory')}
-                type="button"
+                variant="quiet"
               >
                 Browse directory…
-              </button>
+              </VelvetButton>
             ) : null}
             {pickPackage ? (
-              <button
+              <VelvetButton
                 aria-label="Browse ZIP plugin package"
-                className="velvet-button velvet-button--quiet"
                 disabled={installing || busyExtensionId !== undefined}
                 onClick={() => void choosePackage('archive')}
-                type="button"
+                variant="quiet"
               >
                 Browse .zip…
-              </button>
+              </VelvetButton>
             ) : null}
-            <button
-              className="velvet-button"
+            <VelvetButton
               disabled={installing || busyExtensionId !== undefined}
               type="submit"
             >
               {installing
                 ? 'Installing…'
                 : preview?.operation === 'upgrade' ? 'Upgrade and activate' : 'Review manifest'}
-            </button>
+            </VelvetButton>
           </div>
         </form>
         {preview ? (
@@ -594,11 +587,11 @@ export function PluginManagerDialog({
             ) : null}
           </div>
         ) : null}
-        {message ? <p className="velvet-plugin-manager__success">{message}</p> : null}
+        {message ? <VelvetText as="p" className="velvet-plugin-manager__success" tone="success">{message}</VelvetText> : null}
         {error ? (
-          <p aria-live="assertive" className="velvet-command-error" role="alert">
+          <VelvetText ariaLive="assertive" as="p" className="velvet-command-error" role="alert" tone="danger">
             {error}
-          </p>
+          </VelvetText>
         ) : null}
       </div>
     </VelvetDialog>

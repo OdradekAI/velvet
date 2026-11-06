@@ -1776,6 +1776,13 @@ impl ApplicationCore {
             .map(plugin_capability_dto)
     }
 
+    /// Returns the host-owned runtime lease nonce for a live external plugin.
+    /// Transport adapters use this as the binding evidence for plugin-only
+    /// requests; it is never inferred from a caller-provided extension id.
+    pub fn plugin_runtime_nonce(&self, extension_id: &ExtensionId) -> Result<String, PluginError> {
+        self.plugins.runtime_nonce(extension_id)
+    }
+
     pub fn grant_plugin_capabilities(
         &mut self,
         extension_id: &ExtensionId,

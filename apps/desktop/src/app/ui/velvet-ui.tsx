@@ -14,6 +14,8 @@ import type {
   HTMLAttributes,
   InputHTMLAttributes,
   KeyboardEvent,
+  Ref,
+  RefObject,
   ReactNode,
   SelectHTMLAttributes,
 } from 'react';
@@ -23,22 +25,31 @@ export const UI_KIT_API_VERSION = '1.0' as const;
 export type UiButtonVariant = 'default' | 'quiet' | 'danger';
 
 export interface UiCommonProps {
+  readonly [key: `data-${string}`]: string | boolean | undefined;
   readonly apiVersion?: string;
   readonly testId?: string;
   readonly ariaLabel?: string;
   readonly describedBy?: string;
   readonly disabled?: boolean;
   readonly busy?: boolean;
+  readonly ariaLive?: 'off' | 'polite' | 'assertive';
 }
 
 function uiDataProps(props: UiCommonProps): Record<string, string | undefined> {
-  return {
+  const dataProps: Record<string, string | undefined> = {
     'data-ui-kit-api-version': props.apiVersion ?? UI_KIT_API_VERSION,
     'data-ui-test-id': props.testId,
     'aria-label': props.ariaLabel,
     'aria-describedby': props.describedBy,
     'aria-busy': props.busy ? 'true' : undefined,
+    'aria-live': props.ariaLive,
   };
+  for (const [key, value] of Object.entries(props)) {
+    if (key.startsWith('data-')) {
+      dataProps[key] = typeof value === 'boolean' ? String(value) : value;
+    }
+  }
+  return dataProps;
 }
 
 export interface VelvetTextProps extends UiCommonProps {
@@ -46,6 +57,8 @@ export interface VelvetTextProps extends UiCommonProps {
   readonly tone?: 'primary' | 'secondary' | 'muted' | 'danger' | 'success' | 'warning';
   readonly children: ReactNode;
   readonly className?: string;
+  readonly id?: string;
+  readonly role?: string;
 }
 
 export function VelvetText({
@@ -53,6 +66,8 @@ export function VelvetText({
   tone = 'primary',
   children,
   className = '',
+  id,
+  role,
   ...common
 }: VelvetTextProps) {
   const Tag = as;
@@ -60,9 +75,50 @@ export function VelvetText({
     <Tag
       {...uiDataProps(common)}
       className={`velvet-text velvet-text--${tone} ${className}`.trim()}
+      id={id}
+      role={role}
     >
       {children}
     </Tag>
+  );
+}
+
+export interface VelvetIconProps extends UiCommonProps {
+  readonly children: ReactNode;
+  readonly label?: string;
+  readonly className?: string;
+}
+
+export function VelvetIcon({ children, label, className = '', ...common }: VelvetIconProps) {
+  return (
+    <span
+      {...uiDataProps(common)}
+      aria-hidden={label ? undefined : true}
+      aria-label={label}
+      className={`velvet-icon ${className}`.trim()}
+      data-ui-kit-component="icon"
+      role={label ? 'img' : undefined}
+    >
+      {children}
+    </span>
+  );
+}
+
+export interface VelvetBadgeProps extends UiCommonProps {
+  readonly children: ReactNode;
+  readonly tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger';
+  readonly className?: string;
+}
+
+export function VelvetBadge({ children, tone = 'neutral', className = '', ...common }: VelvetBadgeProps) {
+  return (
+    <span
+      {...uiDataProps(common)}
+      className={`velvet-badge velvet-badge--${tone} ${className}`.trim()}
+      data-ui-kit-component="badge"
+    >
+      {children}
+    </span>
   );
 }
 
@@ -102,6 +158,7 @@ export interface VelvetButtonProps
   readonly children?: ReactNode;
   readonly label?: string;
   readonly variant?: UiButtonVariant;
+  readonly ref?: Ref<HTMLButtonElement>;
 }
 
 export function VelvetButton({
@@ -115,6 +172,7 @@ export function VelvetButton({
   testId,
   ariaLabel,
   describedBy,
+  ref,
   ...props
 }: VelvetButtonProps) {
   return (
@@ -124,6 +182,7 @@ export function VelvetButton({
       className={`velvet-button velvet-button--${variant} ${className}`.trim()}
       data-ui-kit-component="button"
       disabled={disabled || busy}
+      ref={ref}
       type={props.type ?? 'button'}
     >
       {busy ? <span aria-hidden="true" className="velvet-button__spinner" /> : null}
@@ -257,6 +316,7 @@ export interface VelvetDialogProps {
   readonly actions?: readonly VelvetDialogAction[];
   readonly severity?: 'normal' | 'warning' | 'danger';
   readonly closeLabel?: string;
+  readonly restoreFocusRef?: RefObject<HTMLElement | null>;
 }
 
 export interface VelvetDialogAction {
@@ -278,7 +338,16 @@ export function VelvetDialog({
   actions = [],
   severity = 'normal',
   closeLabel = 'Close',
+  restoreFocusRef,
 }: VelvetDialogProps) {
+  const previousOpenRef = useRef(open);
+  useEffect(() => {
+    if (previousOpenRef.current && !open) {
+      queueMicrotask(() => restoreFocusRef?.current?.focus());
+    }
+    previousOpenRef.current = open;
+  }, [open, restoreFocusRef]);
+
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
@@ -454,7 +523,7 @@ export function VelvetProgress({
   const determinate = value !== undefined;
   const bounded = determinate ? Math.max(0, Math.min(100, value)) : undefined;
   return (
-    <div {...uiDataProps(common)} className={`velvet-progress velvet-progress--${tone} ${className}`.trim()}>
+    <div {...uiDataProps(common)} className={`velvet-progress velvet-progress--${tone} ${className}`.trim()} data-ui-kit-component="progress">
       {label ? <span className="velvet-progress__label">{label}</span> : null}
       <progress aria-label={label ?? 'Progress'} max={100} value={bounded} />
       {determinate ? <span className="velvet-progress__value">{bounded}%</span> : null}
@@ -490,6 +559,7 @@ export function VelvetState({
       aria-busy={kind === 'loading' ? 'true' : undefined}
       aria-live={kind === 'error' ? 'assertive' : 'polite'}
       className={`velvet-state velvet-state--${kind} ${className}`.trim()}
+      data-ui-kit-component="state"
       role={kind === 'error' ? 'alert' : 'status'}
     >
       <strong>{title}</strong>
@@ -636,16 +706,16 @@ export function VelvetActivityBar({ items, onSelect, className = '', ...common }
   );
 }
 
-export interface VelvetPaneProps {
+export interface VelvetPaneProps extends UiCommonProps {
   readonly title: string;
   readonly region: 'navigation' | 'context' | 'operations' | 'preview';
   readonly children: ReactNode;
   readonly className?: string;
 }
 
-export function VelvetPane({ title, region, children, className = '' }: VelvetPaneProps) {
+export function VelvetPane({ title, region, children, className = '', ...common }: VelvetPaneProps) {
   return (
-    <section aria-label={title} className={`velvet-pane velvet-pane--${region} ${className}`.trim()} data-ui-kit-region={region}>
+    <section {...uiDataProps(common)} aria-label={title} className={`velvet-pane velvet-pane--${region} ${className}`.trim()} data-ui-kit-region={region}>
       <header className="velvet-pane__header">{title}</header>
       <div className="velvet-pane__body">{children}</div>
     </section>

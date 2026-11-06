@@ -7,6 +7,7 @@ import type {
 import {
   UI_BRIDGE_HOST_EVENT,
   UI_BRIDGE_SURFACE_EVENT,
+  validateSurfaceToHostMessage,
 } from './ui-bridge.js';
 
 export interface TauriSurfaceWebview {
@@ -73,6 +74,8 @@ class IframeSurfaceAdapter implements PluginSurfaceAdapter {
     const message = unwrapSurfaceMessage(event.data);
     if (message) {
       this.endpoint?.receive(message);
+    } else {
+      this.endpoint?.receive(invalidSurfaceMessage());
     }
   };
   private endpoint: UiBridgeEndpoint | undefined;
@@ -183,6 +186,8 @@ class TauriWebviewSurfaceAdapter implements PluginSurfaceAdapter {
       const message = unwrapSurfaceMessage(event.payload);
       if (message) {
         endpoint.receive(message);
+      } else {
+        endpoint.receive(invalidSurfaceMessage());
       }
     });
 
@@ -298,10 +303,14 @@ function unwrapSurfaceMessage(value: unknown): SurfaceToHostMessage | undefined 
   const candidate = isRecord(value) && value.type === 'velvet.ui.surface'
     ? value.message
     : value;
-  if (!isRecord(candidate) || typeof candidate.type !== 'string') {
-    return undefined;
-  }
-  return candidate as unknown as SurfaceToHostMessage;
+  return validateSurfaceToHostMessage(candidate);
+}
+
+function invalidSurfaceMessage(): SurfaceToHostMessage {
+  return {
+    type: 'surface.error',
+    message: 'Invalid UI Bridge message',
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

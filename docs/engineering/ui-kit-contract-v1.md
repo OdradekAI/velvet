@@ -64,6 +64,53 @@ theme updates and registered command dispatch. It cannot create a second
 layout owner, install a global key handler, inject arbitrary DOM/CSS or mutate
 host state directly.
 
+## Visual system and renderer boundary
+
+The default host visual language is Eagle-informed rather than Eagle-compatible.
+It uses the observed desktop workbench grammar as design input: dense
+navigation/workspace/Inspector zones, near-flat charcoal surfaces, thin
+separators, rounded selected rows, compact system-sans typography, one
+saturated indigo/purple accent, icon-first toolbars with explicit search,
+filter and zoom controls, and action-oriented empty states. The host may
+support light, comfortable and high-contrast modes through the existing
+semantic theme snapshot; those modes preserve the same component states and
+ownership rules.
+
+The visual system is expressed through Velvet semantic tokens and named
+component variants. Primitive colors, Tailwind utility classes, DOM structure,
+Eagle assets and exact pixel values are implementation details. A visual change
+that changes keyboard behavior, state ownership or token meaning requires a UI
+contract version decision; a palette or spacing refinement stays behind the
+Velvet wrapper.
+
+The public first-party renderer surface is the `Velvet*` React wrapper layer.
+Wrappers expose semantic props, controlled state where the host owns selection
+or overlay lifecycle, default state for local inputs, standard React events
+and Velvet accessibility behavior. They do not expose Radix types, `asChild`,
+Radix data attributes, Tailwind class names or host-private portals. Radix
+Dialog and Context Menu remain internal primitives; additional Radix packages
+are added one host use at a time after production bundle measurement.
+
+The component set is split into three ownership groups:
+
+1. **Primitives** — text, icon, button, icon button, input, select, checkbox,
+   separator, stack, inline, tabs, progress, state and toast.
+2. **Host composites** — Activity Bar, Pane, PreviewHost, AssetGrid,
+   DataTable and CommandPalette. These retain host-owned context, focus,
+   layout and projection state.
+3. **Overlay wrappers** — Dialog and Context Menu today; Tooltip, Popover,
+   DropdownMenu or ScrollArea only when a concrete host surface needs them.
+
+Every group remains replaceable behind the semantic wrapper and the
+framework-neutral plugin bridge. Isolated extensions receive component names,
+theme tokens and typed overlay/command requests; they never receive React
+elements or renderer implementation dependencies.
+
+Story modules and the generated agent catalog are host development artifacts.
+They verify the semantic wrapper behavior and document the supported states;
+they do not expand the plugin bridge or turn story metadata into a runtime
+permission surface.
+
 ## Surface and origin rules
 
 The current host accepts only declared `http`, `https`, `tauri-webview`,

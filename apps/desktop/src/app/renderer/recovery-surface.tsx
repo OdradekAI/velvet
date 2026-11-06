@@ -3,6 +3,7 @@ import type {
   CoreRecoveryAction,
   CoreRecoveryProjection,
 } from '../../platform/protocol.js';
+import { VelvetButton, VelvetText } from '../ui/velvet-ui.js';
 
 const ACTION_LABELS: Record<CoreRecoveryAction, string> = {
   retry: 'Retry startup',
@@ -47,15 +48,15 @@ export function RecoverySurface({
       data-recovery-mode={projection?.mode ?? 'starting'}
     >
       <section className="velvet-recovery-card">
-        <p className="velvet-recovery-eyebrow">Velvet recovery</p>
-        <h1 id="velvet-recovery-title">Velvet could not mount the workbench</h1>
-        <p aria-live="polite" className="velvet-recovery-status" role="status">
+        <VelvetText as="p" className="velvet-recovery-eyebrow" tone="muted">Velvet recovery</VelvetText>
+        <VelvetText as="h1" id="velvet-recovery-title">Velvet could not mount the workbench</VelvetText>
+        <VelvetText ariaLive="polite" ariaLabel="Recovery status" as="p" className="velvet-recovery-status" role="status" tone="secondary">
           {projection?.mode === 'safe'
             ? 'Velvet is running in Safe Mode. Core data was left unchanged.'
             : 'The host recovery path is available while optional components remain isolated.'}
-        </p>
-        {failureMessage ? <p className="velvet-recovery-detail">{failureMessage}</p> : null}
-        {errorMessage ? <p className="velvet-recovery-detail">{errorMessage}</p> : null}
+        </VelvetText>
+        {failureMessage ? <VelvetText as="p" className="velvet-recovery-detail" tone="danger">{failureMessage}</VelvetText> : null}
+        {errorMessage ? <VelvetText as="p" className="velvet-recovery-detail" tone="danger">{errorMessage}</VelvetText> : null}
         <dl className="velvet-recovery-meta">
           <div>
             <dt>Mode</dt>
@@ -97,23 +98,21 @@ export function RecoverySurface({
                 onClick = undefined;
             }
             return (
-              <button
+              <VelvetButton
                 aria-disabled={!enabled}
-                className={`velvet-button${enabled ? '' : ' velvet-button--quiet'}`}
                 data-recovery-action={action}
                 disabled={!enabled}
                 key={action}
                 onClick={enabled && onClick ? () => { void onClick(); } : undefined}
-                type="button"
-              >
+                variant={enabled ? 'default' : 'quiet'}>
                 {ACTION_LABELS[action]}
-              </button>
+              </VelvetButton>
             );
           })}
         </div>
-        <p className="velvet-recovery-note">
+        <VelvetText as="p" className="velvet-recovery-note" tone="muted">
           Recovery actions do not run plugin code and do not reset core data automatically.
-        </p>
+        </VelvetText>
       </section>
     </main>
   );

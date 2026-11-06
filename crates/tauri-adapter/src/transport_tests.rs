@@ -498,6 +498,7 @@ fn plugin_envelope_uses_the_same_session_dispatch_path() {
             protocol_version: velvet_workbench_protocol::PLUGIN_PROTOCOL_SCHEMA_VERSION,
             session_id: session,
             caller_extension_id: ExtensionId("missing.extension".into()),
+            runtime_nonce: "test-runtime-nonce".into(),
             request_id: RequestId(90),
             message: velvet_workbench_protocol::PluginRequest::QueryProjection {
                 extension_id: ExtensionId("missing.extension".into()),
@@ -522,13 +523,14 @@ fn plugin_envelope_uses_the_same_session_dispatch_path() {
             protocol_version: velvet_workbench_protocol::PLUGIN_PROTOCOL_SCHEMA_VERSION,
             session_id: unbound_session,
             caller_extension_id: ExtensionId("missing.extension".into()),
+            runtime_nonce: "test-runtime-nonce".into(),
             request_id: RequestId(91),
             message: velvet_workbench_protocol::PluginRequest::QueryProjection {
                 extension_id: ExtensionId("missing.extension".into()),
             },
         })
         .expect_err("unbound plugin sessions must fail closed");
-    assert!(matches!(unbound_error, CoreError::SessionExpired { .. }));
+    assert!(matches!(unbound_error, CoreError::Plugin(_)));
 }
 
 #[test]

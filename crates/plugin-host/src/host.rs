@@ -3127,6 +3127,25 @@ impl InMemoryPluginHost {
         }
     }
 
+    /// Returns the lease nonce for an active external runtime. The nonce is
+    /// host-owned evidence used by transport adapters to bind requests to the
+    /// runtime that received it during activation.
+    pub fn runtime_nonce(&self, id: &ExtensionId) -> Result<String, PluginError> {
+        if !self.active.contains(id) {
+            return Err(PluginError::RuntimeLease {
+                extension_id: id.clone(),
+                message: "plugin runtime is not active".into(),
+            });
+        }
+        self.runtime_nonces
+            .get(id)
+            .cloned()
+            .ok_or_else(|| PluginError::RuntimeLease {
+                extension_id: id.clone(),
+                message: "plugin runtime has no active lease nonce".into(),
+            })
+    }
+
     /// Returns the authoritative host-owned contribution projection.
     ///
     /// Frontend registries may cache this projection, but they do not own it.
@@ -3217,9 +3236,14 @@ impl InMemoryPluginHost {
         capabilities: &[Capability],
         expected_generation: Option<u64>,
     ) -> Result<CapabilityGrantSnapshot, PluginError> {
-        self.capabilities
+        let snapshot = self
+            .capabilities
             .grant(id, capabilities, expected_generation)
-            .map_err(|error| capability_error(id, error))
+            .map_err(|error| capability_error(id, error))?;
+        if snapshot.active {
+            self.restore_missing_contributions(id)?;
+        }
+        Ok(snapshot)
     }
 
     pub fn revoke_capabilities(
@@ -3228,9 +3252,12 @@ impl InMemoryPluginHost {
         capabilities: &[Capability],
         expected_generation: Option<u64>,
     ) -> Result<CapabilityGrantSnapshot, PluginError> {
-        self.capabilities
+        let snapshot = self
+            .capabilities
             .revoke(id, capabilities, expected_generation)
-            .map_err(|error| capability_error(id, error))
+            .map_err(|error| capability_error(id, error))?;
+        self.revoke_missing_contributions(id, &snapshot);
+        Ok(snapshot)
     }
 
     pub fn capability_handle(
@@ -5167,26 +5194,7 @@ impl InMemoryPluginHost {
         contributions: &[velvet_plugin_api::ContributionDescriptor],
     ) -> Result<(), PluginError> {
         for contribution in contributions {
-            for capability_name in &contribution.required_capabilities {
-                let capability = Capability::from_name(capability_name).ok_or_else(|| {
-                    PluginError::InvalidContribution(format!(
-                        "contribution {} declares unknown capability {}",
-                        contribution.id, capability_name
-                    ))
-                })?;
-                if !self
-                    .capabilities
-                    .is_granted(id, &capability)
-                    .map_err(|error| capability_error(id, error))?
-                {
-                    return Err(PluginError::CapabilityDenied {
-                        extension_id: id.clone(),
-                        capability,
-                        reason: CapabilityDenyReason::UserApprovalRequired,
-                        retryable: false,
-                    });
-                }
-            }
+            self.ensure_contribution_capabilities(id, contribution)?;
         }
         let handles = self
             .registry
@@ -5197,8 +5205,116 @@ impl InMemoryPluginHost {
                 | RegistryError::InvalidCommandSurface(key)
                 | RegistryError::KeybindingConflict(key) => PluginError::InvalidContribution(key),
             })?;
-        self.registrations.insert(id.clone(), handles);
+        self.registrations
+            .entry(id.clone())
+            .or_default()
+            .extend(handles);
         Ok(())
+    }
+
+    fn ensure_contribution_capabilities(
+        &self,
+        id: &ExtensionId,
+        contribution: &velvet_plugin_api::ContributionDescriptor,
+    ) -> Result<(), PluginError> {
+        let snapshot = self
+            .capabilities
+            .snapshot(id)
+            .map_err(|error| capability_error(id, error))?;
+        for capability_name in &contribution.required_capabilities {
+            let capability = Capability::from_name(capability_name).ok_or_else(|| {
+                PluginError::InvalidContribution(format!(
+                    "contribution {} declares unknown capability {}",
+                    contribution.id, capability_name
+                ))
+            })?;
+            if snapshot.active && snapshot.granted.contains(&capability) {
+                continue;
+            }
+            let reason = if !snapshot.active {
+                CapabilityDenyReason::Inactive
+            } else {
+                snapshot
+                    .denied
+                    .iter()
+                    .find(|denial| denial.capability == capability)
+                    .map(|denial| denial.reason.clone())
+                    .unwrap_or(CapabilityDenyReason::UserApprovalRequired)
+            };
+            return Err(PluginError::CapabilityDenied {
+                extension_id: id.clone(),
+                capability,
+                retryable: matches!(reason, CapabilityDenyReason::Inactive),
+                reason,
+            });
+        }
+        Ok(())
+    }
+
+    fn restore_missing_contributions(&mut self, id: &ExtensionId) -> Result<(), PluginError> {
+        let Some(manifest) = self.manifests.get(id).cloned() else {
+            return Err(PluginError::NotFound(id.clone()));
+        };
+        let missing = manifest
+            .contributions
+            .into_iter()
+            .filter(|contribution| {
+                !self
+                    .registry
+                    .contains(id, &contribution.id, &contribution.kind)
+            })
+            .collect::<Vec<_>>();
+        if !missing.is_empty() {
+            self.register_contributions(id, &missing)?;
+        }
+        Ok(())
+    }
+
+    fn revoke_missing_contributions(
+        &mut self,
+        id: &ExtensionId,
+        snapshot: &CapabilityGrantSnapshot,
+    ) {
+        let granted = snapshot.granted.iter().collect::<BTreeSet<_>>();
+        let blocked = self
+            .manifests
+            .get(id)
+            .map(|manifest| {
+                manifest
+                    .contributions
+                    .iter()
+                    .filter(|contribution| {
+                        contribution.required_capabilities.iter().any(|name| {
+                            Capability::from_name(name)
+                                .is_none_or(|capability| !granted.contains(&capability))
+                        })
+                    })
+                    .map(|contribution| contribution.id.clone())
+                    .collect::<BTreeSet<_>>()
+            })
+            .unwrap_or_default();
+        if blocked.is_empty() {
+            return;
+        }
+        let removed = self
+            .registrations
+            .get_mut(id)
+            .map(|handles| {
+                let mut removed = Vec::new();
+                handles.retain(|handle| {
+                    if blocked.contains(handle.contribution_id()) {
+                        removed.push(handle.clone());
+                        false
+                    } else {
+                        true
+                    }
+                });
+                removed
+            })
+            .unwrap_or_default();
+        for handle in removed {
+            self.registry.dispose(&handle);
+        }
     }
 
     fn revoke_contributions(&mut self, id: &ExtensionId) {
@@ -5244,6 +5360,23 @@ impl InMemoryPluginHost {
                 state,
             });
         }
+
+        let contribution = self
+            .manifests
+            .get(id)
+            .and_then(|manifest| {
+                manifest
+                    .contributions
+                    .iter()
+                    .find(|contribution| contribution.id == contribution_id)
+            })
+            .ok_or_else(|| {
+                PluginError::InvalidContribution(format!(
+                    "contribution {} is not declared by extension {}",
+                    contribution_id, id.0
+                ))
+            })?;
+        self.ensure_contribution_capabilities(id, contribution)?;
 
         if !self.contribution_is_active(id, &contribution_id, &expected_kind) {
             return Err(PluginError::InvalidContribution(format!(
