@@ -7,7 +7,7 @@
 ---
 
 > [!NOTE]
-> Velvet `0.0.5` 是一个 Workbench 基础版本。React 壳层、带版本控制的布局模型、原生 Tauri 窗口、健壮的持久化与恢复、隔离的插件生命周期和 Preview 资源定位已经建立，素材索引器和生产级扩展仍在开发中。
+> Velvet `0.0.6` 是插件平台 Alpha 迭代版本。Workbench 基础、宿主拥有的插件合同、UI Kit bridge、Job/diagnostics 接缝和 Asset Inspector fixture 已建立；生产 runtime 和外部 SDK 资格仍属于后续门禁。
 
 ## 一个工作台，两种入口
 
@@ -154,6 +154,7 @@ apps/desktop/
 - [插件开发者指南](docs/engineering/plugin-developer-guide.md)
 - [插件合同验证矩阵](docs/engineering/plugin-contract-matrix.md)
 - [插件生态化资格门禁](docs/engineering/plugin-ecosystem-qualification.md)
+- [插件平台 0.0.6 审计](docs/engineering/plugin-platform-0.0.6-audit.md)
 - [插件 manifest schema](docs/engineering/plugin-manifest-v1.md)
 - [插件注册表合同](docs/engineering/plugin-registry-v1.md)
 - [UI Kit 合同](docs/engineering/ui-kit-contract-v1.md)

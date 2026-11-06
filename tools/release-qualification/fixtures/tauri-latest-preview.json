@@ -1,18 +1,18 @@
 {
-  "version": "0.0.5",
+  "version": "0.0.6",
   "notes": "Preview release",
   "pub_date": "2026-11-01T00:00:00Z",
   "platforms": {
     "darwin-aarch64": {
       "signature": "tauri-signature-fixture",
-      "url": "https://github.com/OdradekAI/velvet/releases/download/v0.0.5/Velvet_0.0.5_aarch64.dmg"
+      "url": "https://github.com/OdradekAI/velvet/releases/download/v0.0.6/Velvet_0.0.6_aarch64.dmg"
     }
   },
   "velvetManifests": {
     "darwin-aarch64": {
       "schemaVersion": 1,
       "channel": "preview",
-      "version": "0.0.5",
+      "version": "0.0.6",
       "target": "macos-aarch64",
       "artifactSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "updaterSchema": 1,

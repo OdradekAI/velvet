@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = path.resolve(scriptDirectory, '../..');
 const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'velvet-updater-'));
-const artifactPath = path.join(temporaryDirectory, 'Velvet_0.0.5_aarch64.app.tar.gz');
+const artifactPath = path.join(temporaryDirectory, 'Velvet_0.0.6_aarch64.app.tar.gz');
 const manifestPath = path.join(temporaryDirectory, 'velvet-manifest-darwin-aarch64.json');
 const latestPath = path.join(temporaryDirectory, 'latest.json');
 const mergedPath = path.join(temporaryDirectory, 'latest.merged.json');
@@ -21,7 +21,7 @@ fs.writeFileSync(artifactPath, Buffer.from('signed-artifact-fixture'));
 run('generate-release-manifest.mjs', [
   '--artifact-paths', JSON.stringify([artifactPath, `${artifactPath}.sig`]),
   '--artifact-suffix', '.app.tar.gz',
-  '--version', '0.0.5',
+  '--version', '0.0.6',
   '--channel', 'preview',
   '--target', 'macos-aarch64',
   '--signing-key-id', 'velvet-preview-root-1',

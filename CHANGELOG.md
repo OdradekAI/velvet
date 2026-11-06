@@ -4,6 +4,22 @@ All notable changes to Velvet (白翎) are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses [Semantic Versioning](https://semver.org/).
 
+## [0.0.6] - 2026-11-06
+
+### Added
+
+- Added the Alpha plugin platform contract across manifest validation, lifecycle, capabilities, host registries, typed errors, cancellation and compatibility checks.
+- Added host-owned command, menu, keybinding, diagnostics, notification, confirmation and Job seams with failure isolation and disable cleanup.
+- Added the framework-neutral UI Kit contract, theme/token negotiation, plugin surface lifecycle and Asset Inspector demo fixture.
+- Added the ecosystem qualification matrix that separates repository fixtures from future external SDK gates.
+- Added the 0.0.6 plugin platform audit with explicit runtime, UI Bridge, revocation and manifest-discovery follow-ups.
+
+### Changed
+
+- Moved native shortcut event dispatch into the Workbench command seam while keeping Tauri event listening in the platform adapter.
+- Added diagnostics and platform dependency checks to the desktop test gate.
+- Closed the strict Clippy gate for the current protocol dispatch envelope with a documented local exception.
+
 ## [0.0.5] - 2026-11-04
 
 ### Added

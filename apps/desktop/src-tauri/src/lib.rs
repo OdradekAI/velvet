@@ -4326,7 +4326,7 @@ mod tests {
                 "manifest": {
                     "schemaVersion": 1,
                     "channel": "preview",
-                    "version": "0.0.5",
+                    "version": "0.0.6",
                     "target": "test-target",
                     "artifactSha256": "0000000000000000000000000000000000000000000000000000000000000000",
                     "updaterSchema": 1,

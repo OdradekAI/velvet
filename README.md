@@ -7,7 +7,7 @@ Your assets and information should be understandable at a glance.
 ---
 
 > [!NOTE]
-> Velvet `0.0.5` is a Workbench foundation release. The React shell, revisioned layout model, native Tauri window boundary, resilient persistence and recovery, isolated plugin lifecycle and Preview source locations are in place; the asset indexer and production extensions are still being built.
+> Velvet `0.0.6` is the Alpha plugin platform iteration. The Workbench foundation, host-owned plugin contracts, UI Kit bridge, Job/diagnostic seams and Asset Inspector fixture are in place; production runtime and external SDK qualification remain later gates.
 
 ## One workbench, two starting points
 
@@ -194,6 +194,7 @@ apps/desktop/
 - [Plugin developer guide](docs/engineering/plugin-developer-guide.md)
 - [Plugin contract matrix](docs/engineering/plugin-contract-matrix.md)
 - [Plugin ecosystem qualification](docs/engineering/plugin-ecosystem-qualification.md)
+- [Plugin platform 0.0.6 audit](docs/engineering/plugin-platform-0.0.6-audit.md)
 - [Plugin manifest schema](docs/engineering/plugin-manifest-v1.md)
 - [Plugin registry contract](docs/engineering/plugin-registry-v1.md)
 - [UI Kit contract](docs/engineering/ui-kit-contract-v1.md)

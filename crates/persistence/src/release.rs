@@ -473,7 +473,7 @@ mod tests {
             manifest: ReleaseManifestDto {
                 schema_version: 1,
                 channel: ReleaseChannel::Preview,
-                version: "0.0.5".into(),
+                version: "0.0.6".into(),
                 target: "test".into(),
                 artifact_sha256: "0".repeat(64),
                 updater_schema: 1,

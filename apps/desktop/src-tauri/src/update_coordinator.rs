@@ -341,13 +341,13 @@ mod tests {
     #[test]
     fn manifest_is_read_from_tauri_static_json_extension() {
         let raw = serde_json::json!({
-            "version": "0.0.5",
+            "version": "0.0.6",
             "platforms": {},
             "velvetManifests": {
               "test-x86_64": {
                 "schemaVersion": 1,
                 "channel": "preview",
-                "version": "0.0.5",
+                "version": "0.0.6",
                 "target": "test-x86_64",
                 "artifactSha256": "a".repeat(64),
                 "updaterSchema": 1,
@@ -363,14 +363,14 @@ mod tests {
             }
         });
         let manifest = parse_release_manifest(&raw, "test-x86_64", None).expect("manifest");
-        assert_eq!(manifest.version, "0.0.5");
+        assert_eq!(manifest.version, "0.0.6");
         assert_eq!(manifest.release_sequence, 2);
     }
 
     #[test]
     fn missing_manifest_fails_closed() {
         let error = parse_release_manifest(
-            &serde_json::json!({"version": "0.0.5"}),
+            &serde_json::json!({"version": "0.0.6"}),
             "darwin-aarch64",
             None,
         )
@@ -385,7 +385,7 @@ mod tests {
                 "darwin-aarch64": {
                     "schemaVersion": 1,
                     "channel": "preview",
-                    "version": "0.0.5",
+                    "version": "0.0.6",
                     "target": "macos-aarch64",
                     "artifactSha256": "a".repeat(64),
                     "updaterSchema": 1,
@@ -432,7 +432,7 @@ mod tests {
         serde_json::json!({
             "schemaVersion": 1,
             "channel": "preview",
-            "version": "0.0.5",
+            "version": "0.0.6",
             "target": target,
             "artifactSha256": "a".repeat(64),
             "updaterSchema": 1,
@@ -449,7 +449,7 @@ mod tests {
 
     #[test]
     fn status_has_stable_wire_shape() {
-        let status = UpdateCoordinator::new("0.0.5", ReleaseChannel::Preview)
+        let status = UpdateCoordinator::new("0.0.6", ReleaseChannel::Preview)
             .base_status(NativeUpdateState::Disabled, Some("not configured".into()));
         let json = serde_json::to_value(status).expect("status should serialize");
         assert_eq!(json["schemaVersion"], 1);

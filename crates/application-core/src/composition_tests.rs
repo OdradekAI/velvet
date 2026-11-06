@@ -1676,7 +1676,7 @@ fn startup_failure_rolls_back_a_pending_release_once() {
                 manifest: velvet_workbench_protocol::ReleaseManifestDto {
                     schema_version: velvet_workbench_protocol::RELEASE_MANIFEST_SCHEMA_VERSION,
                     channel: velvet_workbench_protocol::ReleaseChannel::Preview,
-                    version: "0.0.5".into(),
+                    version: "0.0.6".into(),
                     target: "test-target".into(),
                     artifact_sha256: "0".repeat(64),
                     updater_schema: 1,

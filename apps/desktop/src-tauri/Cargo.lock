@@ -4275,7 +4275,7 @@ dependencies = [
 
 [[package]]
 name = "velvet-application-core"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "ed25519-dalek",
  "semver",
@@ -4294,11 +4294,11 @@ dependencies = [
 
 [[package]]
 name = "velvet-asset-core"
-version = "0.0.5"
+version = "0.0.6"
 
 [[package]]
 name = "velvet-desktop"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "ed25519-dalek",
  "libc",
@@ -4324,7 +4324,7 @@ dependencies = [
 
 [[package]]
 name = "velvet-job-system"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "serde",
  "serde_json",
@@ -4332,14 +4332,14 @@ dependencies = [
 
 [[package]]
 name = "velvet-layout-model"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "velvet-persistence"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "crc32fast",
  "serde",
@@ -4352,7 +4352,7 @@ dependencies = [
 
 [[package]]
 name = "velvet-plugin-api"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "serde",
  "serde_json",
@@ -4361,7 +4361,7 @@ dependencies = [
 
 [[package]]
 name = "velvet-plugin-host"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "crc32fast",
  "ed25519-dalek",
@@ -4379,7 +4379,7 @@ dependencies = [
 
 [[package]]
 name = "velvet-preview-core"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "serde",
  "velvet-asset-core",
@@ -4387,7 +4387,7 @@ dependencies = [
 
 [[package]]
 name = "velvet-tauri-adapter"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "velvet-application-core",
  "velvet-job-system",
@@ -4396,7 +4396,7 @@ dependencies = [
 
 [[package]]
 name = "velvet-workbench-protocol"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "serde",
  "serde_json",
