@@ -1,28 +1,25 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import type { CommandExecutionContext } from '../workbench/commands/command-registry.js';
-import { KeybindingRegistry } from '../workbench/commands/keybinding-registry.js';
 
 export interface NativeShortcutEvent {
   readonly keybinding: string;
   readonly state: 'pressed' | 'released';
 }
 
-export interface TauriShortcutAdapterOptions {
+export interface TauriShortcutEventSourceOptions {
   readonly eventName?: string;
-  readonly context: () => CommandExecutionContext;
-  readonly onError?: (error: unknown) => void;
 }
 
-/** Feeds native Tauri shortcut events into the host keybinding registry. */
-export class TauriShortcutAdapter {
+export type NativeShortcutEventListener = (event: NativeShortcutEvent) => void;
+
+/** Provides native shortcut events without depending on Workbench command state. */
+export class TauriShortcutEventSource {
   private unlisten: UnlistenFn | undefined;
 
   public constructor(
-    private readonly keybindings: KeybindingRegistry,
-    private readonly options: TauriShortcutAdapterOptions,
+    private readonly options: TauriShortcutEventSourceOptions = {},
   ) {}
 
-  public async start(): Promise<void> {
+  public async start(listener: NativeShortcutEventListener): Promise<void> {
     if (this.unlisten) {
       return;
     }
@@ -30,13 +27,7 @@ export class TauriShortcutAdapter {
     this.unlisten = await listen<NativeShortcutEvent>(
       this.options.eventName ?? 'velvet_keybinding',
       (event) => {
-        if (event.payload.state !== 'pressed') {
-          return;
-        }
-
-        void this.keybindings
-          .execute(event.payload.keybinding, undefined, this.options.context())
-          .catch((error: unknown) => this.options.onError?.(error));
+        listener(event.payload);
       },
     );
   }

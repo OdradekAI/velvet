@@ -2458,6 +2458,13 @@ pub enum Query {
     ReleaseStatus,
 }
 
+// `Request` is the framework-independent dispatch envelope. `Command` is
+// intentionally kept inline because this public Rust contract is constructed
+// directly throughout the application and adapter layers; boxing it would add
+// an allocation and break those constructors without changing the transport
+// semantics. Keep the exception local and revisit it if Request becomes a
+// serialized or allocation-sensitive hot path.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Request {
     Command(Command),

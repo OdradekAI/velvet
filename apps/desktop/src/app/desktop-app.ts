@@ -1,6 +1,6 @@
 import {
   createNativeTauriBridge,
-  TauriShortcutAdapter,
+  TauriShortcutEventSource,
   TauriCoreTransport,
   type TauriBridge,
   type TauriTransportOptions,
@@ -10,6 +10,7 @@ import type {
   ActivationAwareCoreTransport,
   CoreActivationRequest,
 } from '../platform/protocol.js';
+import { WorkbenchShortcutAdapter } from '../workbench/commands/shortcut-adapter.js';
 import { Workbench } from '../workbench/workbench.js';
 
 /** The desktop composition root owns startup ordering, not feature modules. */
@@ -85,13 +86,17 @@ export function createNativeTauriDesktopApp(
   options?: TauriTransportOptions,
 ): DesktopApp {
   const app = createTauriDesktopApp(createNativeTauriBridge(), options);
-  const shortcuts = new TauriShortcutAdapter(app.workbench.keybindings, {
-    context: () => ({
-      activeAppId: app.workbench.context.snapshot().activeAppId,
-      keys: app.workbench.contextKeys.snapshot(),
-    }),
-    onError: (error) => console.error('Native Workbench shortcut failed', error),
-  });
+  const shortcuts = new WorkbenchShortcutAdapter(
+    app.workbench.keybindings,
+    new TauriShortcutEventSource(),
+    {
+      context: () => ({
+        activeAppId: app.workbench.context.snapshot().activeAppId,
+        keys: app.workbench.contextKeys.snapshot(),
+      }),
+      onError: (error) => console.error('Native Workbench shortcut failed', error),
+    },
+  );
 
   return {
     ...app,

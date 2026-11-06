@@ -1,9 +1,14 @@
 # Velvet UI Kit contract v1
 
-Status: host contract slice. This document describes the current framework-neutral
-surface used by the desktop UI bridge and the host-owned renderer UI Kit. It is
-not a published third-party SDK and does not select an iframe, child WebView or
-native renderer for future runtimes.
+Status: Alpha host contract frozen in-repository. This document describes the
+current framework-neutral surface used by the desktop UI bridge and the
+host-owned renderer UI Kit. It is not a published third-party SDK and does not
+select an iframe, child WebView or native renderer for future runtimes.
+
+The frozen surface covers semantic tokens, theme negotiation, component
+availability, semantic zones, origin checks and disposal/error behavior. It
+does not freeze a production renderer, cross-platform accessibility
+qualification or an external package ABI.
 
 ## Version surfaces
 

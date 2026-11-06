@@ -9,6 +9,20 @@ result. A green unit or contract test proves the named seam; it does not prove
 that a production marketplace, package signature, or platform sandbox is
 available.
 
+## Alpha contract freeze
+
+The current freeze applies to the repository-owned manifest schema and ID/range
+rules, lifecycle and contribution registries, capability checks, CoreTransport
+mirrors, Job/diagnostic seams, extension storage/facet provenance and the
+framework-neutral UI Kit bridge. These surfaces fail closed on major version
+mismatches, unknown required fields, invalid capabilities/zones and incompatible
+component contracts; minor evolution is optional and additive.
+
+The Asset Inspector, Echo sidecar and fake `HostFacade` are local deterministic
+fixtures. Their results are recorded as `pass (fixture)` where appropriate and
+do not establish a production WASM/sidecar runtime, public SDK, Marketplace
+ABI, publisher signing/revocation service or cross-platform UI qualification.
+
 ## Result vocabulary
 
 | Result | Meaning |
@@ -47,7 +61,7 @@ The result values above are the local run recorded for this checkout on
 | Registry lifecycle and contribution cleanup | `plugin-host::PluginHost`/`InMemoryPluginHost` | Plugin registry projection through `ApplicationCore` | `PluginClient`, `ViewRegistry`, command/menu registries and UI Bridge | `crates/plugin-host/src/host_tests.rs`; `apps/desktop/test/plugin-contribution-lifecycle.test.mjs`; `plugin-registry-v1.md` | `pass` |
 | Capability and zone enforcement | `plugin-host` capability policy | Typed manifest/projection validation before dispatch | Renderer consumes already-filtered projections | `crates/plugin-host/src/capabilities.rs` and `host_tests.rs`; `apps/desktop/test/plugin-surface-adapter.test.mjs` | `pass` |
 | Commands, menus and keybindings | Host-owned contribution descriptors and invocation validation | `invoke-plugin-command` CoreTransport path | `CommandRegistry`, `MenuRegistry`, keybinding adapter | `crates/plugin-host/src/host_tests.rs`; `apps/desktop/test/external-plugin-e2e.test.mjs`; `apps/desktop/test/workbench-dom-regression.test.mjs` | `pass` |
-| Diagnostics, notifications and recovery | `PluginDiagnosticSink` and bounded ApplicationCore history | Typed diagnostic projection/export | Diagnostics service, recovery operations and notification seams | `crates/plugin-host/src/host_tests.rs`; `crates/application-core/src/composition_tests.rs`; `apps/desktop/test/diagnostics-service.test.mjs`; `apps/desktop/test/plugin-recovery-operations.test.mjs` | `pass` |
+| Diagnostics, notifications and recovery | `PluginDiagnosticSink` and bounded ApplicationCore history | Typed diagnostic projection/export | Diagnostics service, recovery operations and notification seams | `crates/plugin-host/src/host_tests.rs`; `crates/application-core/src/composition_tests.rs`; `apps/desktop/test/diagnostics-service.test.mjs` (included in `npm test`); `apps/desktop/test/plugin-recovery-operations.test.mjs` | `pass` |
 | Host services and plugin-owned Jobs | `PluginHost` capability checks, confirmation provider and `JobSystem` owner | `PluginRequest` host messages, `velvet_plugin_request` and typed Job DTOs | `PluginClient` host-service calls and `JobClient` plugin submit/query/cancel methods | `crates/plugin-host/src/host_tests.rs`; `crates/workbench-protocol/src/protocol_tests.rs`; `crates/application-core/src/composition_tests.rs`; `apps/desktop/src-tauri` wire tests | `pass (fixture)` |
 | Jobs, cancellation and provenance | `job-system::JobSystem` and `PluginJobInvocation` | Job request/result DTOs and cancellation commands | `JobClient` and Operations panel projections | `crates/job-system/src/lifecycle_tests.rs`; `crates/plugin-host/src/host_tests.rs`; `apps/desktop/test/job-operations.test.mjs` | `pass` |
 | UI Kit theme and component negotiation | Host-owned UI bridge schema and renderer components | Bridge version, origin policy and typed overlay/progress requests | `PluginUiRegistry`, `PluginSurfaceHost`, token sanitizer and host UI Kit | `apps/desktop/test/ui-kit-contract.test.mjs` (schema, token filtering, theme update, component fallback); `apps/desktop/test/ui-kit-components.test.mjs` (tabs, states, grid, table, command palette, theme application); `apps/desktop/test/plugin-surface-adapter.test.mjs` (origin and dispose); `apps/desktop/test/workbench-dom-regression.test.mjs` (ARIA labels and focus restoration); `ui-kit-contract-v1.md`; `ui-kit-component-guide.md` | `pass (fixture)` |
@@ -134,3 +148,7 @@ see [plugin-developer-guide.md](plugin-developer-guide.md). For the individual
 contracts, see [plugin-manifest-v1.md](plugin-manifest-v1.md),
 [plugin-registry-v1.md](plugin-registry-v1.md) and
 [ui-kit-contract-v1.md](ui-kit-contract-v1.md).
+
+The future external SDK promotion gate is defined in
+[plugin-ecosystem-qualification.md](plugin-ecosystem-qualification.md). It is
+deferred and does not change the current Alpha contract.

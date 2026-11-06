@@ -69,6 +69,12 @@ An extension manifest declares its contributions and permissions. The host valid
 
 Third-party extensions are designed for isolated WASM or sidecar runtimes. Built-in adapters may run in-process, but they use the same public contribution model. Extensions communicate through stable protocol types and do not depend on internal Vue or React component types.
 
+The current plugin platform freezes an in-repository Alpha contract and local
+fixtures. It does not publish an external SDK or Marketplace ABI, and the
+WASM/sidecar declarations are not proof of a production runtime or sandbox.
+Publisher signing/revocation and cross-platform UI qualification remain
+separate ecosystem gates.
+
 The Rust plugin host starts declared external runners through an isolated child
 process boundary, grants only zone-validated permissions, and reports runtime
 state through the core extension query. A failed start or crash removes that
@@ -187,6 +193,7 @@ apps/desktop/
 - [Workbench foundation plan](docs/engineering/workbench-foundation-plan.md)
 - [Plugin developer guide](docs/engineering/plugin-developer-guide.md)
 - [Plugin contract matrix](docs/engineering/plugin-contract-matrix.md)
+- [Plugin ecosystem qualification](docs/engineering/plugin-ecosystem-qualification.md)
 - [Plugin manifest schema](docs/engineering/plugin-manifest-v1.md)
 - [Plugin registry contract](docs/engineering/plugin-registry-v1.md)
 - [UI Kit contract](docs/engineering/ui-kit-contract-v1.md)

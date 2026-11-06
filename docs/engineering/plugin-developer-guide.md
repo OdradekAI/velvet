@@ -6,6 +6,23 @@ Inspector demo and marks the parts that are still fixture-only or release-gated.
 It is not a promise that a Marketplace, a production SDK package, or an
 unrestricted in-process runtime exists.
 
+## Alpha contract freeze
+
+The repository currently freezes the manifest schema, identifiers and API
+ranges, host-owned registries, capability checks, Job/diagnostic seams and the
+framework-neutral UI Kit bridge as an in-repository Alpha contract. Major
+mismatches, unknown required fields, invalid capabilities/zones and incompatible
+UI surfaces fail closed; minor changes are optional and additive only.
+
+The Asset Inspector, Echo sidecar and `HostFacade` are deterministic fixtures,
+so their `pass (fixture)` results prove the host seam rather than a production
+WASM/sidecar runtime. Velvet does not currently publish an external SDK,
+Marketplace ABI, signing/revocation service or cross-platform UI qualification.
+Those become eligible only after a second real consumer and the ecosystem
+qualification evidence listed in the [contract matrix](plugin-contract-matrix.md).
+The full promotion matrix is recorded in
+[plugin-ecosystem-qualification.md](plugin-ecosystem-qualification.md).
+
 ## Choose a starting fixture
 
 - `examples/plugins/asset-inspector/` is the Resource Manager (Asset Manager)

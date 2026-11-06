@@ -191,7 +191,8 @@ export {
   type PluginPackageSelection,
 } from './tauri-plugin-package-picker.js';
 export {
-  TauriShortcutAdapter,
+  TauriShortcutEventSource,
   type NativeShortcutEvent,
-  type TauriShortcutAdapterOptions,
+  type NativeShortcutEventListener,
+  type TauriShortcutEventSourceOptions,
 } from './tauri-shortcut-adapter.js';

@@ -69,6 +69,10 @@ AnalysisJob           执行耗时的后台工作
 
 第三方扩展计划运行在隔离的 WASM 或 Sidecar 进程中。内置适配器可以在进程内运行，但仍然使用同一套公开贡献模型。扩展通过稳定的协议类型通信，不依赖内部 Vue 或 React 组件类型。
 
+当前插件平台冻结的是仓库内 Alpha 合同和本地 fixture。仓库尚未发布外部
+SDK 或 Marketplace ABI；WASM/Sidecar 声明也不代表生产 runtime 或安全沙箱
+已经完成。发布者签名、撤销和跨平台 UI 资格仍属于后续生态化门禁。
+
 ## 架构
 
 首个版本采用本地优先的单进程拓扑：
@@ -149,6 +153,7 @@ apps/desktop/
 - [工作台基础计划](docs/engineering/workbench-foundation-plan.md)
 - [插件开发者指南](docs/engineering/plugin-developer-guide.md)
 - [插件合同验证矩阵](docs/engineering/plugin-contract-matrix.md)
+- [插件生态化资格门禁](docs/engineering/plugin-ecosystem-qualification.md)
 - [插件 manifest schema](docs/engineering/plugin-manifest-v1.md)
 - [插件注册表合同](docs/engineering/plugin-registry-v1.md)
 - [UI Kit 合同](docs/engineering/ui-kit-contract-v1.md)

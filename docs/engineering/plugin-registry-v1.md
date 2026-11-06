@@ -1,8 +1,17 @@
 # Plugin registry v1
 
+Status: Alpha contract frozen in-repository; registry fixtures are not a
+published SDK or production runtime.
+
 This document records the implementation slice for issue 003. It describes the
 current host-owned registry contract; it does not claim that a WASM or sidecar
 runtime, marketplace, or capability policy is complete.
+
+The frozen Alpha surface is the declarative registry snapshot, lifecycle state,
+opaque contribution cleanup handle and transport projection. The host remains
+the only owner of registration state. External SDK compatibility is deferred
+until a second real consumer and production runtime, trust and platform
+qualification evidence exist.
 
 ## Owner and seam
 

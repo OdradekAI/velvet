@@ -1,9 +1,18 @@
 # Velvet plugin manifest and CoreTransport contract (schema 1)
 
+Status: Alpha contract frozen in-repository; not an external SDK promise.
+
 This document records the narrow contract implemented by issue 002. It is a
 wire and validation reference, not an acceptance of the proposed runtime in
 ADR-0006. `RuntimeKind` is an existing declaration in `plugin-api`; this
 document does not make WASM or sidecar execution available to packages.
+
+The Alpha freeze covers the manifest schema, stable identifiers, independent
+API ranges, capability declarations and fail-closed validation fixtures. A
+major version mismatch, unknown required field, invalid capability or invalid
+zone is rejected. Minor evolution is limited to optional additive data. A
+second real consumer, production runtime qualification and publisher trust
+policy are required before this contract can become an external SDK promise.
 
 ## Ownership and boundaries
 
