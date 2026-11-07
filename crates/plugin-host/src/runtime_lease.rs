@@ -6,7 +6,7 @@ use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[cfg(windows)]
-use crate::platform_process;
+use super::platform_process;
 use serde::{Deserialize, Serialize};
 use velvet_persistence::DurabilityMode;
 use velvet_plugin_api::ExtensionId;

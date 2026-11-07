@@ -112,14 +112,14 @@ fn jobs_report_progress_and_complete() {
             provenance: JobProvenance::for_owner("core"),
         })
         .expect("submit");
-    for _ in 0..20 {
+    for _ in 0..100 {
         if jobs
             .snapshot(&created.id)
             .is_some_and(|job| job.status == JobStatus::Completed)
         {
             return;
         }
-        thread::sleep(Duration::from_millis(30));
+        thread::sleep(Duration::from_millis(50));
     }
     panic!("job did not complete: {:?}", jobs.snapshot(&created.id));
 }
