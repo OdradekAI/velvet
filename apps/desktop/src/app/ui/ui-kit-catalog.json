@@ -289,8 +289,7 @@
         "onChange"
       ],
       "keyboard": [
-        "Tab",
-        "Escape"
+        "Tab"
       ],
       "accessibility": [
         "uses native input semantics",
@@ -298,12 +297,12 @@
       ],
       "stories": [
         "default",
+        "change",
         "busy"
       ],
       "slots": [],
       "actions": [
-        "change",
-        "clear"
+        "change"
       ],
       "observables": [
         "semantic-dom",

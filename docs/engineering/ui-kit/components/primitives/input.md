@@ -25,6 +25,7 @@ The executable stories are in
 `apps/desktop/src/app/ui/stories/primitives/input.stories.tsx`:
 
 - `input/default`
+- `input/change`
 - `input/busy`
 
 
