@@ -1,7 +1,8 @@
 export { VelvetActivityBar, type VelvetActivityBarItem, type VelvetActivityBarProps } from './activity-bar.js';
-export { VelvetAssetGrid, type VelvetAssetGridItem, type VelvetAssetGridProps } from './asset-grid.js';
+export { VelvetAssetGrid, type VelvetAssetGridItem, type VelvetAssetGridLayout, type VelvetAssetGridProps } from './asset-grid.js';
 export { VelvetCommandPalette, type VelvetCommandPaletteCommand, type VelvetCommandPaletteProps } from './command-palette.js';
 export { VelvetDataTable, type VelvetDataTableColumn, type VelvetDataTableProps } from './data-table.js';
+export { VelvetInspector, type VelvetInspectorField, type VelvetInspectorProps } from './inspector.js';
 export { VelvetPane, type VelvetPaneProps } from './pane.js';
 export { VelvetPanel, type VelvetPanelProps } from './panel.js';
 export { VelvetPreviewHost, type VelvetPreviewHostProps } from './preview-host.js';

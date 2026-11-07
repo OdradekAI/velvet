@@ -42,7 +42,7 @@ internals without changing the contract.
 `VelvetSeparator`, `VelvetTabs`, `VelvetProgress`, `VelvetState`,
 `VelvetToastProvider`, `VelvetToastHost`, `VelvetActivityBar`, `VelvetPane`,
 `VelvetPreviewHost`, `VelvetAssetGrid`, `VelvetDataTable` and
-`VelvetCommandPalette` are host-owned renderer components. `VelvetPanel`,
+`VelvetCommandPalette` and `VelvetInspector` are host-owned renderer components. `VelvetPanel`,
 `VelvetDialog` and `VelvetContextMenu` are the compatibility wrappers used by
 existing Workbench surfaces and now use the same token, focus and state rules.
 
@@ -67,8 +67,8 @@ apps/desktop/src/app/ui/
 ```
 
 `overlays/` owns the Dialog, Context Menu and Toast implementations, and
-`host-projections/` owns Panel, Activity Bar, Pane, PreviewHost, AssetGrid,
-DataTable and CommandPalette. Radix dependencies stay behind the Velvet
+`host-projections/` owns Panel, Activity Bar, Pane, PreviewHost, Inspector,
+AssetGrid, DataTable and CommandPalette. Radix dependencies stay behind the Velvet
 overlay wrappers. `legacy-components.tsx` is now a compatibility re-export
 barrel only.
 
@@ -119,8 +119,8 @@ generated output is `ui-kit-catalog.json`. Run
 `npm run generate:ui-kit-catalog` from `apps/desktop` after changing metadata or
 story names; CI must fail if generation produces a diff.
 
-Host-owned surfaces include Activity Bar, Navigation, Context, Operations,
-PreviewHost, global overlays and global shortcuts. Plugins can contribute to
+Host-owned surfaces include Activity Bar, Navigation, Context, Inspector,
+Operations, PreviewHost, global overlays and global shortcuts. Plugins can contribute to
 those surfaces through registries and bridge requests, but cannot import the
 React components, change the Workbench grid, create a global portal or attach a
 document-level keyboard listener.
@@ -134,6 +134,8 @@ document-level keyboard listener.
 - Asset Grid exposes `role=grid`, selection and Arrow/Enter behavior. Core
   selection remains owned by the host projection.
 - Data Table exposes a labelled table, sortable headers and focusable rows.
+- Inspector consumes host-owned selection count and exposes controlled metadata
+  edits with projected save, validation, cancellation and retry states.
 - Dialogs restore focus through Radix; controlled dialogs with an external
   trigger pass `restoreFocusRef` so the Velvet wrapper can restore focus after
   Escape or outside dismissal. Actions stay in a host-owned footer.

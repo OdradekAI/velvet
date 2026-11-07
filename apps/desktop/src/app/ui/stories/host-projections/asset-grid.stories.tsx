@@ -3,6 +3,8 @@ import { VelvetAssetGrid } from '../../host-projections/index.js';
 
 let selectedAsset = '';
 let openedAsset = '';
+let draggedAsset = '';
+let droppedAsset = '';
 
 export const assetGridStories: readonly UiKitStory[] = [
   {
@@ -12,7 +14,7 @@ export const assetGridStories: readonly UiKitStory[] = [
     description: 'Asset grid.',
     render: () => <VelvetAssetGrid items={[{ id: 'a', label: 'A', selected: true }, { id: 'b', label: 'B' }]} onOpen={(id) => { openedAsset = id; }} onSelect={(id) => { selectedAsset = id; }} />,
     scenario: {
-      setup: () => { selectedAsset = ''; openedAsset = ''; },
+      setup: () => { selectedAsset = ''; openedAsset = ''; draggedAsset = ''; droppedAsset = ''; },
       actions: [
         (runtime) => runtime.act(async () => {
           const cell = runtime.root.querySelector<HTMLElement>('[role="gridcell"]');
@@ -33,4 +35,32 @@ export const assetGridStories: readonly UiKitStory[] = [
     },
   },
   { id: 'asset-grid/selected', componentId: 'asset-grid', name: 'Selected', description: 'Selected asset grid.', render: () => <VelvetAssetGrid items={[{ id: 'a', label: 'A', selected: true }]} onSelect={() => undefined} /> },
+  {
+    id: 'asset-grid/layout-modes',
+    componentId: 'asset-grid',
+    name: 'Layout modes',
+    description: 'Eagle-observed list layout with optional drag and drop.',
+    render: () => <VelvetAssetGrid layout="list" items={[{ id: 'a', label: 'A', pinned: true }, { id: 'b', label: 'B', aspectRatio: '16 / 9' }]} onSelect={() => undefined} onDragStart={(id) => { draggedAsset = id; }} onDrop={(sourceId, targetId) => { droppedAsset = `${sourceId}:${targetId}`; }} />,
+    scenario: {
+      setup: () => { draggedAsset = ''; droppedAsset = ''; },
+      actions: [(runtime) => runtime.act(async () => {
+        const cells = [...runtime.root.querySelectorAll<HTMLButtonElement>('[role="gridcell"]')];
+        const source = cells[0];
+        const target = cells[1];
+        const transfer = new Map<string, string>();
+        const dragStart = new Event('dragstart', { bubbles: true });
+        Object.defineProperty(dragStart, 'dataTransfer', { value: { setData: (type: string, value: string) => transfer.set(type, value), getData: (type: string) => transfer.get(type) ?? '' } });
+        source?.dispatchEvent(dragStart);
+        if (!draggedAsset) throw new Error('AssetGrid drag start contract failed');
+        const drop = new Event('drop', { bubbles: true });
+        Object.defineProperty(drop, 'dataTransfer', { value: { getData: (type: string) => transfer.get(type) ?? '' } });
+        target?.dispatchEvent(drop);
+      })],
+      checkpoints: [{ name: 'layout and drag/drop', afterAction: 0, assert: (runtime) => {
+        if (!runtime.root.querySelector('.velvet-asset-grid--list')) throw new Error('AssetGrid list layout contract failed');
+        if (runtime.root.querySelector('[data-pinned="true"]')?.getAttribute('aria-label') !== 'A') throw new Error('AssetGrid pinned projection contract failed');
+        if (draggedAsset !== 'a' || droppedAsset !== 'a:b') throw new Error('AssetGrid drag/drop contract failed');
+      } }],
+    },
+  },
 ];

@@ -7,6 +7,7 @@ import {
   VelvetDialog,
   VelvetIconButton,
   VelvetInput,
+  VelvetInspector,
   VelvetPane,
   VelvetProgress,
   VelvetSelect,
@@ -66,6 +67,7 @@ export function VisualQualificationFixture() {
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState('recent');
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [inspectorPinned, setInspectorPinned] = useState(false);
   const dialogTriggerRef = useRef<HTMLButtonElement>(null);
 
   const assets = useMemo(() => {
@@ -171,24 +173,26 @@ export function VisualQualificationFixture() {
           </section>
         </section>
 
-        <VelvetPane region="context" title="Inspector" className="velvet-visual-fixture__inspector" data-ui-kit-probe="inspector">
-          <VelvetStack gap="md">
-            <div className="velvet-visual-fixture__inspector-preview" data-ui-kit-probe="selection-preview">
-              <img alt="" src={selectedAsset.thumbnailUrl} />
-            </div>
-            <VelvetStack gap="xs">
-              <VelvetText as="strong">{selectedAsset.label}</VelvetText>
-              <VelvetText tone="muted">{selectedAsset.secondary}</VelvetText>
-            </VelvetStack>
-            <VelvetSeparator />
-            <dl className="velvet-visual-fixture__metadata">
-              <div><dt>Folder</dt><dd>Illustration</dd></div>
-              <div><dt>Tags</dt><dd><VelvetBadge tone="info">reference</VelvetBadge></dd></div>
-              <div><dt>Added</dt><dd>2026/11/06 14:28</dd></div>
-            </dl>
-            <VelvetButton variant="quiet">Open in preview</VelvetButton>
+        <VelvetInspector
+          className="velvet-visual-fixture__inspector"
+          data-ui-kit-probe="inspector"
+          fields={[
+            { id: 'folder', label: 'Folder', value: 'Illustration' },
+            { id: 'tags', label: 'Tags', value: <VelvetBadge tone="info">reference</VelvetBadge> },
+            { id: 'added', label: 'Added', value: '2026/11/06 14:28' },
+          ]}
+          onOpen={() => setSelectedId(selectedId)}
+          onPin={setInspectorPinned}
+          pinned={inspectorPinned}
+          preview={<div data-ui-kit-probe="selection-preview"><img alt="" src={selectedAsset.thumbnailUrl} /></div>}
+          selectedCount={1}
+          title="Inspector"
+        >
+          <VelvetStack gap="xs">
+            <VelvetText as="strong">{selectedAsset.label}</VelvetText>
+            <VelvetText tone="muted">{selectedAsset.secondary}</VelvetText>
           </VelvetStack>
-        </VelvetPane>
+        </VelvetInspector>
       </div>
       <VelvetDialog
         description="Dialog focus and dismissal are qualified in the real browser fixture."

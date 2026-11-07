@@ -36,3 +36,7 @@ Run `npm run qualify:ui-host-projections` from `apps/desktop` to execute that
 fixture at the canonical 1280×800 viewport. PreviewHost also owns the async
 lifecycle story matrix for success, cancellation, timeout, failure and retry;
 those deterministic scenarios run in the Node/Happy DOM story runner.
+AssetGrid's layout and drag/drop surface is backed by the versioned Eagle
+directive evidence matrix at `docs/engineering/ui-kit-eagle-directive-evidence.md`.
+Inspector is the first host projection extracted from that matrix; its
+selection and metadata contract lives in `host-projections/inspector.md`.

@@ -3,6 +3,7 @@ import { activityBarStories } from './host-projections/activity-bar.stories.js';
 import { assetGridStories } from './host-projections/asset-grid.stories.js';
 import { commandPaletteStories } from './host-projections/command-palette.stories.js';
 import { dataTableStories } from './host-projections/data-table.stories.js';
+import { inspectorStories } from './host-projections/inspector.stories.js';
 import { paneStories } from './host-projections/pane.stories.js';
 import { panelStories } from './host-projections/panel.stories.js';
 import { previewHostStories } from './host-projections/preview-host.stories.js';
@@ -20,5 +21,6 @@ export const velvetUiStories: readonly UiKitStory[] = [
   ...previewHostStories,
   ...assetGridStories,
   ...dataTableStories,
+  ...inspectorStories,
   ...commandPaletteStories,
 ];

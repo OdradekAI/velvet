@@ -812,6 +812,80 @@
       ]
     },
     {
+      "id": "inspector",
+      "name": "VelvetInspector",
+      "category": "composite",
+      "layer": "host-projections",
+      "contractId": "inspector",
+      "documentation": "docs/engineering/ui-kit/components/host-projections/inspector.md",
+      "purpose": "Persistent selection-aware Inspector projection for zero, one or many selected assets.",
+      "ownership": "host",
+      "states": [
+        "empty",
+        "single",
+        "multiple",
+        "pinned",
+        "editing",
+        "saving",
+        "saved",
+        "error",
+        "cancelled"
+      ],
+      "props": [
+        "title",
+        "selectedCount",
+        "preview",
+        "fields",
+        "emptyMessage",
+        "onFieldChange",
+        "onSave",
+        "onRetry",
+        "saveState",
+        "saveError",
+        "pinned",
+        "onPin",
+        "onOpen",
+        "children"
+      ],
+      "keyboard": [
+        "Enter on actions"
+      ],
+      "accessibility": [
+        "complementary landmark, labelled metadata, editable fields and status empty state"
+      ],
+      "stories": [
+        "empty",
+        "single",
+        "multiple",
+        "edit-success",
+        "edit-validation-error",
+        "edit-failure-retry"
+      ],
+      "slots": [
+        "preview",
+        "metadata",
+        "actions",
+        "children"
+      ],
+      "actions": [
+        "pin",
+        "open",
+        "edit",
+        "save",
+        "retry"
+      ],
+      "observables": [
+        "inspector-role",
+        "selection-mode",
+        "metadata",
+        "pin-state",
+        "open-callback",
+        "edit-field",
+        "save-state",
+        "validation"
+      ]
+    },
+    {
       "id": "preview-host",
       "name": "VelvetPreviewHost",
       "category": "composite",
@@ -874,30 +948,38 @@
       "layer": "host-projections",
       "contractId": "asset-grid",
       "documentation": "docs/engineering/ui-kit/components/host-projections/asset-grid.md",
-      "purpose": "Keyboard-navigable Asset projection grid.",
+      "purpose": "Keyboard-navigable Asset projection with Eagle-observed layout and drag/drop modes.",
       "ownership": "host",
       "states": [
         "default",
         "selected",
         "disabled",
-        "empty"
+        "empty",
+        "layout",
+        "dragging",
+        "pinned"
       ],
       "props": [
         "items",
         "columns",
+        "layout",
         "onSelect",
-        "onOpen"
+        "onOpen",
+        "onDragStart",
+        "onDrop"
       ],
       "keyboard": [
         "Arrow keys",
         "Enter"
       ],
       "accessibility": [
-        "grid/gridcell semantics and selection"
+        "grid/gridcell semantics and selection",
+        "drag/drop is an optional host action"
       ],
       "stories": [
         "default",
-        "selected"
+        "selected",
+        "layout-modes"
       ],
       "slots": [
         "items"
@@ -905,13 +987,18 @@
       "actions": [
         "select",
         "open",
-        "navigate"
+        "navigate",
+        "drag",
+        "drop"
       ],
       "observables": [
         "grid-role",
         "selection",
         "focus",
-        "open-callback"
+        "open-callback",
+        "layout",
+        "drag-and-drop",
+        "pinned"
       ]
     },
     {
