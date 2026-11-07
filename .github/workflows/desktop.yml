@@ -3,8 +3,6 @@ name: Desktop CI
 on:
   pull_request:
   push:
-    branches:
-      - main
     tags:
       - "v*"
   workflow_dispatch:
