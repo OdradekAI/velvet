@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
-const { PluginDiagnosticsService } = await import(
-  new URL('../src/workbench/diagnostics/diagnostics-service.ts', import.meta.url).href,
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+const diagnosticsServicePath = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '../src/workbench/diagnostics/diagnostics-service.ts',
 );
+const { PluginDiagnosticsService } = await import(pathToFileURL(diagnosticsServicePath).href);
 
 const service = new PluginDiagnosticsService();
 let notifications = 0;
