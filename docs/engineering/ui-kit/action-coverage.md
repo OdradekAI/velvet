@@ -24,6 +24,7 @@ contract test rejects an action that appears in neither set.
 | VelvetAssetGrid | `select`, `navigate`, `open`, `drag`, `drop` — AssetGrid stories | keyboard/open in host fixture |
 | VelvetDataTable | `select`, `sort` — `data-table/default` | keyboard/sort in host fixture |
 | VelvetCommandPalette | `select`, `navigate`, `close` — `command-palette/open` | `query` plus focus restoration in host fixture |
+| VelvetZoomControl | `increment`, `decrement`, `change` — `zoom-control/default` | keyboard step, bounds and button actions in Eagle fixture |
 
 Run the complete action matrix with:
 

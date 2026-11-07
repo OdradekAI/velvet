@@ -41,8 +41,9 @@ internals without changing the contract.
 `VelvetCheckbox`, `VelvetText`, `VelvetStack`, `VelvetInline`,
 `VelvetSeparator`, `VelvetTabs`, `VelvetProgress`, `VelvetState`,
 `VelvetToastProvider`, `VelvetToastHost`, `VelvetActivityBar`, `VelvetPane`,
-`VelvetPreviewHost`, `VelvetAssetGrid`, `VelvetDataTable` and
-`VelvetCommandPalette` and `VelvetInspector` are host-owned renderer components. `VelvetPanel`,
+`VelvetPreviewHost`, `VelvetAssetGrid`, `VelvetDataTable`,
+`VelvetCommandPalette`, `VelvetInspector` and `VelvetZoomControl` are
+host-owned renderer components. `VelvetPanel`,
 `VelvetDialog` and `VelvetContextMenu` are the compatibility wrappers used by
 existing Workbench surfaces and now use the same token, focus and state rules.
 
@@ -68,7 +69,7 @@ apps/desktop/src/app/ui/
 
 `overlays/` owns the Dialog, Context Menu and Toast implementations, and
 `host-projections/` owns Panel, Activity Bar, Pane, PreviewHost, Inspector,
-AssetGrid, DataTable and CommandPalette. Radix dependencies stay behind the Velvet
+AssetGrid, DataTable, CommandPalette and ZoomControl. Radix dependencies stay behind the Velvet
 overlay wrappers. `legacy-components.tsx` is now a compatibility re-export
 barrel only.
 

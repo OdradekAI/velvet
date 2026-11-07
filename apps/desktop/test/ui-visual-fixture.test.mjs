@@ -22,7 +22,7 @@ const root = createRoot(host);
 await act(async () => root.render(React.createElement(VisualQualificationFixture)));
 
 assert.equal(host.querySelector('[data-ui-kit-fixture="eagle-baseline"]')?.getAttribute('data-ui-kit-viewport'), '1280x800');
-for (const probe of ['title-bar', 'navigation', 'toolbar', 'facets', 'workspace', 'grid', 'inspector', 'selection-preview', 'operations']) {
+for (const probe of ['title-bar', 'navigation', 'toolbar', 'facets', 'workspace', 'grid', 'inspector', 'selection-preview', 'operations', 'zoom-control']) {
   assert.ok(host.querySelector(`[data-ui-kit-probe="${probe}"]`), `missing visual probe: ${probe}`);
 }
 assert.equal(host.querySelectorAll('[data-ui-kit-component="button"]').length >= 10, true);
@@ -31,6 +31,8 @@ assert.equal(host.querySelectorAll('[role="gridcell"]').length, 9);
 assert.ok(host.querySelector('[role="gridcell"][aria-selected="true"]'));
 assert.ok(host.querySelector('input[aria-label="Search assets"]'));
 assert.ok(host.querySelector('select[aria-label="Sort assets"]'));
+assert.equal(host.querySelector('input[aria-label="Zoom level"]')?.getAttribute('step'), '5');
+assert.equal(host.querySelector('input[aria-label="Zoom level"]')?.getAttribute('value'), '180');
 assert.ok(host.querySelector('[data-ui-kit-probe="dialog-trigger"]'));
 assert.ok(host.querySelector('[data-ui-kit-probe="context-trigger"]'));
 assert.deepEqual(

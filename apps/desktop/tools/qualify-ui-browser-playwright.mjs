@@ -131,5 +131,23 @@ host.inspector = {
 assert.equal(host.inspector.state, 'name:Renamed poster;pinned:true;save:saved');
 assert.equal(host.inspector.status, 'Saved');
 
+await fixtureReady('eagle');
+const zoom = page.locator('[data-ui-kit-probe="workspace"] [role="group"][aria-label="Asset zoom"]');
+const zoomSlider = zoom.locator('input[aria-label="Zoom level"]');
+assert.equal(await zoomSlider.inputValue(), '180');
+await zoomSlider.focus();
+await page.keyboard.press('ArrowRight');
+assert.equal(await zoomSlider.inputValue(), '185');
+await zoom.locator('button[aria-label="Zoom out"]').click();
+assert.equal(await zoomSlider.inputValue(), '180');
+await zoom.locator('button[aria-label="Zoom in"]').click();
+assert.equal(await zoomSlider.inputValue(), '185');
+host.zoom = {
+  value: await zoomSlider.inputValue(),
+  focused: await zoomSlider.evaluate((node) => document.activeElement === node),
+  step: await zoomSlider.getAttribute('step'),
+};
+assert.deepEqual(host.zoom, { value: '185', focused: false, step: '5' });
+
 console.log(JSON.stringify({ engine: 'playwright', overlay, host }, null, 2));
 await browser.close();

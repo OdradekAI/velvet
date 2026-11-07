@@ -11,7 +11,7 @@ await page.goto("http://127.0.0.1:5173/?fixture=eagle");
 await page.cdp("Emulation.setDeviceMetricsOverride", {width:1280,height:800,deviceScaleFactor:1,mobile:false});
 await page.waitForSelector('loc=css:[data-ui-kit-fixture="eagle-baseline"]', {state:"visible"});
 const probes = await page.evaluate(() => {
-  const names = ["title-bar","navigation","toolbar","facets","workspace","grid","inspector","selection-preview","operations"];
+  const names = ["title-bar","navigation","toolbar","facets","workspace","grid","inspector","selection-preview","operations","zoom-control"];
   const regions = Object.fromEntries(names.map((name) => {
     const node = document.querySelector('[data-ui-kit-probe="' + name + '"]');
     if (!node) return [name, null];

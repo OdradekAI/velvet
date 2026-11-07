@@ -113,6 +113,7 @@ theme snapshot.
 The second comparison pass is recorded in
 `.scratch/velvet-ui-evidence-alignment/research/eagle-visual-diff-2026-11-07.md`.
 It replaces the fixture's status-like facet badges with compact icon/label
-actions, equalizes the navigation and Inspector side zones, and keeps Eagle's
-slider-based zoom behavior explicitly unknown until a native interaction
-scenario establishes its range and keyboard contract.
+actions and equalizes the navigation and Inspector side zones. The native Eagle
+probe then established a 5-point zoom step from the observed `180 → 505 → 500`
+sequence; `VelvetZoomControl` now owns that bounded, controlled slider contract.
+Eagle's full range, persistence and grid reflow semantics remain unknown.

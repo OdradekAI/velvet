@@ -6,3 +6,4 @@ export { VelvetInspector, type VelvetInspectorField, type VelvetInspectorProps }
 export { VelvetPane, type VelvetPaneProps } from './pane.js';
 export { VelvetPanel, type VelvetPanelProps } from './panel.js';
 export { VelvetPreviewHost, type VelvetPreviewHostProps } from './preview-host.js';
+export { VelvetZoomControl, type VelvetZoomControlProps } from './zoom-control.js';

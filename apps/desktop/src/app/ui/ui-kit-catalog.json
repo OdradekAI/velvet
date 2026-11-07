@@ -1115,6 +1115,65 @@
       "browserActions": [
         "query"
       ]
+    },
+    {
+      "id": "zoom-control",
+      "name": "VelvetZoomControl",
+      "category": "composite",
+      "layer": "host-projections",
+      "qualification": "both",
+      "contractId": "zoom-control",
+      "documentation": "docs/engineering/ui-kit/components/host-projections/zoom-control.md",
+      "purpose": "Controlled host zoom slider with bounded keyboard and step actions.",
+      "ownership": "host",
+      "states": [
+        "default",
+        "disabled",
+        "min",
+        "max",
+        "keyboard"
+      ],
+      "props": [
+        "value",
+        "min",
+        "max",
+        "step",
+        "onChange",
+        "disabled"
+      ],
+      "keyboard": [
+        "Arrow keys",
+        "Home",
+        "End"
+      ],
+      "accessibility": [
+        "group and native range semantics",
+        "live zoom value"
+      ],
+      "stories": [
+        "default",
+        "keyboard",
+        "bounds",
+        "disabled"
+      ],
+      "slots": [],
+      "actions": [
+        "increment",
+        "decrement",
+        "change"
+      ],
+      "observables": [
+        "group-role",
+        "slider-role",
+        "value",
+        "focus",
+        "disabled"
+      ],
+      "browserActions": [
+        "increment",
+        "decrement",
+        "change"
+      ]
     }
   ]
 }

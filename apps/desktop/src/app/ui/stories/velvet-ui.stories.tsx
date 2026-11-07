@@ -7,6 +7,7 @@ import { inspectorStories } from './host-projections/inspector.stories.js';
 import { paneStories } from './host-projections/pane.stories.js';
 import { panelStories } from './host-projections/panel.stories.js';
 import { previewHostStories } from './host-projections/preview-host.stories.js';
+import { zoomControlStories } from './host-projections/zoom-control.stories.js';
 import { contextMenuStories } from './overlays/context-menu.stories.js';
 import { dialogStories } from './overlays/dialog.stories.js';
 import { toastStories } from './overlays/toast.stories.js';
@@ -23,4 +24,5 @@ export const velvetUiStories: readonly UiKitStory[] = [
   ...dataTableStories,
   ...inspectorStories,
   ...commandPaletteStories,
+  ...zoomControlStories,
 ];

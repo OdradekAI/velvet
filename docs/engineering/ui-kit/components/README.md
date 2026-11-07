@@ -43,5 +43,8 @@ AssetGrid's layout and drag/drop surface is backed by the versioned Eagle
 directive evidence matrix at `docs/engineering/ui-kit-eagle-directive-evidence.md`.
 Inspector is the first host projection extracted from that matrix; its
 selection and metadata contract lives in `host-projections/inspector.md`.
+`VelvetZoomControl` is the host-owned slider projection backed by the Eagle
+runtime step probe; its full range and persistence semantics remain explicitly
+unknown.
 The complete action-to-story/browser mapping is maintained in
 `../action-coverage.md`.

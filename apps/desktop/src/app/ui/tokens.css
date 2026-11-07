@@ -488,6 +488,14 @@ button {
 .velvet-command-palette__item[aria-selected='true'] { background: var(--velvet-surface-active); border-color: var(--velvet-border-strong); }
 .velvet-command-palette__item span { display: grid; gap: 2px; }
 .velvet-command-palette__item small { color: var(--velvet-text-muted); }
+.velvet-zoom-control { display: inline-flex; align-items: center; gap: 6px; min-width: 170px; color: var(--velvet-text-secondary); }
+.velvet-zoom-control__step { display: grid; width: 24px; height: 24px; place-items: center; padding: 0; border: 0; border-radius: var(--velvet-radius-sm); background: transparent; color: var(--velvet-text-secondary); cursor: pointer; font-size: 16px; }
+.velvet-zoom-control__step:hover:not(:disabled) { background: var(--velvet-surface-active); color: var(--velvet-text-primary); }
+.velvet-zoom-control__step:focus-visible, .velvet-zoom-control__range:focus-visible { outline: 2px solid var(--velvet-focus); outline-offset: 2px; }
+.velvet-zoom-control__step:disabled { cursor: not-allowed; opacity: .45; }
+.velvet-zoom-control__range { width: 112px; accent-color: var(--velvet-accent); cursor: pointer; }
+.velvet-zoom-control__range:disabled { cursor: not-allowed; opacity: .55; }
+.velvet-zoom-control__value { min-width: 40px; color: var(--velvet-text-muted); font-size: var(--velvet-font-size-label); text-align: right; }
 /* Deterministic browser fixture for Eagle-informed visual qualification. */
 .velvet-visual-fixture { display: grid; grid-template-rows: 36px minmax(0, 1fr); height: 100%; min-width: 1100px; background: var(--velvet-surface-app); color: var(--velvet-text-primary); font-size: var(--velvet-font-size-body); line-height: 1.35; }
 .velvet-visual-fixture > output { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }

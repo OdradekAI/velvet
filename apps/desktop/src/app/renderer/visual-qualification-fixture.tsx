@@ -14,6 +14,7 @@ import {
   VelvetSeparator,
   VelvetStack,
   VelvetText,
+  VelvetZoomControl,
 } from '../ui/velvet-ui.js';
 
 interface FixtureAsset {
@@ -66,6 +67,7 @@ export function VisualQualificationFixture() {
   const [selectedId, setSelectedId] = useState('editorial');
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState('recent');
+  const [zoom, setZoom] = useState(180);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [dialogAction, setDialogAction] = useState('idle');
   const [contextAction, setContextAction] = useState('idle');
@@ -159,11 +161,7 @@ export function VisualQualificationFixture() {
               <option value="recent">Recent</option>
               <option value="name">Name</option>
             </VelvetSelect>
-            <VelvetStack direction="row" gap="xs" className="velvet-visual-fixture__zoom-controls">
-              <VelvetIconButton icon="−" label="Zoom out" variant="quiet" />
-              <VelvetText tone="muted">180%</VelvetText>
-              <VelvetIconButton icon="+" label="Zoom in" variant="quiet" />
-            </VelvetStack>
+            <VelvetZoomControl ariaLabel="Asset zoom" className="velvet-visual-fixture__zoom-controls" data-ui-kit-probe="zoom-control" value={zoom} onChange={setZoom} />
           </div>
           <div className="velvet-visual-fixture__facet-strip" data-ui-kit-probe="facets">
             {[
