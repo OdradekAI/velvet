@@ -225,6 +225,18 @@ jobs:
           uploadWorkflowArtifacts: true
           workflowArtifactNamePattern: velvet-[platform]-[arch]-[bundle]
 
+      - name: Inspect failed bundle sidecar inputs
+        if: failure()
+        shell: bash
+        run: |
+          echo '--- binaries ---'
+          find apps/desktop/src-tauri/binaries -maxdepth 1 -print -exec ls -ld {} \; || true
+          echo '--- generated bundle files ---'
+          find apps/desktop/src-tauri/target/release -type f \( -name 'main.wxs' -o -name '*.spec' \) -print | while read -r file; do
+            echo "### $file"
+            grep -n -C 3 'velvet-launcher' "$file" || true
+          done
+
   release:
     name: Release (${{ matrix.os }} ${{ matrix.arch }})
     if: startsWith(github.ref, 'refs/tags/v')
