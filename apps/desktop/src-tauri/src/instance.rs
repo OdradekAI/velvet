@@ -270,12 +270,33 @@ fn canonical_file_path(raw: &str, current_dir: &Path) -> io::Result<String> {
 }
 
 fn file_uri_path(value: &str) -> io::Result<PathBuf> {
-    let encoded = value
-        .strip_prefix("file://")
-        .filter(|value| value.starts_with('/'))
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "file URI host is not allowed"))?;
+    let encoded = value.strip_prefix("file://").ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidInput, "file URI scheme is required")
+    })?;
     let decoded = percent_decode(encoded)?;
-    Ok(PathBuf::from(decoded))
+    #[cfg(windows)]
+    {
+        let path = decoded.strip_prefix('/').filter(|value| {
+            value.as_bytes().get(1) == Some(&b':')
+        }).unwrap_or(&decoded);
+        if path.as_bytes().get(1) != Some(&b':') {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "file URI host is not allowed",
+            ));
+        }
+        return Ok(PathBuf::from(path));
+    }
+    #[cfg(not(windows))]
+    {
+        if !decoded.starts_with('/') {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "file URI host is not allowed",
+            ));
+        }
+        Ok(PathBuf::from(decoded))
+    }
 }
 
 fn percent_decode(value: &str) -> io::Result<String> {
@@ -651,7 +672,12 @@ mod tests {
         fs::create_dir_all(&root).expect("activation root");
         let file = root.join("asset with space.txt");
         fs::write(&file, b"asset").expect("asset file");
-        let uri = format!("file://{}", file.to_string_lossy().replace(' ', "%20"));
+        let file_uri_path = file.to_string_lossy().replace('\\', "/").replace(' ', "%20");
+        let uri = if cfg!(windows) {
+            format!("file:///{}", file_uri_path.trim_start_matches('/'))
+        } else {
+            format!("file://{file_uri_path}")
+        };
         let request = ActivationRequest {
             schema_version: 1,
             request_id: "file-uri".into(),
