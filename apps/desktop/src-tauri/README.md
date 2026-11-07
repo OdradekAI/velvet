@@ -34,7 +34,7 @@ crash_capture, instance, capability_policy, launcher_failure, native_recovery_wi
 
 ## Tests
 
-Run cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml separately from the root workspace. Native lifecycle and capability fixtures live in this workspace.
+Run `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --features launcher-bin` separately from the root workspace. Native lifecycle and capability fixtures live in this workspace; the launcher binary is feature-gated so Tauri bundles include only the external sidecar.
 
 ## Failure boundary
 

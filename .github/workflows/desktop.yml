@@ -87,7 +87,7 @@ jobs:
         run: cargo test --workspace
 
       - name: Test Tauri crate
-        run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
+        run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --features launcher-bin
 
       - name: Check frontend types
         working-directory: apps/desktop

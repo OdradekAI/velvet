@@ -34,7 +34,7 @@ crash_capture、instance、capability_policy、launcher_failure、native_recover
 
 ## 测试入口
 
-使用 cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml 单独验证，不包含在根 workspace 测试中。native lifecycle 和 capability fixture 位于此 workspace。
+使用 `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --features launcher-bin` 单独验证，不包含在根 workspace 测试中。launcher binary 通过 feature 独立启用，Tauri bundle 只收录 external sidecar；native lifecycle 和 capability fixture 位于此 workspace。
 
 ## 失败边界
 

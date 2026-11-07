@@ -23,6 +23,7 @@ printf 'Building velvet-launcher for %s\n' "$target"
 TAURI_CONFIG='{"bundle":{"externalBin":null}}' cargo build \
   --manifest-path "$tauri_root/Cargo.toml" \
   --bin velvet-launcher \
+  --features launcher-bin \
   --release \
   --target "$target"
 

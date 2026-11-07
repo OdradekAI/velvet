@@ -21,7 +21,7 @@ set +e
 TAURI_CONFIG='{"bundle":{"externalBin":null}}' \
 VELVET_APP_DATA_DIR="$failure_data" \
 VELVET_APP_BINARY="$failure_child" \
-cargo run --quiet --manifest-path "$launcher_manifest" --bin velvet-launcher -- \
+cargo run --quiet --manifest-path "$launcher_manifest" --bin velvet-launcher --features launcher-bin -- \
   >"$tmp_root/failure.stdout" 2>"$tmp_root/failure.stderr"
 failure_exit=$?
 set -e
@@ -37,7 +37,7 @@ set +e
 TAURI_CONFIG='{"bundle":{"externalBin":null}}' \
 VELVET_APP_DATA_DIR="$missing_data" \
 VELVET_APP_BINARY="$tmp_root/does-not-exist" \
-cargo run --quiet --manifest-path "$launcher_manifest" --bin velvet-launcher -- \
+cargo run --quiet --manifest-path "$launcher_manifest" --bin velvet-launcher --features launcher-bin -- \
   >"$tmp_root/missing.stdout" 2>"$tmp_root/missing.stderr"
 missing_exit=$?
 set -e
@@ -58,7 +58,7 @@ success_data="$tmp_root/success-data"
 TAURI_CONFIG='{"bundle":{"externalBin":null}}' \
 VELVET_APP_DATA_DIR="$success_data" \
 VELVET_APP_BINARY="$success_child" \
-cargo run --quiet --manifest-path "$launcher_manifest" --bin velvet-launcher -- \
+cargo run --quiet --manifest-path "$launcher_manifest" --bin velvet-launcher --features launcher-bin -- \
   >"$tmp_root/success.stdout" 2>"$tmp_root/success.stderr"
 test ! -e "$success_data/launcher-attempt.json"
 
