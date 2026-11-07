@@ -987,6 +987,7 @@
       ],
       "accessibility": [
         "grid/gridcell semantics and selection",
+        "pinned metadata is announced",
         "drag/drop is an optional host action"
       ],
       "stories": [
@@ -995,7 +996,8 @@
         "layout-modes"
       ],
       "slots": [
-        "items"
+        "items",
+        "item.metadata"
       ],
       "actions": [
         "select",
@@ -1011,7 +1013,8 @@
         "open-callback",
         "layout",
         "drag-and-drop",
-        "pinned"
+        "pinned",
+        "metadata"
       ]
     },
     {

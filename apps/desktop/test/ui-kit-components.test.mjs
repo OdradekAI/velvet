@@ -58,7 +58,7 @@ await act(async () => {
     }),
     React.createElement(VelvetState, { kind: 'error', title: 'Failed', onRetry: () => {} }),
     React.createElement(VelvetAssetGrid, {
-      items: [{ id: 'asset-1', label: 'Asset 1', selected: true }, { id: 'asset-2', label: 'Asset 2' }],
+      items: [{ id: 'asset-1', label: 'Asset 1', selected: true, metadata: '2 tags' }, { id: 'asset-2', label: 'Asset 2' }],
       onSelect: (id) => { selectedAsset = id; },
       onOpen: (id) => { openedAsset = id; },
     }),
@@ -79,6 +79,7 @@ await act(async () => {
 
 assert.equal(rootElement.querySelector('[role="alert"]')?.textContent?.startsWith('Failed'), true);
 assert.equal(rootElement.querySelectorAll('[role="gridcell"]').length, 2);
+assert.equal(rootElement.querySelector('.velvet-asset-grid__metadata')?.textContent, '2 tags');
 assert.equal(rootElement.querySelectorAll('tbody tr').length, 1);
 assert.equal(rootElement.querySelector('[role="option"]')?.textContent?.includes('Open'), true);
 

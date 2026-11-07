@@ -41,7 +41,7 @@ export const assetGridStories: readonly UiKitStory[] = [
     componentId: 'asset-grid',
     name: 'Layout modes',
     description: 'Eagle-observed list layout with optional drag and drop.',
-    render: () => <VelvetAssetGrid layout="list" items={[{ id: 'a', label: 'A', pinned: true }, { id: 'b', label: 'B', aspectRatio: '16 / 9' }]} onSelect={() => undefined} onDragStart={(id) => { draggedAsset = id; }} onDrop={(sourceId, targetId) => { droppedAsset = `${sourceId}:${targetId}`; }} />,
+    render: () => <VelvetAssetGrid layout="list" items={[{ id: 'a', label: 'A', pinned: true, metadata: '2 tags · 1920 × 1080' }, { id: 'b', label: 'B', aspectRatio: '16 / 9' }]} onSelect={() => undefined} onDragStart={(id) => { draggedAsset = id; }} onDrop={(sourceId, targetId) => { droppedAsset = `${sourceId}:${targetId}`; }} />,
     scenario: {
       covers: ['drag', 'drop'],
       setup: () => { draggedAsset = ''; droppedAsset = ''; },
@@ -61,6 +61,8 @@ export const assetGridStories: readonly UiKitStory[] = [
       checkpoints: [{ name: 'layout and drag/drop', afterAction: 0, assert: (runtime) => {
         if (!runtime.root.querySelector('.velvet-asset-grid--list')) throw new Error('AssetGrid list layout contract failed');
         if (runtime.root.querySelector('[data-pinned="true"]')?.getAttribute('aria-label') !== 'A') throw new Error('AssetGrid pinned projection contract failed');
+        if (runtime.root.querySelector('[aria-label="Pinned"]')?.textContent !== '⌖') throw new Error('AssetGrid pinned indicator contract failed');
+        if (runtime.root.querySelector('.velvet-asset-grid__metadata')?.textContent !== '2 tags · 1920 × 1080') throw new Error('AssetGrid metadata slot contract failed');
         if (draggedAsset !== 'a' || droppedAsset !== 'a:b') throw new Error('AssetGrid drag/drop contract failed');
       } }],
     },

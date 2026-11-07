@@ -467,13 +467,15 @@ button {
 .velvet-asset-grid__item[draggable='true'] { cursor: grab; }
 .velvet-asset-grid__item[draggable='true']:active { cursor: grabbing; }
 .velvet-asset-grid__item[data-dragging='true'] { opacity: .7; }
-.velvet-asset-grid__item[data-pinned='true']::after { content: '•'; justify-self: end; color: var(--velvet-accent); }
+.velvet-asset-grid__item[data-pinned='true'] { position: relative; }
 .velvet-asset-grid__item { display: grid; gap: 4px; min-width: 0; padding: 6px; border: 1px solid transparent; border-radius: var(--velvet-radius-sm); background: var(--velvet-surface-panel); color: var(--velvet-text-primary); text-align: left; cursor: pointer; }
 .velvet-asset-grid__item[aria-selected='true'] { border-color: var(--velvet-accent); box-shadow: 0 0 0 1px var(--velvet-accent); }
 .velvet-asset-grid__item img, .velvet-asset-grid__placeholder { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 3px; background: var(--velvet-surface-raised); }
-.velvet-asset-grid__label, .velvet-asset-grid__secondary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.velvet-asset-grid__label, .velvet-asset-grid__secondary, .velvet-asset-grid__metadata { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .velvet-asset-grid__label { font-size: var(--velvet-font-size-body); }
 .velvet-asset-grid__secondary { color: var(--velvet-text-muted); font-size: var(--velvet-font-size-label); }
+.velvet-asset-grid__metadata { color: var(--velvet-text-muted); font-size: var(--velvet-font-size-label); }
+.velvet-asset-grid__pin-indicator { position: absolute; top: 7px; right: 7px; display: grid; width: 18px; height: 18px; place-items: center; border-radius: 50%; background: rgb(23 24 26 / .76); color: var(--velvet-accent); font-size: 12px; line-height: 1; }
 .velvet-data-table { overflow: auto; border: 1px solid var(--velvet-border-subtle); border-radius: var(--velvet-radius-sm); }
 .velvet-data-table table { width: 100%; border-collapse: collapse; font-size: var(--velvet-font-size-body); }
 .velvet-data-table th { position: sticky; top: 0; z-index: 1; padding: 7px 9px; border-bottom: 1px solid var(--velvet-border-strong); background: var(--velvet-surface-raised); color: var(--velvet-text-secondary); text-align: left; }

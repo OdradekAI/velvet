@@ -21,8 +21,11 @@ classes and Workbench implementation details are not public API.
 ## Layout and drag/drop
 
 `layout` accepts `grid` (default), `square`, `list` or `justified`. An item may
-provide `aspectRatio` and `pinned`; those values are rendered as host-owned
-projection state. Drag/drop is opt-in: when `onDragStart` and `onDrop` are
+provide `aspectRatio`, `metadata` and `pinned`; those values are rendered as
+host-owned projection state. `metadata` is a React slot so the host can project
+tags, resolution, rating or extension details without making those fields part
+of the grid's selection state. Pinned state has an accessible marker but no
+implicit persistence action. Drag/drop is opt-in: when `onDragStart` and `onDrop` are
 provided, the component exposes native draggable cells and reports typed source
 and target ids. It does not persist ordering or read transport state.
 

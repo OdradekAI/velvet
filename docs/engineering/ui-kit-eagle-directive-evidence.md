@@ -13,7 +13,7 @@ outside the selected scope and explicitly unknown.
 | Eagle source evidence | Observed behavior | Velvet consequence |
 | --- | --- | --- |
 | `app/js/directives/ng-grid-layout.js:539-566` | Grid/Square, List and Justified layout branches use different layout strategies and spacing. | `VelvetAssetGrid` exposes `grid`, `square`, `list` and `justified` without exposing InfiniteGrid. |
-| `ng-grid-layout.js:78-101` | Items carry an aspect ratio, thumbnail, metadata labels, tags, rating and pin affordance. | Items accept `aspectRatio` and `pinned` as host-owned projection data. |
+| `ng-grid-layout.js:78-101` | Items carry an aspect ratio, thumbnail, metadata labels, tags, rating and pin affordance. | Items accept `aspectRatio`, a host-rendered `metadata` slot and `pinned` as host-owned projection data. The pin marker is visual/announced only until an action contract is observed. |
 | `ng-grid-layout.js:53-55`, `80-81`, `208-212` | Thumbnail and item nodes are draggable; folder mode renders sortable helpers. | Drag/drop is optional and reports typed source/target ids through host callbacks. |
 | `ng-grid-layout.js:696-729` | Selection, tagged and conditional pinned classes are projected from host mappings. | Selection and pin state stay controlled by the host. |
 | `ng-grid-layout.js:600-610`, `792-807` | Layout completion registers lazy loading; removal unregisters before relayout. | Lazy loading and paging remain host data concerns, outside the component API. |
@@ -22,7 +22,7 @@ outside the selected scope and explicitly unknown.
 | `quick-search-modal.js:15-47` | Open focuses/selects the input; close blurs and restores content focus. | Search overlays need explicit focus entry and restoration. |
 | `quick-search-modal.js:49-120` | Search modes and bounded, deduplicated local history exist. | Eagle-specific modes/history stay out of the generic command contract until Velvet ownership is defined. |
 
-The current correction includes AssetGrid layout/aspect-ratio/pinned/drag-drop
+The current correction includes AssetGrid layout/aspect-ratio/metadata/pinned/drag-drop
 behavior and a controlled Inspector edit/save surface. Lazy-loading timing,
 Inspector edit persistence and quick-search history ownership remain unknown and
 require runtime or host-contract evidence before implementation.

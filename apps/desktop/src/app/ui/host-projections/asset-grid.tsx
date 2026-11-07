@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import type { HTMLAttributes } from 'react';
 import type { UiCommonProps } from '../internal/types.js';
 import { uiDataProps } from '../internal/ui-data-props.js';
@@ -7,6 +8,8 @@ export interface VelvetAssetGridItem {
   readonly id: string;
   readonly label: string;
   readonly secondary?: string;
+  /** Host-rendered metadata slot for tags, resolution, rating or extension details. */
+  readonly metadata?: ReactNode;
   readonly thumbnailUrl?: string;
   readonly aspectRatio?: string;
   readonly selected?: boolean;
@@ -99,6 +102,8 @@ export function VelvetAssetGrid({
           {item.thumbnailUrl ? <img alt="" src={item.thumbnailUrl} style={item.aspectRatio ? { aspectRatio: item.aspectRatio } : undefined} /> : <span aria-hidden="true" className="velvet-asset-grid__placeholder" style={item.aspectRatio ? { aspectRatio: item.aspectRatio } : undefined} />}
           <span className="velvet-asset-grid__label">{item.label}</span>
           {item.secondary ? <span className="velvet-asset-grid__secondary">{item.secondary}</span> : null}
+          {item.metadata ? <span className="velvet-asset-grid__metadata">{item.metadata}</span> : null}
+          {item.pinned ? <span aria-label="Pinned" className="velvet-asset-grid__pin-indicator" role="img">⌖</span> : null}
         </button>
       ))}
     </div>
