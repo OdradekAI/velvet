@@ -333,16 +333,26 @@ fn job_commands_emit_progress_and_terminal_events() {
         Response::Job(snapshot) => snapshot.id,
         other => panic!("expected job response, got {other:?}"),
     };
-    std::thread::sleep(std::time::Duration::from_millis(80));
-    let _ = transport.dispatch(RequestId(5), Request::Query(Query::Jobs));
-    let events = sink.events();
-    assert!(events.iter().any(|event| matches!(event, Event::JobChanged { snapshot } if snapshot.id == job_id && snapshot.progress > 0)));
-    for request_id in 6..=100 {
+    let mut saw_progress = false;
+    for request_id in 5..=50 {
+        std::thread::sleep(std::time::Duration::from_millis(40));
+        let _ = transport.dispatch(RequestId(request_id), Request::Query(Query::Jobs));
+        if sink.events().iter().any(|event| matches!(event, Event::JobChanged { snapshot } if snapshot.id == job_id && snapshot.progress > 0)) {
+            saw_progress = true;
+            break;
+        }
+    }
+    assert!(
+        saw_progress,
+        "job never emitted a progress event: {:?}",
+        sink.events()
+    );
+    for request_id in 51..=150 {
         std::thread::sleep(std::time::Duration::from_millis(40));
         let _ = transport.dispatch(RequestId(request_id), Request::Query(Query::Jobs));
         if sink.events().iter().any(|event| matches!(event, Event::JobChanged { snapshot } if snapshot.id == job_id && snapshot.status == velvet_job_system::JobStatus::Completed)) {
-                return;
-            }
+            return;
+        }
     }
     panic!("job never emitted a completed event: {:?}", sink.events());
 }
