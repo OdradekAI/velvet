@@ -20,6 +20,9 @@ classes and Workbench implementation details are not public API.
 - `context-menu/default`
 - `context-menu/checked`
 
+The real-browser fixture adds `context-menu/select`, `context-menu/cancel-escape`
+and `context-menu/cancel-outside` coverage, including checked item semantics.
+
 
 The current story runner provides deterministic fixture coverage. Required for overlays and host projections: run the real-browser qualification fixture when changing focus, portal, geometry or host projection behavior.
 Unknown Eagle behavior remains `unknown` until a runtime capture proves it.
@@ -30,4 +33,5 @@ Unknown Eagle behavior remains `unknown` until a runtime capture proves it.
 npm run typecheck
 npm run generate:ui-kit-catalog
 npm test
+npm run qualify:ui-browser
 ```

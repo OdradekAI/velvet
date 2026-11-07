@@ -88,6 +88,12 @@ state. Browser-only surfaces keep the same scenario shape but run through the
 real-browser qualification scripts when portals, geometry or native focus
 behavior are involved.
 
+The unified UI Kit acceptance gate is `npm run verify:ui-kit` from
+`apps/desktop`. It runs typed compile/catalog checks, the Node/Happy DOM
+contract and story suite, the production build, and both real-browser
+qualification layers. The browser layer expects the Vite fixture server at
+`http://127.0.0.1:5173` (start it with `npm run dev` in another terminal).
+
 The fake host adapter also exposes typed deferred operations for asynchronous
 stories. They record `requested → pending → committed` for success and the
 terminal `cancelled`, `timed-out` or `failed` states. `retry()` starts a fresh

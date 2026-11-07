@@ -67,6 +67,8 @@ export function VisualQualificationFixture() {
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState('recent');
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [dialogAction, setDialogAction] = useState('idle');
+  const [contextAction, setContextAction] = useState('idle');
   const [inspectorPinned, setInspectorPinned] = useState(false);
   const dialogTriggerRef = useRef<HTMLButtonElement>(null);
 
@@ -92,7 +94,7 @@ export function VisualQualificationFixture() {
         <VelvetStack direction="row" gap="xs" className="velvet-visual-fixture__title-actions">
           <VelvetIconButton icon="⌘K" label="Quick search" variant="quiet" />
           <VelvetIconButton icon="⋯" label="More actions" variant="quiet" />
-          <VelvetButton data-ui-kit-probe="dialog-trigger" onClick={() => setDialogOpen(true)} ref={dialogTriggerRef} variant="quiet">Open dialog</VelvetButton>
+          <VelvetButton data-ui-kit-probe="dialog-trigger" onClick={() => { setDialogAction('idle'); setDialogOpen(true); }} ref={dialogTriggerRef} variant="quiet">Open dialog</VelvetButton>
         </VelvetStack>
       </header>
 
@@ -144,7 +146,7 @@ export function VisualQualificationFixture() {
             <VelvetInput ariaLabel="Search assets" onChange={(event) => setQuery(event.target.value)} placeholder="Search" value={query} />
             <VelvetIconButton icon="⌕" label="Search" variant="quiet" />
             <VelvetIconButton icon="≡" label="Filter" variant="quiet" />
-            <VelvetContextMenu actions={[{ id: 'pin', label: 'Pin selection', checked: true }, { id: 'open', label: 'Open in preview', shortcutHint: 'Enter' }]}>
+            <VelvetContextMenu actions={[{ id: 'pin', label: 'Pin selection', checked: true, onSelect: () => setContextAction('pin') }, { id: 'open', label: 'Open in preview', onSelect: () => setContextAction('open'), shortcutHint: 'Enter' }]}>
               <div className="velvet-visual-fixture__context-trigger" data-ui-kit-probe="context-trigger" role="button" tabIndex={0}>Actions</div>
             </VelvetContextMenu>
             <VelvetSelect ariaLabel="Sort assets" onChange={(event) => setSort(event.target.value)} value={sort}>
@@ -194,9 +196,13 @@ export function VisualQualificationFixture() {
           </VelvetStack>
         </VelvetInspector>
       </div>
+      <output data-ui-kit-observation="dialog-action">dialog:{dialogAction}</output>
+      <output data-ui-kit-observation="context-action">context:{contextAction}</output>
       <VelvetDialog
         description="Dialog focus and dismissal are qualified in the real browser fixture."
-        onOpenChange={setDialogOpen}
+        actions={[{ id: 'apply', label: 'Apply', onSelect: () => setDialogAction('submitted'), primary: true }]}
+        closeLabel="Cancel"
+        onOpenChange={(open) => { setDialogOpen(open); if (!open) setDialogAction('cancelled'); }}
         open={dialogOpen}
         restoreFocusRef={dialogTriggerRef}
         title="Asset actions"

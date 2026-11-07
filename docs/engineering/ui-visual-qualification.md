@@ -88,8 +88,11 @@ the URL remains directly inspectable in any Chromium browser at the same
 viewport.
 
 Radix-backed overlays use `npm run qualify:ui-overlays`. It exercises Dialog
-open/Escape/focus restoration and Context Menu pointer, keyboard and outside
-dismissal, then saves overlay screenshots under the same research directory.
+submit, cancel-button, Escape/focus restoration and Context Menu selection,
+Escape cancellation and outside dismissal, then saves overlay screenshots
+under the same research directory. The combined browser gate is
+`npm run qualify:ui-browser`; the full UI Kit acceptance gate is
+`npm run verify:ui-kit`.
 
 ## First observed baseline
 

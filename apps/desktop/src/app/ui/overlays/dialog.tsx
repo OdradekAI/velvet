@@ -65,12 +65,13 @@ export function VelvetDialog({
                 disabled={action.disabled}
                 key={action.id}
                 onClick={action.onSelect}
+                testId={`dialog-action-${action.id}`}
                 variant={action.variant ?? (action.primary ? 'default' : 'quiet')}
               >
                 {action.label}
               </VelvetButton>
             ))}
-            <Dialog.Close className="velvet-button velvet-button--quiet">
+            <Dialog.Close className="velvet-button velvet-button--quiet" data-ui-test-id="dialog-cancel">
               {closeLabel}
             </Dialog.Close>
           </div>

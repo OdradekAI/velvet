@@ -20,6 +20,9 @@ classes and Workbench implementation details are not public API.
 - `dialog/closed`
 - `dialog/open`
 
+The real-browser fixture adds `dialog/submit`, `dialog/cancel-button` and
+`dialog/cancel-escape` coverage, including Radix portal focus restoration.
+
 
 The current story runner provides deterministic fixture coverage. Required for overlays and host projections: run the real-browser qualification fixture when changing focus, portal, geometry or host projection behavior.
 Unknown Eagle behavior remains `unknown` until a runtime capture proves it.
@@ -30,4 +33,5 @@ Unknown Eagle behavior remains `unknown` until a runtime capture proves it.
 npm run typecheck
 npm run generate:ui-kit-catalog
 npm test
+npm run qualify:ui-browser
 ```
