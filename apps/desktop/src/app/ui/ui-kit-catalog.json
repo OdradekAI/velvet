@@ -7,6 +7,9 @@
       "id": "text",
       "name": "VelvetText",
       "category": "primitive",
+      "layer": "primitives",
+      "contractId": "text",
+      "documentation": "docs/engineering/ui-kit/components/primitives/text.md",
       "purpose": "Semantic text with host typography and tone tokens.",
       "ownership": "host",
       "states": [
@@ -25,12 +28,23 @@
       "stories": [
         "default",
         "tones"
+      ],
+      "slots": [
+        "children"
+      ],
+      "actions": [],
+      "observables": [
+        "semantic-dom",
+        "accessible-name"
       ]
     },
     {
       "id": "icon",
       "name": "VelvetIcon",
       "category": "primitive",
+      "layer": "primitives",
+      "contractId": "icon",
+      "documentation": "docs/engineering/ui-kit/components/primitives/icon.md",
       "purpose": "Accessible or decorative icon wrapper for toolbars and controls.",
       "ownership": "host",
       "states": [
@@ -48,12 +62,23 @@
       "stories": [
         "default",
         "labelled"
+      ],
+      "slots": [
+        "children"
+      ],
+      "actions": [],
+      "observables": [
+        "semantic-dom",
+        "accessible-name"
       ]
     },
     {
       "id": "badge",
       "name": "VelvetBadge",
       "category": "primitive",
+      "layer": "primitives",
+      "contractId": "badge",
+      "documentation": "docs/engineering/ui-kit/components/primitives/badge.md",
       "purpose": "Compact status or count marker.",
       "ownership": "host",
       "states": [
@@ -71,12 +96,23 @@
       "stories": [
         "default",
         "tones"
+      ],
+      "slots": [
+        "children"
+      ],
+      "actions": [],
+      "observables": [
+        "semantic-dom",
+        "non-focusable"
       ]
     },
     {
       "id": "stack",
       "name": "VelvetStack",
       "category": "primitive",
+      "layer": "primitives",
+      "contractId": "stack",
+      "documentation": "docs/engineering/ui-kit/components/primitives/stack.md",
       "purpose": "Token-spaced vertical or horizontal layout primitive.",
       "ownership": "host",
       "states": [
@@ -96,12 +132,55 @@
       "stories": [
         "default",
         "directions"
+      ],
+      "slots": [
+        "children"
+      ],
+      "actions": [],
+      "observables": [
+        "child-preservation",
+        "layout-class"
+      ]
+    },
+    {
+      "id": "inline",
+      "name": "VelvetInline",
+      "category": "primitive",
+      "layer": "primitives",
+      "contractId": "inline",
+      "documentation": "docs/engineering/ui-kit/components/primitives/inline.md",
+      "purpose": "Token-spaced horizontal layout primitive.",
+      "ownership": "host",
+      "states": [
+        "row"
+      ],
+      "props": [
+        "gap",
+        "children"
+      ],
+      "keyboard": [],
+      "accessibility": [
+        "layout wrapper preserves child semantics"
+      ],
+      "stories": [
+        "default"
+      ],
+      "slots": [
+        "children"
+      ],
+      "actions": [],
+      "observables": [
+        "child-preservation",
+        "layout-class"
       ]
     },
     {
       "id": "button",
       "name": "VelvetButton",
       "category": "primitive",
+      "layer": "primitives",
+      "contractId": "button",
+      "documentation": "docs/engineering/ui-kit/components/primitives/button.md",
       "purpose": "Command or local action control.",
       "ownership": "host",
       "states": [
@@ -131,12 +210,26 @@
         "default",
         "busy",
         "disabled"
+      ],
+      "slots": [
+        "children"
+      ],
+      "actions": [
+        "activate"
+      ],
+      "observables": [
+        "semantic-dom",
+        "focus",
+        "action-callback"
       ]
     },
     {
       "id": "icon-button",
       "name": "VelvetIconButton",
       "category": "primitive",
+      "layer": "primitives",
+      "contractId": "icon-button",
+      "documentation": "docs/engineering/ui-kit/components/primitives/icon-button.md",
       "purpose": "Compact icon-first action with an accessible label.",
       "ownership": "host",
       "states": [
@@ -160,12 +253,26 @@
       "stories": [
         "default",
         "disabled"
+      ],
+      "slots": [
+        "icon"
+      ],
+      "actions": [
+        "activate"
+      ],
+      "observables": [
+        "semantic-dom",
+        "focus",
+        "action-callback"
       ]
     },
     {
       "id": "input",
       "name": "VelvetInput",
       "category": "primitive",
+      "layer": "primitives",
+      "contractId": "input",
+      "documentation": "docs/engineering/ui-kit/components/primitives/input.md",
       "purpose": "Text entry control with host density and focus styling.",
       "ownership": "host",
       "states": [
@@ -192,12 +299,25 @@
       "stories": [
         "default",
         "busy"
+      ],
+      "slots": [],
+      "actions": [
+        "change",
+        "clear"
+      ],
+      "observables": [
+        "semantic-dom",
+        "focus",
+        "value"
       ]
     },
     {
       "id": "select",
       "name": "VelvetSelect",
       "category": "primitive",
+      "layer": "primitives",
+      "contractId": "select",
+      "documentation": "docs/engineering/ui-kit/components/primitives/select.md",
       "purpose": "Native select control with host styling.",
       "ownership": "host",
       "states": [
@@ -221,12 +341,26 @@
       "stories": [
         "default",
         "disabled"
+      ],
+      "slots": [
+        "options"
+      ],
+      "actions": [
+        "change"
+      ],
+      "observables": [
+        "semantic-dom",
+        "focus",
+        "value"
       ]
     },
     {
       "id": "checkbox",
       "name": "VelvetCheckbox",
       "category": "primitive",
+      "layer": "primitives",
+      "contractId": "checkbox",
+      "documentation": "docs/engineering/ui-kit/components/primitives/checkbox.md",
       "purpose": "Controlled boolean setting control.",
       "ownership": "host",
       "states": [
@@ -251,12 +385,24 @@
       "stories": [
         "checked",
         "disabled"
+      ],
+      "slots": [],
+      "actions": [
+        "toggle"
+      ],
+      "observables": [
+        "semantic-dom",
+        "focus",
+        "checked"
       ]
     },
     {
       "id": "separator",
       "name": "VelvetSeparator",
       "category": "primitive",
+      "layer": "primitives",
+      "contractId": "separator",
+      "documentation": "docs/engineering/ui-kit/components/primitives/separator.md",
       "purpose": "Visual and semantic divider.",
       "ownership": "host",
       "states": [
@@ -273,12 +419,20 @@
       "stories": [
         "horizontal",
         "vertical"
+      ],
+      "slots": [],
+      "actions": [],
+      "observables": [
+        "semantic-dom"
       ]
     },
     {
       "id": "panel",
       "name": "VelvetPanel",
       "category": "composite",
+      "layer": "host-projections",
+      "contractId": "panel",
+      "documentation": "docs/engineering/ui-kit/components/host-projections/panel.md",
       "purpose": "Surface container for host panes and product views.",
       "ownership": "host",
       "states": [
@@ -298,12 +452,23 @@
       "stories": [
         "panel",
         "raised"
+      ],
+      "slots": [
+        "children"
+      ],
+      "actions": [],
+      "observables": [
+        "semantic-dom",
+        "children"
       ]
     },
     {
       "id": "dialog",
       "name": "VelvetDialog",
       "category": "overlay",
+      "layer": "overlays",
+      "contractId": "dialog",
+      "documentation": "docs/engineering/ui-kit/components/overlays/dialog.md",
       "purpose": "Host-owned modal overlay with focus restoration.",
       "ownership": "host",
       "states": [
@@ -333,12 +498,30 @@
       "stories": [
         "closed",
         "open"
+      ],
+      "slots": [
+        "children",
+        "actions"
+      ],
+      "actions": [
+        "open",
+        "close",
+        "submit"
+      ],
+      "observables": [
+        "dialog-role",
+        "focus-trap",
+        "focus-restore",
+        "action-callback"
       ]
     },
     {
       "id": "context-menu",
       "name": "VelvetContextMenu",
       "category": "overlay",
+      "layer": "overlays",
+      "contractId": "context-menu",
+      "documentation": "docs/engineering/ui-kit/components/overlays/context-menu.md",
       "purpose": "Trigger-driven contextual command menu.",
       "ownership": "host",
       "states": [
@@ -363,12 +546,30 @@
       "stories": [
         "default",
         "checked"
+      ],
+      "slots": [
+        "trigger",
+        "actions"
+      ],
+      "actions": [
+        "open",
+        "select",
+        "dismiss"
+      ],
+      "observables": [
+        "menu-role",
+        "checked-state",
+        "focus",
+        "dismissal"
       ]
     },
     {
       "id": "tabs",
       "name": "VelvetTabs",
       "category": "primitive",
+      "layer": "primitives",
+      "contractId": "tabs",
+      "documentation": "docs/engineering/ui-kit/components/primitives/tabs.md",
       "purpose": "Roving-focus tab selection control.",
       "ownership": "host",
       "states": [
@@ -392,12 +593,27 @@
       "stories": [
         "default",
         "disabled"
+      ],
+      "slots": [
+        "tab labels"
+      ],
+      "actions": [
+        "select",
+        "navigate"
+      ],
+      "observables": [
+        "tab-selection",
+        "focus",
+        "keyboard"
       ]
     },
     {
       "id": "progress",
       "name": "VelvetProgress",
       "category": "primitive",
+      "layer": "primitives",
+      "contractId": "progress",
+      "documentation": "docs/engineering/ui-kit/components/primitives/progress.md",
       "purpose": "Job progress projection.",
       "ownership": "host",
       "states": [
@@ -418,12 +634,21 @@
       "stories": [
         "determinate",
         "indeterminate"
+      ],
+      "slots": [],
+      "actions": [],
+      "observables": [
+        "semantic-dom",
+        "value"
       ]
     },
     {
       "id": "state",
       "name": "VelvetState",
       "category": "primitive",
+      "layer": "primitives",
+      "contractId": "state",
+      "documentation": "docs/engineering/ui-kit/components/primitives/state.md",
       "purpose": "Loading, empty and error state composition.",
       "ownership": "host",
       "states": [
@@ -447,13 +672,28 @@
       "stories": [
         "loading",
         "empty",
-        "error"
+        "error-retry"
+      ],
+      "slots": [
+        "action"
+      ],
+      "actions": [
+        "retry",
+        "action"
+      ],
+      "observables": [
+        "status",
+        "alert",
+        "retry-callback"
       ]
     },
     {
       "id": "toast",
       "name": "VelvetToastHost",
       "category": "overlay",
+      "layer": "overlays",
+      "contractId": "toast",
+      "documentation": "docs/engineering/ui-kit/components/overlays/toast.md",
       "purpose": "Live notification projection with dismissal.",
       "ownership": "host",
       "states": [
@@ -476,12 +716,26 @@
       "stories": [
         "default",
         "error"
+      ],
+      "slots": [
+        "action"
+      ],
+      "actions": [
+        "dismiss"
+      ],
+      "observables": [
+        "live-region",
+        "alert",
+        "dismiss-callback"
       ]
     },
     {
       "id": "activity-bar",
       "name": "VelvetActivityBar",
       "category": "composite",
+      "layer": "host-projections",
+      "contractId": "activity-bar",
+      "documentation": "docs/engineering/ui-kit/components/host-projections/activity-bar.md",
       "purpose": "Workbench app navigation rail.",
       "ownership": "host",
       "states": [
@@ -505,12 +759,27 @@
       "stories": [
         "default",
         "badges"
+      ],
+      "slots": [
+        "items"
+      ],
+      "actions": [
+        "select",
+        "navigate"
+      ],
+      "observables": [
+        "navigation-role",
+        "selection",
+        "roving-focus"
       ]
     },
     {
       "id": "pane",
       "name": "VelvetPane",
       "category": "composite",
+      "layer": "host-projections",
+      "contractId": "pane",
+      "documentation": "docs/engineering/ui-kit/components/host-projections/pane.md",
       "purpose": "Semantic Workbench zone container.",
       "ownership": "host",
       "states": [
@@ -531,12 +800,24 @@
       "stories": [
         "navigation",
         "context"
+      ],
+      "slots": [
+        "children"
+      ],
+      "actions": [],
+      "observables": [
+        "region",
+        "label",
+        "children"
       ]
     },
     {
       "id": "preview-host",
       "name": "VelvetPreviewHost",
       "category": "composite",
+      "layer": "host-projections",
+      "contractId": "preview-host",
+      "documentation": "docs/engineering/ui-kit/components/host-projections/preview-host.md",
       "purpose": "Host frame for Preview lifecycle and fallback states.",
       "ownership": "host",
       "states": [
@@ -560,13 +841,39 @@
       ],
       "stories": [
         "ready",
-        "error"
+        "error",
+        "async-success",
+        "async-cancelled",
+        "async-timeout",
+        "async-failure",
+        "async-retry"
+      ],
+      "slots": [
+        "children"
+      ],
+      "actions": [
+        "retry"
+      ],
+      "observables": [
+        "preview-region",
+        "fallback-state",
+        "retry-callback"
+      ],
+      "asyncLifecycle": [
+        "success",
+        "cancelled",
+        "timeout",
+        "failure",
+        "retry"
       ]
     },
     {
       "id": "asset-grid",
       "name": "VelvetAssetGrid",
       "category": "composite",
+      "layer": "host-projections",
+      "contractId": "asset-grid",
+      "documentation": "docs/engineering/ui-kit/components/host-projections/asset-grid.md",
       "purpose": "Keyboard-navigable Asset projection grid.",
       "ownership": "host",
       "states": [
@@ -591,12 +898,29 @@
       "stories": [
         "default",
         "selected"
+      ],
+      "slots": [
+        "items"
+      ],
+      "actions": [
+        "select",
+        "open",
+        "navigate"
+      ],
+      "observables": [
+        "grid-role",
+        "selection",
+        "focus",
+        "open-callback"
       ]
     },
     {
       "id": "data-table",
       "name": "VelvetDataTable",
       "category": "composite",
+      "layer": "host-projections",
+      "contractId": "data-table",
+      "documentation": "docs/engineering/ui-kit/components/host-projections/data-table.md",
       "purpose": "Sortable tabular projection for host-owned data.",
       "ownership": "host",
       "states": [
@@ -622,12 +946,28 @@
       "stories": [
         "default",
         "selected"
+      ],
+      "slots": [
+        "cells"
+      ],
+      "actions": [
+        "select",
+        "sort"
+      ],
+      "observables": [
+        "table-role",
+        "selection",
+        "sort-callback",
+        "focus"
       ]
     },
     {
       "id": "command-palette",
       "name": "VelvetCommandPalette",
       "category": "composite",
+      "layer": "host-projections",
+      "contractId": "command-palette",
+      "documentation": "docs/engineering/ui-kit/components/host-projections/command-palette.md",
       "purpose": "Host-owned command search overlay.",
       "ownership": "host",
       "states": [
@@ -640,7 +980,8 @@
         "open",
         "commands",
         "onSelect",
-        "onClose"
+        "onClose",
+        "restoreFocusRef"
       ],
       "keyboard": [
         "Arrow keys",
@@ -653,6 +994,21 @@
       "stories": [
         "open",
         "empty"
+      ],
+      "slots": [
+        "commands"
+      ],
+      "actions": [
+        "query",
+        "select",
+        "navigate",
+        "close"
+      ],
+      "observables": [
+        "dialog-role",
+        "listbox-role",
+        "focus-entry",
+        "selection"
       ]
     }
   ]

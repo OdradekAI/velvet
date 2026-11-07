@@ -16,7 +16,7 @@ const React = ReactModule.default;
 const { act } = ReactModule;
 const { createRoot } = await import('react-dom/client');
 const { COMPONENT_META } = await import('/tmp/velvet-plugin-tests/app/ui/component-meta.js');
-const { UI_KIT_STORY_REGISTRY } = await import('/tmp/velvet-plugin-tests/app/ui/story-registry.js');
+const { createUiKitStoryHostAdapter, runUiKitStoryScenario, UI_KIT_STORY_REGISTRY } = await import('/tmp/velvet-plugin-tests/app/ui/story-registry.js');
 
 const catalog = JSON.parse(await readFile(new URL('../src/app/ui/ui-kit-catalog.json', import.meta.url), 'utf8'));
 assert.equal(catalog.schema, 'velvet.ui.catalog');
@@ -27,6 +27,14 @@ const rootElement = document.createElement('div');
 document.body.append(rootElement);
 const stories = UI_KIT_STORY_REGISTRY.list();
 assert.ok(stories.length >= 40);
+assert.ok(stories.filter((story) => story.scenario).length >= 8);
+assert.deepEqual(
+  stories
+    .map((story) => story.scenario?.asyncLifecycle)
+    .filter(Boolean)
+    .sort(),
+  ['cancelled', 'failure', 'retry', 'success', 'timeout'],
+);
 
 for (const component of COMPONENT_META) {
   for (const storyName of component.stories) {
@@ -48,6 +56,14 @@ for (const story of stories) {
     root.render(React.createElement(React.Fragment, null, story.render()));
   });
   assert.equal(typeof story.render, 'function');
+  if (story.scenario) {
+    const host = createUiKitStoryHostAdapter();
+    await runUiKitStoryScenario(story.scenario, {
+      root: storyHost,
+      act: async (work) => act(work),
+      host,
+    });
+  }
   await act(async () => root.unmount());
   storyHost.remove();
 }

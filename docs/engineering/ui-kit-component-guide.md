@@ -2,8 +2,10 @@
 
 Status: host implementation for UI Kit v1.
 
-The renderer UI Kit is implemented in `apps/desktop/src/app/ui/velvet-ui.tsx`
-and `apps/desktop/src/app/ui/theme.ts`. Its public behavior is semantic and
+The renderer UI Kit is implemented in `apps/desktop/src/app/ui/index.ts`, the
+layered modules under `primitives/`, `overlays/` and `host-projections/`, and
+`apps/desktop/src/app/ui/theme.ts`. `velvet-ui.tsx` is a compatibility barrel;
+new first-party imports use `ui/index.ts`. Its public behavior is semantic and
 versioned; the React implementation and CSS class names remain host-private.
 
 ## Visual baseline
@@ -50,6 +52,26 @@ use default state. Dialog and Context Menu keep Radix behind the Velvet wrapper.
 Future Radix primitives are admitted one host use at a time after bundle and
 interaction qualification.
 
+## Module map
+
+The first migration wave gives every reusable primitive its own module:
+
+```text
+apps/desktop/src/app/ui/
+  internal/                 # common props, data attributes and contract types
+  primitives/<component>.tsx
+  contracts/primitives/<component>.contract.ts
+  stories/primitives/<component>.stories.tsx
+  index.ts                  # formal first-party barrel
+  velvet-ui.tsx             # compatibility re-export barrel
+```
+
+`overlays/` owns the Dialog, Context Menu and Toast implementations, and
+`host-projections/` owns Panel, Activity Bar, Pane, PreviewHost, AssetGrid,
+DataTable and CommandPalette. Radix dependencies stay behind the Velvet
+overlay wrappers. `legacy-components.tsx` is now a compatibility re-export
+barrel only.
+
 ## Stories, contract tests and agent catalog
 
 Each component owns a `*.stories.tsx` module with typed metadata and named
@@ -58,6 +80,21 @@ the current TypeScript compile path, Node and Happy DOM rather than adding a
 Storybook runtime dependency. Stories are executable fixtures, not screenshots
 that can drift away from the component API.
 
+Interactive stories may attach a typed lifecycle scenario with
+`setup → actions → checkpoints → cleanup`. The runner provides a fake host
+adapter that records semantic calls and an `act` boundary for React updates.
+Checkpoints can assert DOM/ARIA, focus, emitted action payloads and recovery
+state. Browser-only surfaces keep the same scenario shape but run through the
+real-browser qualification scripts when portals, geometry or native focus
+behavior are involved.
+
+The fake host adapter also exposes typed deferred operations for asynchronous
+stories. They record `requested → pending → committed` for success and the
+terminal `cancelled`, `timed-out` or `failed` states. `retry()` starts a fresh
+pending attempt after a terminal failure. This keeps success, cancellation,
+timeout, failure and retry deterministic without connecting a story to
+`CoreTransport`.
+
 Every interactive component covers its meaningful state matrix, keyboard
 behavior and accessibility contract: default, selected/open, focus, disabled,
 loading/error and empty states when applicable. Static layout components cover
@@ -65,19 +102,22 @@ their semantic structure and representative variants without inventing
 interaction states. A story may use a fake host projection, but it must not
 create a second state owner or bypass CoreTransport semantics.
 
-The source of truth for discovery is a typed `ComponentMeta` record. The build
-generates a JSON catalog for developers and agents. Catalog entries describe the
-stable component id, category, ownership, semantic purpose, props and events,
-supported states, keyboard/a11y guarantees, story names and usage examples.
+The source of truth for discovery is a typed `ComponentMeta` record paired with
+the component's typed `ComponentContract`. The build generates a JSON catalog
+for developers and agents. Catalog entries describe the stable component id,
+category, ownership layer, contract id, documentation path, semantic purpose,
+props and events, supported states, keyboard/a11y guarantees, story names and
+usage examples.
 They do not publish CSS class names, Radix types, private DOM structure or
 plugin-internal implementation details. The catalog is versioned with the UI
 Kit contract and generated in CI so metadata cannot silently diverge from the
 stories.
 
-The current implementation lives in `apps/desktop/src/app/ui/component-meta.ts`,
-`story-registry.ts`, `stories/velvet-ui.stories.tsx` and the generated
-`ui-kit-catalog.json`. Run `npm run generate:ui-kit-catalog` from
-`apps/desktop` after changing metadata or story names.
+The current catalog inputs live in `apps/desktop/src/app/ui/component-meta.ts`,
+`contracts/`, `story-registry.ts` and the independent `stories/` modules. The
+generated output is `ui-kit-catalog.json`. Run
+`npm run generate:ui-kit-catalog` from `apps/desktop` after changing metadata or
+story names; CI must fail if generation produces a diff.
 
 Host-owned surfaces include Activity Bar, Navigation, Context, Operations,
 PreviewHost, global overlays and global shortcuts. Plugins can contribute to

@@ -7,6 +7,7 @@ import '../ui/tokens.css';
 import { applyUiThemeSnapshot } from '../ui/theme.js';
 import { DEFAULT_UI_THEME } from '../../workbench/plugins/ui-kit.js';
 import { VisualQualificationFixture } from './visual-qualification-fixture.js';
+import { HostProjectionQualificationFixture } from './host-projection-qualification-fixture.js';
 
 const root = document.querySelector('#root');
 
@@ -17,9 +18,10 @@ if (!root) {
 applyUiThemeSnapshot(DEFAULT_UI_THEME);
 
 const isVisualQualificationFixture = new URLSearchParams(window.location.search).get('fixture') === 'eagle';
+const isHostProjectionQualificationFixture = new URLSearchParams(window.location.search).get('fixture') === 'host-projections';
 
 createRoot(root).render(
   <StrictMode>
-    {isVisualQualificationFixture ? <VisualQualificationFixture /> : isTauri() ? <NativeWorkbenchApp /> : <DemoApp />}
+    {isVisualQualificationFixture ? <VisualQualificationFixture /> : isHostProjectionQualificationFixture ? <HostProjectionQualificationFixture /> : isTauri() ? <NativeWorkbenchApp /> : <DemoApp />}
   </StrictMode>,
 );

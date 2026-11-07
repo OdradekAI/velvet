@@ -1,0 +1,34 @@
+# VelvetCommandPalette
+
+`VelvetCommandPalette` is the Velvet host projections component for host-owned command search overlay.
+It is implemented in `apps/desktop/src/app/ui/host-projections/`; its public
+import remains available from `apps/desktop/src/app/ui/index.ts`.
+
+## Contract
+
+- **Props:** `open`, `commands`, `onSelect`, `onClose`, `restoreFocusRef`
+- **States:** open, empty
+- **Contract:** `apps/desktop/src/app/ui/contracts/host-projections/command-palette.contract.ts`
+- **Stories:** `apps/desktop/src/app/ui/stories/host-projections/command-palette.stories.tsx`
+- **Host boundary:** layout, overlay, focus and projection state remain host-owned.
+
+The component contract is semantic. Radix types, private DOM structure, Tailwind
+classes and Workbench implementation details are not public API.
+
+## Stories and evidence
+
+- `command-palette/open`
+- `command-palette/empty`
+
+
+The current story runner provides deterministic fixture coverage. Required for overlays and host projections: run the real-browser qualification fixture when changing focus, portal, geometry or host projection behavior.
+Unknown Eagle behavior remains `unknown` until a runtime capture proves it.
+
+## Validation
+
+```sh
+npm run typecheck
+npm run generate:ui-kit-catalog
+npm test
+npm run qualify:ui-host-projections
+```

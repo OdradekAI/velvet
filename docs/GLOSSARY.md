@@ -321,6 +321,38 @@ PortableBundle 的扩展 section 也可以进入这个状态：`ImportQuarantine
 
 对某类持久化字段或派生缓存负责的唯一模块。State owner 负责 schema、迁移、失效、恢复和对外投影；存储适配器不成为第二 owner。
 
+## Component contract
+
+组件对调用方承诺的语义边界，包含 typed props、数据插槽、状态及其唯一 owner、语义动作、可观测结果和可访问性行为。它描述组件能做什么以及如何恢复，不等同于 React 类型、DOM 结构或 CSS 实现。
+
+## Component action lifecycle
+
+组件语义动作从 `requested` 到 `committed`、`cancelled` 或 `failed` 的有界状态过程。异步或宿主动作必须暴露可关联的操作结果；取消、超时和迟到完成不能被当作静默丢弃的 Promise。
+
+## Focus owner
+
+对某个交互表面当前焦点进入、移动、陷阱、释放和恢复负责的唯一组件或宿主。Overlay 的 focus owner 通常是宿主，组件只能通过约定的 focus target 和 restore target 参与生命周期。
+
+## Story scenario
+
+用于验证组件契约的一组可执行 fixture，按 setup、actions、checkpoints 和 cleanup 描述生命周期。它观察语义 DOM/ARIA、焦点、动作阶段、fake host 调用和错误恢复，不是只记录截图的视觉样例。
+
+## Visual parity target
+
+希望达到的界面地标、密度、语义 token 和状态呈现方向。它可以指导纠偏和视觉评审，但本身不声明与 Eagle 的行为或实现兼容。
+
+## Behavioral compatibility
+
+组件在约定的状态 owner、动作生命周期、键盘/指针语义、焦点恢复、失败处理和宿主边界上通过可执行验证后，才可以使用的兼容性声明。视觉相似不能替代 Behavioral compatibility。
+
+## Source evidence
+
+支持某项能力判断的来源记录，例如原生运行时观察、官方文档、打包产物分析或 Velvet 的执行 fixture。Source evidence 必须保留范围和未知项，静态字符串或截图不能单独证明运行时行为。
+
+## Migration gate
+
+组件进入维护型 UI Kit 目录前必须通过的一组门槛：typed Component contract、适用的 story 生命周期和可访问性验证、catalog 无漂移、兼容出口、证据/未知记录以及所需的真实浏览器资格层。不同 ownership layer 可以有不同的附加门槛。
+
 ## ResourceBudget
 
 由宿主执行的设备全局、owner 和 Job 三级资源上限与软预算。Job 的
