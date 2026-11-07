@@ -109,3 +109,10 @@ The first P1 correction pass is recorded in
 It aligns compact typography, landscape asset tiles, selection emphasis,
 toolbar/facet surfaces and the CSS fallback values with the canonical semantic
 theme snapshot.
+
+The second comparison pass is recorded in
+`.scratch/velvet-ui-evidence-alignment/research/eagle-visual-diff-2026-11-07.md`.
+It replaces the fixture's status-like facet badges with compact icon/label
+actions, equalizes the navigation and Inspector side zones, and keeps Eagle's
+slider-based zoom behavior explicitly unknown until a native interaction
+scenario establishes its range and keyboard contract.

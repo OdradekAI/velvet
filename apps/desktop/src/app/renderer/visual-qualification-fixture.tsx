@@ -100,6 +100,7 @@ export function VisualQualificationFixture() {
 
       <div className="velvet-visual-fixture__layout">
         <VelvetPane region="navigation" title="Library" className="velvet-visual-fixture__navigation" data-ui-kit-probe="navigation">
+          <div className="velvet-visual-fixture__navigation-content">
           <VelvetStack gap="sm">
             <VelvetStack direction="row" gap="xs" className="velvet-visual-fixture__library-switcher">
               <VelvetButton className="velvet-visual-fixture__library-name" variant="quiet">Graphic Design⌄</VelvetButton>
@@ -135,6 +136,11 @@ export function VisualQualificationFixture() {
               </VelvetButton>
             ))}
           </VelvetStack>
+          <VelvetButton className="velvet-visual-fixture__sidebar-filter" variant="quiet">
+            <span aria-hidden="true">▽</span>
+            <span>Filter</span>
+          </VelvetButton>
+          </div>
         </VelvetPane>
 
         <section aria-label="Asset browser" className="velvet-visual-fixture__workspace" data-ui-kit-region="preview" data-ui-kit-probe="workspace">
@@ -160,10 +166,20 @@ export function VisualQualificationFixture() {
             </VelvetStack>
           </div>
           <div className="velvet-visual-fixture__facet-strip" data-ui-kit-probe="facets">
-            <VelvetBadge tone="info">All</VelvetBadge>
-            <VelvetBadge>Illustration</VelvetBadge>
-            <VelvetBadge>Photography</VelvetBadge>
-            <VelvetBadge>Recent</VelvetBadge>
+            {[
+              ['◉', 'Color'],
+              ['◇', 'Tags'],
+              ['□', 'Folders'],
+              ['▣', 'Shapes'],
+              ['☆', 'Rating'],
+              ['<>', 'Format'],
+            ].map(([icon, label]) => (
+              <VelvetButton className="velvet-visual-fixture__facet" key={label} variant="quiet">
+                <span aria-hidden="true">{icon}</span>
+                <span>{label}</span>
+              </VelvetButton>
+            ))}
+            <VelvetIconButton icon="+" label="Add filter" variant="quiet" />
           </div>
           <VelvetSeparator />
           <div className="velvet-visual-fixture__grid-wrap" data-ui-kit-probe="grid">

@@ -20,42 +20,78 @@ The repository is internally consistent for the Alpha fixture gate:
 
 This is an Alpha source iteration, not an ecosystem release. The repository
 does not claim a public SDK, production WASM sandbox, Marketplace ABI or
-cross-platform UI qualification.
+cross-platform UI qualification. The three original P1 findings below have
+since been remediated and are recorded as verified evidence against the
+current HEAD; the remaining open findings are P2.
 
 ## Findings
 
-### P1: runtime identity is not bound at the plugin request entry point
+### Resolved P1 evidence: runtime identity binding
 
-`TauriTransport::bind_plugin_session` is exercised by tests but has no
-production caller. The Tauri wire envelope accepts `callerExtensionId` and the
-plugin request path dispatches it without deriving the identity from a host
-owned runtime lease/package. This conflicts with the host-side identity and
-capability boundary in ADR-0005 and can leave the endpoint unusable or open to
-identity spoofing if exposed to an untrusted caller.
+The plugin request seam now requires a host-issued runtime lease nonce. The
+nonce is published by `PluginHost`, projected through `ApplicationCore`, and
+verified by `TauriTransport` before a transport session is bound. A missing,
+mismatched or inactive lease fails closed; runtime shutdown removes the nonce
+and persisted lease, so a stale request cannot be reused. The declared
+`callerExtensionId` remains namespace metadata and is never treated as proof of
+identity.
 
-Follow-up: bind the extension identity when the host starts the runtime and
-accept only the bound session at the Tauri/plugin request seam.
+Evidence and checks:
 
-### P1: inbound UI Bridge messages are not fully validated at runtime
+- Implementation: `crates/plugin-host`, `crates/application-core`,
+  `crates/tauri-adapter` runtime lease and transport binding seams.
+- Contract fixtures: valid bound session, spoofed/missing nonce, shutdown
+  cleanup and stale-session rejection.
+- Verification: `cargo test -p velvet-workbench-protocol`,
+  `cargo test -p velvet-tauri-adapter`, `cargo test -p velvet-plugin-host`,
+  and the Tauri desktop test suite passed.
+- Decision record: [Bind plugin runtime identity at the transport seam](../../.scratch/velvet-ui-kit-and-plugin-boundaries/issues/01-bind-plugin-runtime-identity.md).
 
-The surface adapter checks the message discriminator and then casts the
-payload to `SurfaceToHostMessage`. Overlay, notification, progress and command
-requests are forwarded without field schema, size, request-id or capability
-validation. Malformed or oversized messages can therefore reach host actions.
+Status: **verified on current HEAD**.
 
-Follow-up: validate every inbound message against the versioned UI Bridge
-schema before dispatch, bound payload sizes and fail closed with an isolated
-surface diagnostic.
+### Resolved P1 evidence: UI Bridge payload validation
 
-### P1: dynamic capability revocation is not enforced on existing contributions
+Every inbound `SurfaceToHostMessage` now passes one host-owned validator before
+dispatch. The validator rejects unknown fields, unsupported discriminators,
+empty or oversized identifiers/text, invalid overlay/progress DTOs,
+non-JSON command arguments and messages above the 64 KiB bridge budget. Source
+and origin checks remain in the iframe and Tauri WebView adapters. Invalid
+messages fail closed through the bounded `surface.error` path and isolate the
+affected surface.
 
-The capability broker revokes grants, but command invocation checks lifecycle
-and registration without rechecking the contribution's required capabilities.
-Revoking a command or asset capability can leave the contribution registered
-and invokable until another lifecycle transition.
+Evidence and checks:
 
-Follow-up: re-evaluate required capabilities for every contribution call and
-remove or suspend affected projections on revocation.
+- Implementation: the shared UI Bridge validator used by the surface adapters
+  and in-memory endpoint.
+- Contract fixtures: valid messages, unknown fields, oversized command
+  payloads and origin spoofing.
+- Verification: desktop typecheck, test compilation,
+  `plugin-surface-adapter.test.mjs` and `ui-kit-contract.test.mjs` passed.
+- Decision record: [Validate inbound UI Bridge messages before host dispatch](../../.scratch/velvet-ui-kit-and-plugin-boundaries/issues/02-validate-ui-bridge-messages.md).
+
+Status: **verified on current HEAD**.
+
+### Resolved P1 evidence: dynamic capability revocation
+
+`InMemoryPluginHost` now treats contribution requirements as a live boundary.
+Revoking a capability removes only affected command, view, surface or service
+registrations, while unrelated contributions and the extension runtime remain
+available. Every invocation rechecks the current capability snapshot, so a
+stale handle cannot bypass revocation. Regranting restores eligible manifest
+contributions through the normal registry validation path and preserves typed
+denial reasons.
+
+Evidence and checks:
+
+- Implementation: `crates/plugin-host` capability broker, contribution
+  registries and invocation guard.
+- Contract fixtures: revoke-before-invoke, revoke-while-active, regrant and
+  unaffected-extension isolation.
+- Verification: `cargo fmt --all -- --check` and
+  `cargo test -p velvet-plugin-host` passed.
+- Decision record: [Enforce capability revocation on active plugin contributions](../../.scratch/velvet-ui-kit-and-plugin-boundaries/issues/03-enforce-capability-revocation.md).
+
+Status: **verified on current HEAD**.
 
 ### P2: manifest discovery is unbounded and too broad
 
