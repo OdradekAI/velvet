@@ -11,6 +11,7 @@ export const VelvetDialogContract = defineComponentContract<
   schemaVersion: 1,
   id: 'dialog',
   layer: 'overlays',
+  qualification: 'browser',
   owner: 'host',
   props: ['open', 'title', 'description', 'actions', 'onOpenChange', 'restoreFocusRef'],
   slots: ['children', 'actions'],

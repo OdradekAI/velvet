@@ -11,6 +11,7 @@ export const VelvetContextMenuContract = defineComponentContract<
   schemaVersion: 1,
   id: 'context-menu',
   layer: 'overlays',
+  qualification: 'browser',
   owner: 'host',
   props: ['actions', 'children'],
   slots: ['trigger', 'actions'],

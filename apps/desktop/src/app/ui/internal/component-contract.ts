@@ -2,6 +2,7 @@ export const UI_COMPONENT_CONTRACT_SCHEMA = 'velvet.ui.component-contract' as co
 export const UI_COMPONENT_CONTRACT_SCHEMA_VERSION = 1 as const;
 
 export type UiKitLayer = 'primitives' | 'overlays' | 'host-projections';
+export type UiKitQualificationTier = 'node' | 'browser' | 'both';
 export type ComponentEvidenceKind = 'observed' | 'inferred' | 'host-guarantee' | 'unknown';
 export type UiKitAsyncLifecycle = 'success' | 'cancelled' | 'timeout' | 'failure' | 'retry';
 
@@ -21,6 +22,7 @@ export interface ComponentContract<
   readonly schemaVersion: typeof UI_COMPONENT_CONTRACT_SCHEMA_VERSION;
   readonly id: string;
   readonly layer: UiKitLayer;
+  readonly qualification?: UiKitQualificationTier;
   readonly owner: 'component' | 'host' | 'adapter';
   readonly props: readonly (keyof Props | string)[];
   readonly slots: readonly string[];

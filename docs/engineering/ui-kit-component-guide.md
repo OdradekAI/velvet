@@ -113,7 +113,7 @@ the component's typed `ComponentContract`. The build generates a JSON catalog
 for developers and agents. Catalog entries describe the stable component id,
 category, ownership layer, contract id, documentation path, semantic purpose,
 props and events, supported states, keyboard/a11y guarantees, story names and
-usage examples.
+qualification tier (`node`, `browser` or `both`) and usage examples.
 They do not publish CSS class names, Radix types, private DOM structure or
 plugin-internal implementation details. The catalog is versioned with the UI
 Kit contract and generated in CI so metadata cannot silently diverge from the

@@ -11,6 +11,7 @@ export const VelvetInspectorContract = defineComponentContract<
   schemaVersion: 1,
   id: 'inspector',
   layer: 'host-projections',
+  qualification: 'both',
   owner: 'host',
   props: ['title', 'selectedCount', 'preview', 'fields', 'emptyMessage', 'onFieldChange', 'onSave', 'onRetry', 'saveState', 'saveError', 'pinned', 'onPin', 'onOpen', 'children'],
   slots: ['preview', 'metadata', 'actions', 'children'],

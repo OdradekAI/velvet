@@ -10,6 +10,7 @@ remains available from `apps/desktop/src/app/ui/index.ts`.
 - **States:** closed, open
 - **Contract:** `apps/desktop/src/app/ui/contracts/overlays/dialog.contract.ts`
 - **Stories:** `apps/desktop/src/app/ui/stories/overlays/dialog.stories.tsx`
+- **Qualification:** browser (Radix portal, focus trap and restoration)
 - **Host boundary:** layout, overlay, focus and projection state remain host-owned.
 
 The component contract is semantic. Radix types, private DOM structure, Tailwind

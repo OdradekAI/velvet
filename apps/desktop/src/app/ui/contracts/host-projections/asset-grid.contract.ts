@@ -11,6 +11,7 @@ export const VelvetAssetGridContract = defineComponentContract<
   schemaVersion: 1,
   id: 'asset-grid',
   layer: 'host-projections',
+  qualification: 'both',
   owner: 'host',
   props: ['items', 'columns', 'layout', 'onSelect', 'onOpen', 'onDragStart', 'onDrop'],
   slots: ['items'],

@@ -26,6 +26,7 @@ assert.deepEqual(catalog.components.map((component) => component.id), COMPONENT_
 const rootElement = document.createElement('div');
 document.body.append(rootElement);
 const stories = UI_KIT_STORY_REGISTRY.list();
+const browserOnlyComponents = new Set(COMPONENT_META.filter((component) => component.qualification === 'browser').map((component) => component.id));
 assert.ok(stories.length >= 40);
 assert.ok(stories.filter((story) => story.scenario).length >= 8);
 assert.deepEqual(
@@ -43,10 +44,9 @@ for (const component of COMPONENT_META) {
 }
 
 for (const story of stories) {
-  // Radix Dialog/Context Menu require a real browser EventTarget for focus and
-  // dismissable-layer effects; their wrapper contracts are covered by the
-  // dedicated adapter tests, while this runner executes the DOM-safe stories.
-  if (story.componentId === 'dialog' || story.componentId === 'context-menu') {
+  // Browser-qualified components require a real browser EventTarget for portal,
+  // focus and dismissable-layer effects; the unified browser gate executes them.
+  if (browserOnlyComponents.has(story.componentId)) {
     continue;
   }
   const storyHost = document.createElement('div');

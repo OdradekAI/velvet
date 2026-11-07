@@ -15,6 +15,7 @@ for (const meta of COMPONENT_META) {
   assert.equal(contract.schemaVersion, 1);
   assert.equal(contract.id, meta.id);
   assert.equal(contract.layer, meta.layer);
+  assert.equal(contract.qualification ?? 'node', meta.qualification ?? 'node');
   assert.equal(contract.documentation, meta.documentation);
   assert.deepEqual(contract.stories, meta.stories);
   assert.deepEqual(contract.asyncLifecycle ?? [], meta.asyncLifecycle ?? []);

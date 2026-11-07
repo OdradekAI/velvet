@@ -11,6 +11,7 @@ export const VelvetDataTableContract = defineComponentContract<
   schemaVersion: 1,
   id: 'data-table',
   layer: 'host-projections',
+  qualification: 'both',
   owner: 'host',
   props: ['rows', 'columns', 'selectedId', 'onSelect', 'onSort'],
   slots: ['cells'],

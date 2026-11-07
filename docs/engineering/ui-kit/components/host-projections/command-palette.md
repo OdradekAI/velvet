@@ -10,6 +10,7 @@ import remains available from `apps/desktop/src/app/ui/index.ts`.
 - **States:** open, empty
 - **Contract:** `apps/desktop/src/app/ui/contracts/host-projections/command-palette.contract.ts`
 - **Stories:** `apps/desktop/src/app/ui/stories/host-projections/command-palette.stories.tsx`
+- **Qualification:** both Node/Happy DOM and real browser
 - **Host boundary:** layout, overlay, focus and projection state remain host-owned.
 
 The component contract is semantic. Radix types, private DOM structure, Tailwind

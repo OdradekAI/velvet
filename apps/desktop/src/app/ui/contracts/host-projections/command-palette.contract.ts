@@ -11,6 +11,7 @@ export const VelvetCommandPaletteContract = defineComponentContract<
   schemaVersion: 1,
   id: 'command-palette',
   layer: 'host-projections',
+  qualification: 'both',
   owner: 'host',
   props: ['open', 'commands', 'onSelect', 'onClose', 'restoreFocusRef'],
   slots: ['commands'],

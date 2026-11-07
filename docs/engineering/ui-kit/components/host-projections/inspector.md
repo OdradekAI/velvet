@@ -13,6 +13,7 @@ Workbench host.
 - **Slots:** preview, metadata, actions, children
 - **Contract:** `apps/desktop/src/app/ui/contracts/host-projections/inspector.contract.ts`
 - **Stories:** `apps/desktop/src/app/ui/stories/host-projections/inspector.stories.tsx`
+- **Qualification:** both Node/Happy DOM and real browser
 
 `selectedCount` is a host projection. The component does not inspect the Asset
 store or derive selection itself. Editable fields are controlled through
