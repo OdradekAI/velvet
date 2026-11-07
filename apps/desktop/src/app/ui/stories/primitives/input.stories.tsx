@@ -20,6 +20,7 @@ export const inputStories: readonly UiKitStory[] = [
     description: 'Controlled text change.',
     render: () => <InputChangeStory />,
     scenario: {
+      covers: ['change'],
       setup: () => { changedInputValue = 'Search'; },
       actions: [(runtime) => runtime.act(async () => { changeInput?.('Astronaut'); })],
       checkpoints: [{ name: 'controlled value change', afterAction: 0, assert: (runtime) => { const domValue = runtime.root.querySelector<HTMLInputElement>('input')?.value; if (changedInputValue !== 'Astronaut' || domValue !== 'Astronaut') throw new Error('Input change contract failed'); } }],

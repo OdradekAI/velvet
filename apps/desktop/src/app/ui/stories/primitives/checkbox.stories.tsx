@@ -9,6 +9,7 @@ export const checkboxStories: readonly UiKitStory[] = [
     id: 'checkbox/checked', componentId: 'checkbox', name: 'Checked', description: 'Checked setting.',
     render: () => <VelvetCheckbox checked={checkedValue} label="Show metadata" onCheckedChange={(value) => { checkedValue = value; }} />,
     scenario: {
+      covers: ['toggle'],
       setup: () => { checkedValue = true; },
       actions: [(runtime) => runtime.act(async () => { runtime.root.querySelector<HTMLInputElement>('input[type="checkbox"]')?.click(); })],
       checkpoints: [{ name: 'toggle action', afterAction: 0, assert: () => { if (checkedValue !== false) throw new Error('Checkbox toggle contract failed'); } }],

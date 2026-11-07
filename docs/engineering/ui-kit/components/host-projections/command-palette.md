@@ -21,8 +21,14 @@ classes and Workbench implementation details are not public API.
 - `command-palette/open`
 - `command-palette/empty`
 
+The story runner covers keyboard navigation, selection and Escape dismissal.
+The real-browser qualification additionally verifies query filtering with the
+host command data.
+
 
 The current story runner provides deterministic fixture coverage. Required for overlays and host projections: run the real-browser qualification fixture when changing focus, portal, geometry or host projection behavior.
+The `command-palette/open` scenario covers query filtering, keyboard navigation,
+selection and Escape dismissal.
 Unknown Eagle behavior remains `unknown` until a runtime capture proves it.
 
 ## Validation

@@ -18,7 +18,7 @@ export const VelvetPreviewHostContract = defineComponentContract<
   actions: ['retry'],
   observables: ['preview-region', 'fallback-state', 'retry-callback'],
   asyncLifecycle: ['success', 'cancelled', 'timeout', 'failure', 'retry'],
-  stories: ['ready', 'error', 'async-success', 'async-cancelled', 'async-timeout', 'async-failure', 'async-retry'],
+  stories: ['ready', 'error', 'retry', 'async-success', 'async-cancelled', 'async-timeout', 'async-failure', 'async-retry'],
   documentation: 'docs/engineering/ui-kit/components/host-projections/preview-host.md',
   evidence: [
     { kind: 'host-guarantee', reference: 'docs/engineering/ui-kit-component-guide.md', claim: 'Velvet host ownership and semantic behavior rules' },

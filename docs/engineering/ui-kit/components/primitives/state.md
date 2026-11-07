@@ -13,7 +13,7 @@ import { VelvetState } from './app/ui/index.js';
 - **State:** loading, empty, error-retry
 - **Owner:** see `apps/desktop/src/app/ui/contracts/primitives/state.contract.ts`.
 - **Slots:** the contract file lists the supported child/data slots.
-- **Actions:** Semantic actions are observed through the typed callback or native control event.
+- **Actions:** `retry` is the semantic callback action. `action` is a content slot and does not imply a host command.
 - **Keyboard and accessibility:** Error state exposes a retry button when `onRetry` is supplied.
 
 The contract is semantic. React implementation details, Tailwind classes, Radix

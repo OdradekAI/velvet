@@ -20,6 +20,7 @@ classes and Workbench implementation details are not public API.
 
 - `preview-host/ready`
 - `preview-host/error`
+- `preview-host/retry`
 - `preview-host/async-success`
 - `preview-host/async-cancelled`
 - `preview-host/async-timeout`

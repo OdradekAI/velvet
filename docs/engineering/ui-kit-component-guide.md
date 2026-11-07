@@ -94,6 +94,9 @@ contract and story suite, the production build, and both real-browser
 qualification layers. The browser layer expects the Vite fixture server at
 `http://127.0.0.1:5173`; `qualify:ui-browser` reuses an existing server or
 starts and cleans up a temporary one.
+CI sets `UI_BROWSER_ENGINE=playwright` and runs the same gate with a managed
+headless Chromium instance; local runs use the installed ego-browser engine by
+default.
 The fake host adapter also exposes typed deferred operations for asynchronous
 stories. They record `requested → pending → committed` for success and the
 terminal `cancelled`, `timed-out` or `failed` states. `retry()` starts a fresh
@@ -124,6 +127,10 @@ The current catalog inputs live in `apps/desktop/src/app/ui/component-meta.ts`,
 generated output is `ui-kit-catalog.json`. Run
 `npm run generate:ui-kit-catalog` from `apps/desktop` after changing metadata or
 story names; CI must fail if generation produces a diff.
+The action matrix is documented in
+`docs/engineering/ui-kit/action-coverage.md`; each scenario declares
+`scenario.covers`, while browser-only actions are published as
+`browserActions` in the typed contract and catalog.
 
 Host-owned surfaces include Activity Bar, Navigation, Context, Inspector,
 Operations, PreviewHost, global overlays and global shortcuts. Plugins can contribute to

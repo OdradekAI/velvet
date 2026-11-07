@@ -19,6 +19,18 @@ for (const meta of COMPONENT_META) {
   assert.equal(contract.documentation, meta.documentation);
   assert.deepEqual(contract.stories, meta.stories);
   assert.deepEqual(contract.asyncLifecycle ?? [], meta.asyncLifecycle ?? []);
+  assert.deepEqual(contract.browserActions ?? [], meta.browserActions ?? []);
+  const storyActions = new Set(
+    UI_KIT_STORY_REGISTRY
+      .forComponent(meta.id)
+      .flatMap((story) => story.scenario?.covers ?? []),
+  );
+  const coveredActions = new Set([...storyActions, ...(meta.browserActions ?? [])]);
+  assert.deepEqual(
+    (meta.actions ?? []).filter((action) => !coveredActions.has(action)),
+    [],
+    `${meta.id} has uncovered actions`,
+  );
   for (const lifecycle of meta.asyncLifecycle ?? []) {
     assert.ok(
       UI_KIT_STORY_REGISTRY.forComponent(meta.id).some((story) => story.scenario?.asyncLifecycle === lifecycle),

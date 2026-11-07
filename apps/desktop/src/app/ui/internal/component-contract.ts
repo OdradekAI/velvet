@@ -29,6 +29,7 @@ export interface ComponentContract<
   readonly states: readonly State[];
   readonly actions: readonly Action[];
   readonly observables: readonly Observation[];
+  readonly browserActions?: readonly Action[];
   readonly asyncLifecycle?: readonly UiKitAsyncLifecycle[];
   readonly stories: readonly string[];
   readonly documentation: string;

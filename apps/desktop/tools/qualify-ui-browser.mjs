@@ -1,7 +1,9 @@
 import { spawn, spawnSync } from 'node:child_process';
 
 const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-const browserChecks = ['qualify:ui-overlays', 'qualify:ui-host-projections'];
+const browserChecks = process.env.UI_BROWSER_ENGINE === 'playwright'
+  ? ['playwright']
+  : ['qualify:ui-overlays', 'qualify:ui-host-projections'];
 const fixtureUrl = 'http://127.0.0.1:5173/?fixture=eagle';
 
 async function serverReady() {
@@ -34,7 +36,10 @@ if (!(await serverReady())) {
 let failureCode = 0;
 try {
   for (const script of browserChecks) {
-    const result = spawnSync(npmCommand, ['run', script], { stdio: 'inherit' });
+    const command = script === 'playwright'
+      ? [process.execPath, ['tools/qualify-ui-browser-playwright.mjs']]
+      : [npmCommand, ['run', script]];
+    const result = spawnSync(command[0], command[1], { stdio: 'inherit' });
     if (result.error) {
       throw new Error(`Unable to run ${script}: ${result.error.message}`);
     }

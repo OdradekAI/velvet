@@ -20,6 +20,8 @@ classes and Workbench implementation details are not public API.
 - `activity-bar/default`
 - `activity-bar/badges`
 
+The default scenario covers ArrowRight navigation and click selection.
+
 
 The current story runner provides deterministic fixture coverage. Required for overlays and host projections: run the real-browser qualification fixture when changing focus, portal, geometry or host projection behavior.
 Unknown Eagle behavior remains `unknown` until a runtime capture proves it.

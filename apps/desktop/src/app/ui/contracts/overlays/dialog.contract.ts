@@ -17,6 +17,7 @@ export const VelvetDialogContract = defineComponentContract<
   slots: ['children', 'actions'],
   states: ['closed', 'open', 'warning', 'danger', 'busy'],
   actions: ['open', 'close', 'submit'],
+  browserActions: ['open', 'close', 'submit'],
   observables: ['dialog-role', 'focus-trap', 'focus-restore', 'action-callback'],
   stories: ['closed', 'open'],
   documentation: 'docs/engineering/ui-kit/components/overlays/dialog.md',

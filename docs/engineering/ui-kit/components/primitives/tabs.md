@@ -27,6 +27,8 @@ The executable stories are in
 - `tabs/default`
 - `tabs/disabled`
 
+The default scenario covers ArrowRight navigation and direct tab selection.
+
 
 ## Evidence
 

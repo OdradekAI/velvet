@@ -9,6 +9,7 @@ export const buttonStories: readonly UiKitStory[] = [
     id: 'button/default', componentId: 'button', name: 'Default', description: 'Primary action.',
     render: () => <VelvetButton onClick={() => { activated += 1; }}>Import</VelvetButton>,
     scenario: {
+      covers: ['activate'],
       setup: () => { activated = 0; },
       actions: [(runtime) => runtime.act(async () => { runtime.root.querySelector<HTMLButtonElement>('button')?.click(); runtime.host.record('button.activate'); })],
       checkpoints: [{ name: 'committed activation', afterAction: 0, assert: () => { if (activated !== 1) throw new Error('Button activation contract failed'); } }],

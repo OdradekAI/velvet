@@ -19,6 +19,7 @@ export const selectStories: readonly UiKitStory[] = [
     description: 'Native select.',
     render: () => <SelectDefaultStory />,
     scenario: {
+      covers: ['change'],
       setup: () => { selectedValue = 'recent'; },
       actions: [(runtime) => runtime.act(async () => { changeSelect?.('name'); })],
       checkpoints: [{ name: 'selection change', afterAction: 0, assert: (runtime) => { if (selectedValue !== 'name' || runtime.root.querySelector<HTMLSelectElement>('select')?.value !== 'name') throw new Error('Select change contract failed'); } }],

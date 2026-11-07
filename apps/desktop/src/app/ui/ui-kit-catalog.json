@@ -513,6 +513,11 @@
         "focus-trap",
         "focus-restore",
         "action-callback"
+      ],
+      "browserActions": [
+        "open",
+        "close",
+        "submit"
       ]
     },
     {
@@ -562,6 +567,11 @@
         "checked-state",
         "focus",
         "dismissal"
+      ],
+      "browserActions": [
+        "open",
+        "select",
+        "dismiss"
       ]
     },
     {
@@ -679,8 +689,7 @@
         "action"
       ],
       "actions": [
-        "retry",
-        "action"
+        "retry"
       ],
       "observables": [
         "status",
@@ -918,6 +927,7 @@
       "stories": [
         "ready",
         "error",
+        "retry",
         "async-success",
         "async-cancelled",
         "async-timeout",
@@ -1101,6 +1111,9 @@
         "listbox-role",
         "focus-entry",
         "selection"
+      ],
+      "browserActions": [
+        "query"
       ]
     }
   ]

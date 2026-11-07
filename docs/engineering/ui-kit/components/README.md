@@ -43,3 +43,5 @@ AssetGrid's layout and drag/drop surface is backed by the versioned Eagle
 directive evidence matrix at `docs/engineering/ui-kit-eagle-directive-evidence.md`.
 Inspector is the first host projection extracted from that matrix; its
 selection and metadata contract lives in `host-projections/inspector.md`.
+The complete action-to-story/browser mapping is maintained in
+`../action-coverage.md`.

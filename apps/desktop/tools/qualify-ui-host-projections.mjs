@@ -37,6 +37,9 @@ const tableSorted = await page.evaluate(() => document.querySelector('[data-ui-k
 
 await page.click('loc=css:[data-ui-test-id="command-palette-trigger"]');
 await page.waitForSelector('loc=css:[data-ui-kit-probe="command-palette"] [role="dialog"]', {state:"visible"});
+await page.fill('loc=css:[data-ui-kit-probe="command-palette"] input[aria-label="Search commands"]', 'Pin');
+await page.waitForFunction(() => document.querySelectorAll('[data-ui-kit-probe="command-palette"] [role="option"]').length === 1);
+const paletteFiltered = await page.evaluate(() => [...document.querySelectorAll('[data-ui-kit-probe="command-palette"] [role="option"]')].map((node) => node.textContent?.trim() ?? null));
 const paletteOpen = await page.evaluate(() => ({
   role: document.querySelector('[data-ui-kit-probe="command-palette"] [role="dialog"]')?.getAttribute('role') ?? null,
   active: document.activeElement?.getAttribute('aria-label') ?? document.activeElement?.getAttribute('placeholder') ?? null,
@@ -57,6 +60,7 @@ assert(assetOpened === 'selected:asset-2;opened:asset-2', 'AssetGrid Enter open 
 assert(tableSelected.state === 'selected:row-1;sorted:', 'DataTable row selection contract failed');
 assert(tableSorted === 'selected:row-1;sorted:name', 'DataTable sort contract failed');
 assert(paletteOpen.role === 'dialog', 'CommandPalette dialog role contract failed');
+assert(paletteFiltered.length === 1 && paletteFiltered[0]?.startsWith('Pin selected asset'), 'CommandPalette query filter contract failed: ' + JSON.stringify(paletteFiltered));
 assert(paletteSelected === 'selected:command.pin', 'CommandPalette selection contract failed');
 assert(paletteClosed.closed && paletteClosed.restoredFocus === 'command-palette-trigger', 'CommandPalette focus restoration contract failed');
 
@@ -84,7 +88,7 @@ const result = {
   viewport: {width: await page.evaluate(() => innerWidth), height: await page.evaluate(() => innerHeight), dpr: await page.evaluate(() => devicePixelRatio)},
   assetGrid: {moved: assetMoved, opened: assetOpened},
   dataTable: {selected: tableSelected, sorted: tableSorted},
-  commandPalette: {open: paletteOpen, selected: paletteSelected, closed: paletteClosed},
+  commandPalette: {open: paletteOpen, filtered: paletteFiltered, selected: paletteSelected, closed: paletteClosed},
   inspector: {pinned: inspectorPinned, saved: inspectorSaved},
 };
 await (await import("node:fs/promises")).writeFile(${JSON.stringify(outputPath)}, JSON.stringify(result, null, 2));

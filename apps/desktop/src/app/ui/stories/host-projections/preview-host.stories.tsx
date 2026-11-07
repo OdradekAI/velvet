@@ -4,6 +4,7 @@ import { VelvetPreviewHost } from '../../host-projections/index.js';
 
 const noop = () => undefined;
 let activeOperation: UiKitStoryAsyncOperation<string> | undefined;
+let retried = 0;
 
 function operation(): UiKitStoryAsyncOperation<string> {
   if (!activeOperation) {
@@ -24,6 +25,19 @@ function clearOperation(): void {
 export const previewHostStories: readonly UiKitStory[] = [
   { id: 'preview-host/ready', componentId: 'preview-host', name: 'Ready', description: 'Ready preview.', render: () => <VelvetPreviewHost state="ready"><VelvetText>Preview</VelvetText></VelvetPreviewHost> },
   { id: 'preview-host/error', componentId: 'preview-host', name: 'Error', description: 'Retryable preview error.', render: () => <VelvetPreviewHost state="error" message="Provider failed" onRetry={noop} /> },
+  {
+    id: 'preview-host/retry',
+    componentId: 'preview-host',
+    name: 'Retry',
+    description: 'Error fallback retry action.',
+    render: () => <VelvetPreviewHost state="error" message="Provider failed" onRetry={() => { retried += 1; }} />,
+    scenario: {
+      covers: ['retry'],
+      setup: () => { retried = 0; },
+      actions: [(runtime) => runtime.act(async () => { runtime.root.querySelector<HTMLButtonElement>('button')?.click(); })],
+      checkpoints: [{ name: 'retry action', afterAction: 0, assert: () => { if (retried !== 1) throw new Error('PreviewHost retry contract failed'); } }],
+    },
+  },
   {
     id: 'preview-host/async-success',
     componentId: 'preview-host',
@@ -87,6 +101,7 @@ export const previewHostStories: readonly UiKitStory[] = [
     description: 'A failed preview request retries and then succeeds.',
     render: () => <VelvetPreviewHost state="loading" />,
     scenario: {
+      covers: ['retry'],
       asyncLifecycle: 'retry',
       setup: setupOperation,
       actions: [

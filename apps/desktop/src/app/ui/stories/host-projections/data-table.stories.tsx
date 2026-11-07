@@ -12,6 +12,7 @@ export const dataTableStories: readonly UiKitStory[] = [
     description: 'Data table.',
     render: () => <VelvetDataTable rows={[{ id: 'a', name: 'A' }]} columns={[{ id: 'name', label: 'Name', render: (row) => row.name, sortable: true }]} onSelect={(id) => { selectedRow = id; }} onSort={(id) => { sortedColumn = id; }} rowId={(row) => row.id} />,
     scenario: {
+      covers: ['select', 'sort'],
       setup: () => { selectedRow = ''; sortedColumn = ''; },
       actions: [
         (runtime) => runtime.act(async () => {

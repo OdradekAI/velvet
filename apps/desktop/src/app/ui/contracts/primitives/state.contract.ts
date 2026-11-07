@@ -4,7 +4,7 @@ import { defineComponentContract, type ComponentContract } from '../../internal/
 export const VelvetStateContract = defineComponentContract<
   VelvetStateProps,
   'loading' | 'empty' | 'error',
-  'retry' | 'action',
+  'retry',
   'status' | 'alert' | 'retry-callback'
 >({
   schema: 'velvet.ui.component-contract',
@@ -15,7 +15,7 @@ export const VelvetStateContract = defineComponentContract<
   props: ['kind', 'title', 'description', 'retryLabel', 'onRetry', 'action'],
   slots: ['action'],
   states: ['loading', 'empty', 'error'],
-  actions: ['retry', 'action'],
+  actions: ['retry'],
   observables: ['status', 'alert', 'retry-callback'],
   stories: ['loading', 'empty', 'error-retry'],
   documentation: 'docs/engineering/ui-kit/components/primitives/state.md',
@@ -23,4 +23,4 @@ export const VelvetStateContract = defineComponentContract<
     { kind: 'host-guarantee', reference: 'docs/engineering/ui-kit-component-guide.md', claim: 'Velvet semantic component contract and accessibility rules' },
     { kind: 'observed', reference: 'apps/desktop/test/ui-kit-components.test.mjs', claim: 'Executable renderer behavior coverage' },
   ],
-} satisfies ComponentContract<VelvetStateProps, 'loading' | 'empty' | 'error', 'retry' | 'action', 'status' | 'alert' | 'retry-callback'>);
+} satisfies ComponentContract<VelvetStateProps, 'loading' | 'empty' | 'error', 'retry', 'status' | 'alert' | 'retry-callback'>);

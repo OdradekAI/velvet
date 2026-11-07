@@ -11,6 +11,7 @@ export const iconButtonStories: readonly UiKitStory[] = [
     description: 'Icon action.',
     render: () => <VelvetIconButton icon="+" label="Add" onClick={() => { activated += 1; }} />,
     scenario: {
+      covers: ['activate'],
       setup: () => { activated = 0; },
       actions: [(runtime) => runtime.act(async () => { runtime.root.querySelector<HTMLButtonElement>('[aria-label="Add"]')?.click(); })],
       checkpoints: [{ name: 'icon activation', afterAction: 0, assert: () => { if (activated !== 1) throw new Error('IconButton activation contract failed'); } }],

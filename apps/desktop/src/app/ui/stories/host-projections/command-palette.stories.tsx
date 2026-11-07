@@ -13,6 +13,7 @@ export const commandPaletteStories: readonly UiKitStory[] = [
     description: 'Open command palette.',
     render: () => <VelvetCommandPalette open commands={[{ id: 'open', label: 'Open' }, { id: 'pin', label: 'Pin' }]} onSelect={(id) => { selectedCommand = id; }} onClose={() => { closed = true; }} />,
     scenario: {
+      covers: ['select', 'navigate', 'close'],
       setup: () => { selectedCommand = ''; closed = false; },
       actions: [
         (runtime) => runtime.act(async () => {

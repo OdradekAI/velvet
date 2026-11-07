@@ -58,6 +58,7 @@ export const inspectorStories: readonly UiKitStory[] = [
     description: 'Single selected asset with host actions.',
     render: () => <InspectorSingleStory />,
     scenario: {
+      covers: ['pin', 'open'],
       setup: () => { opened = false; editedValue = ''; retryCount = 0; },
       actions: [
         (runtime) => runtime.act(async () => { runtime.root.querySelector<HTMLButtonElement>('[aria-label="Pin inspector"]')?.click(); }),
@@ -83,6 +84,7 @@ export const inspectorStories: readonly UiKitStory[] = [
     description: 'Controlled field edit and committed save.',
     render: () => <InspectorEditSuccessStory />,
     scenario: {
+      covers: ['edit', 'save'],
       setup: () => { editedValue = ''; },
       actions: [
         (runtime) => runtime.act(async () => { changeField?.('name', 'New title'); }),
@@ -108,6 +110,7 @@ export const inspectorStories: readonly UiKitStory[] = [
     description: 'Failed save with host-owned retry.',
     render: () => <InspectorFailureRetryStory />,
     scenario: {
+      covers: ['retry'],
       setup: () => { retryCount = 0; },
       actions: [(runtime) => runtime.act(async () => { runtime.root.querySelector<HTMLButtonElement>('[data-inspector-action="retry"]')?.click(); })],
       checkpoints: [{ name: 'retry committed', afterAction: 0, assert: (runtime) => { if (retryCount !== 1 || runtime.root.querySelector('[role="status"]')?.textContent !== 'Saved') throw new Error('Inspector retry contract failed'); } }],

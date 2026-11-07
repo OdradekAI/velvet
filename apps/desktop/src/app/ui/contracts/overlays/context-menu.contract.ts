@@ -17,6 +17,7 @@ export const VelvetContextMenuContract = defineComponentContract<
   slots: ['trigger', 'actions'],
   states: ['closed', 'open', 'disabled', 'checked'],
   actions: ['open', 'select', 'dismiss'],
+  browserActions: ['open', 'select', 'dismiss'],
   observables: ['menu-role', 'checked-state', 'focus', 'dismissal'],
   stories: ['default', 'checked'],
   documentation: 'docs/engineering/ui-kit/components/overlays/context-menu.md',

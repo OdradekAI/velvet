@@ -17,6 +17,7 @@ export const VelvetCommandPaletteContract = defineComponentContract<
   slots: ['commands'],
   states: ['open', 'empty', 'selected', 'disabled'],
   actions: ['query', 'select', 'navigate', 'close'],
+  browserActions: ['query'],
   observables: ['dialog-role', 'listbox-role', 'focus-entry', 'selection'],
   stories: ['open', 'empty'],
   documentation: 'docs/engineering/ui-kit/components/host-projections/command-palette.md',

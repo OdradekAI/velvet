@@ -14,6 +14,7 @@ export const assetGridStories: readonly UiKitStory[] = [
     description: 'Asset grid.',
     render: () => <VelvetAssetGrid items={[{ id: 'a', label: 'A', selected: true }, { id: 'b', label: 'B' }]} onOpen={(id) => { openedAsset = id; }} onSelect={(id) => { selectedAsset = id; }} />,
     scenario: {
+      covers: ['select', 'navigate', 'open'],
       setup: () => { selectedAsset = ''; openedAsset = ''; draggedAsset = ''; droppedAsset = ''; },
       actions: [
         (runtime) => runtime.act(async () => {
@@ -42,6 +43,7 @@ export const assetGridStories: readonly UiKitStory[] = [
     description: 'Eagle-observed list layout with optional drag and drop.',
     render: () => <VelvetAssetGrid layout="list" items={[{ id: 'a', label: 'A', pinned: true }, { id: 'b', label: 'B', aspectRatio: '16 / 9' }]} onSelect={() => undefined} onDragStart={(id) => { draggedAsset = id; }} onDrop={(sourceId, targetId) => { droppedAsset = `${sourceId}:${targetId}`; }} />,
     scenario: {
+      covers: ['drag', 'drop'],
       setup: () => { draggedAsset = ''; droppedAsset = ''; },
       actions: [(runtime) => runtime.act(async () => {
         const cells = [...runtime.root.querySelectorAll<HTMLButtonElement>('[role="gridcell"]')];

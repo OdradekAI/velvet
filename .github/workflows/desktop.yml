@@ -94,9 +94,38 @@ jobs:
         working-directory: apps/desktop
         run: npm test
 
+  ui-kit:
+    name: UI Kit acceptance
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: apps/desktop
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        working-directory: apps/desktop
+        run: npx playwright install --with-deps chromium
+
+      - name: Run unified UI Kit acceptance gate
+        working-directory: apps/desktop
+        env:
+          UI_BROWSER_ENGINE: playwright
+        run: npm run verify:ui-kit
+
   build:
     name: Build (${{ matrix.os }} ${{ matrix.arch }})
-    needs: test
+    needs: [test, ui-kit]
     env:
       VELVET_TARGET_TRIPLE: ${{ matrix.target }}
     strategy:

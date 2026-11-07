@@ -56,6 +56,7 @@ export interface UiKitStoryCheckpoint {
 }
 
 export interface UiKitStoryScenario {
+  readonly covers?: readonly string[];
   readonly asyncLifecycle?: UiKitAsyncLifecycle;
   readonly setup?: (runtime: UiKitStoryRuntime) => void | Promise<void>;
   readonly actions: readonly ((runtime: UiKitStoryRuntime) => void | Promise<void>)[];
