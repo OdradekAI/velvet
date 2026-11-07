@@ -46,6 +46,8 @@ export function VelvetAssetGrid({
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const effectiveColumns = layout === 'list' ? 1 : columns;
+  const semanticColumns = layout === 'justified' ? undefined : effectiveColumns;
+  const semanticRows = semanticColumns && items.length > 0 ? Math.ceil(items.length / semanticColumns) : undefined;
   const move = (index: number, delta: number): void => {
     const next = Math.max(0, Math.min(items.length - 1, index + delta));
     const item = items[next];
@@ -58,6 +60,9 @@ export function VelvetAssetGrid({
     <div
       {...uiDataProps(common)}
       aria-label={common.ariaLabel ?? 'Assets'}
+      aria-colcount={semanticColumns}
+      aria-multiselectable="true"
+      aria-rowcount={semanticRows}
       className={`velvet-asset-grid velvet-asset-grid--${layout} ${className}`.trim()}
       role="grid"
       style={{ '--velvet-grid-columns': columns } as HTMLAttributes<HTMLDivElement>['style']}
@@ -65,7 +70,9 @@ export function VelvetAssetGrid({
       {items.map((item, index) => (
         <button
           aria-label={item.label}
-          aria-selected={item.selected}
+          aria-colindex={semanticColumns ? (index % semanticColumns) + 1 : undefined}
+          aria-rowindex={semanticColumns ? Math.floor(index / semanticColumns) + 1 : undefined}
+          aria-selected={item.selected ? 'true' : 'false'}
           className="velvet-asset-grid__item"
           data-dragging={draggingId === item.id ? 'true' : undefined}
           data-pinned={item.pinned ? 'true' : undefined}

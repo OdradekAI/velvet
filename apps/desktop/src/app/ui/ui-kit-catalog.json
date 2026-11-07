@@ -987,6 +987,7 @@
       ],
       "accessibility": [
         "grid/gridcell semantics and selection",
+        "multi-selection and row/column metrics are exposed",
         "selection modifiers are reported to the host",
         "pinned metadata is announced",
         "drag/drop is an optional host action"
@@ -994,6 +995,7 @@
       "stories": [
         "default",
         "selected",
+        "grid-semantics",
         "layout-modes",
         "selection-modifiers",
         "zoom-layout"
@@ -1011,6 +1013,7 @@
       ],
       "observables": [
         "grid-role",
+        "grid-metrics",
         "selection",
         "selection-modifier",
         "focus",

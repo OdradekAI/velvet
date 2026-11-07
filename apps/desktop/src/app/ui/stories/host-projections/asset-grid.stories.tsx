@@ -39,6 +39,24 @@ export const assetGridStories: readonly UiKitStory[] = [
   },
   { id: 'asset-grid/selected', componentId: 'asset-grid', name: 'Selected', description: 'Selected asset grid.', render: () => <VelvetAssetGrid items={[{ id: 'a', label: 'A', selected: true }]} onSelect={() => undefined} /> },
   {
+    id: 'asset-grid/grid-semantics',
+    componentId: 'asset-grid',
+    name: 'Grid semantics',
+    description: 'Multi-select and row/column metrics exposed to assistive technology.',
+    render: () => <VelvetAssetGrid columns={2} items={[{ id: 'a', label: 'A', selected: true }, { id: 'b', label: 'B' }, { id: 'c', label: 'C' }]} onSelect={() => undefined} />,
+    scenario: {
+      covers: ['navigate'],
+      setup: () => undefined,
+      actions: [],
+      checkpoints: [{ name: 'grid metrics', assert: (runtime) => {
+        const grid = runtime.root.querySelector<HTMLElement>('[role="grid"]');
+        const cells = [...runtime.root.querySelectorAll<HTMLElement>('[role="gridcell"]')];
+        if (grid?.getAttribute('aria-multiselectable') !== 'true' || grid?.getAttribute('aria-rowcount') !== '2' || grid?.getAttribute('aria-colcount') !== '2') throw new Error('AssetGrid grid metrics contract failed');
+        if (cells[0]?.getAttribute('aria-rowindex') !== '1' || cells[0]?.getAttribute('aria-colindex') !== '1' || cells[2]?.getAttribute('aria-rowindex') !== '2' || cells[2]?.getAttribute('aria-colindex') !== '1') throw new Error('AssetGrid cell position contract failed');
+      } }],
+    },
+  },
+  {
     id: 'asset-grid/layout-modes',
     componentId: 'asset-grid',
     name: 'Layout modes',

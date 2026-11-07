@@ -9,7 +9,7 @@ import remains available from `apps/desktop/src/app/ui/index.ts`.
 - **Props:** `items`, `columns`, `layout`, `onSelect`, `onOpen`, `onDragStart`, `onDrop`
 - **States:** default, selected, disabled, empty, layout, dragging, pinned
 - **Actions:** select, open, navigate, drag, drop
-- **Observables:** grid-role, selection, selection-modifier, focus, open-callback, layout, drag-and-drop, pinned, metadata
+- **Observables:** grid-role, grid-metrics, selection, selection-modifier, focus, open-callback, layout, drag-and-drop, pinned, metadata
 - **Contract:** `apps/desktop/src/app/ui/contracts/host-projections/asset-grid.contract.ts`
 - **Stories:** `apps/desktop/src/app/ui/stories/host-projections/asset-grid.stories.tsx`
 - **Qualification:** both Node/Happy DOM and real browser
@@ -44,6 +44,7 @@ are intentionally outside this component's public API.
 
 - `asset-grid/default`
 - `asset-grid/selected`
+- `asset-grid/grid-semantics`
 - `asset-grid/layout-modes`
 - `asset-grid/selection-modifiers`
 - `asset-grid/zoom-layout`
@@ -52,6 +53,12 @@ are intentionally outside this component's public API.
 separate, and the host maps its value to `columns`. It records the observed
 Eagle checkpoints of eight columns at `180` and five at `230` without making
 that mapping a public AssetGrid algorithm.
+
+The grid exposes `aria-multiselectable="true"` because selection modifiers are
+reported to the host. For `grid`, `square` and `list` layouts it also exposes
+`aria-rowcount`, `aria-colcount`, `aria-rowindex` and `aria-colindex` using the
+host-projected column count. `justified` keeps these metrics unset because its
+CSS auto-fit geometry is not a stable public row/column contract.
 
 
 The current story runner provides deterministic fixture coverage. Required for overlays and host projections: run the real-browser qualification fixture when changing focus, portal, geometry or host projection behavior.

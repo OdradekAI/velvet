@@ -79,6 +79,9 @@ await act(async () => {
 
 assert.equal(rootElement.querySelector('[role="alert"]')?.textContent?.startsWith('Failed'), true);
 assert.equal(rootElement.querySelectorAll('[role="gridcell"]').length, 2);
+assert.equal(rootElement.querySelector('[role="grid"]')?.getAttribute('aria-multiselectable'), 'true');
+assert.equal(rootElement.querySelector('[role="grid"]')?.getAttribute('aria-rowcount'), '1');
+assert.equal(rootElement.querySelector('[role="grid"] [role="gridcell"]')?.getAttribute('aria-colindex'), '1');
 assert.equal(rootElement.querySelector('.velvet-asset-grid__metadata')?.textContent, '2 tags');
 assert.equal(rootElement.querySelectorAll('tbody tr').length, 1);
 assert.equal(rootElement.querySelector('[role="option"]')?.textContent?.includes('Open'), true);

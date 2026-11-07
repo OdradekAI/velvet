@@ -21,7 +21,7 @@ contract test rejects an action that appears in neither set.
 | VelvetContextMenu | — | `open`, `select`, `dismiss` — overlay fixture |
 | VelvetPreviewHost | `retry` — `preview-host/retry` | — |
 | VelvetInspector | `pin`, `open`, `edit`, `save`, `retry` — Inspector stories | pin/edit/save in host fixture |
-| VelvetAssetGrid | `select`, `navigate`, `open`, `drag`, `drop` — AssetGrid stories (including Shift range hint) | keyboard/open/Shift selection in host fixture |
+| VelvetAssetGrid | `select`, `navigate`, `open`, `drag`, `drop` — AssetGrid stories (including grid metrics and Shift range hint) | keyboard/open/Shift selection and grid semantics in host fixture |
 | VelvetDataTable | `select`, `sort` — `data-table/default` | keyboard/sort in host fixture |
 | VelvetCommandPalette | `select`, `navigate`, `close` — `command-palette/open` | `query` plus focus restoration in host fixture |
 | VelvetZoomControl | `increment`, `decrement`, `change` — `zoom-control/default` | keyboard step, bounds and button actions in Eagle fixture |

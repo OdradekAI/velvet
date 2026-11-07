@@ -3,8 +3,8 @@
 This record captures a bounded populated-library probe against the installed
 Eagle 4.0.0 application. The probe used a temporary `Velvet Probe` folder in
 the existing empty library and twelve locally generated SVG fixtures. The
-folder was left in place after the probe because Eagle presented deletion as an
-irreversible action; no existing user assets were changed.
+temporary folder was removed after the probe with the user's explicit
+authorization; no existing user assets were changed.
 
 The current live REA native endpoint did not attach to the running process in
 this pass (`target_unavailable`), so the interaction claims below are from the

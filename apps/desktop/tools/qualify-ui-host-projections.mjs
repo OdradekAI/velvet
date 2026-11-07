@@ -26,6 +26,10 @@ await page.keyboard.press("Enter");
 const assetOpened = await page.evaluate(() => document.querySelector('[data-ui-kit-observation="asset-selection"]')?.textContent ?? null);
 await page.evaluate(() => document.querySelector('[data-ui-kit-probe="asset-grid"] [role="gridcell"]:nth-of-type(2)')?.dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: true })));
 const assetRangeSelected = await page.evaluate(() => document.querySelector('[data-ui-kit-observation="asset-selection-mode"]')?.textContent ?? null);
+const assetGridSemantics = await page.evaluate(() => {
+  const grid = document.querySelector('[data-ui-kit-probe="asset-grid"] [role="grid"]');
+  return 'multi:' + (grid?.getAttribute('aria-multiselectable') ?? '') + ';rows:' + (grid?.getAttribute('aria-rowcount') ?? '') + ';cols:' + (grid?.getAttribute('aria-colcount') ?? '');
+});
 
 const firstRow = 'loc=css:[data-ui-kit-probe="data-table"] tbody tr:nth-child(1)';
 await page.focus(firstRow);
@@ -60,6 +64,7 @@ const paletteClosed = await page.evaluate(() => ({
 assert(assetMoved.selected === 'selected:asset-2;opened:', 'AssetGrid ArrowRight selection contract failed');
 assert(assetOpened === 'selected:asset-2;opened:asset-2', 'AssetGrid Enter open contract failed');
 assert(assetRangeSelected === 'replace:range', 'AssetGrid Shift range selection contract failed');
+assert(assetGridSemantics === 'multi:true;rows:2;cols:2', 'AssetGrid grid semantics contract failed');
 assert(tableSelected.state === 'selected:row-1;sorted:', 'DataTable row selection contract failed');
 assert(tableSorted === 'selected:row-1;sorted:name', 'DataTable sort contract failed');
 assert(paletteOpen.role === 'dialog', 'CommandPalette dialog role contract failed');
@@ -89,7 +94,7 @@ assert(inspectorSaved.state === 'name:Renamed poster;pinned:true;save:saved', 'I
 const result = {
   fixture: "host-projections",
   viewport: {width: await page.evaluate(() => innerWidth), height: await page.evaluate(() => innerHeight), dpr: await page.evaluate(() => devicePixelRatio)},
-  assetGrid: {moved: assetMoved, opened: assetOpened, rangeSelected: assetRangeSelected},
+  assetGrid: {moved: assetMoved, opened: assetOpened, rangeSelected: assetRangeSelected, semantics: assetGridSemantics},
   dataTable: {selected: tableSelected, sorted: tableSorted},
   commandPalette: {open: paletteOpen, filtered: paletteFiltered, selected: paletteSelected, closed: paletteClosed},
   inspector: {pinned: inspectorPinned, saved: inspectorSaved},
