@@ -38,8 +38,8 @@ fi
 
 destination_dir="$tauri_root/binaries"
 destination="$destination_dir/velvet-launcher-$target$extension"
+rm -rf "$destination_dir"
 mkdir -p "$destination_dir"
-find "$destination_dir" -maxdepth 1 -name 'velvet-launcher*' -delete
 cp "$source" "$destination"
 if [[ "$extension" != ".exe" ]]; then
   chmod 755 "$destination"
