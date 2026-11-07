@@ -17,6 +17,7 @@ export const VelvetInspectorContract = defineComponentContract<
   slots: ['preview', 'metadata', 'actions', 'children'],
   states: ['empty', 'single', 'multiple', 'pinned', 'editing', 'saving', 'saved', 'error', 'cancelled'],
   actions: ['pin', 'open', 'edit', 'save', 'retry'],
+  browserActions: ['pin', 'open', 'edit', 'save'],
   observables: ['inspector-role', 'selection-mode', 'metadata', 'pin-state', 'open-callback', 'edit-field', 'save-state', 'validation'],
   stories: ['empty', 'single', 'multiple', 'edit-success', 'edit-validation-error', 'edit-failure-retry'],
   documentation: 'docs/engineering/ui-kit/components/host-projections/inspector.md',

@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import type { ReactNode } from 'react';
 import type { UiCommonProps } from '../internal/types.js';
 import { uiDataProps } from '../internal/ui-data-props.js';
@@ -19,17 +20,25 @@ export interface VelvetActivityBarProps extends UiCommonProps {
 
 export function VelvetActivityBar({ items, onSelect, className = '', ...common }: VelvetActivityBarProps) {
   const activeIndex = Math.max(0, items.findIndex((item) => item.active));
+  const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const selectAt = (index: number): void => {
+    const item = items[index];
+    if (!item || item.disabled) return;
+    onSelect(item.id);
+    itemRefs.current[index]?.focus();
+  };
   const move = (index: number, direction: 1 | -1): void => {
     for (let offset = 1; offset <= items.length; offset += 1) {
-      const candidate = items[(index + offset * direction + items.length) % items.length];
+      const nextIndex = (index + offset * direction + items.length) % items.length;
+      const candidate = items[nextIndex];
       if (candidate && !candidate.disabled) {
-        onSelect(candidate.id);
+        selectAt(nextIndex);
         return;
       }
     }
   };
   return (
-    <nav {...uiDataProps(common)} aria-label={common.ariaLabel ?? 'Workspaces'} className={`velvet-activity-bar ${className}`.trim()}>
+    <nav {...uiDataProps(common)} aria-label={common.ariaLabel ?? 'Workspaces'} className={`velvet-activity-bar ${className}`.trim()} data-ui-kit-navigation="activity-bar">
       {items.map((item, index) => (
         <button
           aria-current={item.active ? 'page' : undefined}
@@ -38,6 +47,7 @@ export function VelvetActivityBar({ items, onSelect, className = '', ...common }
           className="velvet-activity-bar__item"
           disabled={item.disabled}
           key={item.id}
+          ref={(element) => { itemRefs.current[index] = element; }}
           onClick={() => onSelect(item.id)}
           onKeyDown={(event) => {
             if (event.key === 'ArrowDown' || event.key === 'ArrowRight') {
@@ -48,12 +58,18 @@ export function VelvetActivityBar({ items, onSelect, className = '', ...common }
               move(index, -1);
             } else if (event.key === 'Home') {
               event.preventDefault();
-              const first = items.find((candidate) => !candidate.disabled);
-              if (first) onSelect(first.id);
+              const firstIndex = items.findIndex((candidate) => !candidate.disabled);
+              if (firstIndex >= 0) selectAt(firstIndex);
             } else if (event.key === 'End') {
               event.preventDefault();
-              const last = [...items].reverse().find((candidate) => !candidate.disabled);
-              if (last) onSelect(last.id);
+              let lastIndex = -1;
+              for (let candidateIndex = items.length - 1; candidateIndex >= 0; candidateIndex -= 1) {
+                if (!items[candidateIndex]?.disabled) {
+                  lastIndex = candidateIndex;
+                  break;
+                }
+              }
+              if (lastIndex >= 0) selectAt(lastIndex);
             }
           }}
           tabIndex={index === activeIndex ? 0 : -1}

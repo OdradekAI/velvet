@@ -47,7 +47,7 @@ export const zoomControlStories: readonly UiKitStory[] = [
       covers: ['change'],
       setup: () => { zoomValue = 180; },
       actions: [(runtime) => runtime.act(async () => { const slider = runtime.root.querySelector<HTMLInputElement>('[aria-label="Zoom level"]'); slider?.focus(); changeZoom?.(185); })],
-      checkpoints: [{ name: 'keyboard step', assert: (runtime) => { if (zoomValue !== 185 || runtime.root.querySelector('[role="group"]') === null) throw new Error('Zoom keyboard contract failed'); } }],
+      checkpoints: [{ name: 'keyboard step', assert: (runtime) => { if (zoomValue !== 185 || runtime.root.querySelector('[role="group"]') === null || runtime.root.querySelector('input[type="range"]')?.getAttribute('aria-label') !== 'Zoom level' || runtime.root.querySelector('.velvet-zoom-control__value')?.getAttribute('aria-live') !== 'polite') throw new Error('Zoom keyboard/accessibility contract failed'); } }],
     },
   },
   { id: 'zoom-control/bounds', componentId: 'zoom-control', name: 'Bounds', description: 'Step buttons stop at declared bounds.', render: () => <VelvetZoomControl value={25} min={25} max={500} onChange={(value) => { zoomValue = value; }} /> },

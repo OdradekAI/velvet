@@ -430,6 +430,7 @@
       "name": "VelvetPanel",
       "category": "composite",
       "layer": "host-projections",
+      "qualification": "both",
       "contractId": "panel",
       "documentation": "docs/engineering/ui-kit/components/host-projections/panel.md",
       "purpose": "Surface container for host panes and product views.",
@@ -446,7 +447,7 @@
       ],
       "keyboard": [],
       "accessibility": [
-        "section label and heading are preserved"
+        "named region with heading and surface projection"
       ],
       "stories": [
         "panel",
@@ -457,7 +458,9 @@
       ],
       "actions": [],
       "observables": [
-        "semantic-dom",
+        "panel-role",
+        "heading",
+        "surface",
         "children"
       ]
     },
@@ -744,6 +747,7 @@
       "name": "VelvetActivityBar",
       "category": "composite",
       "layer": "host-projections",
+      "qualification": "both",
       "contractId": "activity-bar",
       "documentation": "docs/engineering/ui-kit/components/host-projections/activity-bar.md",
       "purpose": "Workbench app navigation rail.",
@@ -764,7 +768,9 @@
         "End"
       ],
       "accessibility": [
-        "navigation landmark and roving focus"
+        "navigation landmark and roving focus",
+        "focus follows keyboard selection",
+        "disabled items are skipped"
       ],
       "stories": [
         "default",
@@ -780,7 +786,13 @@
       "observables": [
         "navigation-role",
         "selection",
-        "roving-focus"
+        "roving-focus",
+        "focus-target",
+        "disabled-skip"
+      ],
+      "browserActions": [
+        "select",
+        "navigate"
       ]
     },
     {
@@ -788,6 +800,7 @@
       "name": "VelvetPane",
       "category": "composite",
       "layer": "host-projections",
+      "qualification": "both",
       "contractId": "pane",
       "documentation": "docs/engineering/ui-kit/components/host-projections/pane.md",
       "purpose": "Semantic Workbench zone container.",
@@ -805,7 +818,7 @@
       ],
       "keyboard": [],
       "accessibility": [
-        "labelled section and region marker"
+        "named region with heading and host zone marker"
       ],
       "stories": [
         "navigation",
@@ -817,7 +830,8 @@
       "actions": [],
       "observables": [
         "region",
-        "label",
+        "region-role",
+        "heading",
         "children"
       ]
     },
@@ -862,7 +876,7 @@
         "Enter on actions"
       ],
       "accessibility": [
-        "complementary landmark, labelled metadata, editable fields and status empty state"
+        "complementary landmark, labelled heading, metadata, editable fields and status empty state"
       ],
       "stories": [
         "empty",
@@ -894,6 +908,12 @@
         "edit-field",
         "save-state",
         "validation"
+      ],
+      "browserActions": [
+        "pin",
+        "open",
+        "edit",
+        "save"
       ]
     },
     {
@@ -901,6 +921,7 @@
       "name": "VelvetPreviewHost",
       "category": "composite",
       "layer": "host-projections",
+      "qualification": "both",
       "contractId": "preview-host",
       "documentation": "docs/engineering/ui-kit/components/host-projections/preview-host.md",
       "purpose": "Host frame for Preview lifecycle and fallback states.",
@@ -922,7 +943,8 @@
         "Enter on retry"
       ],
       "accessibility": [
-        "preview landmark and state announcement"
+        "named preview region",
+        "loading is busy and error/empty states are announced"
       ],
       "stories": [
         "ready",
@@ -943,7 +965,11 @@
       "observables": [
         "preview-region",
         "fallback-state",
+        "state-announcement",
         "retry-callback"
+      ],
+      "browserActions": [
+        "retry"
       ],
       "asyncLifecycle": [
         "success",
@@ -1022,6 +1048,11 @@
         "drag-and-drop",
         "pinned",
         "metadata"
+      ],
+      "browserActions": [
+        "select",
+        "open",
+        "navigate"
       ]
     },
     {
@@ -1070,6 +1101,10 @@
         "selection",
         "sort-callback",
         "focus"
+      ],
+      "browserActions": [
+        "select",
+        "sort"
       ]
     },
     {
@@ -1123,7 +1158,10 @@
         "selection"
       ],
       "browserActions": [
-        "query"
+        "query",
+        "select",
+        "navigate",
+        "close"
       ]
     },
     {

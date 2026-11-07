@@ -5,22 +5,24 @@ export const VelvetActivityBarContract = defineComponentContract<
   VelvetActivityBarProps,
   'selected' | 'disabled' | 'focus' | 'badge',
   'select' | 'navigate',
-  'navigation-role' | 'selection' | 'roving-focus'
+  'navigation-role' | 'selection' | 'roving-focus' | 'focus-target' | 'disabled-skip'
 >({
   schema: 'velvet.ui.component-contract',
   schemaVersion: 1,
   id: 'activity-bar',
   layer: 'host-projections',
+  qualification: 'both',
   owner: 'host',
   props: ['items', 'onSelect'],
   slots: ['items'],
   states: ['selected', 'disabled', 'focus', 'badge'],
   actions: ['select', 'navigate'],
-  observables: ['navigation-role', 'selection', 'roving-focus'],
+  browserActions: ['select', 'navigate'],
+  observables: ['navigation-role', 'selection', 'roving-focus', 'focus-target', 'disabled-skip'],
   stories: ['default', 'badges'],
   documentation: 'docs/engineering/ui-kit/components/host-projections/activity-bar.md',
   evidence: [
     { kind: 'host-guarantee', reference: 'docs/engineering/ui-kit-component-guide.md', claim: 'Velvet host ownership and semantic behavior rules' },
     { kind: 'observed', reference: 'apps/desktop/src/app/ui/stories/velvet-ui.stories.tsx', claim: 'Existing compatibility story coverage' },
   ],
-} satisfies ComponentContract<VelvetActivityBarProps, 'selected' | 'disabled' | 'focus' | 'badge', 'select' | 'navigate', 'navigation-role' | 'selection' | 'roving-focus'>);
+} satisfies ComponentContract<VelvetActivityBarProps, 'selected' | 'disabled' | 'focus' | 'badge', 'select' | 'navigate', 'navigation-role' | 'selection' | 'roving-focus' | 'focus-target' | 'disabled-skip'>);

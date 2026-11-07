@@ -9,6 +9,7 @@ import remains available from `apps/desktop/src/app/ui/index.ts`.
 - **Props:** `state`, `message`, `children`, `onRetry`
 - **States:** loading, ready, empty, error, disabled
 - **Async lifecycle:** success, cancelled, timeout, failure, retry
+- **Accessibility:** named preview region; loading is busy and error/empty fallback states are announced
 - **Contract:** `apps/desktop/src/app/ui/contracts/host-projections/preview-host.contract.ts`
 - **Stories:** `apps/desktop/src/app/ui/stories/host-projections/preview-host.stories.tsx`
 - **Host boundary:** layout, overlay, focus and projection state remain host-owned.
@@ -33,6 +34,9 @@ attempt after a terminal failure and records both attempts in the host call log;
 the component only renders the host-owned projection state and never owns the
 underlying transport or job.
 
+The browser fixture verifies the error live region, retry action and transition
+to the ready preview state.
+
 
 The current story runner provides deterministic fixture coverage. Required for overlays and host projections: run the real-browser qualification fixture when changing focus, portal, geometry or host projection behavior.
 Unknown Eagle behavior remains `unknown` until a runtime capture proves it.
@@ -43,4 +47,5 @@ Unknown Eagle behavior remains `unknown` until a runtime capture proves it.
 npm run typecheck
 npm run generate:ui-kit-catalog
 npm test
+npm run qualify:ui-host-projections
 ```

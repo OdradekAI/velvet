@@ -1,12 +1,17 @@
 import { useRef, useState } from 'react';
 import {
   VelvetAssetGrid,
+  VelvetActivityBar,
   VelvetButton,
   VelvetCommandPalette,
   VelvetDataTable,
   VelvetInspector,
+  VelvetPane,
+  VelvetPanel,
+  VelvetPreviewHost,
   VelvetStack,
   VelvetText,
+  VelvetZoomControl,
 } from '../ui/index.js';
 
 const ASSETS = [
@@ -28,6 +33,7 @@ const COMMANDS = [
 
 export function HostProjectionQualificationFixture() {
   const [selectedAsset, setSelectedAsset] = useState('asset-1');
+  const [activeWorkspace, setActiveWorkspace] = useState('library');
   const [openedAsset, setOpenedAsset] = useState('');
   const [assetSelectionMode, setAssetSelectionMode] = useState('replace:single');
   const [selectedRow, setSelectedRow] = useState('');
@@ -37,6 +43,8 @@ export function HostProjectionQualificationFixture() {
   const [inspectorPinned, setInspectorPinned] = useState(false);
   const [inspectorName, setInspectorName] = useState('Astronaut poster');
   const [inspectorSaveState, setInspectorSaveState] = useState<'idle' | 'saved'>('idle');
+  const [previewState, setPreviewState] = useState<'error' | 'ready'>('error');
+  const [zoom, setZoom] = useState(180);
   const paletteTriggerRef = useRef<HTMLButtonElement>(null);
 
   return (
@@ -45,6 +53,30 @@ export function HostProjectionQualificationFixture() {
         <VelvetText as="h1">Host projection qualification</VelvetText>
         <VelvetText tone="muted">Keyboard and focus contract fixture</VelvetText>
       </VelvetStack>
+      <section aria-label="Activity bar qualification" data-ui-kit-probe="activity-bar">
+        <VelvetActivityBar
+          ariaLabel="Qualification workspaces"
+          items={[{ id: 'library', label: 'Library', icon: '▦', active: activeWorkspace === 'library' }, { id: 'settings', label: 'Settings', icon: '⚙', disabled: true }, { id: 'feed', label: 'Feed', icon: '◌', active: activeWorkspace === 'feed' }]}
+          onSelect={setActiveWorkspace}
+        />
+        <output data-ui-kit-observation="activity-bar-state">selected:{activeWorkspace}</output>
+      </section>
+      <section aria-label="Pane qualification" data-ui-kit-probe="pane">
+        <VelvetPane region="navigation" title="Qualification navigation">Pane content</VelvetPane>
+      </section>
+      <section aria-label="Panel qualification" data-ui-kit-probe="panel">
+        <VelvetPanel surface="raised" title="Qualification panel">Panel content</VelvetPanel>
+      </section>
+      <section aria-label="Preview host qualification" data-ui-kit-probe="preview-host">
+        <VelvetPreviewHost message="Provider failed" onRetry={() => setPreviewState('ready')} state={previewState}>
+          <VelvetText>Preview ready</VelvetText>
+        </VelvetPreviewHost>
+        <output data-ui-kit-observation="preview-host-state">{previewState}</output>
+      </section>
+      <section aria-label="Zoom control qualification" data-ui-kit-probe="zoom-control">
+        <VelvetZoomControl max={500} min={25} onChange={setZoom} step={5} value={zoom} />
+        <output data-ui-kit-observation="zoom-control-value">{zoom}</output>
+      </section>
       <section aria-label="Asset grid qualification" data-ui-kit-probe="asset-grid">
         <VelvetStack gap="sm">
           <VelvetText as="h2">Asset Grid</VelvetText>

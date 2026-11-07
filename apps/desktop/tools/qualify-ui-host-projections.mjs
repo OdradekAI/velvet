@@ -13,6 +13,44 @@ await page.goto("http://127.0.0.1:5173/?fixture=host-projections");
 await page.cdp("Emulation.setDeviceMetricsOverride", {width:1280,height:800,deviceScaleFactor:1,mobile:false});
 await page.waitForSelector('loc=css:[data-ui-kit-fixture="host-projections"]', {state:"visible"});
 
+await page.focus('loc=css:[data-ui-kit-probe="activity-bar"] [aria-label="Library"]');
+await page.keyboard.press("ArrowRight");
+const activityBar = await page.evaluate(() => ({
+  selected: document.querySelector('[data-ui-kit-observation="activity-bar-state"]')?.textContent ?? null,
+  focused: document.activeElement?.getAttribute('aria-label') ?? null,
+  navigation: document.querySelector('[data-ui-kit-probe="activity-bar"] [data-ui-kit-navigation="activity-bar"]')?.getAttribute('aria-label') ?? null,
+}));
+
+const paneSemantics = await page.evaluate(() => {
+  const pane = document.querySelector('[data-ui-kit-probe="pane"] [data-ui-kit-region="navigation"]');
+  const heading = pane?.querySelector('h2');
+  return {role: pane?.getAttribute('role') ?? null, labelledBy: pane?.getAttribute('aria-labelledby') ?? null, heading: heading?.textContent?.trim() ?? null, body: pane?.querySelector('.velvet-pane__body')?.textContent?.trim() ?? null};
+});
+const panelSemantics = await page.evaluate(() => {
+  const panel = document.querySelector('[data-ui-kit-probe="panel"] [data-ui-kit-component="panel"]');
+  const heading = panel?.querySelector('h2');
+  return {role: panel?.getAttribute('role') ?? null, labelledBy: panel?.getAttribute('aria-labelledby') ?? null, heading: heading?.textContent?.trim() ?? null, raised: panel?.classList.contains('velvet-panel--surface-raised') ?? false};
+});
+
+const previewError = await page.evaluate(() => ({
+  state: document.querySelector('[data-ui-kit-observation="preview-host-state"]')?.textContent ?? null,
+  alert: document.querySelector('[data-ui-kit-probe="preview-host"] [role="alert"]')?.textContent?.trim() ?? null,
+}));
+await page.click('loc=css:[data-ui-kit-probe="preview-host"] button');
+await page.waitForFunction(() => document.querySelector('[data-ui-kit-observation="preview-host-state"]')?.textContent === 'ready');
+const previewReady = await page.evaluate(() => ({
+  state: document.querySelector('[data-ui-kit-observation="preview-host-state"]')?.textContent ?? null,
+  region: document.querySelector('[data-ui-kit-probe="preview-host"] .velvet-preview-host')?.getAttribute('role') ?? null,
+}));
+
+await page.focus('loc=css:[data-ui-kit-probe="zoom-control"] input[aria-label="Zoom level"]');
+await page.keyboard.press("ArrowRight");
+const zoomControl = await page.evaluate(() => ({
+  value: document.querySelector('[data-ui-kit-observation="zoom-control-value"]')?.textContent ?? null,
+  inputValue: document.querySelector('[data-ui-kit-probe="zoom-control"] input[aria-label="Zoom level"]')?.value ?? null,
+  live: document.querySelector('[data-ui-kit-probe="zoom-control"] .velvet-zoom-control__value')?.getAttribute('aria-live') ?? null,
+}));
+
 const firstCell = 'loc=css:[data-ui-kit-probe="asset-grid"] [role="gridcell"]:nth-of-type(1)';
 const secondCell = 'loc=css:[data-ui-kit-probe="asset-grid"] [role="gridcell"]:nth-of-type(2)';
 await page.focus(firstCell);
@@ -65,6 +103,12 @@ assert(assetMoved.selected === 'selected:asset-2;opened:', 'AssetGrid ArrowRight
 assert(assetOpened === 'selected:asset-2;opened:asset-2', 'AssetGrid Enter open contract failed');
 assert(assetRangeSelected === 'replace:range', 'AssetGrid Shift range selection contract failed');
 assert(assetGridSemantics === 'multi:true;rows:2;cols:2', 'AssetGrid grid semantics contract failed');
+assert(activityBar.selected === 'selected:feed' && activityBar.focused === 'Feed' && activityBar.navigation === 'Qualification workspaces', 'ActivityBar focus/navigation contract failed');
+assert(paneSemantics.role === 'region' && paneSemantics.labelledBy && paneSemantics.heading === 'Qualification navigation' && paneSemantics.body === 'Pane content', 'Pane accessibility contract failed');
+assert(panelSemantics.role === 'region' && panelSemantics.labelledBy && panelSemantics.heading === 'Qualification panel' && panelSemantics.raised, 'Panel accessibility contract failed');
+assert(previewError.state === 'error' && previewError.alert?.includes('Preview failed'), 'PreviewHost error announcement contract failed');
+assert(previewReady.state === 'ready' && previewReady.region === 'region', 'PreviewHost retry/region contract failed');
+assert(zoomControl.value === '185' && zoomControl.inputValue === '185' && zoomControl.live === 'polite', 'ZoomControl keyboard/value contract failed');
 assert(tableSelected.state === 'selected:row-1;sorted:', 'DataTable row selection contract failed');
 assert(tableSorted === 'selected:row-1;sorted:name', 'DataTable sort contract failed');
 assert(paletteOpen.role === 'dialog', 'CommandPalette dialog role contract failed');
@@ -94,6 +138,11 @@ assert(inspectorSaved.state === 'name:Renamed poster;pinned:true;save:saved', 'I
 const result = {
   fixture: "host-projections",
   viewport: {width: await page.evaluate(() => innerWidth), height: await page.evaluate(() => innerHeight), dpr: await page.evaluate(() => devicePixelRatio)},
+  activityBar,
+  pane: paneSemantics,
+  panel: panelSemantics,
+  previewHost: {error: previewError, ready: previewReady},
+  zoomControl,
   assetGrid: {moved: assetMoved, opened: assetOpened, rangeSelected: assetRangeSelected, semantics: assetGridSemantics},
   dataTable: {selected: tableSelected, sorted: tableSorted},
   commandPalette: {open: paletteOpen, filtered: paletteFiltered, selected: paletteSelected, closed: paletteClosed},

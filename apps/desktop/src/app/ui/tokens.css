@@ -315,6 +315,8 @@ button {
   text-transform: uppercase;
 }
 
+.velvet-panel__header h2, .velvet-pane__header h2 { margin: 0; font: inherit; }
+
 .velvet-panel__body {
   min-height: 0;
   flex: 1;

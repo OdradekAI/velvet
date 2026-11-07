@@ -16,15 +16,17 @@ contract test rejects an action that appears in neither set.
 | VelvetState | `retry` — `state/error-retry` | `action` is a content slot, not a command |
 | VelvetTabs | `select`, `navigate` — `tabs/default` | — |
 | VelvetToastHost | `dismiss` — `toast/default` | — |
-| VelvetActivityBar | `select`, `navigate` — `activity-bar/default` | — |
+| VelvetActivityBar | `select`, `navigate` — `activity-bar/default` | keyboard selection, disabled-item skip and focus movement in host fixture |
 | VelvetDialog | — | `open`, `close`, `submit` — overlay fixture |
 | VelvetContextMenu | — | `open`, `select`, `dismiss` — overlay fixture |
-| VelvetPreviewHost | `retry` — `preview-host/retry` | — |
+| VelvetPreviewHost | `retry` — `preview-host/retry` | error announcement, retry and ready transition in host fixture |
 | VelvetInspector | `pin`, `open`, `edit`, `save`, `retry` — Inspector stories | pin/edit/save in host fixture |
 | VelvetAssetGrid | `select`, `navigate`, `open`, `drag`, `drop` — AssetGrid stories (including grid metrics and Shift range hint) | keyboard/open/Shift selection and grid semantics in host fixture |
 | VelvetDataTable | `select`, `sort` — `data-table/default` | keyboard/sort in host fixture |
-| VelvetCommandPalette | `select`, `navigate`, `close` — `command-palette/open` | `query` plus focus restoration in host fixture |
+| VelvetCommandPalette | `select`, `navigate`, `close` — `command-palette/open` | query/select/navigation/close plus focus restoration in host fixture |
 | VelvetZoomControl | `increment`, `decrement`, `change` — `zoom-control/default` | keyboard step, bounds and button actions in Eagle fixture |
+| VelvetPane | semantic region checkpoint — `pane/navigation` | role, heading link, zone marker and body in host fixture |
+| VelvetPanel | semantic region checkpoint — `panel/panel` | role, heading link, surface and body in host fixture |
 
 Run the complete action matrix with:
 

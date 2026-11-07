@@ -12,11 +12,11 @@ export const activityBarStories: readonly UiKitStory[] = [
       covers: ['select', 'navigate'],
       setup: () => { selectedActivity = ''; },
       actions: [
-        (runtime) => runtime.act(async () => { runtime.root.querySelector<HTMLElement>('[aria-label="Library"]')?.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'ArrowRight' })); }),
+        (runtime) => runtime.act(async () => { const library = runtime.root.querySelector<HTMLElement>('[aria-label="Library"]'); library?.focus(); library?.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'ArrowRight' })); }),
         (runtime) => runtime.act(async () => { runtime.root.querySelector<HTMLButtonElement>('[aria-label="Library"]')?.click(); }),
       ],
       checkpoints: [
-        { name: 'activity navigation', afterAction: 0, assert: () => { if (selectedActivity !== 'feed') throw new Error('ActivityBar ArrowRight contract failed'); } },
+        { name: 'activity navigation', afterAction: 0, assert: (runtime) => { if (selectedActivity !== 'feed' || runtime.root.ownerDocument.activeElement?.getAttribute('aria-label') !== 'Feed') throw new Error('ActivityBar ArrowRight/focus contract failed'); } },
         { name: 'activity selection', afterAction: 1, assert: () => { if (selectedActivity !== 'library') throw new Error('ActivityBar click selection contract failed'); } },
       ],
     },

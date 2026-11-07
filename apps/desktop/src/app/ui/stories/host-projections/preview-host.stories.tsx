@@ -24,7 +24,7 @@ function clearOperation(): void {
 
 export const previewHostStories: readonly UiKitStory[] = [
   { id: 'preview-host/ready', componentId: 'preview-host', name: 'Ready', description: 'Ready preview.', render: () => <VelvetPreviewHost state="ready"><VelvetText>Preview</VelvetText></VelvetPreviewHost> },
-  { id: 'preview-host/error', componentId: 'preview-host', name: 'Error', description: 'Retryable preview error.', render: () => <VelvetPreviewHost state="error" message="Provider failed" onRetry={noop} /> },
+  { id: 'preview-host/error', componentId: 'preview-host', name: 'Error', description: 'Retryable preview error.', render: () => <VelvetPreviewHost state="error" message="Provider failed" onRetry={noop} />, scenario: { covers: ['retry'], actions: [], checkpoints: [{ name: 'error announcement', assert: (runtime) => { if (runtime.root.querySelector('[role="region"]')?.getAttribute('data-preview-state') !== 'error' || runtime.root.querySelector('[role="alert"]') === null || runtime.root.querySelector('button') === null) throw new Error('PreviewHost error accessibility contract failed'); } }] } },
   {
     id: 'preview-host/retry',
     componentId: 'preview-host',

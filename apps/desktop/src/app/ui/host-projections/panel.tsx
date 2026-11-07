@@ -1,3 +1,4 @@
+import { useId } from 'react';
 import type { ReactNode } from 'react';
 
 export interface VelvetPanelProps {
@@ -17,14 +18,17 @@ export function VelvetPanel({
   id,
   surface = 'panel',
 }: VelvetPanelProps) {
+  const headingId = useId();
   return (
     <section
-      aria-label={ariaLabel}
+      aria-label={ariaLabel ?? (title ? undefined : 'Panel')}
+      aria-labelledby={ariaLabel || !title ? undefined : headingId}
       className={`velvet-panel velvet-panel--surface-${surface} ${className}`.trim()}
       data-ui-kit-component="panel"
       id={id}
+      role="region"
     >
-      {title ? <header className="velvet-panel__header">{title}</header> : null}
+      {title ? <header className="velvet-panel__header"><h2 id={headingId}>{title}</h2></header> : null}
       <div className="velvet-panel__body">{children}</div>
     </section>
   );

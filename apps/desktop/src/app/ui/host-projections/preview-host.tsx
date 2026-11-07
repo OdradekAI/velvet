@@ -10,11 +10,11 @@ export interface VelvetPreviewHostProps {
 
 export function VelvetPreviewHost({ state, children, message, onRetry }: VelvetPreviewHostProps) {
   if (state === 'ready') {
-    return <section aria-label="Preview" className="velvet-preview-host" data-preview-state={state}>{children}</section>;
+    return <section aria-label="Preview" className="velvet-preview-host" data-preview-state={state} role="region">{children}</section>;
   }
   const kind: VelvetStateKind = state === 'loading' ? 'loading' : state === 'error' ? 'error' : 'empty';
   return (
-    <section aria-label="Preview" className="velvet-preview-host" data-preview-state={state}>
+    <section aria-busy={state === 'loading' ? 'true' : undefined} aria-label="Preview" className="velvet-preview-host" data-preview-state={state} role="region">
       <VelvetState
         description={message}
         kind={kind}

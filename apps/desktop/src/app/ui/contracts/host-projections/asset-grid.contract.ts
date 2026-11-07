@@ -17,6 +17,7 @@ export const VelvetAssetGridContract = defineComponentContract<
   slots: ['items', 'items.metadata'],
   states: ['default', 'selected', 'disabled', 'empty', 'layout', 'dragging', 'pinned'],
   actions: ['select', 'open', 'navigate', 'drag', 'drop'],
+  browserActions: ['select', 'open', 'navigate'],
   observables: ['grid-role', 'grid-metrics', 'selection', 'selection-modifier', 'focus', 'open-callback', 'layout', 'drag-and-drop', 'pinned', 'metadata'],
   stories: ['default', 'selected', 'grid-semantics', 'layout-modes', 'selection-modifiers', 'zoom-layout'],
   documentation: 'docs/engineering/ui-kit/components/host-projections/asset-grid.md',

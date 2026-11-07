@@ -1,3 +1,4 @@
+import { useId } from 'react';
 import type { ReactNode } from 'react';
 import { VelvetButton, VelvetInput } from '../primitives/index.js';
 import type { UiCommonProps } from '../internal/types.js';
@@ -51,19 +52,21 @@ export function VelvetInspector({
   className = '',
   ...common
 }: VelvetInspectorProps) {
+  const headingId = useId();
   const selectionMode = selectedCount === 0 ? 'empty' : selectedCount === 1 ? 'single' : 'multiple';
   const editableFields = fields.filter((field) => field.editable);
   return (
     <aside
       {...uiDataProps(common)}
       aria-label={title}
+      aria-labelledby={common.ariaLabel ? undefined : headingId}
       className={`velvet-inspector velvet-inspector--${selectionMode} ${pinned ? 'velvet-inspector--pinned' : ''} ${className}`.trim()}
       data-inspector-pinned={pinned ? 'true' : undefined}
       data-inspector-selection={selectionMode}
       data-ui-kit-component="inspector"
     >
       <header className="velvet-inspector__header">
-        <h2>{title}</h2>
+        <h2 id={headingId}>{title}</h2>
         {onPin ? (
           <VelvetButton
             ariaLabel={pinned ? 'Unpin inspector' : 'Pin inspector'}

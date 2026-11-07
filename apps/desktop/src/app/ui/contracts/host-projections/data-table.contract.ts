@@ -17,6 +17,7 @@ export const VelvetDataTableContract = defineComponentContract<
   slots: ['cells'],
   states: ['default', 'selected', 'sortable', 'empty'],
   actions: ['select', 'sort'],
+  browserActions: ['select', 'sort'],
   observables: ['table-role', 'selection', 'sort-callback', 'focus'],
   stories: ['default', 'selected'],
   documentation: 'docs/engineering/ui-kit/components/host-projections/data-table.md',
