@@ -11,6 +11,7 @@ export const VelvetInlineContract = defineComponentContract<
   schemaVersion: 1,
   id: 'inline',
   layer: 'primitives',
+  qualification: 'both',
   owner: 'component',
   props: ['children', 'gap', 'className'],
   slots: ['children'],

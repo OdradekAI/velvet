@@ -12,7 +12,7 @@ export const checkboxStories: readonly UiKitStory[] = [
       covers: ['toggle'],
       setup: () => { checkedValue = true; },
       actions: [(runtime) => runtime.act(async () => { runtime.root.querySelector<HTMLInputElement>('input[type="checkbox"]')?.click(); })],
-      checkpoints: [{ name: 'toggle action', afterAction: 0, assert: () => { if (checkedValue !== false) throw new Error('Checkbox toggle contract failed'); } }],
+      checkpoints: [{ name: 'toggle action', afterAction: 0, assert: (runtime) => { if (checkedValue !== false || runtime.root.querySelector('input[type="checkbox"]')?.closest('label') === null) throw new Error('Checkbox toggle/label contract failed'); } }],
     },
   },
   { id: 'checkbox/disabled', componentId: 'checkbox', name: 'Disabled', description: 'Disabled setting.', render: () => <VelvetCheckbox checked={false} disabled label="Unavailable" onCheckedChange={noop} /> },

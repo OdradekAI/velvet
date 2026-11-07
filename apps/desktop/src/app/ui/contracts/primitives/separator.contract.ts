@@ -11,6 +11,7 @@ export const VelvetSeparatorContract = defineComponentContract<
   schemaVersion: 1,
   id: 'separator',
   layer: 'primitives',
+  qualification: 'both',
   owner: 'component',
   props: ['orientation'],
   slots: [],

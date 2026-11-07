@@ -8,14 +8,14 @@ contract test rejects an action that appears in neither set.
 
 | Component | Node story coverage | Browser coverage |
 | --- | --- | --- |
-| VelvetButton | `activate` — `button/default` | — |
-| VelvetIconButton | `activate` — `icon-button/default` | — |
-| VelvetInput | `change` — `input/change` | — |
-| VelvetSelect | `change` — `select/default` | — |
-| VelvetCheckbox | `toggle` — `checkbox/checked` | — |
-| VelvetState | `retry` — `state/error-retry` | `action` is a content slot, not a command |
-| VelvetTabs | `select`, `navigate` — `tabs/default` | — |
-| VelvetToastHost | `dismiss` — `toast/default` | — |
+| VelvetButton | `activate` — `button/default` | native activation and busy semantics in primitives fixture |
+| VelvetIconButton | `activate` — `icon-button/default` | accessible label and activation in primitives fixture |
+| VelvetInput | `change` — `input/change` | native value/change semantics in primitives fixture |
+| VelvetSelect | `change` — `select/default` | native value/change semantics in primitives fixture |
+| VelvetCheckbox | `toggle` — `checkbox/checked` | associated label and checked state in primitives fixture |
+| VelvetState | `retry` — `state/error-retry` | alert live region and retry in primitives fixture |
+| VelvetTabs | `select`, `navigate` — `tabs/default` | tablist orientation, ArrowRight selection and focus in primitives fixture |
+| VelvetToastHost | `dismiss` — `toast/default` | polite live region and dismissal in primitives fixture |
 | VelvetActivityBar | `select`, `navigate` — `activity-bar/default` | keyboard selection, disabled-item skip and focus movement in host fixture |
 | VelvetDialog | — | `open`, `close`, `submit` — overlay fixture |
 | VelvetContextMenu | — | `open`, `select`, `dismiss` — overlay fixture |

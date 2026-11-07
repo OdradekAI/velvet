@@ -12,11 +12,11 @@ export const tabsStories: readonly UiKitStory[] = [
       covers: ['select', 'navigate'],
       setup: () => { selectedTab = ''; },
       actions: [
-        (runtime) => runtime.act(async () => { runtime.root.querySelector<HTMLElement>('[role="tab"]')?.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'ArrowRight' })); }),
+        (runtime) => runtime.act(async () => { const tab = runtime.root.querySelector<HTMLElement>('[role="tab"]'); tab?.focus(); tab?.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'ArrowRight' })); }),
         (runtime) => runtime.act(async () => { runtime.root.querySelector<HTMLButtonElement>('[role="tab"]:first-of-type')?.click(); }),
       ],
       checkpoints: [
-        { name: 'roving focus navigation', afterAction: 0, assert: () => { if (selectedTab !== 'recent') throw new Error('Tabs ArrowRight contract failed'); } },
+        { name: 'roving focus navigation', afterAction: 0, assert: (runtime) => { if (selectedTab !== 'recent' || runtime.root.ownerDocument.activeElement?.textContent?.trim() !== 'Recent' || runtime.root.querySelector('[role="tablist"]')?.getAttribute('aria-orientation') !== 'horizontal') throw new Error('Tabs ArrowRight/focus contract failed'); } },
         { name: 'tab selection', afterAction: 1, assert: () => { if (selectedTab !== 'all') throw new Error('Tabs click selection contract failed'); } },
       ],
     },

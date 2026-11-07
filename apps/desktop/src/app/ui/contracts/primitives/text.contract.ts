@@ -11,6 +11,7 @@ export const VelvetTextContract = defineComponentContract<
   schemaVersion: 1,
   id: 'text',
   layer: 'primitives',
+  qualification: 'both',
   owner: 'component',
   props: ['as', 'tone', 'children', 'className', 'ariaLabel'],
   slots: ['children'],

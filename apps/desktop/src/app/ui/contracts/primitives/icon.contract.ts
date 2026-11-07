@@ -11,6 +11,7 @@ export const VelvetIconContract = defineComponentContract<
   schemaVersion: 1,
   id: 'icon',
   layer: 'primitives',
+  qualification: 'both',
   owner: 'component',
   props: ['children', 'label', 'className'],
   slots: ['children'],

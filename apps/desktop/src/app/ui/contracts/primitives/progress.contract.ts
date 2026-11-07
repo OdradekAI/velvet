@@ -11,6 +11,7 @@ export const VelvetProgressContract = defineComponentContract<
   schemaVersion: 1,
   id: 'progress',
   layer: 'primitives',
+  qualification: 'both',
   owner: 'host',
   props: ['value', 'label', 'tone'],
   slots: [],

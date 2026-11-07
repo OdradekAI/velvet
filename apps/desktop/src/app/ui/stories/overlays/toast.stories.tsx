@@ -14,7 +14,7 @@ export const toastStories: readonly UiKitStory[] = [
       covers: ['dismiss'],
       setup: () => { dismissedToast = ''; },
       actions: [(runtime) => runtime.act(async () => { runtime.root.querySelector<HTMLButtonElement>('[aria-label="Dismiss notification"]')?.click(); })],
-      checkpoints: [{ name: 'toast dismissal', afterAction: 0, assert: () => { if (dismissedToast !== 'toast-1') throw new Error('Toast dismissal contract failed'); } }],
+      checkpoints: [{ name: 'toast dismissal', afterAction: 0, assert: (runtime) => { if (dismissedToast !== 'toast-1' || runtime.root.querySelector('[role="status"]')?.getAttribute('aria-live') !== 'polite') throw new Error('Toast dismissal/live-region contract failed'); } }],
     },
   },
   { id: 'toast/error', componentId: 'toast', name: 'Error', description: 'Error toast.', render: () => <VelvetToastHost items={[{ id: 'toast-1', message: 'Could not save', severity: 'error' }]} onDismiss={() => undefined} /> },

@@ -14,7 +14,7 @@ export const stateStories: readonly UiKitStory[] = [
       covers: ['retry'],
       setup: () => { retried = 0; },
       actions: [(runtime) => runtime.act(async () => { runtime.root.querySelector<HTMLButtonElement>('button')?.click(); })],
-      checkpoints: [{ name: 'retry action', afterAction: 0, assert: () => { if (retried !== 1) throw new Error('State retry contract failed'); } }],
+      checkpoints: [{ name: 'retry action', afterAction: 0, assert: (runtime) => { if (retried !== 1 || runtime.root.querySelector('[role="alert"]') === null) throw new Error('State retry/live-region contract failed'); } }],
     },
   },
 ];

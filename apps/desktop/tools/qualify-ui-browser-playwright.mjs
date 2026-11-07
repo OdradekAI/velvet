@@ -7,7 +7,8 @@ const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, dev
 
 async function fixtureReady(fixture) {
   await page.goto(`${baseUrl}/?fixture=${fixture}`);
-  await page.locator(`[data-ui-kit-fixture="${fixture === 'eagle' ? 'eagle-baseline' : 'host-projections'}"]`).waitFor({ state: 'visible' });
+  const fixtureId = fixture === 'eagle' ? 'eagle-baseline' : fixture === 'host-projections' ? 'host-projections' : 'primitives-overlays';
+  await page.locator(`[data-ui-kit-fixture="${fixtureId}"]`).waitFor({ state: 'visible' });
   await page.waitForTimeout(150);
 }
 
@@ -149,5 +150,59 @@ host.zoom = {
 };
 assert.deepEqual(host.zoom, { value: '185', focused: false, step: '5' });
 
-console.log(JSON.stringify({ engine: 'playwright', overlay, host }, null, 2));
+const primitives = {};
+await fixtureReady('primitives-overlays');
+primitives.staticSemantics = await page.locator('[data-ui-kit-probe="static-primitives"]').evaluate((node) => ({
+  badgeTag: node.querySelector('.velvet-badge')?.tagName ?? null,
+  iconRole: node.querySelector('.velvet-icon')?.getAttribute('role') ?? null,
+  iconLabel: node.querySelector('.velvet-icon')?.getAttribute('aria-label') ?? null,
+  heading: node.querySelector('h1')?.textContent?.trim() ?? null,
+  separator: node.querySelector('[role="separator"]')?.getAttribute('aria-orientation') ?? null,
+  progressLabel: node.querySelector('progress')?.getAttribute('aria-label') ?? null,
+  progressValue: node.querySelector('progress')?.value ?? null,
+}));
+await page.locator('[data-ui-kit-probe="button"] [aria-label="Run action"]').click();
+await page.locator('[data-ui-kit-probe="button"] [aria-label="Add item"]').click();
+primitives.button = await page.locator('[data-ui-kit-probe="button"]').evaluate((node) => ({
+  activated: node.querySelector('[data-ui-kit-observation="button-state"]')?.textContent ?? null,
+  busyDisabled: node.querySelector('[aria-label="Busy action"]')?.hasAttribute('disabled') ?? false,
+  busy: node.querySelector('[aria-label="Busy action"]')?.getAttribute('aria-busy') ?? null,
+}));
+await page.locator('[data-ui-kit-probe="native-controls"] input[aria-label="Primitive input"]').fill('Ada');
+await page.locator('[data-ui-kit-probe="native-controls"] select[aria-label="Primitive select"]').selectOption('name');
+await page.locator('[data-ui-kit-probe="native-controls"] input[type="checkbox"]').click();
+primitives.nativeControls = await page.locator('[data-ui-kit-observation="native-values"]').textContent();
+await page.locator('[data-ui-kit-probe="tabs"] [role="tab"]').first().focus();
+await page.keyboard.press('ArrowRight');
+primitives.tabs = await page.locator('[data-ui-kit-probe="tabs"]').evaluate((node) => ({
+  selected: node.querySelector('[data-ui-kit-observation="tab-state"]')?.textContent ?? null,
+  focused: document.activeElement?.textContent?.trim() ?? null,
+  orientation: node.querySelector('[role="tablist"]')?.getAttribute('aria-orientation') ?? null,
+}));
+primitives.stateRole = await page.locator('[data-ui-kit-probe="state"] [role="alert"]').getAttribute('role');
+await page.locator('[data-ui-kit-probe="state"] button').click();
+primitives.stateRetry = await page.locator('[data-ui-kit-observation="state-retry"]').textContent();
+primitives.toast = await page.locator('[data-ui-kit-probe="toast"]').evaluate((node) => ({
+  role: node.querySelector('[role="status"]')?.getAttribute('role') ?? null,
+  live: node.querySelector('[role="status"]')?.getAttribute('aria-live') ?? null,
+  count: node.querySelector('[data-ui-kit-observation="toast-count"]')?.textContent ?? null,
+}));
+await page.locator('[data-ui-kit-probe="toast"] [aria-label="Dismiss notification"]').click();
+primitives.toastDismissed = await page.locator('[data-ui-kit-observation="toast-count"]').textContent();
+assert.equal(primitives.staticSemantics.badgeTag, 'SPAN');
+assert.equal(primitives.staticSemantics.iconRole, 'img');
+assert.equal(primitives.staticSemantics.iconLabel, 'Favorite');
+assert.equal(primitives.staticSemantics.heading, 'Primitive semantics');
+assert.equal(primitives.staticSemantics.separator, 'vertical');
+assert.equal(primitives.staticSemantics.progressLabel, 'Progress');
+assert.equal(primitives.staticSemantics.progressValue, 60);
+assert.deepEqual(primitives.button, { activated: '2', busyDisabled: true, busy: 'true' });
+assert.equal(primitives.nativeControls, 'input:Ada;select:name;checked:true');
+assert.deepEqual(primitives.tabs, { selected: 'recent', focused: 'Recent', orientation: 'horizontal' });
+assert.equal(primitives.stateRole, 'alert');
+assert.equal(primitives.stateRetry, '1');
+assert.deepEqual(primitives.toast, { role: 'status', live: 'polite', count: '1' });
+assert.equal(primitives.toastDismissed, '0');
+
+console.log(JSON.stringify({ engine: 'playwright', overlay, host, primitives }, null, 2));
 await browser.close();

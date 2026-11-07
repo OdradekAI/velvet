@@ -8,6 +8,7 @@
       "name": "VelvetText",
       "category": "primitive",
       "layer": "primitives",
+      "qualification": "both",
       "contractId": "text",
       "documentation": "docs/engineering/ui-kit/components/primitives/text.md",
       "purpose": "Semantic text with host typography and tone tokens.",
@@ -43,6 +44,7 @@
       "name": "VelvetIcon",
       "category": "primitive",
       "layer": "primitives",
+      "qualification": "both",
       "contractId": "icon",
       "documentation": "docs/engineering/ui-kit/components/primitives/icon.md",
       "purpose": "Accessible or decorative icon wrapper for toolbars and controls.",
@@ -77,6 +79,7 @@
       "name": "VelvetBadge",
       "category": "primitive",
       "layer": "primitives",
+      "qualification": "both",
       "contractId": "badge",
       "documentation": "docs/engineering/ui-kit/components/primitives/badge.md",
       "purpose": "Compact status or count marker.",
@@ -111,6 +114,7 @@
       "name": "VelvetStack",
       "category": "primitive",
       "layer": "primitives",
+      "qualification": "both",
       "contractId": "stack",
       "documentation": "docs/engineering/ui-kit/components/primitives/stack.md",
       "purpose": "Token-spaced vertical or horizontal layout primitive.",
@@ -147,6 +151,7 @@
       "name": "VelvetInline",
       "category": "primitive",
       "layer": "primitives",
+      "qualification": "both",
       "contractId": "inline",
       "documentation": "docs/engineering/ui-kit/components/primitives/inline.md",
       "purpose": "Token-spaced horizontal layout primitive.",
@@ -179,6 +184,7 @@
       "name": "VelvetButton",
       "category": "primitive",
       "layer": "primitives",
+      "qualification": "both",
       "contractId": "button",
       "documentation": "docs/engineering/ui-kit/components/primitives/button.md",
       "purpose": "Command or local action control.",
@@ -221,6 +227,9 @@
         "semantic-dom",
         "focus",
         "action-callback"
+      ],
+      "browserActions": [
+        "activate"
       ]
     },
     {
@@ -228,6 +237,7 @@
       "name": "VelvetIconButton",
       "category": "primitive",
       "layer": "primitives",
+      "qualification": "both",
       "contractId": "icon-button",
       "documentation": "docs/engineering/ui-kit/components/primitives/icon-button.md",
       "purpose": "Compact icon-first action with an accessible label.",
@@ -264,6 +274,9 @@
         "semantic-dom",
         "focus",
         "action-callback"
+      ],
+      "browserActions": [
+        "activate"
       ]
     },
     {
@@ -271,6 +284,7 @@
       "name": "VelvetInput",
       "category": "primitive",
       "layer": "primitives",
+      "qualification": "both",
       "contractId": "input",
       "documentation": "docs/engineering/ui-kit/components/primitives/input.md",
       "purpose": "Text entry control with host density and focus styling.",
@@ -308,6 +322,9 @@
         "semantic-dom",
         "focus",
         "value"
+      ],
+      "browserActions": [
+        "change"
       ]
     },
     {
@@ -315,6 +332,7 @@
       "name": "VelvetSelect",
       "category": "primitive",
       "layer": "primitives",
+      "qualification": "both",
       "contractId": "select",
       "documentation": "docs/engineering/ui-kit/components/primitives/select.md",
       "purpose": "Native select control with host styling.",
@@ -351,6 +369,9 @@
         "semantic-dom",
         "focus",
         "value"
+      ],
+      "browserActions": [
+        "change"
       ]
     },
     {
@@ -358,6 +379,7 @@
       "name": "VelvetCheckbox",
       "category": "primitive",
       "layer": "primitives",
+      "qualification": "both",
       "contractId": "checkbox",
       "documentation": "docs/engineering/ui-kit/components/primitives/checkbox.md",
       "purpose": "Controlled boolean setting control.",
@@ -393,6 +415,9 @@
         "semantic-dom",
         "focus",
         "checked"
+      ],
+      "browserActions": [
+        "toggle"
       ]
     },
     {
@@ -400,6 +425,7 @@
       "name": "VelvetSeparator",
       "category": "primitive",
       "layer": "primitives",
+      "qualification": "both",
       "contractId": "separator",
       "documentation": "docs/engineering/ui-kit/components/primitives/separator.md",
       "purpose": "Visual and semantic divider.",
@@ -582,6 +608,7 @@
       "name": "VelvetTabs",
       "category": "primitive",
       "layer": "primitives",
+      "qualification": "both",
       "contractId": "tabs",
       "documentation": "docs/engineering/ui-kit/components/primitives/tabs.md",
       "purpose": "Roving-focus tab selection control.",
@@ -602,7 +629,7 @@
         "End"
       ],
       "accessibility": [
-        "tablist/tab semantics and roving focus"
+        "tablist/tab semantics, horizontal orientation and focus follows selection"
       ],
       "stories": [
         "default",
@@ -618,7 +645,13 @@
       "observables": [
         "tab-selection",
         "focus",
-        "keyboard"
+        "keyboard",
+        "tablist-role",
+        "orientation"
+      ],
+      "browserActions": [
+        "select",
+        "navigate"
       ]
     },
     {
@@ -626,6 +659,7 @@
       "name": "VelvetProgress",
       "category": "primitive",
       "layer": "primitives",
+      "qualification": "both",
       "contractId": "progress",
       "documentation": "docs/engineering/ui-kit/components/primitives/progress.md",
       "purpose": "Job progress projection.",
@@ -661,6 +695,7 @@
       "name": "VelvetState",
       "category": "primitive",
       "layer": "primitives",
+      "qualification": "both",
       "contractId": "state",
       "documentation": "docs/engineering/ui-kit/components/primitives/state.md",
       "purpose": "Loading, empty and error state composition.",
@@ -698,6 +733,9 @@
         "status",
         "alert",
         "retry-callback"
+      ],
+      "browserActions": [
+        "retry"
       ]
     },
     {
@@ -705,6 +743,7 @@
       "name": "VelvetToastHost",
       "category": "overlay",
       "layer": "overlays",
+      "qualification": "both",
       "contractId": "toast",
       "documentation": "docs/engineering/ui-kit/components/overlays/toast.md",
       "purpose": "Live notification projection with dismissal.",
@@ -740,6 +779,9 @@
         "live-region",
         "alert",
         "dismiss-callback"
+      ],
+      "browserActions": [
+        "dismiss"
       ]
     },
     {

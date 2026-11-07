@@ -11,6 +11,7 @@ export const VelvetBadgeContract = defineComponentContract<
   schemaVersion: 1,
   id: 'badge',
   layer: 'primitives',
+  qualification: 'both',
   owner: 'component',
   props: ['children', 'tone', 'className'],
   slots: ['children'],

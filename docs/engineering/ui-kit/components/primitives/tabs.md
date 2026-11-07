@@ -15,6 +15,7 @@ import { VelvetTabs } from './app/ui/index.js';
 - **Slots:** the contract file lists the supported child/data slots.
 - **Actions:** Semantic actions are observed through the typed callback or native control event.
 - **Keyboard and accessibility:** Arrow keys move between enabled tabs; Home and End select the first/last enabled tab.
+- **Qualification:** Node/Happy DOM story plus real-browser tablist orientation, selection and focus fixture.
 
 The contract is semantic. React implementation details, Tailwind classes, Radix
 attributes and private DOM structure are not public API.
@@ -27,7 +28,8 @@ The executable stories are in
 - `tabs/default`
 - `tabs/disabled`
 
-The default scenario covers ArrowRight navigation and direct tab selection.
+The default scenario covers ArrowRight navigation, direct tab selection and
+focus following the selected tab.
 
 
 ## Evidence
@@ -43,4 +45,5 @@ The default scenario covers ArrowRight navigation and direct tab selection.
 npm run typecheck
 npm run generate:ui-kit-catalog
 npm test
+npm run qualify:ui-primitives
 ```

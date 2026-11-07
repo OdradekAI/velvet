@@ -29,12 +29,15 @@ The first wave covers primitives:
 The generated catalog at
 `apps/desktop/src/app/ui/ui-kit-catalog.json` links each component id to its
 contract and manual. Overlay and host-projection contracts, stories and
-implementations are split into their own files. Dialog and Context Menu require
-the real-browser overlay qualification tier; AssetGrid, DataTable,
-CommandPalette and Inspector use the host-projection keyboard/focus/edit
-qualification fixture. Dialog and Context Menu use the overlay browser
-qualification fixture for submit/select/cancel, portal and focus behavior.
-Run `npm run qualify:ui-browser` from `apps/desktop` to execute both fixtures
+implementations are split into their own files. All primitives now carry a
+browser qualification tier: the dedicated fixture checks native control
+semantics, live regions, labels, layout wrappers and Tabs focus movement. Toast
+uses the same fixture for live-region dismissal. Dialog and Context Menu require
+the real-browser overlay qualification tier; AssetGrid, DataTable, CommandPalette
+and Inspector use the host-projection keyboard/focus/edit qualification fixture.
+Dialog and Context Menu use the overlay browser qualification fixture for
+submit/select/cancel, portal and focus behavior. Run
+`npm run qualify:ui-browser` from `apps/desktop` to execute all three fixtures
 at the canonical 1280×800 viewport, or use the full `npm run verify:ui-kit`
 acceptance gate. PreviewHost also owns the async
 lifecycle story matrix for success, cancellation, timeout, failure and retry;

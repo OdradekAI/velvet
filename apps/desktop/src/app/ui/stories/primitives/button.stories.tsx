@@ -12,7 +12,7 @@ export const buttonStories: readonly UiKitStory[] = [
       covers: ['activate'],
       setup: () => { activated = 0; },
       actions: [(runtime) => runtime.act(async () => { runtime.root.querySelector<HTMLButtonElement>('button')?.click(); runtime.host.record('button.activate'); })],
-      checkpoints: [{ name: 'committed activation', afterAction: 0, assert: () => { if (activated !== 1) throw new Error('Button activation contract failed'); } }],
+      checkpoints: [{ name: 'committed activation', afterAction: 0, assert: (runtime) => { if (activated !== 1 || runtime.root.querySelector('button')?.getAttribute('type') !== 'button') throw new Error('Button activation/semantic contract failed'); } }],
       cleanup: () => { activated = 0; },
     },
   },

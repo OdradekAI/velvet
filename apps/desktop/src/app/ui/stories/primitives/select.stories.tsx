@@ -22,7 +22,7 @@ export const selectStories: readonly UiKitStory[] = [
       covers: ['change'],
       setup: () => { selectedValue = 'recent'; },
       actions: [(runtime) => runtime.act(async () => { changeSelect?.('name'); })],
-      checkpoints: [{ name: 'selection change', afterAction: 0, assert: (runtime) => { if (selectedValue !== 'name' || runtime.root.querySelector<HTMLSelectElement>('select')?.value !== 'name') throw new Error('Select change contract failed'); } }],
+      checkpoints: [{ name: 'selection change', afterAction: 0, assert: (runtime) => { if (selectedValue !== 'name' || runtime.root.querySelector<HTMLSelectElement>('select')?.value !== 'name' || runtime.root.querySelector('select')?.getAttribute('aria-label') !== 'Sort') throw new Error('Select change/accessibility contract failed'); } }],
       cleanup: () => { changeSelect = undefined; selectedValue = ''; },
     },
   },

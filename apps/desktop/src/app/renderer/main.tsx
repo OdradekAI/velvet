@@ -8,6 +8,7 @@ import { applyUiThemeSnapshot } from '../ui/theme.js';
 import { DEFAULT_UI_THEME } from '../../workbench/plugins/ui-kit.js';
 import { VisualQualificationFixture } from './visual-qualification-fixture.js';
 import { HostProjectionQualificationFixture } from './host-projection-qualification-fixture.js';
+import { PrimitiveQualificationFixture } from './primitive-qualification-fixture.js';
 
 const root = document.querySelector('#root');
 
@@ -19,9 +20,10 @@ applyUiThemeSnapshot(DEFAULT_UI_THEME);
 
 const isVisualQualificationFixture = new URLSearchParams(window.location.search).get('fixture') === 'eagle';
 const isHostProjectionQualificationFixture = new URLSearchParams(window.location.search).get('fixture') === 'host-projections';
+const isPrimitiveQualificationFixture = new URLSearchParams(window.location.search).get('fixture') === 'primitives-overlays';
 
 createRoot(root).render(
   <StrictMode>
-    {isVisualQualificationFixture ? <VisualQualificationFixture /> : isHostProjectionQualificationFixture ? <HostProjectionQualificationFixture /> : isTauri() ? <NativeWorkbenchApp /> : <DemoApp />}
+    {isVisualQualificationFixture ? <VisualQualificationFixture /> : isHostProjectionQualificationFixture ? <HostProjectionQualificationFixture /> : isPrimitiveQualificationFixture ? <PrimitiveQualificationFixture /> : isTauri() ? <NativeWorkbenchApp /> : <DemoApp />}
   </StrictMode>,
 );

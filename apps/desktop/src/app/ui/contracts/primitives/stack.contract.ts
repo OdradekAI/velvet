@@ -11,6 +11,7 @@ export const VelvetStackContract = defineComponentContract<
   schemaVersion: 1,
   id: 'stack',
   layer: 'primitives',
+  qualification: 'both',
   owner: 'component',
   props: ['children', 'direction', 'gap', 'className'],
   slots: ['children'],
