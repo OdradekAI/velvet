@@ -8,6 +8,7 @@ const outputPath = resolve(projectRoot, '.scratch/velvet-ui-evidence-alignment/r
 const script = `
 const task = await taskSpace("velvet host projection qualification");
 const page = task.page("p1");
+const assert = (condition, message) => { if (!condition) throw new Error(message); };
 await page.goto("http://127.0.0.1:5173/?fixture=host-projections");
 await page.cdp("Emulation.setDeviceMetricsOverride", {width:1280,height:800,deviceScaleFactor:1,mobile:false});
 await page.waitForSelector('loc=css:[data-ui-kit-fixture="host-projections"]', {state:"visible"});
@@ -51,6 +52,32 @@ const paletteClosed = await page.evaluate(() => ({
   closed: !document.querySelector('[data-ui-kit-probe="command-palette"] [role="dialog"]'),
   restoredFocus: document.activeElement?.getAttribute('data-ui-test-id') ?? document.activeElement?.textContent?.trim() ?? null,
 }));
+assert(assetMoved.selected === 'selected:asset-2;opened:', 'AssetGrid ArrowRight selection contract failed');
+assert(assetOpened === 'selected:asset-2;opened:asset-2', 'AssetGrid Enter open contract failed');
+assert(tableSelected.state === 'selected:row-1;sorted:', 'DataTable row selection contract failed');
+assert(tableSorted === 'selected:row-1;sorted:name', 'DataTable sort contract failed');
+assert(paletteOpen.role === 'dialog', 'CommandPalette dialog role contract failed');
+assert(paletteSelected === 'selected:command.pin', 'CommandPalette selection contract failed');
+assert(paletteClosed.closed && paletteClosed.restoredFocus === 'command-palette-trigger', 'CommandPalette focus restoration contract failed');
+
+const inspector = 'loc=css:[data-ui-kit-probe="inspector"]';
+await page.click(inspector + ' [aria-label="Pin inspector"]');
+await page.waitForFunction(() => document.querySelector('[data-ui-kit-probe="inspector"] [aria-label="Unpin inspector"]')?.getAttribute('aria-pressed') === 'true');
+const inspectorPinned = await page.evaluate(() => ({
+  pressed: document.querySelector('[data-ui-kit-probe="inspector"] [aria-label="Unpin inspector"]')?.getAttribute('aria-pressed') ?? null,
+  state: document.querySelector('[data-ui-kit-observation="inspector-state"]')?.textContent ?? null,
+}));
+await page.fill(inspector + ' input[aria-label="Name"]', 'Renamed poster');
+await page.click(inspector + ' [data-inspector-action="save"]');
+await page.waitForFunction(() => document.querySelector('[data-ui-kit-probe="inspector"] [role="status"]')?.textContent === 'Saved');
+const inspectorSaved = await page.evaluate(() => ({
+  status: document.querySelector('[data-ui-kit-probe="inspector"] [role="status"]')?.textContent ?? null,
+  state: document.querySelector('[data-ui-kit-observation="inspector-state"]')?.textContent ?? null,
+}));
+assert(inspectorPinned.pressed === 'true', 'Inspector pin contract failed');
+assert(inspectorPinned.state === 'name:Astronaut poster;pinned:true;save:idle', 'Inspector pin observation failed');
+assert(inspectorSaved.status === 'Saved', 'Inspector save status contract failed');
+assert(inspectorSaved.state === 'name:Renamed poster;pinned:true;save:saved', 'Inspector save observation failed');
 
 const result = {
   fixture: "host-projections",
@@ -58,6 +85,7 @@ const result = {
   assetGrid: {moved: assetMoved, opened: assetOpened},
   dataTable: {selected: tableSelected, sorted: tableSorted},
   commandPalette: {open: paletteOpen, selected: paletteSelected, closed: paletteClosed},
+  inspector: {pinned: inspectorPinned, saved: inspectorSaved},
 };
 await (await import("node:fs/promises")).writeFile(${JSON.stringify(outputPath)}, JSON.stringify(result, null, 2));
 console.log(JSON.stringify(result, null, 2));

@@ -33,4 +33,5 @@ edit persistence and plugin Inspector activation remain separate host contracts.
 npm run typecheck
 npm run generate:ui-kit-catalog
 npm test
+npm run qualify:ui-host-projections
 ```

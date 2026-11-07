@@ -4,6 +4,7 @@ import {
   VelvetButton,
   VelvetCommandPalette,
   VelvetDataTable,
+  VelvetInspector,
   VelvetStack,
   VelvetText,
 } from '../ui/index.js';
@@ -32,6 +33,9 @@ export function HostProjectionQualificationFixture() {
   const [sortedBy, setSortedBy] = useState('');
   const [selectedCommand, setSelectedCommand] = useState('');
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [inspectorPinned, setInspectorPinned] = useState(false);
+  const [inspectorName, setInspectorName] = useState('Astronaut poster');
+  const [inspectorSaveState, setInspectorSaveState] = useState<'idle' | 'saved'>('idle');
   const paletteTriggerRef = useRef<HTMLButtonElement>(null);
 
   return (
@@ -60,6 +64,27 @@ export function HostProjectionQualificationFixture() {
           <VelvetButton onClick={() => setPaletteOpen(true)} ref={paletteTriggerRef} testId="command-palette-trigger">Open commands</VelvetButton>
           <VelvetCommandPalette commands={COMMANDS} onClose={() => setPaletteOpen(false)} onSelect={(id) => { setSelectedCommand(id); setPaletteOpen(false); }} open={paletteOpen} restoreFocusRef={paletteTriggerRef} />
           <output data-ui-kit-observation="command-selection">selected:{selectedCommand}</output>
+        </VelvetStack>
+      </section>
+      <section aria-label="Inspector qualification" data-ui-kit-probe="inspector">
+        <VelvetStack gap="sm">
+          <VelvetText as="h2">Inspector</VelvetText>
+          <VelvetInspector
+            fields={[
+              { id: 'name', label: 'Name', value: inspectorName, inputValue: inspectorName, editable: true },
+              { id: 'type', label: 'Type', value: 'Illustration' },
+            ]}
+            onFieldChange={(fieldId, value) => { if (fieldId === 'name') { setInspectorName(value); setInspectorSaveState('idle'); } }}
+            onPin={setInspectorPinned}
+            onSave={() => setInspectorSaveState('saved')}
+            pinned={inspectorPinned}
+            saveState={inspectorSaveState}
+            selectedCount={1}
+            title="Inspector"
+          >
+            <span data-ui-kit-probe="inspector-preview">Preview: Astronaut poster</span>
+          </VelvetInspector>
+          <output data-ui-kit-observation="inspector-state">name:{inspectorName};pinned:{String(inspectorPinned)};save:{inspectorSaveState}</output>
         </VelvetStack>
       </section>
     </main>

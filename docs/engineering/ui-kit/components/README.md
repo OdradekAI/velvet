@@ -31,7 +31,8 @@ The generated catalog at
 contract and manual. Overlay and host-projection contracts, stories and
 implementations are split into their own files. Dialog and Context Menu require
 the real-browser overlay qualification tier; AssetGrid, DataTable and
-CommandPalette use the host-projection keyboard/focus qualification fixture.
+CommandPalette and Inspector use the host-projection keyboard/focus/edit
+qualification fixture.
 Run `npm run qualify:ui-host-projections` from `apps/desktop` to execute that
 fixture at the canonical 1280×800 viewport. PreviewHost also owns the async
 lifecycle story matrix for success, cancellation, timeout, failure and retry;
