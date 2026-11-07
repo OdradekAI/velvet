@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { fileURLToPath } from 'node:url';
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = fileURLToPath(new URL('../../../examples/plugins/asset-inspector/', import.meta.url));
+const moduleUrl = (name) => pathToFileURL(path.join(root, 'src', name)).href;
 const manifest = JSON.parse(await readFile(`${root}/manifest.json`, 'utf8'));
 const {
   activate,
@@ -15,9 +17,9 @@ const {
   UI_COMPONENTS,
   UI_KIT_API_VERSION,
   validateManifest,
-} = await import(`${root}/src/asset-inspector.mjs`);
+} = await import(moduleUrl('asset-inspector.mjs'));
 const { createAssetInspectorFixtureHost } = await import(
-  `${root}/src/fixture-host.mjs`
+  moduleUrl('fixture-host.mjs'),
 );
 
 validateManifest(manifest);
