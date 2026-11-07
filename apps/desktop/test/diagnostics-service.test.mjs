@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 const { PluginDiagnosticsService } = await import(
-  new URL('../src/workbench/diagnostics/diagnostics-service.ts', import.meta.url),
+  new URL('../src/workbench/diagnostics/diagnostics-service.ts', import.meta.url).href,
 );
 
 const service = new PluginDiagnosticsService();
