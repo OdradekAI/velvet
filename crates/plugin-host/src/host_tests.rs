@@ -2902,7 +2902,8 @@ fn process_runtime_reports_bounded_stderr_and_exit_status() {
 
     match health {
         RuntimeHealth::Crashed(message) => {
-            assert!(message.contains("exit status: 7"));
+            assert!(message.contains("process exited"));
+            assert!(message.contains('7'));
             assert!(message.contains("stderr"));
             assert!(message.len() <= MAX_RUNTIME_STDERR_BYTES + 128);
         }
