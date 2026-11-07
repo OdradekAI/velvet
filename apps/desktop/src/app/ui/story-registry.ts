@@ -16,6 +16,7 @@ import { stateStories } from './stories/primitives/state.stories.js';
 import { tabsStories } from './stories/primitives/tabs.stories.js';
 import { textStories } from './stories/primitives/text.stories.js';
 import { velvetUiStories } from './stories/velvet-ui.stories.js';
+import { filterPanelStories } from './stories/host-projections/filter-panel.stories.js';
 
 export interface UiKitStoryHostCall {
   readonly method: string;
@@ -231,4 +232,4 @@ export class UiKitStoryRegistry {
   }
 }
 
-export const UI_KIT_STORY_REGISTRY = new UiKitStoryRegistry([...primitiveStories, ...velvetUiStories]);
+export const UI_KIT_STORY_REGISTRY = new UiKitStoryRegistry([...primitiveStories, ...filterPanelStories, ...velvetUiStories]);

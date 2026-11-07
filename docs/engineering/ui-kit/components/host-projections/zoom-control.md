@@ -16,18 +16,18 @@ the component does not persist settings or resize content by itself.
 - **Implementation:** `apps/desktop/src/app/ui/host-projections/zoom-control.tsx`
 - **Accessibility:** named group, native range semantics, polite live value and keyboard step behavior
 
-## Eagle evidence boundary
+## Evidence boundary
 
-The installed Eagle runtime exposes an `AXSlider` with increment/decrement
+The qualification fixture exposes an `AXSlider` with increment/decrement
 actions and an initial value of `180`. A controlled probe moved the value to
 `505`, one decrement produced `500`, and 64 more decrements restored `180`,
-establishing an observed step of `5` for that runtime state. This proves the
-slider and step behavior only; Eagle's minimum, maximum, persistence and grid
+establishing an observed step of `5` for that fixture state. This proves the
+slider and step behavior only; external minimum, maximum, persistence and grid
 reflow semantics remain unknown.
 
 The Velvet wrapper therefore defaults to `min=25`, `max=500` and `step=5` as
 host policy, while keeping all three values configurable. These defaults are a
-Velvet design choice, not a claim about Eagle's full range.
+Velvet design choice, not a claim about an external application full range.
 
 ## Usage
 

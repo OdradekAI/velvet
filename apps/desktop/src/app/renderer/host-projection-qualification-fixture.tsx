@@ -5,6 +5,7 @@ import {
   VelvetButton,
   VelvetCommandPalette,
   VelvetDataTable,
+  VelvetFilterPanel,
   VelvetInspector,
   VelvetPane,
   VelvetPanel,
@@ -13,6 +14,7 @@ import {
   VelvetText,
   VelvetZoomControl,
 } from '../ui/index.js';
+import type { VelvetFilterRule } from '../ui/index.js';
 
 const ASSETS = [
   { id: 'asset-1', label: 'Astronaut poster', secondary: 'Illustration' },
@@ -31,6 +33,12 @@ const COMMANDS = [
   { id: 'command.pin', label: 'Pin selected asset', description: 'Keep the asset visible' },
 ] as const;
 
+const FILTER_FACETS = [
+  { id: 'type', label: 'Type', kind: 'multi' as const, options: [{ id: 'image', label: 'Image', count: 12 }, { id: 'video', label: 'Video', count: 2 }] },
+  { id: 'folder', label: 'Folder', kind: 'single' as const, options: [{ id: 'reference', label: 'Reference', count: 8 }, { id: 'inspiration', label: 'Inspiration', count: 4 }] },
+  { id: 'annotation', label: 'Annotation', kind: 'text' as const, placeholder: 'Contains…' },
+] as const;
+
 export function HostProjectionQualificationFixture() {
   const [selectedAsset, setSelectedAsset] = useState('asset-1');
   const [activeWorkspace, setActiveWorkspace] = useState('library');
@@ -45,6 +53,9 @@ export function HostProjectionQualificationFixture() {
   const [inspectorSaveState, setInspectorSaveState] = useState<'idle' | 'saved'>('idle');
   const [previewState, setPreviewState] = useState<'error' | 'ready'>('error');
   const [zoom, setZoom] = useState(180);
+  const [filterRules, setFilterRules] = useState<readonly VelvetFilterRule[]>([]);
+  const [savedFilterRules, setSavedFilterRules] = useState<readonly VelvetFilterRule[]>([]);
+  const [filterClosed, setFilterClosed] = useState(false);
   const paletteTriggerRef = useRef<HTMLButtonElement>(null);
 
   return (
@@ -99,6 +110,19 @@ export function HostProjectionQualificationFixture() {
           <VelvetCommandPalette commands={COMMANDS} onClose={() => setPaletteOpen(false)} onSelect={(id) => { setSelectedCommand(id); setPaletteOpen(false); }} open={paletteOpen} restoreFocusRef={paletteTriggerRef} />
           <output data-ui-kit-observation="command-selection">selected:{selectedCommand}</output>
         </VelvetStack>
+      </section>
+      <section aria-label="Filter panel qualification" data-ui-kit-probe="filter-panel">
+        <VelvetFilterPanel
+          facets={FILTER_FACETS}
+          onClose={() => setFilterClosed(true)}
+          onReset={() => setFilterRules([])}
+          onRuleChange={setFilterRules}
+          onSave={setSavedFilterRules}
+          rules={filterRules}
+        />
+        <output data-ui-kit-observation="filter-rules">{JSON.stringify(filterRules)}</output>
+        <output data-ui-kit-observation="filter-saved">{JSON.stringify(savedFilterRules)}</output>
+        <output data-ui-kit-observation="filter-closed">{String(filterClosed)}</output>
       </section>
       <section aria-label="Inspector qualification" data-ui-kit-probe="inspector">
         <VelvetStack gap="sm">

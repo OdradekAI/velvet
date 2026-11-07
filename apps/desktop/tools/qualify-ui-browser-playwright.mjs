@@ -7,7 +7,7 @@ const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, dev
 
 async function fixtureReady(fixture) {
   await page.goto(`${baseUrl}/?fixture=${fixture}`);
-  const fixtureId = fixture === 'eagle' ? 'eagle-baseline' : fixture === 'host-projections' ? 'host-projections' : 'primitives-overlays';
+  const fixtureId = fixture === 'visual-baseline' ? 'visual-baseline' : fixture === 'host-projections' ? 'host-projections' : 'primitives-overlays';
   await page.locator(`[data-ui-kit-fixture="${fixtureId}"]`).waitFor({ state: 'visible' });
   await page.waitForTimeout(150);
 }
@@ -17,7 +17,7 @@ async function observation(name) {
 }
 
 const overlay = {};
-await fixtureReady('eagle');
+await fixtureReady('visual-baseline');
 const dialogTrigger = page.locator('[data-ui-kit-probe="dialog-trigger"]');
 const dialog = page.locator('[role="dialog"]');
 await dialogTrigger.click();
@@ -57,8 +57,8 @@ await page.keyboard.press('ArrowDown');
 await page.keyboard.press('Enter');
 await contextMenu.waitFor({ state: 'hidden' });
 const contextSelected = await observation('context-action');
-await page.goto(`${baseUrl}/?fixture=eagle`);
-await page.locator('[data-ui-kit-fixture="eagle-baseline"]').waitFor({ state: 'visible' });
+await page.goto(`${baseUrl}/?fixture=visual-baseline`);
+await page.locator('[data-ui-kit-fixture="visual-baseline"]').waitFor({ state: 'visible' });
 await page.waitForTimeout(150);
 const reloadedContextTrigger = page.locator('[data-ui-kit-probe="context-trigger"]');
 const reloadedContextBox = await reloadedContextTrigger.boundingBox();
@@ -132,7 +132,23 @@ host.inspector = {
 assert.equal(host.inspector.state, 'name:Renamed poster;pinned:true;save:saved');
 assert.equal(host.inspector.status, 'Saved');
 
-await fixtureReady('eagle');
+const filter = page.locator('[data-ui-kit-probe="filter-panel"]');
+await filter.locator('input[aria-label="Annotation"]').fill('poster');
+await page.waitForFunction(() => document.querySelector('[data-ui-kit-observation="filter-rules"]')?.textContent?.includes('poster'));
+host.filterChanged = await observation('filter-rules');
+await filter.locator('.velvet-filter-panel__actions button').nth(0).click();
+host.filterReset = await observation('filter-rules');
+await filter.locator('input[aria-label="Annotation"]').fill('poster');
+await filter.locator('.velvet-filter-panel__actions button').nth(1).click();
+host.filterSaved = await observation('filter-saved');
+await filter.locator('.velvet-filter-panel__header button').click();
+host.filterClosed = await observation('filter-closed');
+assert.ok(host.filterChanged.includes('poster'));
+assert.equal(host.filterReset, '[]');
+assert.ok(host.filterSaved.includes('poster'));
+assert.equal(host.filterClosed, 'true');
+
+await fixtureReady('visual-baseline');
 const zoom = page.locator('[data-ui-kit-probe="workspace"] [role="group"][aria-label="Asset zoom"]');
 const zoomSlider = zoom.locator('input[aria-label="Zoom level"]');
 assert.equal(await zoomSlider.inputValue(), '180');

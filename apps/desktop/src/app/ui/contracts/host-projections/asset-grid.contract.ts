@@ -23,7 +23,7 @@ export const VelvetAssetGridContract = defineComponentContract<
   documentation: 'docs/engineering/ui-kit/components/host-projections/asset-grid.md',
   evidence: [
     { kind: 'host-guarantee', reference: 'docs/engineering/ui-kit-component-guide.md', claim: 'Velvet host ownership and semantic behavior rules' },
-    { kind: 'observed', reference: 'docs/engineering/ui-kit-eagle-directive-evidence.md', claim: 'Eagle ng-grid-layout layout, lazy loading, selection, pinned and drag/drop observations' },
-    { kind: 'observed', reference: 'docs/engineering/ui-kit-eagle-populated-evidence.md', claim: 'Populated Eagle grid reflow, click/Shift selection, filter and search observations' },
+    { kind: 'observed', reference: 'apps/desktop/test/ui-kit-components.test.mjs', claim: 'Grid layout, selection modifiers, pinned metadata and drag/drop behavior' },
+    { kind: 'observed', reference: 'apps/desktop/tools/qualify-ui-host-projections.mjs', claim: 'Browser qualification for grid focus, range selection and row/column semantics' },
   ],
 } satisfies ComponentContract<VelvetAssetGridProps, 'default' | 'selected' | 'disabled' | 'empty' | 'layout' | 'dragging' | 'pinned', 'select' | 'open' | 'navigate' | 'drag' | 'drop', 'grid-role' | 'grid-metrics' | 'selection' | 'selection-modifier' | 'focus' | 'open-callback' | 'layout' | 'drag-and-drop' | 'pinned' | 'metadata'>);

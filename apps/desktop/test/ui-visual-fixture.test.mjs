@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { Window } from 'happy-dom';
 
-const browser = new Window({ url: 'http://velvet.test/?fixture=eagle' });
+const browser = new Window({ url: 'http://velvet.test/?fixture=visual-baseline' });
 for (const name of ['Document', 'Element', 'Event', 'HTMLElement', 'HTMLImageElement', 'KeyboardEvent', 'Node']) {
   if (browser[name]) globalThis[name] = browser[name];
 }
@@ -21,7 +21,7 @@ const root = createRoot(host);
 
 await act(async () => root.render(React.createElement(VisualQualificationFixture)));
 
-assert.equal(host.querySelector('[data-ui-kit-fixture="eagle-baseline"]')?.getAttribute('data-ui-kit-viewport'), '1280x800');
+assert.equal(host.querySelector('[data-ui-kit-fixture="visual-baseline"]')?.getAttribute('data-ui-kit-viewport'), '1280x800');
 for (const probe of ['title-bar', 'navigation', 'toolbar', 'facets', 'workspace', 'grid', 'inspector', 'selection-preview', 'operations', 'zoom-control']) {
   assert.ok(host.querySelector(`[data-ui-kit-probe="${probe}"]`), `missing visual probe: ${probe}`);
 }

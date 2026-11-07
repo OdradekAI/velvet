@@ -116,6 +116,24 @@ assert(paletteFiltered.length === 1 && paletteFiltered[0]?.startsWith('Pin selec
 assert(paletteSelected === 'selected:command.pin', 'CommandPalette selection contract failed');
 assert(paletteClosed.closed && paletteClosed.restoredFocus === 'command-palette-trigger', 'CommandPalette focus restoration contract failed');
 
+const filterPanel = 'loc=css:[data-ui-kit-probe="filter-panel"]';
+await page.evaluate(() => document.querySelector('[data-ui-kit-probe="filter-panel"]')?.scrollIntoView({ block: 'center' }));
+await page.fill(filterPanel + ' input[aria-label="Annotation"]', 'poster');
+await page.waitForFunction(() => document.querySelector('[data-ui-kit-observation="filter-rules"]')?.textContent?.includes('poster'));
+const filterChanged = await page.evaluate(() => document.querySelector('[data-ui-kit-observation="filter-rules"]')?.textContent ?? null);
+await page.click(filterPanel + ' .velvet-filter-panel__actions button:nth-of-type(1)');
+await page.waitForFunction(() => document.querySelector('[data-ui-kit-observation="filter-rules"]')?.textContent === '[]');
+const filterReset = await page.evaluate(() => document.querySelector('[data-ui-kit-observation="filter-rules"]')?.textContent ?? null);
+await page.fill(filterPanel + ' input[aria-label="Annotation"]', 'poster');
+await page.click(filterPanel + ' .velvet-filter-panel__actions button:nth-of-type(2)');
+const filterSaved = await page.evaluate(() => document.querySelector('[data-ui-kit-observation="filter-saved"]')?.textContent ?? null);
+await page.click(filterPanel + ' .velvet-filter-panel__header button');
+const filterClosed = await page.evaluate(() => document.querySelector('[data-ui-kit-observation="filter-closed"]')?.textContent ?? null);
+assert(filterChanged?.includes('poster'), 'FilterPanel text rule contract failed');
+assert(filterReset === '[]', 'FilterPanel reset contract failed');
+assert(filterSaved?.includes('poster'), 'FilterPanel save contract failed');
+assert(filterClosed === 'true', 'FilterPanel close contract failed');
+
 const inspector = 'loc=css:[data-ui-kit-probe="inspector"]';
 await page.click(inspector + ' [aria-label="Pin inspector"]');
 await page.waitForFunction(() => document.querySelector('[data-ui-kit-probe="inspector"] [aria-label="Unpin inspector"]')?.getAttribute('aria-pressed') === 'true');
@@ -146,6 +164,7 @@ const result = {
   assetGrid: {moved: assetMoved, opened: assetOpened, rangeSelected: assetRangeSelected, semantics: assetGridSemantics},
   dataTable: {selected: tableSelected, sorted: tableSorted},
   commandPalette: {open: paletteOpen, filtered: paletteFiltered, selected: paletteSelected, closed: paletteClosed},
+  filterPanel: {changed: filterChanged, reset: filterReset, saved: filterSaved, closed: filterClosed},
   inspector: {pinned: inspectorPinned, saved: inspectorSaved},
 };
 await (await import("node:fs/promises")).writeFile(${JSON.stringify(outputPath)}, JSON.stringify(result, null, 2));

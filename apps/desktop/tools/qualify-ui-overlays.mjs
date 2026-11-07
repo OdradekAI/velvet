@@ -5,7 +5,7 @@ const projectRoot = resolve(new URL('../..', import.meta.url).pathname, '..');
 const evidenceRoot = resolve(projectRoot, '.scratch/velvet-ui-kit-and-plugin-boundaries/research');
 
 const script = `
-const task = await taskSpace("velvet eagle overlay qualification");
+const task = await taskSpace("velvet overlay qualification");
 const page = task.page("p1");
 const assert = (condition, message) => { if (!condition) throw new Error(message); };
 const waitFor = async (label, predicate) => {
@@ -15,9 +15,9 @@ const waitFor = async (label, predicate) => {
     throw new Error(label + ': ' + String(error));
   }
 };
-await page.goto("http://127.0.0.1:5173/?fixture=eagle");
+await page.goto("http://127.0.0.1:5173/?fixture=visual-baseline");
 await page.cdp("Emulation.setDeviceMetricsOverride", {width:1280,height:800,deviceScaleFactor:1,mobile:false});
-await page.waitForSelector('loc=css:[data-ui-kit-fixture="eagle-baseline"]', {state:"visible"});
+await page.waitForSelector('loc=css:[data-ui-kit-fixture="visual-baseline"]', {state:"visible"});
 await new Promise((resolve) => setTimeout(resolve, 150));
 
 const dialogTrigger = 'loc=css:[data-ui-kit-probe="dialog-trigger"]';
@@ -85,9 +85,9 @@ const contextEscapeCancelled = await page.evaluate(() => ({
   action: document.querySelector('[data-ui-kit-observation="context-action"]')?.textContent ?? null,
 }));
 
-await page.goto("http://127.0.0.1:5173/?fixture=eagle");
+await page.goto("http://127.0.0.1:5173/?fixture=visual-baseline");
 await page.cdp("Emulation.setDeviceMetricsOverride", {width:1280,height:800,deviceScaleFactor:1,mobile:false});
-await page.waitForSelector('loc=css:[data-ui-kit-fixture="eagle-baseline"]', {state:"visible"});
+await page.waitForSelector('loc=css:[data-ui-kit-fixture="visual-baseline"]', {state:"visible"});
 await new Promise((resolve) => setTimeout(resolve, 150));
 await page.focus(contextTrigger);
 const thirdRect = await page.evaluate(() => { const node = document.querySelector('[data-ui-kit-probe="context-trigger"]'); const rect = node?.getBoundingClientRect(); return rect ? {x:rect.x + rect.width / 2, y:rect.y + rect.height / 2} : null; });

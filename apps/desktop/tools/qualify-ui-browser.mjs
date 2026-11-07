@@ -4,7 +4,7 @@ const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const browserChecks = process.env.UI_BROWSER_ENGINE === 'playwright'
   ? ['playwright']
   : ['qualify:ui-overlays', 'qualify:ui-host-projections', 'qualify:ui-primitives'];
-const fixtureUrl = 'http://127.0.0.1:5173/?fixture=eagle';
+const fixtureUrl = 'http://127.0.0.1:5173/?fixture=visual-baseline';
 
 async function serverReady() {
   try {

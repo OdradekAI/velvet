@@ -17,3 +17,7 @@ translate/
 .env.*
 !.env.example
 /artifacts/
+
+
+# Local Eagle reverse-engineering research
+docs/research/eagle/

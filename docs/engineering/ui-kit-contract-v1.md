@@ -66,7 +66,7 @@ host state directly.
 
 ## Visual system and renderer boundary
 
-The default host visual language is Eagle-informed rather than Eagle-compatible.
+The default host visual language follows the observed desktop workbench grammar.
 It uses the observed desktop workbench grammar as design input: dense
 navigation/workspace/Inspector zones, near-flat charcoal surfaces, thin
 separators, rounded selected rows, compact system-sans typography, one
@@ -78,7 +78,7 @@ ownership rules.
 
 The visual system is expressed through Velvet semantic tokens and named
 component variants. Primitive colors, Tailwind utility classes, DOM structure,
-Eagle assets and exact pixel values are implementation details. A visual change
+Reference assets and exact pixel values are implementation details. A visual change
 that changes keyboard behavior, state ownership or token meaning requires a UI
 contract version decision; a palette or spacing refinement stays behind the
 Velvet wrapper.

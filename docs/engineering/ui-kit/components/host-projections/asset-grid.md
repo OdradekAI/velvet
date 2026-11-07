@@ -30,14 +30,14 @@ provided, the component exposes native draggable cells and reports typed source
 and target ids. It does not persist ordering or read transport state.
 
 `onSelect(id, additive, range)` reports the pointer modifier that produced the
-selection. Eagle's populated-library probe showed Shift-click selecting a
+selection. The populated-library probe showed Shift-click selecting a
 second item while keeping both cells selected. The host owns the selection
 anchor and decides how to apply the `range` hint; the grid never stores a
 second selection model.
 
-The layout and drag/drop surface is derived from the bounded Eagle directive
-analysis in [the versioned evidence matrix](../../../ui-kit-eagle-directive-evidence.md).
-Eagle's lazy loading and InfiniteGrid paging remain host runtime concerns and
+The layout and drag/drop surface is derived from the bounded interaction evidence
+recorded in the local research matrix.
+Lazy loading and paging remain host runtime concerns and
 are intentionally outside this component's public API.
 
 ## Stories and evidence
@@ -51,7 +51,7 @@ are intentionally outside this component's public API.
 
 `asset-grid/zoom-layout` is an integration story: `VelvetZoomControl` stays
 separate, and the host maps its value to `columns`. It records the observed
-Eagle checkpoints of eight columns at `180` and five at `230` without making
+Observed geometry checkpoints of eight columns at `180` and five at `230` without making
 that mapping a public AssetGrid algorithm.
 
 The grid exposes `aria-multiselectable="true"` because selection modifiers are
@@ -62,7 +62,7 @@ CSS auto-fit geometry is not a stable public row/column contract.
 
 
 The current story runner provides deterministic fixture coverage. Required for overlays and host projections: run the real-browser qualification fixture when changing focus, portal, geometry or host projection behavior.
-Unknown Eagle behavior remains `unknown` until a runtime capture proves it.
+Unverified external behavior remains `unknown` until a runtime capture proves it.
 
 ## Validation
 

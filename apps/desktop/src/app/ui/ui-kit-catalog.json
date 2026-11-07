@@ -1029,7 +1029,7 @@
       "qualification": "both",
       "contractId": "asset-grid",
       "documentation": "docs/engineering/ui-kit/components/host-projections/asset-grid.md",
-      "purpose": "Keyboard-navigable Asset projection with Eagle-observed layout and drag/drop modes.",
+      "purpose": "Keyboard-navigable Asset projection with host-controlled layout and drag/drop modes.",
       "ownership": "host",
       "states": [
         "default",
@@ -1147,6 +1147,74 @@
       "browserActions": [
         "select",
         "sort"
+      ]
+    },
+    {
+      "id": "filter-panel",
+      "name": "VelvetFilterPanel",
+      "category": "composite",
+      "layer": "host-projections",
+      "qualification": "both",
+      "contractId": "filter-panel",
+      "documentation": "docs/engineering/ui-kit/components/host-projections/filter-panel.md",
+      "purpose": "Host-owned filter facet projection.",
+      "ownership": "host",
+      "states": [
+        "open",
+        "closed",
+        "filtered",
+        "empty"
+      ],
+      "props": [
+        "open",
+        "title",
+        "facets",
+        "rules",
+        "onRuleChange",
+        "onReset",
+        "onSave",
+        "onClose"
+      ],
+      "keyboard": [
+        "Tab",
+        "Enter",
+        "Space"
+      ],
+      "accessibility": [
+        "named region with fieldset/legend facet groups",
+        "native control semantics are preserved"
+      ],
+      "stories": [
+        "default",
+        "multi-select",
+        "reset-save",
+        "keyboard-close"
+      ],
+      "slots": [
+        "facets",
+        "facet.options",
+        "actions"
+      ],
+      "actions": [
+        "change",
+        "reset",
+        "save",
+        "close"
+      ],
+      "observables": [
+        "region-role",
+        "facet-groups",
+        "rule-values",
+        "selection",
+        "reset-callback",
+        "save-callback",
+        "focus"
+      ],
+      "browserActions": [
+        "change",
+        "reset",
+        "save",
+        "close"
       ]
     },
     {

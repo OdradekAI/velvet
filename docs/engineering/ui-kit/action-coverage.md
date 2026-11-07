@@ -24,7 +24,8 @@ contract test rejects an action that appears in neither set.
 | VelvetAssetGrid | `select`, `navigate`, `open`, `drag`, `drop` — AssetGrid stories (including grid metrics and Shift range hint) | keyboard/open/Shift selection and grid semantics in host fixture |
 | VelvetDataTable | `select`, `sort` — `data-table/default` | keyboard/sort in host fixture |
 | VelvetCommandPalette | `select`, `navigate`, `close` — `command-palette/open` | query/select/navigation/close plus focus restoration in host fixture |
-| VelvetZoomControl | `increment`, `decrement`, `change` — `zoom-control/default` | keyboard step, bounds and button actions in Eagle fixture |
+| VelvetFilterPanel | `change`, `reset`, `save`, `close` — `filter-panel/default`, `filter-panel/reset-save`, `filter-panel/keyboard-close` | text rule, reset/save and close in host fixture |
+| VelvetZoomControl | `increment`, `decrement`, `change` — `zoom-control/default` | keyboard step, bounds and button actions in the visual-baseline fixture |
 | VelvetPane | semantic region checkpoint — `pane/navigation` | role, heading link, zone marker and body in host fixture |
 | VelvetPanel | semantic region checkpoint — `panel/panel` | role, heading link, surface and body in host fixture |
 

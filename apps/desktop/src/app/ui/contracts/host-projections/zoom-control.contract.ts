@@ -22,8 +22,8 @@ export const VelvetZoomControlContract = defineComponentContract<
   stories: ['default', 'keyboard', 'bounds', 'disabled'],
   documentation: 'docs/engineering/ui-kit/components/host-projections/zoom-control.md',
   evidence: [
-    { kind: 'observed', reference: '.scratch/velvet-ui-evidence-alignment/research/eagle-visual-diff-2026-11-07.md', claim: 'Eagle exposes a zoom slider with increment/decrement actions; the observed step is 5.' },
     { kind: 'host-guarantee', reference: 'docs/engineering/ui-kit-component-guide.md', claim: 'The host owns durable zoom state and the component remains controlled.' },
+    { kind: 'observed', reference: 'apps/desktop/tools/qualify-ui-host-projections.mjs', claim: 'Browser qualification for keyboard step, value and live output.' },
   ],
 } satisfies ComponentContract<
   VelvetZoomControlProps,

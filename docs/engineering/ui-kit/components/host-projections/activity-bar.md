@@ -27,7 +27,7 @@ skipped and the newly selected item receives focus.
 
 
 The current story runner provides deterministic fixture coverage. Required for overlays and host projections: run the real-browser qualification fixture when changing focus, portal, geometry or host projection behavior.
-Unknown Eagle behavior remains `unknown` until a runtime capture proves it.
+Unverified external behavior remains `unknown` until a runtime capture proves it.
 
 ## Validation
 

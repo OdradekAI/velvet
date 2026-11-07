@@ -22,10 +22,9 @@ component does not persist edits or infer save success.
 
 ## Evidence
 
-The shape follows the shipped Eagle Inspector evidence in
-`docs/engineering/ui-kit-eagle-directive-evidence.md`: Eagle derives different
-field sets for zero, one and many selected items, routes name/URL changes
-through host handlers, and rejects an empty single-item name. Eagle-specific
+The shape follows the shipped Inspector evidence: different field sets
+appear for zero, one and many selected items, routes name/URL changes
+through host handlers, and rejects an empty single-item name. Product-specific
 edit persistence and plugin Inspector activation remain separate host contracts.
 
 ## Validation

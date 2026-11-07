@@ -10,12 +10,12 @@ versioned; the React implementation and CSS class names remain host-private.
 
 ## Visual baseline
 
-The default host theme follows an Eagle-informed desktop workbench grammar:
+The default host theme follows the observed desktop workbench grammar:
 dense navigation/workspace/Inspector zones, charcoal near-flat surfaces, thin
 separators, rounded selected rows, compact system-sans typography, a restrained
 indigo/purple accent, icon-first toolbars and action-oriented empty states.
 This is design input for Velvet, not pixel compatibility or permission to copy
-Eagle assets. Light, comfortable and high-contrast modes reuse the same
+Reference assets. Light, comfortable and high-contrast modes reuse the same
 semantic states and accessibility rules.
 
 Use Velvet semantic tokens and component variants to style a surface. Tailwind

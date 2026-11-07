@@ -18,7 +18,7 @@ if (!root) {
 
 applyUiThemeSnapshot(DEFAULT_UI_THEME);
 
-const isVisualQualificationFixture = new URLSearchParams(window.location.search).get('fixture') === 'eagle';
+const isVisualQualificationFixture = new URLSearchParams(window.location.search).get('fixture') === 'visual-baseline';
 const isHostProjectionQualificationFixture = new URLSearchParams(window.location.search).get('fixture') === 'host-projections';
 const isPrimitiveQualificationFixture = new URLSearchParams(window.location.search).get('fixture') === 'primitives-overlays';
 

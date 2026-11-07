@@ -5,7 +5,7 @@ const { COMPONENT_META } = await import('/tmp/velvet-plugin-tests/app/ui/compone
 const contracts = await import('/tmp/velvet-plugin-tests/app/ui/contracts/index.js');
 const { UI_KIT_STORY_REGISTRY } = await import('/tmp/velvet-plugin-tests/app/ui/story-registry.js');
 
-assert.equal(COMPONENT_META.length, 26);
+assert.equal(COMPONENT_META.length, 27);
 
 for (const meta of COMPONENT_META) {
   const exportName = `${meta.name}Contract`;

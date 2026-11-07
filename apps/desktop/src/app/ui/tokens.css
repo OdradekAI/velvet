@@ -492,6 +492,14 @@ button {
 .velvet-command-palette__item[aria-selected='true'] { background: var(--velvet-surface-active); border-color: var(--velvet-border-strong); }
 .velvet-command-palette__item span { display: grid; gap: 2px; }
 .velvet-command-palette__item small { color: var(--velvet-text-muted); }
+.velvet-filter-panel { display: flex; flex-direction: column; min-width: 260px; min-height: 0; padding: var(--velvet-spacing-5); border: 1px solid var(--velvet-border-subtle); border-radius: var(--velvet-radius-md); background: var(--velvet-surface-panel); color: var(--velvet-text-primary); }
+.velvet-filter-panel__header { display: flex; align-items: center; justify-content: space-between; gap: var(--velvet-spacing-4); margin: calc(var(--velvet-spacing-5) * -1) calc(var(--velvet-spacing-5) * -1) var(--velvet-spacing-5); padding: var(--velvet-spacing-4) var(--velvet-spacing-5); border-bottom: 1px solid var(--velvet-border-subtle); }
+.velvet-filter-panel__header h2 { margin: 0; color: var(--velvet-text-secondary); font-size: var(--velvet-font-size-title); }
+.velvet-filter-panel__facets { display: grid; gap: var(--velvet-spacing-5); overflow: auto; }
+.velvet-filter-panel__facet { display: grid; gap: var(--velvet-spacing-3); min-width: 0; margin: 0; padding: 0; border: 0; }
+.velvet-filter-panel__facet legend { padding: 0; color: var(--velvet-text-muted); font-size: var(--velvet-font-size-label); font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
+.velvet-filter-panel__options { display: grid; gap: var(--velvet-spacing-2); }
+.velvet-filter-panel__actions { display: flex; justify-content: flex-end; gap: var(--velvet-spacing-3); margin-top: var(--velvet-spacing-5); padding-top: var(--velvet-spacing-4); border-top: 1px solid var(--velvet-border-subtle); }
 .velvet-zoom-control { display: inline-flex; align-items: center; gap: 6px; min-width: 170px; color: var(--velvet-text-secondary); }
 .velvet-zoom-control__step { display: grid; width: 24px; height: 24px; place-items: center; padding: 0; border: 0; border-radius: var(--velvet-radius-sm); background: transparent; color: var(--velvet-text-secondary); cursor: pointer; font-size: 16px; }
 .velvet-zoom-control__step:hover:not(:disabled) { background: var(--velvet-surface-active); color: var(--velvet-text-primary); }
@@ -500,7 +508,7 @@ button {
 .velvet-zoom-control__range { width: 112px; accent-color: var(--velvet-accent); cursor: pointer; }
 .velvet-zoom-control__range:disabled { cursor: not-allowed; opacity: .55; }
 .velvet-zoom-control__value { min-width: 40px; color: var(--velvet-text-muted); font-size: var(--velvet-font-size-label); text-align: right; }
-/* Deterministic browser fixture for Eagle-informed visual qualification. */
+/* Deterministic browser fixture for visual qualification. */
 .velvet-visual-fixture { display: grid; grid-template-rows: 36px minmax(0, 1fr); height: 100%; min-width: 1100px; background: var(--velvet-surface-app); color: var(--velvet-text-primary); font-size: var(--velvet-font-size-body); line-height: 1.35; }
 .velvet-visual-fixture > output { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
 .velvet-visual-fixture__title { display: flex; align-items: center; gap: var(--velvet-spacing-3); padding: 0 var(--velvet-spacing-5); border-bottom: 1px solid var(--velvet-border-subtle); background: var(--velvet-surface-panel); font-size: var(--velvet-font-size-body); }

@@ -24,7 +24,7 @@ export const zoomControlStories: readonly UiKitStory[] = [
     id: 'zoom-control/default',
     componentId: 'zoom-control',
     name: 'Default',
-    description: 'Eagle-informed controlled zoom slider.',
+    description: 'Controlled zoom slider.',
     render: () => <ZoomDefaultStory />,
     scenario: {
       covers: ['increment', 'decrement', 'change'],

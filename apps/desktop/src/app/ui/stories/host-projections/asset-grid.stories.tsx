@@ -60,7 +60,7 @@ export const assetGridStories: readonly UiKitStory[] = [
     id: 'asset-grid/layout-modes',
     componentId: 'asset-grid',
     name: 'Layout modes',
-    description: 'Eagle-observed list layout with optional drag and drop.',
+    description: 'List layout with optional drag and drop.',
     render: () => <VelvetAssetGrid layout="list" items={[{ id: 'a', label: 'A', pinned: true, metadata: '2 tags · 1920 × 1080' }, { id: 'b', label: 'B', aspectRatio: '16 / 9' }]} onSelect={() => undefined} onDragStart={(id) => { draggedAsset = id; }} onDrop={(sourceId, targetId) => { droppedAsset = `${sourceId}:${targetId}`; }} />,
     scenario: {
       covers: ['drag', 'drop'],
@@ -112,7 +112,7 @@ export const assetGridStories: readonly UiKitStory[] = [
     id: 'asset-grid/zoom-layout',
     componentId: 'asset-grid',
     name: 'Zoom layout projection',
-    description: 'Host-controlled grid reflow using the populated Eagle geometry checkpoints.',
+    description: 'Host-controlled grid reflow using deterministic geometry checkpoints.',
     render: () => <ZoomLayoutStory />,
     scenario: {
       covers: ['navigate'],

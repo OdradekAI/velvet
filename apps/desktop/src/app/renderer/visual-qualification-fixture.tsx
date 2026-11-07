@@ -87,7 +87,7 @@ export function VisualQualificationFixture() {
     <main
       aria-label="Velvet visual qualification fixture"
       className="velvet-visual-fixture"
-      data-ui-kit-fixture="eagle-baseline"
+      data-ui-kit-fixture="visual-baseline"
       data-ui-kit-viewport="1280x800"
     >
       <header className="velvet-visual-fixture__title" data-ui-kit-probe="title-bar">

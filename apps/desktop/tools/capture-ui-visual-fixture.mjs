@@ -2,14 +2,14 @@ import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 
 const projectRoot = resolve(new URL('../..', import.meta.url).pathname, '..');
-const outputPath = resolve(projectRoot, '.scratch/velvet-ui-kit-and-plugin-boundaries/research/velvet-eagle-fixture.png');
+const outputPath = resolve(projectRoot, '.scratch/velvet-ui-kit-and-plugin-boundaries/research/velvet-visual-baseline-fixture.png');
 
 const script = `
-const task = await taskSpace("velvet eagle visual qualification");
+const task = await taskSpace("velvet visual qualification");
 const page = task.page("p1");
-await page.goto("http://127.0.0.1:5173/?fixture=eagle");
+await page.goto("http://127.0.0.1:5173/?fixture=visual-baseline");
 await page.cdp("Emulation.setDeviceMetricsOverride", {width:1280,height:800,deviceScaleFactor:1,mobile:false});
-await page.waitForSelector('loc=css:[data-ui-kit-fixture="eagle-baseline"]', {state:"visible"});
+await page.waitForSelector('loc=css:[data-ui-kit-fixture="visual-baseline"]', {state:"visible"});
 const probes = await page.evaluate(() => {
   const names = ["title-bar","navigation","toolbar","facets","workspace","grid","inspector","selection-preview","operations","zoom-control"];
   const regions = Object.fromEntries(names.map((name) => {

@@ -23,6 +23,6 @@ export const VelvetInspectorContract = defineComponentContract<
   documentation: 'docs/engineering/ui-kit/components/host-projections/inspector.md',
   evidence: [
     { kind: 'host-guarantee', reference: 'docs/engineering/ui-kit-component-guide.md', claim: 'Selection and Inspector ownership remain host-owned projections' },
-    { kind: 'observed', reference: 'docs/engineering/ui-kit-eagle-directive-evidence.md', claim: 'Eagle Inspector derives different fields for zero, one and many selected items' },
+    { kind: 'observed', reference: 'apps/desktop/test/ui-kit-components.test.mjs', claim: 'Inspector selection modes, editable fields, save state and retry behavior' },
   ],
 } satisfies ComponentContract<VelvetInspectorProps, 'empty' | 'single' | 'multiple' | 'pinned' | 'editing' | 'saving' | 'saved' | 'error' | 'cancelled', 'pin' | 'open' | 'edit' | 'save' | 'retry', 'inspector-role' | 'selection-mode' | 'metadata' | 'pin-state' | 'open-callback' | 'edit-field' | 'save-state' | 'validation'>);

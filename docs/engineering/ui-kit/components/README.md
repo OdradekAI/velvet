@@ -42,12 +42,17 @@ at the canonical 1280×800 viewport, or use the full `npm run verify:ui-kit`
 acceptance gate. PreviewHost also owns the async
 lifecycle story matrix for success, cancellation, timeout, failure and retry;
 those deterministic scenarios run in the Node/Happy DOM story runner.
-AssetGrid's layout and drag/drop surface is backed by the versioned Eagle
-directive evidence matrix at `docs/engineering/ui-kit-eagle-directive-evidence.md`.
-Inspector is the first host projection extracted from that matrix; its
-selection and metadata contract lives in `host-projections/inspector.md`.
-`VelvetZoomControl` is the host-owned slider projection backed by the Eagle
-runtime step probe; its full range and persistence semantics remain explicitly
-unknown.
+AssetGrid, Inspector and ZoomControl keep their interaction evidence in
+their own contracts and browser qualification fixtures. Their external runtime
+range and persistence semantics remain explicitly unknown.
 The complete action-to-story/browser mapping is maintained in
 `../action-coverage.md`.
+
+The first evidence-derived host projection added in this wave is
+`VelvetFilterPanel` ([manual](host-projections/filter-panel.md)). It keeps
+filter rules in the host, supports text/single/multi/range facets, and is
+qualified in both the Node story runner and the real-browser host fixture.
+
+The current semantic and visual mapping is maintained in the local research
+notes; product contracts keep only the resulting host ownership and action
+semantics.
