@@ -1,10 +1,12 @@
+import { useState } from 'react';
 import type { UiKitStory } from '../../story-registry.js';
-import { VelvetAssetGrid } from '../../host-projections/index.js';
+import { VelvetAssetGrid, VelvetZoomControl } from '../../host-projections/index.js';
 
 let selectedAsset = '';
 let openedAsset = '';
 let draggedAsset = '';
 let droppedAsset = '';
+let selectionMode = '';
 
 export const assetGridStories: readonly UiKitStory[] = [
   {
@@ -15,7 +17,7 @@ export const assetGridStories: readonly UiKitStory[] = [
     render: () => <VelvetAssetGrid items={[{ id: 'a', label: 'A', selected: true }, { id: 'b', label: 'B' }]} onOpen={(id) => { openedAsset = id; }} onSelect={(id) => { selectedAsset = id; }} />,
     scenario: {
       covers: ['select', 'navigate', 'open'],
-      setup: () => { selectedAsset = ''; openedAsset = ''; draggedAsset = ''; droppedAsset = ''; },
+      setup: () => { selectedAsset = ''; openedAsset = ''; draggedAsset = ''; droppedAsset = ''; selectionMode = ''; },
       actions: [
         (runtime) => runtime.act(async () => {
           const cell = runtime.root.querySelector<HTMLElement>('[role="gridcell"]');
@@ -67,4 +69,60 @@ export const assetGridStories: readonly UiKitStory[] = [
       } }],
     },
   },
+  {
+    id: 'asset-grid/selection-modifiers',
+    componentId: 'asset-grid',
+    name: 'Selection modifiers',
+    description: 'Host receives additive and range selection modifiers without taking ownership of the anchor.',
+    render: () => <VelvetAssetGrid items={[{ id: 'a', label: 'A', selected: true }, { id: 'b', label: 'B' }, { id: 'c', label: 'C' }]} onSelect={(id, additive, range) => { selectedAsset = id; selectionMode = `${additive ? 'additive' : 'replace'}:${range ? 'range' : 'single'}`; }} />,
+    scenario: {
+      covers: ['select'],
+      setup: () => { selectedAsset = ''; selectionMode = ''; },
+      actions: [
+        (runtime) => runtime.act(async () => {
+          const cell = runtime.root.querySelector<HTMLElement>('[role="gridcell"][aria-label="B"]');
+          const MouseEventCtor = cell?.ownerDocument.defaultView?.MouseEvent;
+          if (cell && MouseEventCtor) cell.dispatchEvent(new MouseEventCtor('click', { bubbles: true, shiftKey: true }));
+        }),
+      ],
+      checkpoints: [{ name: 'range modifier', afterAction: 0, assert: () => {
+        if (selectedAsset !== 'b' || selectionMode !== 'replace:range') throw new Error('AssetGrid range selection modifier contract failed');
+      } }],
+    },
+  },
+  {
+    id: 'asset-grid/zoom-layout',
+    componentId: 'asset-grid',
+    name: 'Zoom layout projection',
+    description: 'Host-controlled grid reflow using the populated Eagle geometry checkpoints.',
+    render: () => <ZoomLayoutStory />,
+    scenario: {
+      covers: ['navigate'],
+      setup: () => undefined,
+      actions: [async (runtime) => {
+        for (let index = 0; index < 10; index += 1) {
+          await runtime.act(async () => runtime.root.querySelector<HTMLButtonElement>('button[aria-label="Zoom in"]')?.click());
+        }
+      }],
+      checkpoints: [{ name: 'host reflow at 230', afterAction: 0, assert: (runtime) => {
+        if (runtime.root.querySelector('[data-ui-kit-observation="grid-columns"]')?.textContent !== '5') throw new Error('AssetGrid zoom layout projection contract failed');
+      } }],
+    },
+  },
 ];
+
+function ZoomLayoutStory() {
+  const [zoom, setZoom] = useState(180);
+  const columns = zoom >= 230 ? 5 : 8;
+  return (
+    <div>
+      <VelvetZoomControl ariaLabel="Zoom level" max={500} min={25} onChange={setZoom} value={zoom} />
+      <output data-ui-kit-observation="grid-columns">{columns}</output>
+      <VelvetAssetGrid
+        columns={columns}
+        items={Array.from({ length: 12 }, (_, index) => ({ id: `asset-${index}`, label: `Asset ${index}` }))}
+        onSelect={() => undefined}
+      />
+    </div>
+  );
+}

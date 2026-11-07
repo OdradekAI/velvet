@@ -21,7 +21,8 @@ export type VelvetAssetGridLayout = 'grid' | 'square' | 'list' | 'justified';
 
 export interface VelvetAssetGridProps extends UiCommonProps {
   readonly items: readonly VelvetAssetGridItem[];
-  readonly onSelect: (id: string, additive: boolean) => void;
+  /** Reports the host selection mode; `range` is true for a Shift selection. */
+  readonly onSelect: (id: string, additive: boolean, range: boolean) => void;
   readonly onOpen?: (id: string) => void;
   readonly onDragStart?: (id: string) => void;
   readonly onDrop?: (sourceId: string, targetId: string) => void;
@@ -49,7 +50,7 @@ export function VelvetAssetGrid({
     const next = Math.max(0, Math.min(items.length - 1, index + delta));
     const item = items[next];
     if (item && !item.disabled) {
-      onSelect(item.id, false);
+      onSelect(item.id, false, false);
       itemRefs.current[next]?.focus();
     }
   };
@@ -72,7 +73,7 @@ export function VelvetAssetGrid({
           draggable={onDragStart !== undefined}
           key={item.id}
           ref={(element) => { itemRefs.current[index] = element; }}
-          onClick={(event) => onSelect(item.id, event.metaKey || event.ctrlKey)}
+          onClick={(event) => onSelect(item.id, event.metaKey || event.ctrlKey, event.shiftKey)}
           onDoubleClick={() => onOpen?.(item.id)}
           onDragOver={(event) => { if (onDrop) event.preventDefault(); }}
           onDragStart={(event) => {

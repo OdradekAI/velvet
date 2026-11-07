@@ -29,6 +29,7 @@ const COMMANDS = [
 export function HostProjectionQualificationFixture() {
   const [selectedAsset, setSelectedAsset] = useState('asset-1');
   const [openedAsset, setOpenedAsset] = useState('');
+  const [assetSelectionMode, setAssetSelectionMode] = useState('replace:single');
   const [selectedRow, setSelectedRow] = useState('');
   const [sortedBy, setSortedBy] = useState('');
   const [selectedCommand, setSelectedCommand] = useState('');
@@ -47,8 +48,9 @@ export function HostProjectionQualificationFixture() {
       <section aria-label="Asset grid qualification" data-ui-kit-probe="asset-grid">
         <VelvetStack gap="sm">
           <VelvetText as="h2">Asset Grid</VelvetText>
-          <VelvetAssetGrid ariaLabel="Qualification assets" columns={2} items={ASSETS.map((asset) => ({ ...asset, selected: asset.id === selectedAsset }))} onOpen={setOpenedAsset} onSelect={(id) => setSelectedAsset(id)} />
+          <VelvetAssetGrid ariaLabel="Qualification assets" columns={2} items={ASSETS.map((asset) => ({ ...asset, selected: asset.id === selectedAsset }))} onOpen={setOpenedAsset} onSelect={(id, additive, range) => { setSelectedAsset(id); setAssetSelectionMode(`${additive ? 'additive' : 'replace'}:${range ? 'range' : 'single'}`); }} />
           <output data-ui-kit-observation="asset-selection">selected:{selectedAsset};opened:{openedAsset}</output>
+          <output data-ui-kit-observation="asset-selection-mode">{assetSelectionMode}</output>
         </VelvetStack>
       </section>
       <section aria-label="Data table qualification" data-ui-kit-probe="data-table">

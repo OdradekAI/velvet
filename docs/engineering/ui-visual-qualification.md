@@ -117,3 +117,11 @@ actions and equalizes the navigation and Inspector side zones. The native Eagle
 probe then established a 5-point zoom step from the observed `180 → 505 → 500`
 sequence; `VelvetZoomControl` now owns that bounded, controlled slider contract.
 Eagle's full range, persistence and grid reflow semantics remain unknown.
+
+The populated-library probe is recorded in
+`docs/engineering/ui-kit-eagle-populated-evidence.md`. It established the
+observed geometry change from eight columns at zoom `180` to five columns at
+zoom `230`, plus click selection, Shift multi-selection, format filtering and
+content-search focus behavior. The resulting `AssetGrid` contract reports the
+selection modifier while leaving the selection anchor, zoom formula and filter
+persistence with the host.
