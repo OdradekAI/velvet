@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
-import { PluginDiagnosticsService } from '/Users/luiz/Odradek/velvet/apps/desktop/src/workbench/diagnostics/diagnostics-service.ts';
+const { PluginDiagnosticsService } = await import(
+  new URL('../src/workbench/diagnostics/diagnostics-service.ts', import.meta.url),
+);
 
 const service = new PluginDiagnosticsService();
 let notifications = 0;
