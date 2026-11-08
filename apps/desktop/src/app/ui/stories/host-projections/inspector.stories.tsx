@@ -8,6 +8,9 @@ let retryCount = 0;
 let changeField: ((fieldId: string, value: string) => void) | undefined;
 let sectionToggled = '';
 
+const LANDSCAPE_PREVIEW = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 180"><rect width="320" height="180" fill="#2b76e7"/><circle cx="250" cy="54" r="34" fill="#b9d4ff"/><path d="M0 145 90 75l58 42 62-58 110 86v35H0Z" fill="#142c63"/></svg>')}`;
+const PORTRAIT_PREVIEW = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 320"><rect width="180" height="320" fill="#fc85b3"/><circle cx="90" cy="90" r="48" fill="#ffd8e8"/><path d="M0 260 52 180l38 38 35-54 55 68v88H0Z" fill="#6c214d"/></svg>')}`;
+
 function InspectorSingleStory() {
   const [pinned, setPinned] = useState(false);
   return <VelvetInspector title="Inspector" selectedCount={1} preview={<div aria-label="Asset preview" role="img" />} fields={[{ id: 'folder', label: 'Folder', value: 'Illustration' }, { id: 'tags', label: 'Tags', value: 'reference' }]} onOpen={() => { opened = true; }} onPin={setPinned} pinned={pinned} />;
@@ -60,6 +63,19 @@ function InspectorGroupedPaletteStory() {
   );
 }
 
+function InspectorPreviewStory({ orientation }: { orientation: 'landscape' | 'portrait' }) {
+  const landscape = orientation === 'landscape';
+  return (
+    <VelvetInspector
+      fields={[{ id: 'dimensions', label: 'Dimensions', value: landscape ? '320 × 180' : '180 × 320' }, { id: 'type', label: 'Type', value: 'Image' }]}
+      palette={[{ id: landscape ? 'blue' : 'pink', color: landscape ? '#2b76e7' : '#fc85b3', ratio: landscape ? 42.5 : 61.25, label: landscape ? 'Blue' : 'Pink' }]}
+      preview={<img alt={`${orientation} asset preview`} height={landscape ? 180 : 320} src={landscape ? LANDSCAPE_PREVIEW : PORTRAIT_PREVIEW} width={landscape ? 320 : 180} />}
+      selectedCount={1}
+      title="Inspector"
+    />
+  );
+}
+
 export const inspectorStories: readonly UiKitStory[] = [
   {
     id: 'inspector/empty',
@@ -93,6 +109,53 @@ export const inspectorStories: readonly UiKitStory[] = [
     name: 'Multiple selection',
     description: 'Aggregated fields for multiple selected assets.',
     render: () => <VelvetInspector title="Inspector" selectedCount={2} fields={[{ id: 'selection', label: 'Selection', value: '2 assets' }, { id: 'size', label: 'Size', value: '4.2 MB' }]} />,
+    scenario: {
+      actions: [],
+      checkpoints: [{ name: 'selected count', assert: (runtime) => {
+        if (runtime.root.querySelector('[data-inspector-selected-count]')?.textContent?.replace(/\s+/g, ' ').trim() !== 'Selected 2 assets') throw new Error('Inspector multiple selection count contract failed');
+      } }],
+    },
+  },
+  {
+    id: 'inspector/preview-landscape',
+    componentId: 'inspector',
+    name: 'Landscape preview',
+    description: 'Landscape preview keeps the supplied 16:9 aspect ratio inside the 200px fit region.',
+    render: () => <InspectorPreviewStory orientation="landscape" />,
+    scenario: {
+      actions: [],
+      checkpoints: [{ name: 'landscape preview slot', assert: (runtime) => {
+        const image = runtime.root.querySelector<HTMLImageElement>('.velvet-inspector__preview img');
+        if (image?.width !== 320 || image.height !== 180) throw new Error('Inspector landscape preview evidence contract failed');
+      } }],
+    },
+  },
+  {
+    id: 'inspector/preview-portrait',
+    componentId: 'inspector',
+    name: 'Portrait preview',
+    description: 'Portrait preview keeps the supplied 9:16 aspect ratio and is height constrained by the host.',
+    render: () => <InspectorPreviewStory orientation="portrait" />,
+    scenario: {
+      actions: [],
+      checkpoints: [{ name: 'portrait preview slot', assert: (runtime) => {
+        const image = runtime.root.querySelector<HTMLImageElement>('.velvet-inspector__preview img');
+        if (image?.width !== 180 || image.height !== 320) throw new Error('Inspector portrait preview evidence contract failed');
+      } }],
+    },
+  },
+  {
+    id: 'inspector/no-preview',
+    componentId: 'inspector',
+    name: 'No preview',
+    description: 'Assets without a viewer keep metadata visible and omit the preview slot.',
+    render: () => <VelvetInspector fields={[{ id: 'type', label: 'Type', value: 'Raw file' }, { id: 'preview', label: 'Preview', value: 'Unavailable' }]} selectedCount={1} title="Inspector" />,
+    scenario: {
+      actions: [],
+      checkpoints: [{ name: 'no preview branch', assert: (runtime) => {
+        if (runtime.root.querySelector('.velvet-inspector__preview') !== null || runtime.root.querySelector('[data-inspector-selection="single"]') === null) throw new Error('Inspector no-preview evidence contract failed');
+      } }],
+    },
   },
   {
     id: 'inspector/grouped-palette',

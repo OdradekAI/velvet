@@ -21,13 +21,14 @@ export interface VelvetPreviewHostProps {
   readonly providerActions?: readonly VelvetPreviewProviderAction[];
   readonly onProviderAction?: (actionId: string) => void;
   readonly onOpenExternal?: () => void;
+  readonly onClose?: () => void;
 }
 
-export function VelvetPreviewHost({ state, mode = 'fit', toolbar, children, message, onRetry, onModeChange, providerActions, onProviderAction, onOpenExternal }: VelvetPreviewHostProps) {
+export function VelvetPreviewHost({ state, mode = 'fit', toolbar, children, message, onRetry, onModeChange, providerActions, onProviderAction, onOpenExternal, onClose }: VelvetPreviewHostProps) {
   if (state === 'ready') {
     return (
       <section aria-label="Preview" className="velvet-preview-host" data-preview-mode={mode} data-preview-state={state} role="region">
-        {toolbar || onModeChange || providerActions?.length || onOpenExternal ? (
+        {toolbar || onModeChange || providerActions?.length || onOpenExternal || onClose ? (
           <div aria-label="Preview controls" className="velvet-preview-host__toolbar" role="toolbar">
             <span className="velvet-preview-host__mode" data-preview-mode-label="true">{mode === 'actual' ? 'Actual size' : 'Fit'}</span>
             {onModeChange ? <VelvetButton data-preview-action="toggle-mode" onClick={() => onModeChange(mode === 'actual' ? 'fit' : 'actual')} variant="quiet">{mode === 'actual' ? 'Fit' : 'Actual size'}</VelvetButton> : null}
@@ -45,6 +46,7 @@ export function VelvetPreviewHost({ state, mode = 'fit', toolbar, children, mess
             ))}
             {toolbar}
             {onOpenExternal ? <VelvetButton data-preview-action="open-external" onClick={onOpenExternal} variant="quiet">Open externally</VelvetButton> : null}
+            {onClose ? <VelvetButton ariaLabel="Close preview" data-preview-action="close" onClick={onClose} variant="quiet">Close</VelvetButton> : null}
           </div>
         ) : null}
         {children}
@@ -55,6 +57,7 @@ export function VelvetPreviewHost({ state, mode = 'fit', toolbar, children, mess
   return (
     <section aria-busy={state === 'loading' ? 'true' : undefined} aria-label="Preview" className="velvet-preview-host" data-preview-mode={mode} data-preview-state={state} role="region">
       <VelvetState
+        action={onClose ? <VelvetButton ariaLabel="Close preview" data-preview-action="close" onClick={onClose} variant="quiet">Close</VelvetButton> : undefined}
         description={message}
         kind={kind}
         onRetry={state === 'error' ? onRetry : undefined}

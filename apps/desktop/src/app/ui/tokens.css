@@ -453,6 +453,7 @@ button {
 .velvet-inspector__pin { min-height: 24px; padding: 0 6px; font-size: var(--velvet-font-size-label); }
 .velvet-inspector__empty { display: grid; min-height: 120px; margin: 0; place-items: center; color: var(--velvet-text-muted); font-size: var(--velvet-font-size-label); text-align: center; }
 .velvet-inspector__preview { display: flex; min-height: 200px; align-items: center; justify-content: center; overflow: hidden; border: 1px solid var(--velvet-border-subtle); border-radius: var(--velvet-radius-sm); background: var(--velvet-surface-raised); }
+.velvet-inspector__preview > * { display: flex; width: 100%; max-width: 100%; max-height: 200px; align-items: center; justify-content: center; }
 .velvet-inspector__preview img { display: block; width: auto; height: auto; max-width: 100%; max-height: 200px; object-fit: contain; border-radius: var(--velvet-radius-sm); }
 .velvet-inspector__metadata { display: grid; gap: var(--velvet-spacing-3); margin: var(--velvet-spacing-4) 0; }
 .velvet-inspector__metadata div { display: grid; grid-template-columns: 62px minmax(0, 1fr); gap: var(--velvet-spacing-3); align-items: center; }

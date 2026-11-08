@@ -6,7 +6,7 @@ import remains available from `apps/desktop/src/app/ui/index.ts`.
 
 ## Contract
 
-- **Props:** `state`, `mode`, `message`, `toolbar`, `providerActions`, `children`, `onRetry`, `onModeChange`, `onProviderAction`, `onOpenExternal`
+- **Props:** `state`, `mode`, `message`, `toolbar`, `providerActions`, `children`, `onRetry`, `onModeChange`, `onProviderAction`, `onOpenExternal`, `onClose`
 - **States:** loading, ready, empty, error, disabled
 - **Async lifecycle:** success, cancelled, timeout, failure, retry
 - **Accessibility:** named preview region; loading is busy and error/empty fallback states are announced
@@ -24,6 +24,7 @@ classes and Workbench implementation details are not public API.
 - `preview-host/retry`
 - `preview-host/toolbar-mode`
 - `preview-host/provider-actions`
+- `preview-host/main-window-lifecycle`
 - `preview-host/async-success`
 - `preview-host/async-cancelled`
 - `preview-host/async-timeout`
@@ -47,6 +48,13 @@ rotate, pan or slideshow. Each action supplies a stable id and accessible label;
 the host owns pressed/disabled state and receives the selected id through
 `onProviderAction`. The component does not infer provider capabilities or call a
 preview provider directly.
+
+`onClose` is the host-owned exit action for inline/detail preview mode. It is
+available in the ready and fallback states, so the host can leave a loading,
+error or no-preview branch without the component owning navigation state. The
+main-window lifecycle story and browser fixture cover open → loading → ready,
+provider failure → retry, portrait/landscape content, no-preview fallback and
+close with focus returned by the host.
 
 The semantic visual contract keeps the preview on the canvas surface, reserves
 a 48px control strip for provider actions and keeps zoom bounds in the host

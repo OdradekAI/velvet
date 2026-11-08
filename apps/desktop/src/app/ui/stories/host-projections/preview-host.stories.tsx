@@ -9,6 +9,29 @@ let retried = 0;
 let openedExternally = false;
 let providerAction = '';
 
+function MainWindowPreviewLifecycleStory() {
+  const [open, setOpen] = useState(false);
+  const [state, setState] = useState<'loading' | 'ready' | 'empty' | 'error'>('empty');
+  return (
+    <div>
+      <button data-preview-story-action="open" onClick={() => { setOpen(true); setState('loading'); }} type="button">Open preview</button>
+      <button data-preview-story-action="resolve" onClick={() => setState('ready')} type="button">Resolve preview</button>
+      <button data-preview-story-action="fail" onClick={() => setState('error')} type="button">Fail preview</button>
+      {open ? (
+        <VelvetPreviewHost
+          message={state === 'error' ? 'Provider failed' : state === 'empty' ? 'No preview available' : undefined}
+          onClose={() => { setOpen(false); setState('empty'); }}
+          onRetry={() => setState('loading')}
+          state={state}
+        >
+          <VelvetText>Loaded asset preview</VelvetText>
+        </VelvetPreviewHost>
+      ) : <p data-preview-story-state="closed">Preview closed</p>}
+      <output data-preview-story-state={open ? state : 'closed'}>{open ? state : 'closed'}</output>
+    </div>
+  );
+}
+
 function operation(): UiKitStoryAsyncOperation<string> {
   if (!activeOperation) {
     throw new Error('Preview async story operation has not been set up');
@@ -61,6 +84,30 @@ export const previewHostStories: readonly UiKitStory[] = [
         const action = runtime.root.querySelector<HTMLButtonElement>('[data-preview-provider-action="rotate-right"]');
         if (providerAction !== 'rotate-right' || action?.getAttribute('aria-pressed') !== 'true' || runtime.root.querySelector<HTMLButtonElement>('[data-preview-provider-action="slideshow"]')?.disabled !== true) throw new Error('PreviewHost provider action contract failed');
       } }],
+    },
+  },
+  {
+    id: 'preview-host/main-window-lifecycle',
+    componentId: 'preview-host',
+    name: 'Main window lifecycle',
+    description: 'Host-owned open, loading, ready, error, retry and close transitions for the main-window preview.',
+    render: () => <MainWindowPreviewLifecycleStory />,
+    scenario: {
+      covers: ['retry', 'close'],
+      actions: [
+        (runtime) => runtime.act(async () => { runtime.root.querySelector<HTMLButtonElement>('[data-preview-story-action="open"]')?.click(); }),
+        (runtime) => runtime.act(async () => { runtime.root.querySelector<HTMLButtonElement>('[data-preview-story-action="resolve"]')?.click(); }),
+        (runtime) => runtime.act(async () => { runtime.root.querySelector<HTMLButtonElement>('[data-preview-story-action="fail"]')?.click(); }),
+        (runtime) => runtime.act(async () => { runtime.root.querySelector<HTMLButtonElement>('[role="alert"] button')?.click(); }),
+        (runtime) => runtime.act(async () => { runtime.root.querySelector<HTMLButtonElement>('[data-preview-action="close"]')?.click(); }),
+      ],
+      checkpoints: [
+        { name: 'loading', afterAction: 0, assert: (runtime) => { if (runtime.root.querySelector('[data-preview-story-state="loading"]') === null) throw new Error('Preview main-window loading lifecycle contract failed'); } },
+        { name: 'ready', afterAction: 1, assert: (runtime) => { if (runtime.root.querySelector('[data-preview-story-state="ready"]') === null) throw new Error('Preview main-window ready lifecycle contract failed'); } },
+        { name: 'error', afterAction: 2, assert: (runtime) => { if (runtime.root.querySelector('[data-preview-story-state="error"]') === null || runtime.root.querySelector('[role="alert"]') === null) throw new Error('Preview main-window error lifecycle contract failed'); } },
+        { name: 'retry loading', afterAction: 3, assert: (runtime) => { if (runtime.root.querySelector('[data-preview-story-state="loading"]') === null) throw new Error('Preview main-window retry lifecycle contract failed'); } },
+        { name: 'closed', afterAction: 4, assert: (runtime) => { if (runtime.root.querySelector('[data-preview-story-state="closed"]') === null) throw new Error('Preview main-window close lifecycle contract failed'); } },
+      ],
     },
   },
   {

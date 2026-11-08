@@ -228,6 +228,7 @@ const folderFacetOpen = await page.evaluate(() => {
 assert(folderFacetOpen.width === 360 && folderFacetOpen.options === 3 && folderFacetOpen.focused === 'Folders search', 'Folder facet menu geometry/focus contract failed');
 await page.click('loc=css:[data-ui-kit-probe="filter-facet-menu"] [data-filter-option="reference"]');
 const folderIncluded = await page.evaluate(() => document.querySelector('[data-ui-kit-probe="filter-facet-menu"] [data-filter-option="reference"]')?.getAttribute('data-filter-state') ?? null);
+await page.evaluate(() => document.querySelector('[data-ui-kit-probe="filter-facet-menu"] [data-filter-option="archive"]')?.scrollIntoView({block:'center'}));
 const folderArchiveBox = await page.evaluate(() => { const node = document.querySelector('[data-ui-kit-probe="filter-facet-menu"] [data-filter-option="archive"]'); const rect = node?.getBoundingClientRect(); return rect ? {x: rect.x + rect.width / 2, y: rect.y + rect.height / 2} : null; });
 assert(folderArchiveBox, 'Folder facet archive option rectangle unavailable');
 await page.cdp("Input.dispatchMouseEvent", {type:"mousePressed",x:folderArchiveBox.x,y:folderArchiveBox.y,button:"right",clickCount:1});
@@ -290,6 +291,62 @@ const inspectorCollapsed = await page.evaluate(() => document.querySelector('[da
 assert(inspectorCollapsed === 'false', 'Inspector section collapse contract failed');
 assert(inspectorSaved.state === 'name:Renamed poster;pinned:true;save:saved', 'Inspector save observation failed');
 
+const inspectorScenarios = {};
+for (const scenario of ['landscape', 'portrait', 'no-preview', 'multiple']) {
+  await page.click('loc=css:[data-ui-test-id="inspector-scenario-' + scenario + '"]');
+  await page.waitForFunction((expected) => document.querySelector('[data-ui-kit-observation="inspector-scenario"]')?.textContent === expected, scenario);
+  await page.evaluate(() => document.querySelector('[data-ui-kit-probe="inspector"]')?.scrollIntoView({block:'center'}));
+  inspectorScenarios[scenario] = await page.evaluate(() => {
+    const probe = document.querySelector('[data-ui-kit-probe="inspector"]');
+    const root = probe?.querySelector('.velvet-inspector');
+    const preview = probe?.querySelector('.velvet-inspector__preview');
+    const image = probe?.querySelector('.velvet-inspector__preview img');
+    const rect = image?.getBoundingClientRect();
+    return {selection: root?.getAttribute('data-inspector-selection') ?? null, preview: Boolean(preview), image: rect ? {width: rect.width, height: rect.height} : null, selectedCount: probe?.querySelector('[data-inspector-selected-count]')?.textContent?.replace(/\s+/g, ' ').trim() ?? null, sections: probe?.querySelectorAll('[data-inspector-section]').length ?? 0, palette: probe?.querySelectorAll('[data-palette-id]').length ?? 0};
+  });
+}
+assert(inspectorScenarios.landscape.selection === 'single' && inspectorScenarios.landscape.preview && inspectorScenarios.landscape.image && Math.abs(inspectorScenarios.landscape.image.width / inspectorScenarios.landscape.image.height - 16 / 9) < 0.02, 'Inspector landscape evidence contract failed');
+assert(inspectorScenarios.portrait.selection === 'single' && inspectorScenarios.portrait.preview && inspectorScenarios.portrait.image && Math.abs(inspectorScenarios.portrait.image.width / inspectorScenarios.portrait.image.height - 9 / 16) < 0.02, 'Inspector portrait evidence contract failed');
+assert(inspectorScenarios['no-preview'].selection === 'single' && !inspectorScenarios['no-preview'].preview, 'Inspector no-preview evidence contract failed');
+assert(inspectorScenarios.multiple.selection === 'multiple' && inspectorScenarios.multiple.selectedCount?.includes('2'), 'Inspector multiple selection evidence contract failed');
+
+await page.evaluate(() => document.querySelector('[data-ui-kit-probe="main-window-preview"]')?.scrollIntoView({block:'center'}));
+await page.click('loc=css:[data-ui-test-id="main-preview-open-landscape"]');
+await page.waitForFunction(() => document.querySelector('[data-ui-kit-observation="main-preview-state"]')?.textContent === 'loading;asset:landscape');
+const mainPreviewLoading = await page.evaluate(() => document.querySelector('[data-ui-kit-observation="main-preview-state"]')?.textContent ?? null);
+await page.click('loc=css:[data-ui-test-id="main-preview-resolve"]');
+await page.waitForFunction(() => document.querySelector('[data-ui-kit-observation="main-preview-state"]')?.textContent === 'ready;asset:landscape');
+await page.waitForFunction(() => { const image = document.querySelector('[data-ui-kit-probe="main-window-preview"] [data-main-preview-asset="landscape"]'); return image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0; });
+const mainPreviewLandscape = await page.evaluate(() => { const probe = document.querySelector('[data-ui-kit-probe="main-window-preview"]'); const image = probe?.querySelector('[data-main-preview-asset="landscape"]'); const rect = image?.getBoundingClientRect(); return {state: probe?.querySelector('[data-ui-kit-observation="main-preview-state"]')?.textContent ?? null, width: rect?.width ?? 0, height: rect?.height ?? 0}; });
+await page.click('loc=css:[data-ui-test-id="main-preview-fail"]');
+await page.waitForFunction(() => document.querySelector('[data-ui-kit-observation="main-preview-state"]')?.textContent === 'error;asset:landscape');
+const mainPreviewError = await page.evaluate(() => ({state: document.querySelector('[data-ui-kit-observation="main-preview-state"]')?.textContent ?? null, alert: document.querySelector('[data-ui-kit-probe="main-window-preview"] [role="alert"]')?.textContent?.trim() ?? null}));
+await page.click('loc=css:[data-ui-kit-probe="main-window-preview"] [role="alert"] button:not([data-preview-action="close"])');
+await page.waitForFunction(() => document.querySelector('[data-ui-kit-observation="main-preview-state"]')?.textContent === 'loading;asset:landscape');
+const mainPreviewRetried = await page.evaluate(() => document.querySelector('[data-ui-kit-observation="main-preview-state"]')?.textContent ?? null);
+await page.click('loc=css:[data-ui-test-id="main-preview-resolve"]');
+await page.waitForFunction(() => document.querySelector('[data-ui-kit-observation="main-preview-state"]')?.textContent === 'ready;asset:landscape');
+await page.click('loc=css:[data-ui-kit-probe="main-window-preview"] [data-preview-action="close"]');
+await page.waitForFunction(() => document.querySelector('[data-ui-kit-observation="main-preview-state"]')?.textContent === 'closed');
+const mainPreviewClosed = await page.evaluate(() => ({state: document.querySelector('[data-ui-kit-observation="main-preview-state"]')?.textContent ?? null, closed: document.querySelector('[data-main-preview-closed="true"]') !== null, focus: document.activeElement?.getAttribute('data-ui-test-id') ?? null}));
+await page.click('loc=css:[data-ui-test-id="main-preview-open-portrait"]');
+await page.click('loc=css:[data-ui-test-id="main-preview-resolve"]');
+await page.waitForFunction(() => document.querySelector('[data-ui-kit-observation="main-preview-state"]')?.textContent === 'ready;asset:portrait');
+await page.waitForFunction(() => { const image = document.querySelector('[data-ui-kit-probe="main-window-preview"] [data-main-preview-asset="portrait"]'); return image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0; });
+const mainPreviewPortrait = await page.evaluate(() => { const probe = document.querySelector('[data-ui-kit-probe="main-window-preview"]'); const image = probe?.querySelector('[data-main-preview-asset="portrait"]'); const rect = image?.getBoundingClientRect(); return {state: probe?.querySelector('[data-ui-kit-observation="main-preview-state"]')?.textContent ?? null, width: rect?.width ?? 0, height: rect?.height ?? 0}; });
+await page.click('loc=css:[data-ui-kit-probe="main-window-preview"] [data-preview-action="close"]');
+await page.click('loc=css:[data-ui-test-id="main-preview-open-no-preview"]');
+await page.waitForFunction(() => document.querySelector('[data-ui-kit-observation="main-preview-state"]')?.textContent === 'empty;asset:no-preview');
+const mainPreviewNoPreview = await page.evaluate(() => ({state: document.querySelector('[data-ui-kit-observation="main-preview-state"]')?.textContent ?? null, alert: document.querySelector('[data-ui-kit-probe="main-window-preview"] [role="status"]')?.textContent?.trim() ?? null, image: document.querySelector('[data-ui-kit-probe="main-window-preview"] [data-main-preview-asset]') !== null}));
+await page.click('loc=css:[data-ui-kit-probe="main-window-preview"] [data-preview-action="close"]');
+assert(mainPreviewLoading === 'loading;asset:landscape', 'Main preview loading lifecycle contract failed');
+assert(mainPreviewLandscape.state === 'ready;asset:landscape' && Math.abs(mainPreviewLandscape.width / mainPreviewLandscape.height - 16 / 9) < 0.02, 'Main preview landscape contract failed');
+assert(mainPreviewError.state === 'error;asset:landscape' && mainPreviewError.alert?.includes('Preview failed'), 'Main preview error lifecycle contract failed');
+assert(mainPreviewRetried === 'loading;asset:landscape', 'Main preview retry lifecycle contract failed');
+assert(mainPreviewClosed.closed && mainPreviewClosed.focus === 'main-preview-open-landscape', 'Main preview close/focus contract failed');
+assert(mainPreviewPortrait.state === 'ready;asset:portrait' && Math.abs(mainPreviewPortrait.width / mainPreviewPortrait.height - 9 / 16) < 0.02, 'Main preview portrait contract failed');
+assert(mainPreviewNoPreview.state === 'empty;asset:no-preview' && mainPreviewNoPreview.alert?.includes('No preview') && !mainPreviewNoPreview.image, 'Main preview no-preview contract failed');
+
 const result = {
   fixture: "host-projections",
   viewport: {width: await page.evaluate(() => innerWidth), height: await page.evaluate(() => innerHeight), dpr: await page.evaluate(() => devicePixelRatio)},
@@ -304,7 +361,8 @@ const result = {
   quickSearch: {open: quickSearchOpen, hostResults: quickSearchHostResults, selected: quickSearchSelected, folderResult: quickSearchFolderResult, history: quickSearchHistory, historySelected: quickSearchHistorySelected, closed: quickSearchClosed},
   filterPanel: {semanticSchema: filterSemanticSchema, changed: filterChanged, reset: filterReset, saved: filterSaved, applied: filterApplied, resultCount: filterCount, closed: filterClosed},
   filterFacetMenu: {folder: {open: folderFacetOpen, included: folderIncluded, excluded: folderExcluded, closed: folderFacetClosed}, color: {open: colorFacetOpen, changed: colorFacetChanged, closed: colorFacetClosed}},
-  inspector: {pinned: inspectorPinned, saved: inspectorSaved, evidence: inspectorEvidence, collapsed: inspectorCollapsed},
+  inspector: {pinned: inspectorPinned, saved: inspectorSaved, evidence: inspectorEvidence, collapsed: inspectorCollapsed, scenarios: inspectorScenarios},
+  mainPreview: {loading: mainPreviewLoading, landscape: mainPreviewLandscape, error: mainPreviewError, retried: mainPreviewRetried, closed: mainPreviewClosed, portrait: mainPreviewPortrait, noPreview: mainPreviewNoPreview},
 };
 await (await import("node:fs/promises")).writeFile(${JSON.stringify(outputPath)}, JSON.stringify(result, null, 2));
 console.log(JSON.stringify(result, null, 2));

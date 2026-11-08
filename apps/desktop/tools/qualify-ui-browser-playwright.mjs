@@ -195,6 +195,103 @@ assert.equal(await inspector.locator('[aria-controls="velvet-inspector-section-c
 assert.equal(host.inspector.state, 'name:Renamed poster;pinned:true;save:saved');
 assert.equal(host.inspector.status, 'Saved');
 
+const inspectorScenarios = {};
+for (const scenario of ['landscape', 'portrait', 'no-preview', 'multiple']) {
+  await inspector.locator(`[data-ui-test-id="inspector-scenario-${scenario}"]`).click();
+  await page.waitForFunction((expected) => document.querySelector('[data-ui-kit-observation="inspector-scenario"]')?.textContent === expected, scenario);
+  await inspector.scrollIntoViewIfNeeded();
+  if (scenario === 'landscape' || scenario === 'portrait') {
+    await page.waitForFunction(() => {
+      const image = document.querySelector('[data-ui-kit-probe="inspector"] .velvet-inspector__preview img');
+      return image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0;
+    });
+  }
+  inspectorScenarios[scenario] = await inspector.evaluate((node) => {
+    const root = node.querySelector('.velvet-inspector');
+    const preview = node.querySelector('.velvet-inspector__preview');
+    const image = node.querySelector('.velvet-inspector__preview img');
+    const rect = image?.getBoundingClientRect();
+    return {
+      selection: root?.getAttribute('data-inspector-selection') ?? null,
+      preview: Boolean(preview),
+      image: rect ? {width: rect.width, height: rect.height} : null,
+      selectedCount: node.querySelector('[data-inspector-selected-count]')?.textContent?.replace(/\s+/g, ' ').trim() ?? null,
+      sections: node.querySelectorAll('[data-inspector-section]').length,
+      palette: node.querySelectorAll('[data-palette-id]').length,
+    };
+  });
+}
+assert.equal(inspectorScenarios.landscape.selection, 'single');
+assert.equal(inspectorScenarios.landscape.preview, true);
+assert.ok(inspectorScenarios.landscape.image && Math.abs(inspectorScenarios.landscape.image.width / inspectorScenarios.landscape.image.height - 16 / 9) < 0.02, 'Inspector landscape ratio drifted');
+assert.equal(inspectorScenarios.portrait.selection, 'single');
+assert.equal(inspectorScenarios.portrait.preview, true);
+assert.ok(inspectorScenarios.portrait.image && Math.abs(inspectorScenarios.portrait.image.width / inspectorScenarios.portrait.image.height - 9 / 16) < 0.02, 'Inspector portrait ratio drifted');
+assert.equal(inspectorScenarios['no-preview'].preview, false);
+assert.equal(inspectorScenarios['no-preview'].selection, 'single');
+assert.equal(inspectorScenarios.multiple.selection, 'multiple');
+assert.equal(inspectorScenarios.multiple.selectedCount, 'Selected 2 assets');
+host.inspector.scenarios = inspectorScenarios;
+
+const mainPreview = page.locator('[data-ui-kit-probe="main-window-preview"]');
+await mainPreview.scrollIntoViewIfNeeded();
+await mainPreview.locator('[data-ui-test-id="main-preview-open-landscape"]').click();
+await page.waitForFunction(() => document.querySelector('[data-ui-kit-observation="main-preview-state"]')?.textContent === 'loading;asset:landscape');
+const mainPreviewLoading = await observation('main-preview-state');
+await mainPreview.locator('[data-ui-test-id="main-preview-resolve"]').click();
+await page.waitForFunction(() => document.querySelector('[data-ui-kit-observation="main-preview-state"]')?.textContent === 'ready;asset:landscape');
+await page.waitForFunction(() => {
+  const image = document.querySelector('[data-ui-kit-probe="main-window-preview"] [data-main-preview-asset="landscape"]');
+  return image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0;
+});
+const mainPreviewLandscape = await mainPreview.evaluate((node) => {
+  const image = node.querySelector('[data-main-preview-asset="landscape"]');
+  const rect = image?.getBoundingClientRect();
+  return {state: node.querySelector('[data-ui-kit-observation="main-preview-state"]')?.textContent ?? null, width: rect?.width ?? 0, height: rect?.height ?? 0};
+});
+await mainPreview.locator('[data-ui-test-id="main-preview-fail"]').click();
+await page.waitForFunction(() => document.querySelector('[data-ui-kit-observation="main-preview-state"]')?.textContent === 'error;asset:landscape');
+const mainPreviewError = await mainPreview.evaluate((node) => ({state: node.querySelector('[data-ui-kit-observation="main-preview-state"]')?.textContent ?? null, alert: node.querySelector('[role="alert"]')?.textContent?.trim() ?? null}));
+await mainPreview.locator('[role="alert"] button:not([data-preview-action="close"])').click();
+await page.waitForFunction(() => document.querySelector('[data-ui-kit-observation="main-preview-state"]')?.textContent === 'loading;asset:landscape');
+const mainPreviewRetried = await observation('main-preview-state');
+await mainPreview.locator('[data-ui-test-id="main-preview-resolve"]').click();
+await page.waitForFunction(() => document.querySelector('[data-ui-kit-observation="main-preview-state"]')?.textContent === 'ready;asset:landscape');
+await mainPreview.locator('[data-preview-action="close"]').click();
+await page.waitForFunction(() => document.querySelector('[data-ui-kit-observation="main-preview-state"]')?.textContent === 'closed');
+const mainPreviewClosed = await mainPreview.evaluate((node) => ({state: node.querySelector('[data-ui-kit-observation="main-preview-state"]')?.textContent ?? null, closed: node.querySelector('[data-main-preview-closed="true"]') !== null, focus: document.activeElement?.getAttribute('data-ui-test-id') ?? null}));
+
+await mainPreview.locator('[data-ui-test-id="main-preview-open-portrait"]').click();
+await mainPreview.locator('[data-ui-test-id="main-preview-resolve"]').click();
+await page.waitForFunction(() => document.querySelector('[data-ui-kit-observation="main-preview-state"]')?.textContent === 'ready;asset:portrait');
+await page.waitForFunction(() => {
+  const image = document.querySelector('[data-ui-kit-probe="main-window-preview"] [data-main-preview-asset="portrait"]');
+  return image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0;
+});
+const mainPreviewPortrait = await mainPreview.evaluate((node) => {
+  const image = node.querySelector('[data-main-preview-asset="portrait"]');
+  const rect = image?.getBoundingClientRect();
+  return {state: node.querySelector('[data-ui-kit-observation="main-preview-state"]')?.textContent ?? null, width: rect?.width ?? 0, height: rect?.height ?? 0};
+});
+await mainPreview.locator('[data-preview-action="close"]').click();
+await mainPreview.locator('[data-ui-test-id="main-preview-open-no-preview"]').click();
+await page.waitForFunction(() => document.querySelector('[data-ui-kit-observation="main-preview-state"]')?.textContent === 'empty;asset:no-preview');
+const mainPreviewNoPreview = await mainPreview.evaluate((node) => ({state: node.querySelector('[data-ui-kit-observation="main-preview-state"]')?.textContent ?? null, alert: node.querySelector('[role="status"]')?.textContent?.trim() ?? null, image: node.querySelector('[data-main-preview-asset]') !== null}));
+await mainPreview.locator('[data-preview-action="close"]').click();
+assert.equal(mainPreviewLoading, 'loading;asset:landscape');
+assert.equal(mainPreviewLandscape.state, 'ready;asset:landscape');
+assert.ok(Math.abs(mainPreviewLandscape.width / mainPreviewLandscape.height - 16 / 9) < 0.02, 'main preview landscape ratio drifted');
+assert.equal(mainPreviewError.state, 'error;asset:landscape');
+assert.ok(mainPreviewError.alert?.includes('Preview failed'));
+assert.equal(mainPreviewRetried, 'loading;asset:landscape');
+assert.deepEqual(mainPreviewClosed, {state: 'closed', closed: true, focus: 'main-preview-open-landscape'});
+assert.equal(mainPreviewPortrait.state, 'ready;asset:portrait');
+assert.ok(Math.abs(mainPreviewPortrait.width / mainPreviewPortrait.height - 9 / 16) < 0.02, 'main preview portrait ratio drifted');
+assert.equal(mainPreviewNoPreview.state, 'empty;asset:no-preview');
+assert.ok(mainPreviewNoPreview.alert?.includes('No preview'));
+assert.equal(mainPreviewNoPreview.image, false);
+host.mainPreviewLifecycle = {loading: mainPreviewLoading, landscape: mainPreviewLandscape, error: mainPreviewError, retried: mainPreviewRetried, closed: mainPreviewClosed, portrait: mainPreviewPortrait, noPreview: mainPreviewNoPreview};
+
 const filter = page.locator('[data-ui-kit-probe="filter-panel"]');
 await filter.locator('input[aria-label="Annotation"]').fill('poster');
 await page.waitForFunction(() => document.querySelector('[data-ui-kit-observation="filter-rules"]')?.textContent?.includes('poster'));

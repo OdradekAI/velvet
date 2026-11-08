@@ -73,7 +73,30 @@ const COLOR_FACET_SWATCHES = [
   { id: 'purple', color: '#6D50ED', label: 'Purple' },
 ] as const;
 
-const INSPECTOR_PREVIEW = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 240"><rect width="320" height="240" fill="#6d50ed"/><circle cx="250" cy="60" r="42" fill="#c8b5ff"/><path d="M0 200 100 120l58 50 62-70 100 100v40H0Z" fill="#33245f"/></svg>')}`;
+const INSPECTOR_LANDSCAPE_PREVIEW = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 180"><rect width="320" height="180" fill="#2b76e7"/><circle cx="250" cy="54" r="34" fill="#b9d4ff"/><path d="M0 145 90 75l58 42 62-58 110 86v35H0Z" fill="#142c63"/></svg>')}`;
+const INSPECTOR_PORTRAIT_PREVIEW = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 320"><rect width="180" height="320" fill="#fc85b3"/><circle cx="90" cy="90" r="48" fill="#ffd8e8"/><path d="M0 260 52 180l38 38 35-54 55 68v88H0Z" fill="#6c214d"/></svg>')}`;
+
+type InspectorScenario = 'landscape' | 'portrait' | 'no-preview' | 'multiple';
+
+function createInspectorSections(scenario: InspectorScenario, name: string): VelvetInspectorSection[] {
+  if (scenario === 'multiple') {
+    return [
+      { id: 'metadata', label: 'Metadata', fields: [{ id: 'selection', label: 'Selection', value: '2 assets' }, { id: 'dimensions', label: 'Dimensions', value: 'Mixed' }], expanded: true },
+      { id: 'source', label: 'Source', fields: [{ id: 'folder', label: 'Folder', value: 'Reference' }], expanded: true },
+    ];
+  }
+  if (scenario === 'no-preview') {
+    return [
+      { id: 'metadata', label: 'Metadata', fields: [{ id: 'type', label: 'Type', value: 'Raw file' }, { id: 'preview', label: 'Preview', value: 'Unavailable' }], expanded: true },
+      { id: 'source', label: 'Source', fields: [{ id: 'folder', label: 'Folder', value: 'Archive' }], expanded: true },
+    ];
+  }
+  const portrait = scenario === 'portrait';
+  return [
+    { id: 'metadata', label: 'Metadata', fields: [{ id: 'name', label: 'Name', value: name, inputValue: name, editable: true }, { id: 'dimensions', label: 'Dimensions', value: portrait ? '180 × 320' : '320 × 180' }], expanded: true },
+    { id: 'source', label: 'Source', fields: [{ id: 'folder', label: 'Folder', value: portrait ? 'Portraits' : 'Reference' }], expanded: true },
+  ];
+}
 
 export function HostProjectionQualificationFixture() {
   const [selectedAsset, setSelectedAsset] = useState('asset-1');
@@ -99,6 +122,10 @@ export function HostProjectionQualificationFixture() {
   const [previewMode, setPreviewMode] = useState<'fit' | 'actual'>('fit');
   const [previewProviderAction, setPreviewProviderAction] = useState('');
   const [previewExternalOpened, setPreviewExternalOpened] = useState(false);
+  const [mainPreviewOpen, setMainPreviewOpen] = useState(false);
+  const [mainPreviewState, setMainPreviewState] = useState<'loading' | 'ready' | 'empty' | 'error'>('empty');
+  const [mainPreviewAsset, setMainPreviewAsset] = useState<'landscape' | 'portrait' | 'no-preview'>('landscape');
+  const [mainPreviewMode, setMainPreviewMode] = useState<'fit' | 'actual'>('fit');
   const [zoom, setZoom] = useState(180);
   const [filterRules, setFilterRules] = useState<readonly VelvetFilterRule[]>([]);
   const [savedFilterRules, setSavedFilterRules] = useState<readonly VelvetFilterRule[]>([]);
@@ -110,16 +137,37 @@ export function HostProjectionQualificationFixture() {
   const [folderFacetQuery, setFolderFacetQuery] = useState('');
   const [colorFacetHex, setColorFacetHex] = useState('#FFFFFF');
   const [colorFacetAccuracy, setColorFacetAccuracy] = useState(20);
-  const [inspectorSections, setInspectorSections] = useState<VelvetInspectorSection[]>([
-    { id: 'metadata', label: 'Metadata', fields: [{ id: 'name', label: 'Name', value: inspectorName, inputValue: inspectorName, editable: true }, { id: 'dimensions', label: 'Dimensions', value: '320 × 240' }], expanded: true },
-    { id: 'source', label: 'Source', fields: [{ id: 'folder', label: 'Folder', value: 'Reference' }], expanded: true },
-  ]);
+  const [inspectorScenario, setInspectorScenario] = useState<InspectorScenario>('landscape');
+  const [inspectorSections, setInspectorSections] = useState<VelvetInspectorSection[]>(() => createInspectorSections('landscape', inspectorName));
   const paletteTriggerRef = useRef<HTMLButtonElement>(null);
   const quickSearchTriggerRef = useRef<HTMLButtonElement>(null);
   const folderFacetTriggerRef = useRef<HTMLButtonElement>(null);
   const colorFacetTriggerRef = useRef<HTMLButtonElement>(null);
+  const mainPreviewTriggerRef = useRef<HTMLButtonElement>(null);
   const hostCommands = COMMANDS.filter((command) => commandScope === 'all' || command.scope === undefined || command.scope === commandScope).filter((command) => commandQuery.length === 0 || `${command.label} ${command.description ?? ''}`.toLowerCase().includes(commandQuery.toLowerCase()));
   const hostQuickSearchResults = QUICK_SEARCH_RESULTS.filter((result) => result.kind === quickSearchTab);
+  const setMainPreview = (asset: 'landscape' | 'portrait' | 'no-preview'): void => {
+    setMainPreviewAsset(asset);
+    setMainPreviewOpen(true);
+    setMainPreviewState(asset === 'no-preview' ? 'empty' : 'loading');
+  };
+  const selectInspectorScenario = (scenario: InspectorScenario): void => {
+    setInspectorScenario(scenario);
+    setInspectorName(scenario === 'portrait' ? 'Portrait study' : 'Astronaut poster');
+    setInspectorSaveState('idle');
+    setInspectorSections(createInspectorSections(scenario, scenario === 'portrait' ? 'Portrait study' : 'Astronaut poster'));
+  };
+  const inspectorSelectedCount = inspectorScenario === 'multiple' ? 2 : 1;
+  const inspectorPreview = inspectorScenario === 'landscape'
+    ? <div data-ui-kit-probe="inspector-preview"><img alt="Landscape asset preview" height={180} src={INSPECTOR_LANDSCAPE_PREVIEW} width={320} /></div>
+    : inspectorScenario === 'portrait'
+      ? <div data-ui-kit-probe="inspector-preview"><img alt="Portrait asset preview" height={320} src={INSPECTOR_PORTRAIT_PREVIEW} width={180} /></div>
+      : undefined;
+  const inspectorPalette = inspectorScenario === 'landscape'
+    ? [{ id: 'blue', color: '#2B76E7', ratio: 42.5, label: 'Blue' }, { id: 'gray', color: '#8D95A2', ratio: 18.25, label: 'Gray' }, { id: 'pink', color: '#FC85B3', ratio: 9.5, label: 'Pink' }]
+    : inspectorScenario === 'portrait'
+      ? [{ id: 'pink', color: '#FC85B3', ratio: 61.25, label: 'Pink' }, { id: 'purple', color: '#6D50ED', ratio: 14.5, label: 'Purple' }]
+      : [];
 
   return (
     <main aria-label="Velvet host projection qualification fixture" data-ui-kit-fixture="host-projections" data-ui-kit-viewport="1280x800" style={{ display: 'grid', gap: 24, padding: 24, minHeight: '100%', background: 'var(--velvet-surface-app)' }}>
@@ -158,6 +206,29 @@ export function HostProjectionQualificationFixture() {
         <output data-ui-kit-observation="preview-host-state">{previewState}</output>
         <output data-ui-kit-observation="preview-provider-action">{previewProviderAction}</output>
         <output data-ui-kit-observation="preview-external-opened">{String(previewExternalOpened)}</output>
+      </section>
+      <section aria-label="Main window preview lifecycle qualification" data-ui-kit-probe="main-window-preview">
+        <VelvetStack gap="sm">
+          <VelvetText as="h2">Main window preview lifecycle</VelvetText>
+          <VelvetStack direction="row" gap="sm">
+            <VelvetButton onClick={() => setMainPreview('landscape')} ref={mainPreviewTriggerRef} testId="main-preview-open-landscape">Open landscape</VelvetButton>
+            <VelvetButton onClick={() => setMainPreview('portrait')} testId="main-preview-open-portrait" variant="quiet">Open portrait</VelvetButton>
+            <VelvetButton onClick={() => setMainPreview('no-preview')} testId="main-preview-open-no-preview" variant="quiet">Open no-preview</VelvetButton>
+            {mainPreviewOpen && mainPreviewState === 'loading' ? <VelvetButton onClick={() => setMainPreviewState('ready')} testId="main-preview-resolve" variant="quiet">Resolve</VelvetButton> : null}
+            {mainPreviewOpen && mainPreviewState !== 'loading' ? <VelvetButton onClick={() => setMainPreviewState('error')} testId="main-preview-fail" variant="quiet">Fail</VelvetButton> : null}
+          </VelvetStack>
+          {mainPreviewOpen ? <VelvetPreviewHost
+            mode={mainPreviewMode}
+            message={mainPreviewState === 'error' ? 'Preview provider failed' : mainPreviewState === 'empty' ? 'No preview available' : undefined}
+            onClose={() => { setMainPreviewOpen(false); setMainPreviewState('empty'); mainPreviewTriggerRef.current?.focus(); }}
+            onModeChange={setMainPreviewMode}
+            onRetry={() => setMainPreviewState('loading')}
+            state={mainPreviewState}
+          >
+            {mainPreviewState === 'ready' ? <img alt={`${mainPreviewAsset} main window preview`} data-main-preview-asset={mainPreviewAsset} height={mainPreviewAsset === 'portrait' ? 320 : 180} src={mainPreviewAsset === 'portrait' ? INSPECTOR_PORTRAIT_PREVIEW : INSPECTOR_LANDSCAPE_PREVIEW} width={mainPreviewAsset === 'portrait' ? 180 : 320} /> : null}
+          </VelvetPreviewHost> : <p data-main-preview-closed="true">Preview closed</p>}
+          <output data-ui-kit-observation="main-preview-state">{mainPreviewOpen ? `${mainPreviewState};asset:${mainPreviewAsset}` : 'closed'}</output>
+        </VelvetStack>
       </section>
       <section aria-label="Zoom control qualification" data-ui-kit-probe="zoom-control">
         <VelvetZoomControl max={500} min={25} onChange={setZoom} step={5} value={zoom} />
@@ -265,25 +336,30 @@ export function HostProjectionQualificationFixture() {
       <section aria-label="Inspector qualification" data-ui-kit-probe="inspector">
         <VelvetStack gap="sm">
           <VelvetText as="h2">Inspector</VelvetText>
+          <VelvetStack direction="row" gap="sm">
+            <VelvetButton onClick={() => selectInspectorScenario('landscape')} testId="inspector-scenario-landscape" variant={inspectorScenario === 'landscape' ? 'default' : 'quiet'}>Landscape</VelvetButton>
+            <VelvetButton onClick={() => selectInspectorScenario('portrait')} testId="inspector-scenario-portrait" variant={inspectorScenario === 'portrait' ? 'default' : 'quiet'}>Portrait</VelvetButton>
+            <VelvetButton onClick={() => selectInspectorScenario('no-preview')} testId="inspector-scenario-no-preview" variant={inspectorScenario === 'no-preview' ? 'default' : 'quiet'}>No preview</VelvetButton>
+            <VelvetButton onClick={() => selectInspectorScenario('multiple')} testId="inspector-scenario-multiple" variant={inspectorScenario === 'multiple' ? 'default' : 'quiet'}>Multiple</VelvetButton>
+          </VelvetStack>
           <VelvetInspector
-            fields={[
-              { id: 'name', label: 'Name', value: inspectorName, inputValue: inspectorName, editable: true },
-              { id: 'type', label: 'Type', value: 'Illustration' },
-            ]}
+            data-ui-kit-observation={inspectorScenario}
+            fields={inspectorScenario === 'landscape' ? [{ id: 'name', label: 'Name', value: inspectorName, inputValue: inspectorName, editable: true }, { id: 'type', label: 'Type', value: 'Illustration' }] : undefined}
             onFieldChange={(fieldId, value) => { if (fieldId === 'name') { setInspectorName(value); setInspectorSections((sections) => sections.map((section) => ({ ...section, fields: section.fields.map((field) => field.id === 'name' ? { ...field, value, inputValue: value } : field) }))); setInspectorSaveState('idle'); } }}
             onPin={setInspectorPinned}
             onSave={() => setInspectorSaveState('saved')}
             onSectionToggle={(sectionId, expanded) => setInspectorSections((sections) => sections.map((section) => section.id === sectionId ? { ...section, expanded } : section))}
             pinned={inspectorPinned}
-            palette={[{ id: 'blue', color: '#5d8dff', ratio: 42.5, label: 'Blue' }, { id: 'gray', color: '#8d95a2', ratio: 18.25, label: 'Gray' }, { id: 'pink', color: '#fc85b3', ratio: 9.5, label: 'Pink' }]}
+            palette={inspectorPalette}
             saveState={inspectorSaveState}
             sections={inspectorSections}
-            selectedCount={1}
+            selectedCount={inspectorSelectedCount}
             title="Inspector"
-            preview={<div data-ui-kit-probe="inspector-preview"><img alt="Astronaut poster preview" height={240} src={INSPECTOR_PREVIEW} width={320} /></div>}
+            preview={inspectorPreview}
           >
           </VelvetInspector>
           <output data-ui-kit-observation="inspector-state">name:{inspectorName};pinned:{String(inspectorPinned)};save:{inspectorSaveState}</output>
+          <output data-ui-kit-observation="inspector-scenario">{inspectorScenario}</output>
         </VelvetStack>
       </section>
     </main>
