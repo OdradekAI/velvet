@@ -2,7 +2,7 @@ export { VelvetActivityBar, type VelvetActivityBarItem, type VelvetActivityBarPr
 export { VelvetAssetGrid, type VelvetAssetGridItem, type VelvetAssetGridLayout, type VelvetAssetGridProps } from './asset-grid.js';
 export { VelvetCommandPalette, type VelvetCommandPaletteCommand, type VelvetCommandPaletteProps, type VelvetCommandPaletteScope, type VelvetCommandPaletteScopeOption } from './command-palette.js';
 export { VelvetDataTable, type VelvetDataTableColumn, type VelvetDataTableProps, type VelvetDataTableSort, type VelvetDataTableSortDirection } from './data-table.js';
-export { VelvetFilterPanel, type VelvetFilterFacet, type VelvetFilterFacetKind, type VelvetFilterOperator, type VelvetFilterOption, type VelvetFilterPanelProps, type VelvetFilterRule, type VelvetFilterRuleValue } from './filter-panel.js';
+export { VelvetFilterPanel, type VelvetFilterFacet, type VelvetFilterFacetKind, type VelvetFilterFacetSemantic, type VelvetFilterOperator, type VelvetFilterOption, type VelvetFilterPanelProps, type VelvetFilterRule, type VelvetFilterRuleValue } from './filter-panel.js';
 export { VelvetInspector, type VelvetInspectorField, type VelvetInspectorProps } from './inspector.js';
 export { VelvetPane, type VelvetPaneProps } from './pane.js';
 export { VelvetPanel, type VelvetPanelProps } from './panel.js';

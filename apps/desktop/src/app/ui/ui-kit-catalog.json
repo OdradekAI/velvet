@@ -1495,11 +1495,13 @@
       "accessibility": [
         "named region with fieldset/legend facet groups",
         "native control semantics are preserved",
-        "result count is announced"
+        "result count is announced",
+        "folder/tag/color/rating/date semantics expose stable operator metadata"
       ],
       "stories": [
         "default",
         "multi-select",
+        "semantic-facets",
         "reset-save",
         "keyboard-close",
         "closed"
@@ -1519,6 +1521,7 @@
       "observables": [
         "region-role",
         "facet-groups",
+        "semantic-facets",
         "rule-values",
         "operator-values",
         "result-count",
@@ -1634,13 +1637,15 @@
         "dialog/listbox semantics and focus entry",
         "active descendant links the query to the selected command",
         "scope tabs expose current/all search scope",
-        "query can be controlled by the host without duplicating input ownership"
+        "query can be controlled by the host without duplicating input ownership",
+        "query supports quoted terms, AND, OR/||, parentheses and -negation"
       ],
       "stories": [
         "open",
         "empty",
         "scope",
-        "controlled-query"
+        "controlled-query",
+        "boolean-query"
       ],
       "slots": [
         "commands",
@@ -1661,6 +1666,7 @@
         "scope",
         "query",
         "query-change-callback",
+        "query-semantics",
         "selection"
       ],
       "browserActions": [

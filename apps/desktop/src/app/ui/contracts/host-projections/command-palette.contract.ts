@@ -5,7 +5,7 @@ export const VelvetCommandPaletteContract = defineComponentContract<
   VelvetCommandPaletteProps,
   'open' | 'empty' | 'selected' | 'disabled',
   'query' | 'scope-change' | 'select' | 'navigate' | 'close',
-  'dialog-role' | 'listbox-role' | 'focus-entry' | 'active-descendant' | 'scope' | 'query' | 'query-change-callback' | 'selection'
+  'dialog-role' | 'listbox-role' | 'focus-entry' | 'active-descendant' | 'scope' | 'query' | 'query-change-callback' | 'query-semantics' | 'selection'
 >({
   schema: 'velvet.ui.component-contract',
   schemaVersion: 1,
@@ -18,8 +18,8 @@ export const VelvetCommandPaletteContract = defineComponentContract<
   states: ['open', 'empty', 'selected', 'disabled'],
   actions: ['query', 'scope-change', 'select', 'navigate', 'close'],
   browserActions: ['query', 'scope-change', 'select', 'navigate', 'close'],
-  observables: ['dialog-role', 'listbox-role', 'focus-entry', 'active-descendant', 'scope', 'query', 'query-change-callback', 'selection'],
-  stories: ['open', 'empty', 'scope', 'controlled-query'],
+  observables: ['dialog-role', 'listbox-role', 'focus-entry', 'active-descendant', 'scope', 'query', 'query-change-callback', 'query-semantics', 'selection'],
+  stories: ['open', 'empty', 'scope', 'controlled-query', 'boolean-query'],
   documentation: 'docs/engineering/ui-kit/components/host-projections/command-palette.md',
   evidence: [
     { kind: 'host-guarantee', reference: 'docs/engineering/ui-kit-component-guide.md', claim: 'Velvet host ownership and semantic behavior rules' },
@@ -27,4 +27,4 @@ export const VelvetCommandPaletteContract = defineComponentContract<
   ],
   visual: { profile: 'overlay', surfaces: { root: 'overlay', interactive: 'active', selected: 'active' }, radius: 'md', density: 'compact', geometry: ['surface:600px', 'row:34px', 'scope-chip:24px'] },
   behavior: { stateOwner: 'host', focus: 'restore', selection: 'host', actionLifecycle: [{ action: 'query', transitions: ['requested', 'committed'] }, { action: 'scope-change', transitions: ['requested', 'committed'] }, { action: 'select', transitions: ['requested', 'committed', 'failed'] }, { action: 'navigate', transitions: ['requested', 'committed'] }, { action: 'close', transitions: ['requested', 'committed', 'cancelled'] }] },
-} satisfies ComponentContract<VelvetCommandPaletteProps, 'open' | 'empty' | 'selected' | 'disabled', 'query' | 'scope-change' | 'select' | 'navigate' | 'close', 'dialog-role' | 'listbox-role' | 'focus-entry' | 'active-descendant' | 'scope' | 'query' | 'query-change-callback' | 'selection'>);
+} satisfies ComponentContract<VelvetCommandPaletteProps, 'open' | 'empty' | 'selected' | 'disabled', 'query' | 'scope-change' | 'select' | 'navigate' | 'close', 'dialog-role' | 'listbox-role' | 'focus-entry' | 'active-descendant' | 'scope' | 'query' | 'query-change-callback' | 'query-semantics' | 'selection'>);

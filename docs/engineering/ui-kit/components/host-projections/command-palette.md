@@ -21,12 +21,19 @@ classes and Workbench implementation details are not public API.
 - `command-palette/open`
 - `command-palette/empty`
 - `command-palette/controlled-query`
+- `command-palette/boolean-query`
 
 The story runner covers keyboard navigation, selection, Escape dismissal and the
 controlled query path. When `query` is omitted, the component keeps a local
 draft for the input. When `query` is supplied, the host owns that value and
 must commit changes received through `onQueryChange`; the component does not
 maintain a second source of truth.
+
+The query matcher accepts plain terms, quoted phrases, implicit or explicit
+`AND`, `OR`/`||`, parentheses and a leading `-`/`NOT` negation. Matching uses
+NFKC normalization and case folding before substring comparison. Pinyin,
+cross-language transliteration and ranked history remain outside this contract
+until runtime evidence and a host search adapter are available.
 The real-browser qualification additionally verifies query filtering with the
 host command data.
 

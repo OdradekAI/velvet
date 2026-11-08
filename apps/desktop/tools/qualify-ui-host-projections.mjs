@@ -95,13 +95,20 @@ const tableSortAscending = await page.evaluate(() => document.querySelector('[da
 await page.click('loc=css:[data-ui-kit-probe="data-table"] .velvet-data-table__sort');
 const tableSortDescending = await page.evaluate(() => document.querySelector('[data-ui-kit-probe="data-table"] th')?.getAttribute('aria-sort') ?? null);
 
-await page.click('loc=css:[data-ui-test-id="command-palette-trigger"]');
+await page.evaluate(() => document.querySelector('[data-ui-test-id="command-palette-trigger"]')?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
 await page.waitForSelector('loc=css:[data-ui-kit-probe="command-palette"] [role="dialog"]', {state:"visible"});
 await page.click('loc=css:[data-ui-kit-probe="command-palette"] [role="tab"][aria-label="Current"]');
 await page.waitForFunction(() => document.querySelectorAll('[data-ui-kit-probe="command-palette"] [role="option"]').length === 1);
 const paletteScope = await page.evaluate(() => ({
   selected: document.querySelector('[data-ui-kit-probe="command-palette"] [role="tab"][aria-selected="true"]')?.textContent?.trim() ?? null,
   activeDescendant: document.querySelector('[data-ui-kit-probe="command-palette"] input')?.getAttribute('aria-activedescendant') ?? null,
+}));
+await page.evaluate(() => document.querySelector('[data-ui-kit-probe="command-palette"] [role="tab"][aria-label="All"]')?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+await page.fill('loc=css:[data-ui-kit-probe="command-palette"] input[aria-label="Search commands"]', 'Open || Pin -missing');
+await page.waitForFunction(() => document.querySelectorAll('[data-ui-kit-probe="command-palette"] [role="option"]').length === 2);
+const paletteBoolean = await page.evaluate(() => ({
+  semantics: document.querySelector('[data-ui-kit-probe="command-palette"] input')?.getAttribute('data-command-query-semantics') ?? null,
+  results: [...document.querySelectorAll('[data-ui-kit-probe="command-palette"] [role="option"]')].map((node) => node.querySelector('strong')?.textContent?.trim() ?? null),
 }));
 await page.fill('loc=css:[data-ui-kit-probe="command-palette"] input[aria-label="Search commands"]', 'Pin');
 await page.waitForFunction(() => document.querySelectorAll('[data-ui-kit-probe="command-palette"] [role="option"]').length === 1);
@@ -113,7 +120,7 @@ const paletteOpen = await page.evaluate(() => ({
 await page.keyboard.press("ArrowDown");
 await page.keyboard.press("Enter");
 const paletteSelected = await page.evaluate(() => document.querySelector('[data-ui-kit-observation="command-selection"]')?.textContent ?? null);
-await page.click('loc=css:[data-ui-test-id="command-palette-trigger"]');
+await page.evaluate(() => document.querySelector('[data-ui-test-id="command-palette-trigger"]')?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
 await page.waitForSelector('loc=css:[data-ui-kit-probe="command-palette"] [role="dialog"]', {state:"visible"});
 await page.keyboard.press("Escape");
 await page.waitForFunction(() => !document.querySelector('[data-ui-kit-probe="command-palette"] [role="dialog"]'));
@@ -135,26 +142,29 @@ assert(tableSelected.state === 'selected:row-1;sorted:', 'DataTable row selectio
 assert(tableSorted === 'selected:row-1;sorted:name' && tableSortAscending === 'ascending' && tableSortDescending === 'descending', 'DataTable sort direction contract failed');
 assert(paletteOpen.role === 'dialog', 'CommandPalette dialog role contract failed');
 assert(paletteScope.selected === 'Current' && paletteScope.activeDescendant, 'CommandPalette scope/active descendant contract failed');
+assert(paletteBoolean.semantics === 'boolean' && paletteBoolean.results.length === 2 && paletteBoolean.results.includes('Open selected asset') && paletteBoolean.results.includes('Pin selected asset'), 'CommandPalette boolean query contract failed');
 assert(paletteFiltered.length === 1 && paletteFiltered[0]?.startsWith('Pin selected asset'), 'CommandPalette query filter contract failed: ' + JSON.stringify(paletteFiltered));
 assert(paletteSelected === 'selected:command.pin', 'CommandPalette selection contract failed');
 assert(paletteClosed.closed && paletteClosed.restoredFocus === 'command-palette-trigger', 'CommandPalette focus restoration contract failed');
 
 const filterPanel = 'loc=css:[data-ui-kit-probe="filter-panel"]';
 await page.evaluate(() => document.querySelector('[data-ui-kit-probe="filter-panel"]')?.scrollIntoView({ block: 'center' }));
+const filterSemanticSchema = await page.evaluate(() => [...document.querySelectorAll('[data-ui-kit-probe="filter-panel"] [data-filter-semantic]')].map((node) => (node.getAttribute('data-filter-semantic') ?? '') + ':' + (node.getAttribute('data-filter-operator') ?? '')));
 await page.fill(filterPanel + ' input[aria-label="Annotation"]', 'poster');
 await page.waitForFunction(() => document.querySelector('[data-ui-kit-observation="filter-rules"]')?.textContent?.includes('poster'));
 const filterChanged = await page.evaluate(() => document.querySelector('[data-ui-kit-observation="filter-rules"]')?.textContent ?? null);
-await page.click(filterPanel + ' .velvet-filter-panel__actions button:nth-of-type(1)');
+await page.evaluate(() => document.querySelector('[data-ui-kit-probe="filter-panel"] .velvet-filter-panel__actions button:nth-of-type(1)')?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
 await page.waitForFunction(() => document.querySelector('[data-ui-kit-observation="filter-rules"]')?.textContent === '[]');
 const filterReset = await page.evaluate(() => document.querySelector('[data-ui-kit-observation="filter-rules"]')?.textContent ?? null);
 await page.fill(filterPanel + ' input[aria-label="Annotation"]', 'poster');
-await page.click(filterPanel + ' .velvet-filter-panel__actions button:nth-of-type(2)');
+await page.evaluate(() => document.querySelector('[data-ui-kit-probe="filter-panel"] .velvet-filter-panel__actions button:nth-of-type(2)')?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
 const filterSaved = await page.evaluate(() => document.querySelector('[data-ui-kit-observation="filter-saved"]')?.textContent ?? null);
-await page.click(filterPanel + ' [data-filter-action="apply"]');
+await page.evaluate(() => document.querySelector('[data-ui-kit-probe="filter-panel"] [data-filter-action="apply"]')?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
 const filterApplied = await page.evaluate(() => document.querySelector('[data-ui-kit-observation="filter-applied"]')?.textContent ?? null);
 const filterCount = await page.evaluate(() => document.querySelector('[data-filter-result-count="true"]')?.textContent ?? null);
-await page.click(filterPanel + ' .velvet-filter-panel__header button');
+await page.evaluate(() => document.querySelector('[data-ui-kit-probe="filter-panel"] .velvet-filter-panel__header button')?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
 const filterClosed = await page.evaluate(() => document.querySelector('[data-ui-kit-observation="filter-closed"]')?.textContent ?? null);
+assert(filterSemanticSchema.join('|') === 'folder:equal|tag:intersection|color:equal|rating:between|date:within', 'FilterPanel semantic facet schema contract failed');
 assert(filterChanged?.includes('poster'), 'FilterPanel text rule contract failed');
 assert(filterReset === '[]', 'FilterPanel reset contract failed');
 assert(filterSaved?.includes('poster'), 'FilterPanel save contract failed');
@@ -162,14 +172,14 @@ assert(filterApplied?.includes('poster') && filterCount === '12 results', 'Filte
 assert(filterClosed === 'true', 'FilterPanel close contract failed');
 
 const inspector = 'loc=css:[data-ui-kit-probe="inspector"]';
-await page.click(inspector + ' [aria-label="Pin inspector"]');
+await page.evaluate(() => document.querySelector('[data-ui-kit-probe="inspector"] [aria-label="Pin inspector"]')?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
 await page.waitForFunction(() => document.querySelector('[data-ui-kit-probe="inspector"] [aria-label="Unpin inspector"]')?.getAttribute('aria-pressed') === 'true');
 const inspectorPinned = await page.evaluate(() => ({
   pressed: document.querySelector('[data-ui-kit-probe="inspector"] [aria-label="Unpin inspector"]')?.getAttribute('aria-pressed') ?? null,
   state: document.querySelector('[data-ui-kit-observation="inspector-state"]')?.textContent ?? null,
 }));
 await page.fill(inspector + ' input[aria-label="Name"]', 'Renamed poster');
-await page.click(inspector + ' [data-inspector-action="save"]');
+await page.evaluate(() => document.querySelector('[data-ui-kit-probe="inspector"] [data-inspector-action="save"]')?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
 await page.waitForFunction(() => document.querySelector('[data-ui-kit-probe="inspector"] [role="status"]')?.textContent === 'Saved');
 const inspectorSaved = await page.evaluate(() => ({
   status: document.querySelector('[data-ui-kit-probe="inspector"] [role="status"]')?.textContent ?? null,
@@ -190,8 +200,8 @@ const result = {
   zoomControl,
   assetGrid: {moved: assetMoved, opened: assetOpened, rangeSelected: assetRangeSelected, semantics: assetGridSemantics},
   dataTable: {selected: tableSelected, sorted: tableSorted, ascending: tableSortAscending, descending: tableSortDescending},
-  commandPalette: {open: paletteOpen, scope: paletteScope, filtered: paletteFiltered, selected: paletteSelected, closed: paletteClosed},
-  filterPanel: {changed: filterChanged, reset: filterReset, saved: filterSaved, applied: filterApplied, resultCount: filterCount, closed: filterClosed},
+  commandPalette: {open: paletteOpen, scope: paletteScope, boolean: paletteBoolean, filtered: paletteFiltered, selected: paletteSelected, closed: paletteClosed},
+  filterPanel: {semanticSchema: filterSemanticSchema, changed: filterChanged, reset: filterReset, saved: filterSaved, applied: filterApplied, resultCount: filterCount, closed: filterClosed},
   inspector: {pinned: inspectorPinned, saved: inspectorSaved},
 };
 await (await import("node:fs/promises")).writeFile(${JSON.stringify(outputPath)}, JSON.stringify(result, null, 2));

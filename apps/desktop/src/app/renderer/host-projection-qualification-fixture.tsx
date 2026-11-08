@@ -35,7 +35,11 @@ const COMMANDS = [
 
 const FILTER_FACETS = [
   { id: 'type', label: 'Type', kind: 'multi' as const, options: [{ id: 'image', label: 'Image', count: 12 }, { id: 'video', label: 'Video', count: 2 }] },
-  { id: 'folder', label: 'Folder', kind: 'single' as const, options: [{ id: 'reference', label: 'Reference', count: 8 }, { id: 'inspiration', label: 'Inspiration', count: 4 }] },
+  { id: 'folder', label: 'Folder', semantic: 'folder' as const, kind: 'single' as const, options: [{ id: 'reference', label: 'Reference', count: 8 }, { id: 'inspiration', label: 'Inspiration', count: 4 }] },
+  { id: 'tag', label: 'Tag', semantic: 'tag' as const, kind: 'multi' as const, options: [{ id: 'illustration', label: 'Illustration', count: 5 }] },
+  { id: 'color', label: 'Color', semantic: 'color' as const, kind: 'single' as const, options: [{ id: 'blue', label: 'Blue', count: 6 }] },
+  { id: 'rating', label: 'Rating', semantic: 'rating' as const, kind: 'range' as const, placeholder: '0–5' },
+  { id: 'date', label: 'Date', semantic: 'date' as const, kind: 'range' as const, placeholder: 'YYYY-MM-DD..YYYY-MM-DD' },
   { id: 'annotation', label: 'Annotation', kind: 'text' as const, placeholder: 'Contains…' },
 ] as const;
 

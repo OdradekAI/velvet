@@ -9,6 +9,13 @@ Supported facet kinds in this first slice:
 - `multi`: multiple options (`intersection` operator).
 - `range`: host-defined range value (`between` operator).
 
+Semantic facets may add a stable `semantic` id: `folder`, `tag`, `color`,
+`rating` or `date`. The default operator mapping is `folder → equal`,
+`tag (multi) → intersection`, `color → equal`, `rating (range) → between`
+and `date (range) → within`. A facet may provide an explicit `operator` when
+the host needs `before`, `after`, `not` or `or`; the component reports that
+operator and never executes the query itself.
+
 Rules use the typed operator set `contain`, `equal`, `intersection`, `between`,
 `before`, `after`, `within`, `not` and `or`. The panel does not interpret those
 operators; it reports the rule shape to the host. `resultCount` is an announced
@@ -21,6 +28,10 @@ The component does not read the database, execute a search, or infer result coun
 const facets = [
   { id: 'type', label: 'Type', kind: 'multi', options: [{ id: 'image', label: 'Image', count: 12 }] },
   { id: 'annotation', label: 'Annotation', kind: 'text', placeholder: 'Contains…' },
+  { id: 'folder', label: 'Folder', semantic: 'folder', kind: 'single', options: [{ id: 'reference', label: 'Reference' }] },
+  { id: 'tag', label: 'Tag', semantic: 'tag', kind: 'multi', options: [{ id: 'illustration', label: 'Illustration' }] },
+  { id: 'rating', label: 'Rating', semantic: 'rating', kind: 'range', placeholder: '0–5' },
+  { id: 'date', label: 'Date', semantic: 'date', kind: 'range', placeholder: 'YYYY-MM-DD..YYYY-MM-DD' },
 ] as const;
 
 <VelvetFilterPanel
@@ -35,3 +46,8 @@ const facets = [
 ```
 
 The contract is in `apps/desktop/src/app/ui/contracts/host-projections/filter-panel.contract.ts`; executable scenarios are in `apps/desktop/src/app/ui/stories/host-projections/filter-panel.stories.tsx`.
+
+The semantic names and operator families are grounded in the local shipped-app
+research matrix: `docs/research/eagle/eagle-analysis/report.md` and
+`docs/research/eagle/eagle-analysis/evidence-matrix.json`. The research remains
+ignored product evidence; this component exposes only the stable Velvet schema.

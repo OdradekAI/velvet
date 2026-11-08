@@ -3,6 +3,7 @@ import { VelvetButton, VelvetCheckbox, VelvetInput, VelvetSelect } from '../prim
 import type { UiCommonProps } from '../internal/types.js';
 
 export type VelvetFilterFacetKind = 'text' | 'single' | 'multi' | 'range';
+export type VelvetFilterFacetSemantic = 'folder' | 'tag' | 'color' | 'rating' | 'date';
 export type VelvetFilterOperator = 'contain' | 'equal' | 'intersection' | 'between' | 'before' | 'after' | 'within' | 'not' | 'or';
 export type VelvetFilterRuleValue = string | number | readonly string[];
 
@@ -17,6 +18,8 @@ export interface VelvetFilterFacet {
   readonly id: string;
   readonly label: string;
   readonly kind: VelvetFilterFacetKind;
+  readonly semantic?: VelvetFilterFacetSemantic;
+  readonly operator?: VelvetFilterOperator;
   readonly options?: readonly VelvetFilterOption[];
   readonly placeholder?: string;
 }
@@ -60,7 +63,7 @@ export function VelvetFilterPanel({
   const changeRule = (facet: VelvetFilterFacet, value: VelvetFilterRuleValue | null): void => {
     const nextRules = rules.filter((rule) => rule.facetId !== facet.id);
     if (value !== null && (!Array.isArray(value) || value.length > 0) && value !== '') {
-      nextRules.push({ facetId: facet.id, operator: operatorFor(facet.kind), value });
+      nextRules.push({ facetId: facet.id, operator: operatorFor(facet), value });
     }
     onRuleChange(nextRules);
   };
@@ -82,7 +85,12 @@ export function VelvetFilterPanel({
         {facets.map((facet) => {
           const rule = rules.find((candidate) => candidate.facetId === facet.id);
           return (
-            <fieldset className="velvet-filter-panel__facet" key={facet.id}>
+            <fieldset
+              className="velvet-filter-panel__facet"
+              data-filter-operator={operatorFor(facet)}
+              data-filter-semantic={facet.semantic}
+              key={facet.id}
+            >
               <legend>{facet.label}</legend>
               {facet.kind === 'text' ? (
                 <VelvetInput
@@ -146,7 +154,16 @@ export function VelvetFilterPanel({
   );
 }
 
-function operatorFor(kind: VelvetFilterFacetKind): VelvetFilterOperator {
+function operatorFor(facet: VelvetFilterFacet): VelvetFilterOperator {
+  if (facet.operator) return facet.operator;
+  if (facet.semantic === 'date' && facet.kind === 'range') return 'within';
+  if (facet.semantic === 'rating' && facet.kind === 'range') return 'between';
+  if (facet.semantic === 'tag' && facet.kind === 'multi') return 'intersection';
+  if (facet.semantic === 'folder' || facet.semantic === 'color') return 'equal';
+  return operatorForKind(facet.kind);
+}
+
+function operatorForKind(kind: VelvetFilterFacetKind): VelvetFilterOperator {
   if (kind === 'text') return 'contain';
   if (kind === 'multi') return 'intersection';
   if (kind === 'range') return 'between';

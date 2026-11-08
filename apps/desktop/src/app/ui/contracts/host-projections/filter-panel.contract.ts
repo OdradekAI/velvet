@@ -5,7 +5,7 @@ export const VelvetFilterPanelContract = defineComponentContract<
   VelvetFilterPanelProps,
   'open' | 'closed' | 'filtered' | 'empty' | 'applied',
   'change' | 'apply' | 'reset' | 'save' | 'close',
-  'region-role' | 'facet-groups' | 'rule-values' | 'operator-values' | 'result-count' | 'selection' | 'reset-callback' | 'apply-callback' | 'save-callback' | 'focus'
+  'region-role' | 'facet-groups' | 'semantic-facets' | 'rule-values' | 'operator-values' | 'result-count' | 'selection' | 'reset-callback' | 'apply-callback' | 'save-callback' | 'focus'
 >({
   schema: 'velvet.ui.component-contract',
   schemaVersion: 1,
@@ -18,14 +18,15 @@ export const VelvetFilterPanelContract = defineComponentContract<
   states: ['open', 'closed', 'filtered', 'empty', 'applied'],
   actions: ['change', 'apply', 'reset', 'save', 'close'],
   browserActions: ['change', 'apply', 'reset', 'save', 'close'],
-  observables: ['region-role', 'facet-groups', 'rule-values', 'operator-values', 'result-count', 'selection', 'reset-callback', 'apply-callback', 'save-callback', 'focus'],
-  stories: ['default', 'multi-select', 'reset-save', 'keyboard-close', 'closed'],
+  observables: ['region-role', 'facet-groups', 'semantic-facets', 'rule-values', 'operator-values', 'result-count', 'selection', 'reset-callback', 'apply-callback', 'save-callback', 'focus'],
+  stories: ['default', 'multi-select', 'semantic-facets', 'reset-save', 'keyboard-close', 'closed'],
   documentation: 'docs/engineering/ui-kit/components/host-projections/filter-panel.md',
   evidence: [
     { kind: 'host-guarantee', reference: 'docs/engineering/ui-kit-component-guide.md', claim: 'Host owns query state and the component reports rule changes.' },
-    { kind: 'observed', reference: 'apps/desktop/src/app/ui/stories/host-projections/filter-panel.stories.tsx', claim: 'Facet rule changes, reset/save and close scenarios.' },
+    { kind: 'host-guarantee', reference: 'docs/engineering/ui-kit-component-guide.md', claim: 'Semantic facet ids and explicit operators are host-owned compatibility inputs.' },
+    { kind: 'observed', reference: 'apps/desktop/src/app/ui/stories/host-projections/filter-panel.stories.tsx', claim: 'Facet rule changes, semantic operators, reset/save and close scenarios.' },
     { kind: 'observed', reference: 'apps/desktop/tools/qualify-ui-host-projections.mjs', claim: 'Browser qualification for text rules, reset/save and close.' },
   ],
   visual: { profile: 'dense-panel', surfaces: { root: 'panel', interactive: 'active', selected: 'active' }, radius: 'md', density: 'compact', geometry: ['chip:24px', 'panel-radius:6px'] },
   behavior: { stateOwner: 'host', focus: 'pointer', selection: 'host', actionLifecycle: [{ action: 'change', transitions: ['requested', 'committed'] }, { action: 'apply', transitions: ['requested', 'committed', 'failed'] }, { action: 'reset', transitions: ['requested', 'committed'] }, { action: 'save', transitions: ['requested', 'committed', 'failed'] }, { action: 'close', transitions: ['requested', 'committed', 'cancelled'] }] },
-} satisfies ComponentContract<VelvetFilterPanelProps, 'open' | 'closed' | 'filtered' | 'empty' | 'applied', 'change' | 'apply' | 'reset' | 'save' | 'close', 'region-role' | 'facet-groups' | 'rule-values' | 'operator-values' | 'result-count' | 'selection' | 'reset-callback' | 'apply-callback' | 'save-callback' | 'focus'>);
+} satisfies ComponentContract<VelvetFilterPanelProps, 'open' | 'closed' | 'filtered' | 'empty' | 'applied', 'change' | 'apply' | 'reset' | 'save' | 'close', 'region-role' | 'facet-groups' | 'semantic-facets' | 'rule-values' | 'operator-values' | 'result-count' | 'selection' | 'reset-callback' | 'apply-callback' | 'save-callback' | 'focus'>);

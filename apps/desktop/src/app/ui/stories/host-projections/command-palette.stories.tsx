@@ -81,6 +81,28 @@ export const commandPaletteStories: readonly UiKitStory[] = [
       } }],
     },
   },
+  {
+    id: 'command-palette/boolean-query',
+    componentId: 'command-palette',
+    name: 'Boolean query',
+    description: 'Quoted terms, OR groups and negation use deterministic host search semantics.',
+    render: () => <VelvetCommandPalette
+      commands={[{ id: 'blue-sky', label: 'Blue sky' }, { id: 'blue-ocean', label: 'Blue ocean' }, { id: 'red-sky', label: 'Red sky' }, { id: 'green-field', label: 'Green field' }]}
+      onClose={noop}
+      onQueryChange={noop}
+      onSelect={noop}
+      open
+      query={'"Blue sky" || ocean -red'}
+    />,
+    scenario: {
+      covers: ['query'],
+      actions: [],
+      checkpoints: [{ name: 'boolean query semantics', assert: (runtime) => {
+        const results = [...runtime.root.querySelectorAll('[role="option"]')].map((node) => node.textContent?.trim());
+        if (runtime.root.querySelector('[data-command-query-semantics="boolean"]') === null || results.length !== 2 || !results.some((result) => result === 'Blue sky') || !results.some((result) => result === 'Blue ocean')) throw new Error('CommandPalette boolean query contract failed');
+      } }],
+    },
+  },
 ];
 
 function CommandScopeStory() {
