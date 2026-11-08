@@ -60,9 +60,42 @@ export const commandPaletteStories: readonly UiKitStory[] = [
       } }],
     },
   },
+  {
+    id: 'command-palette/controlled-query',
+    componentId: 'command-palette',
+    name: 'Controlled query',
+    description: 'Host-owned query text keeps filtering and input observation in one owner.',
+    render: () => <ControlledQueryStory />,
+    scenario: {
+      covers: ['query'],
+      setup: () => { selectedCommand = ''; },
+      actions: [(runtime) => runtime.act(async () => {
+        const input = runtime.root.querySelector<HTMLInputElement>('[role="dialog"] input');
+        if (!input) throw new Error('CommandPalette controlled query input missing');
+        Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input), 'value')?.set?.call(input, 'Pin');
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      })],
+      checkpoints: [{ name: 'host query owner', afterAction: 0, assert: (runtime) => {
+        const input = runtime.root.querySelector<HTMLInputElement>('[role="dialog"] input');
+        if (input?.value !== 'Pin' || runtime.root.querySelectorAll('[role="option"]').length !== 1 || runtime.root.querySelector('[role="option"]')?.textContent?.trim() !== 'Pin selected') throw new Error('CommandPalette controlled query contract failed');
+      } }],
+    },
+  },
 ];
 
 function CommandScopeStory() {
   const [scope, setScope] = useState<'all' | 'current'>('all');
   return <VelvetCommandPalette commands={[{ id: 'all', label: 'Open all libraries', scope: 'all' }, { id: 'current', label: 'Open current library', scope: 'current' }]} onClose={noop} onScopeChange={setScope} onSelect={noop} open scope={scope} scopeOptions={[{ id: 'all', label: 'All' }, { id: 'current', label: 'Current' }]} />;
+}
+
+function ControlledQueryStory() {
+  const [query, setQuery] = useState('');
+  return <VelvetCommandPalette
+    commands={[{ id: 'open', label: 'Open selected' }, { id: 'pin', label: 'Pin selected' }]}
+    onClose={noop}
+    onQueryChange={setQuery}
+    onSelect={noop}
+    open
+    query={query}
+  />;
 }

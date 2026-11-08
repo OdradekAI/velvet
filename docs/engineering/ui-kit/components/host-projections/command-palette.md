@@ -6,7 +6,7 @@ import remains available from `apps/desktop/src/app/ui/index.ts`.
 
 ## Contract
 
-- **Props:** `open`, `commands`, `onSelect`, `onClose`, `restoreFocusRef`
+- **Props:** `open`, `commands`, `scope`, `scopeOptions`, `onScopeChange`, `query`, `onQueryChange`, `onSelect`, `onClose`, `restoreFocusRef`
 - **States:** open, empty
 - **Contract:** `apps/desktop/src/app/ui/contracts/host-projections/command-palette.contract.ts`
 - **Stories:** `apps/desktop/src/app/ui/stories/host-projections/command-palette.stories.tsx`
@@ -20,8 +20,13 @@ classes and Workbench implementation details are not public API.
 
 - `command-palette/open`
 - `command-palette/empty`
+- `command-palette/controlled-query`
 
-The story runner covers keyboard navigation, selection and Escape dismissal.
+The story runner covers keyboard navigation, selection, Escape dismissal and the
+controlled query path. When `query` is omitted, the component keeps a local
+draft for the input. When `query` is supplied, the host owns that value and
+must commit changes received through `onQueryChange`; the component does not
+maintain a second source of truth.
 The real-browser qualification additionally verifies query filtering with the
 host command data.
 

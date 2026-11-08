@@ -27,6 +27,8 @@ export interface VelvetCommandPaletteProps extends UiCommonProps {
   readonly scope?: VelvetCommandPaletteScope;
   readonly scopeOptions?: readonly VelvetCommandPaletteScopeOption[];
   readonly onScopeChange?: (scope: VelvetCommandPaletteScope) => void;
+  readonly query?: string;
+  readonly onQueryChange?: (query: string) => void;
   readonly placeholder?: string;
   readonly restoreFocusRef?: RefObject<HTMLElement | null>;
 }
@@ -39,16 +41,19 @@ export function VelvetCommandPalette({
   scope = 'all',
   scopeOptions,
   onScopeChange,
+  query,
+  onQueryChange,
   placeholder = 'Search commands',
   restoreFocusRef,
 }: VelvetCommandPaletteProps) {
-  const [query, setQuery] = useState('');
+  const [internalQuery, setInternalQuery] = useState('');
   const [index, setIndex] = useState(0);
   const previousOpenRef = useRef(open);
   const listId = useId();
   const scopedCommands = commands.filter((command) => scope === 'all' || command.scope === undefined || command.scope === scope);
-  const filtered = scopedCommands.filter((command) => `${command.label} ${command.description ?? ''}`.toLowerCase().includes(query.toLowerCase()));
-  useEffect(() => setIndex(0), [query, scope]);
+  const resolvedQuery = query ?? internalQuery;
+  const filtered = scopedCommands.filter((command) => `${command.label} ${command.description ?? ''}`.toLowerCase().includes(resolvedQuery.toLowerCase()));
+  useEffect(() => setIndex(0), [resolvedQuery, scope]);
   useEffect(() => {
     if (previousOpenRef.current && !open) {
       queueMicrotask(() => restoreFocusRef?.current?.focus());
@@ -68,7 +73,11 @@ export function VelvetCommandPalette({
           ariaLabel={placeholder}
           aria-controls={listId}
           autoFocus
-          onChange={(event) => setQuery(event.currentTarget.value)}
+          onChange={(event) => {
+            const nextQuery = event.currentTarget.value;
+            if (query === undefined) setInternalQuery(nextQuery);
+            onQueryChange?.(nextQuery);
+          }}
           onKeyDown={(event: KeyboardEvent<HTMLInputElement>) => {
             if (event.key === 'Escape') onClose();
             if (event.key === 'ArrowDown') { event.preventDefault(); setIndex((value) => Math.min(filtered.length - 1, value + 1)); }
@@ -78,7 +87,7 @@ export function VelvetCommandPalette({
             if (event.key === 'Enter') { event.preventDefault(); selectCurrent(); }
           }}
           placeholder={placeholder}
-          value={query}
+          value={resolvedQuery}
         />
         {scopeOptions && scopeOptions.length > 0 ? (
           <div aria-label="Command scope" className="velvet-command-palette__scopes" role="tablist">

@@ -1617,6 +1617,8 @@
         "scope",
         "scopeOptions",
         "onScopeChange",
+        "query",
+        "onQueryChange",
         "onSelect",
         "onClose",
         "restoreFocusRef"
@@ -1631,12 +1633,14 @@
       "accessibility": [
         "dialog/listbox semantics and focus entry",
         "active descendant links the query to the selected command",
-        "scope tabs expose current/all search scope"
+        "scope tabs expose current/all search scope",
+        "query can be controlled by the host without duplicating input ownership"
       ],
       "stories": [
         "open",
         "empty",
-        "scope"
+        "scope",
+        "controlled-query"
       ],
       "slots": [
         "commands",
@@ -1655,6 +1659,8 @@
         "focus-entry",
         "active-descendant",
         "scope",
+        "query",
+        "query-change-callback",
         "selection"
       ],
       "browserActions": [
