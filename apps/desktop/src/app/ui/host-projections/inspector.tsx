@@ -18,6 +18,7 @@ export interface VelvetInspectorSection {
   readonly id: string;
   readonly label: string;
   readonly fields: readonly VelvetInspectorField[];
+  readonly expanded?: boolean;
 }
 
 export interface VelvetInspectorPaletteEntry {
@@ -45,6 +46,7 @@ export interface VelvetInspectorProps extends UiCommonProps {
   readonly pinned?: boolean;
   readonly onPin?: (pinned: boolean) => void;
   readonly onOpen?: () => void;
+  readonly onSectionToggle?: (sectionId: string, expanded: boolean) => void;
   readonly children?: ReactNode;
   readonly className?: string;
 }
@@ -65,6 +67,7 @@ export function VelvetInspector({
   pinned = false,
   onPin,
   onOpen,
+  onSectionToggle,
   children,
   className = '',
   ...common
@@ -124,10 +127,20 @@ export function VelvetInspector({
       ) : (
         <>
           {preview ? <div className="velvet-inspector__preview">{preview}</div> : null}
+          {selectionMode === 'multiple' ? <div className="velvet-inspector__selected-count" data-inspector-selected-count="true">Selected <strong>{selectedCount}</strong> assets</div> : null}
           {sections.length > 0 ? sections.map((section) => (
             <section aria-labelledby={`velvet-inspector-section-${section.id}`} className="velvet-inspector__section" data-inspector-section={section.id} key={section.id}>
-              <h3 id={`velvet-inspector-section-${section.id}`}>{section.label}</h3>
-              {renderFields(section.fields)}
+              <button
+                aria-controls={`velvet-inspector-section-content-${section.id}`}
+                aria-expanded={section.expanded !== false}
+                className="velvet-inspector__section-toggle"
+                onClick={() => onSectionToggle?.(section.id, section.expanded === false)}
+                type="button"
+              >
+                <h3 id={`velvet-inspector-section-${section.id}`}>{section.label}</h3>
+                <span aria-hidden="true">{section.expanded === false ? '›' : '⌄'}</span>
+              </button>
+              {section.expanded === false ? null : <div id={`velvet-inspector-section-content-${section.id}`}>{renderFields(section.fields)}</div>}
             </section>
           )) : fields.length > 0 ? renderFields(fields) : null}
           {palette.length > 0 ? (
@@ -135,9 +148,9 @@ export function VelvetInspector({
               <h3>Color palette</h3>
               <ul>
                 {palette.map((entry) => (
-                  <li data-palette-id={entry.id} key={entry.id}>
-                    <span aria-label={entry.label ?? entry.color} className="velvet-inspector__swatch" role="img" style={{ backgroundColor: entry.color }} />
-                    <span>{entry.label ?? entry.color}</span>
+                  <li data-palette-id={entry.id} key={entry.id} title={`${entry.label ?? entry.color} ${entry.ratio}%`}>
+                    <span aria-label={`${entry.label ?? entry.color}, ${entry.ratio}%`} className="velvet-inspector__swatch" role="img" style={{ backgroundColor: entry.color }} />
+                    <span className="velvet-inspector__palette-label">{entry.label ?? entry.color}</span>
                     <data value={String(entry.ratio)}>{entry.ratio}%</data>
                   </li>
                 ))}

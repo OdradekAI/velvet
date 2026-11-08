@@ -6,6 +6,7 @@ let opened = false;
 let editedValue = '';
 let retryCount = 0;
 let changeField: ((fieldId: string, value: string) => void) | undefined;
+let sectionToggled = '';
 
 function InspectorSingleStory() {
   const [pinned, setPinned] = useState(false);
@@ -44,13 +45,15 @@ function InspectorFailureRetryStory() {
 }
 
 function InspectorGroupedPaletteStory() {
+  const [sections, setSections] = useState([
+    { id: 'metadata', label: 'Metadata', fields: [{ id: 'type', label: 'Type', value: 'Illustration' }], expanded: true },
+    { id: 'source', label: 'Source', fields: [{ id: 'folder', label: 'Folder', value: 'Reference' }], expanded: true },
+  ]);
   return (
     <VelvetInspector
       palette={[{ id: 'blue', color: '#5d8dff', ratio: 42.5, label: 'Blue' }, { id: 'gray', color: '#8d95a2', ratio: 18.25, label: 'Gray' }]}
-      sections={[
-        { id: 'metadata', label: 'Metadata', fields: [{ id: 'type', label: 'Type', value: 'Illustration' }] },
-        { id: 'source', label: 'Source', fields: [{ id: 'folder', label: 'Folder', value: 'Reference' }] },
-      ]}
+      onSectionToggle={(sectionId, expanded) => { sectionToggled = `${sectionId}:${expanded}`; setSections((current) => current.map((section) => section.id === sectionId ? { ...section, expanded } : section)); }}
+      sections={sections}
       selectedCount={1}
       title="Inspector"
     />
@@ -98,9 +101,12 @@ export const inspectorStories: readonly UiKitStory[] = [
     description: 'Host-projected field groups and precomputed color ratios.',
     render: () => <InspectorGroupedPaletteStory />,
     scenario: {
-      actions: [],
+      covers: ['toggle-section'],
+      setup: () => { sectionToggled = ''; },
+      actions: [(runtime) => runtime.act(async () => { runtime.root.querySelector<HTMLButtonElement>('[aria-controls="velvet-inspector-section-content-metadata"]')?.click(); })],
       checkpoints: [{ name: 'groups and palette', assert: (runtime) => {
         if (runtime.root.querySelectorAll('[data-inspector-section]').length !== 2 || runtime.root.querySelectorAll('[data-palette-id]').length !== 2) throw new Error('Inspector grouped palette contract failed');
+        if (sectionToggled !== 'metadata:false' || runtime.root.querySelector('[aria-controls="velvet-inspector-section-content-metadata"]')?.getAttribute('aria-expanded') !== 'false') throw new Error('Inspector section toggle contract failed');
       } }],
     },
   },

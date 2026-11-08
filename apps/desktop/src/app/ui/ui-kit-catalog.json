@@ -974,6 +974,7 @@
         "pinned",
         "onPin",
         "onOpen",
+        "onSectionToggle",
         "children"
       ],
       "keyboard": [
@@ -981,7 +982,8 @@
       ],
       "accessibility": [
         "complementary landmark, labelled heading, metadata, editable fields and status empty state",
-        "grouped metadata sections and palette ratios are labelled"
+        "grouped metadata sections and palette ratios are labelled",
+        "selected count is announced and field groups expose expand/collapse controls"
       ],
       "stories": [
         "empty",
@@ -1005,7 +1007,8 @@
         "open",
         "edit",
         "save",
-        "retry"
+        "retry",
+        "toggle-section"
       ],
       "observables": [
         "inspector-role",
@@ -1017,7 +1020,9 @@
         "open-callback",
         "edit-field",
         "save-state",
-        "validation"
+        "validation",
+        "section-toggle",
+        "selected-count"
       ],
       "browserActions": [
         "pin",
@@ -1082,6 +1087,13 @@
               "requested",
               "committed",
               "failed"
+            ]
+          },
+          {
+            "action": "toggle-section",
+            "transitions": [
+              "requested",
+              "committed"
             ]
           }
         ]
@@ -1608,7 +1620,7 @@
       "name": "VelvetFilterFacetMenu",
       "category": "composite",
       "layer": "host-projections",
-      "qualification": "node",
+      "qualification": "both",
       "contractId": "filter-facet-menu",
       "documentation": "docs/engineering/ui-kit/components/host-projections/filter-facet-menu.md",
       "purpose": "Evidence-backed folder or color facet menu with host-owned filter actions.",
@@ -1669,6 +1681,15 @@
         "color-hex",
         "color-accuracy",
         "clear",
+        "close"
+      ],
+      "browserActions": [
+        "query",
+        "folder-rule",
+        "folder-include",
+        "folder-exclude",
+        "color-select",
+        "color-accuracy",
         "close"
       ],
       "observables": [

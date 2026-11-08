@@ -1,4 +1,4 @@
-import type { ChangeEvent, MouseEvent } from 'react';
+import { useEffect, useRef, type ChangeEvent, type KeyboardEvent, type MouseEvent, type RefObject } from 'react';
 import type { UiCommonProps } from '../internal/types.js';
 import { uiDataProps } from '../internal/ui-data-props.js';
 
@@ -55,6 +55,11 @@ export type VelvetFilterFacetMenuProps = VelvetFolderFilterFacetMenuProps | Velv
 export function VelvetFilterFacetMenu(props: VelvetFilterFacetMenuProps) {
   if (props.open === false) return null;
   const { kind, title = kind === 'folder' ? 'Folders' : 'Color', className = '', ...common } = props;
+  const folderSearchRef = useRef<HTMLInputElement>(null);
+  const colorHexRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    (kind === 'folder' ? folderSearchRef.current : colorHexRef.current)?.focus();
+  }, [kind]);
   return (
     <section
       {...uiDataProps(common)}
@@ -62,9 +67,15 @@ export function VelvetFilterFacetMenu(props: VelvetFilterFacetMenuProps) {
       className={`velvet-filter-facet-menu velvet-filter-facet-menu--${kind} ${className}`.trim()}
       data-filter-facet-kind={kind}
       data-ui-kit-component="filter-facet-menu"
+      onKeyDown={(event: KeyboardEvent<HTMLElement>) => {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          props.onClose?.();
+        }
+      }}
       role="dialog"
     >
-      {kind === 'folder' ? <FolderMenu {...props} title={title} /> : <ColorMenu {...props} title={title} />}
+      {kind === 'folder' ? <FolderMenu {...props} searchRef={folderSearchRef} title={title} /> : <ColorMenu {...props} hexRef={colorHexRef} title={title} />}
     </section>
   );
 }
@@ -79,7 +90,8 @@ function FolderMenu({
   onOptionAction,
   onQueryChange,
   onRuleChange,
-}: VelvetFolderFilterFacetMenuProps & { readonly title: string }) {
+  searchRef,
+}: VelvetFolderFilterFacetMenuProps & { readonly searchRef: RefObject<HTMLInputElement | null>; readonly title: string }) {
   return (
     <>
       <header className="velvet-filter-facet-menu__header">
@@ -88,6 +100,7 @@ function FolderMenu({
           className="velvet-filter-facet-menu__search"
           onChange={(event: ChangeEvent<HTMLInputElement>) => onQueryChange?.(event.currentTarget.value)}
           placeholder="Search"
+          ref={searchRef}
           type="search"
           value={query}
         />
@@ -151,7 +164,8 @@ function ColorMenu({
   selectedColor,
   swatches,
   title,
-}: VelvetColorFilterFacetMenuProps & { readonly title: string }) {
+  hexRef,
+}: VelvetColorFilterFacetMenuProps & { readonly hexRef: RefObject<HTMLInputElement | null>; readonly title: string }) {
   return (
     <>
       <header className="velvet-filter-facet-menu__compact-header"><span>{title}</span>{onClose ? <button aria-label="Close color filter" onClick={onClose} type="button">×</button> : null}</header>
@@ -173,7 +187,7 @@ function ColorMenu({
           ))}
         </div>
         <div className="velvet-filter-facet-menu__hex-field">
-          <input aria-label="Hex color" onChange={(event: ChangeEvent<HTMLInputElement>) => onHexChange?.(event.currentTarget.value)} value={hexValue} />
+          <input aria-label="Hex color" onChange={(event: ChangeEvent<HTMLInputElement>) => onHexChange?.(event.currentTarget.value)} ref={hexRef} value={hexValue} />
           <span aria-hidden="true" className="velvet-filter-facet-menu__color-preview" style={{ backgroundColor: hexValue }} />
         </div>
         <label className="velvet-filter-facet-menu__accuracy">

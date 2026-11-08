@@ -167,10 +167,31 @@ await inspector.locator('[aria-label="Pin inspector"]').click();
 await inspector.locator('input[aria-label="Name"]').fill('Renamed poster');
 await inspector.locator('[data-inspector-action="save"]').click();
 await page.waitForFunction(() => document.querySelector('[data-ui-kit-probe="inspector"] [role="status"]')?.textContent === 'Saved');
+await inspector.locator('.velvet-inspector__preview img').waitFor({ state: 'attached' });
+await page.waitForFunction(() => {
+  const image = document.querySelector('[data-ui-kit-probe="inspector"] .velvet-inspector__preview img');
+  return image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0;
+});
 host.inspector = {
   state: await observation('inspector-state'),
   status: await inspector.locator('[role="status"]').textContent(),
 };
+host.inspector.evidence = await inspector.evaluate((node) => {
+  const preview = node.querySelector('.velvet-inspector__preview');
+  const previewRect = preview?.getBoundingClientRect();
+  return {
+    palette: node.querySelectorAll('[data-palette-id]').length,
+    sections: node.querySelectorAll('[data-inspector-section]').length,
+    previewHeight: previewRect?.height ?? 0,
+    previewImageHeight: node.querySelector('.velvet-inspector__preview img')?.getBoundingClientRect().height ?? 0,
+  };
+});
+assert.equal(host.inspector.evidence.palette, 3);
+assert.equal(host.inspector.evidence.sections, 2);
+assert.ok(host.inspector.evidence.previewHeight >= 200);
+assert.ok(host.inspector.evidence.previewImageHeight <= 200);
+await inspector.locator('[aria-controls="velvet-inspector-section-content-metadata"]').click();
+assert.equal(await inspector.locator('[aria-controls="velvet-inspector-section-content-metadata"]').getAttribute('aria-expanded'), 'false');
 assert.equal(host.inspector.state, 'name:Renamed poster;pinned:true;save:saved');
 assert.equal(host.inspector.status, 'Saved');
 
@@ -189,6 +210,44 @@ assert.ok(host.filterChanged.includes('poster'));
 assert.equal(host.filterReset, '[]');
 assert.ok(host.filterSaved.includes('poster'));
 assert.equal(host.filterClosed, 'true');
+
+const facetMenu = page.locator('[data-ui-kit-probe="filter-facet-menu"]');
+await page.locator('[data-ui-test-id="folder-facet-trigger"]').click();
+const folderFacet = facetMenu.locator('[data-filter-facet-kind="folder"]');
+await folderFacet.waitFor({ state: 'visible' });
+const folderFacetOpen = await folderFacet.evaluate((node) => {
+  const rect = node.getBoundingClientRect();
+  return { width: rect.width, focused: document.activeElement?.getAttribute('aria-label') ?? null, options: node.querySelectorAll('[data-filter-option]').length };
+});
+assert.deepEqual(folderFacetOpen, { width: 360, focused: 'Folders search', options: 3 });
+await folderFacet.locator('[data-filter-option="reference"]').click();
+await folderFacet.locator('[data-filter-option="archive"]').click({ button: 'right' });
+const folderFacetStates = await folderFacet.evaluate((node) => ({
+  included: node.querySelector('[data-filter-option="reference"]')?.getAttribute('data-filter-state') ?? null,
+  excluded: node.querySelector('[data-filter-option="archive"]')?.getAttribute('data-filter-state') ?? null,
+}));
+assert.deepEqual(folderFacetStates, { included: 'included', excluded: 'excluded' });
+await page.keyboard.press('Escape');
+await folderFacet.waitFor({ state: 'hidden' });
+assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('data-ui-test-id') ?? null), 'folder-facet-trigger');
+
+await page.locator('[data-ui-test-id="color-facet-trigger"]').click();
+const colorFacet = facetMenu.locator('[data-filter-facet-kind="color"]');
+await colorFacet.waitFor({ state: 'visible' });
+const colorFacetOpen = await colorFacet.evaluate((node) => {
+  const rect = node.getBoundingClientRect();
+  return { width: rect.width, focused: document.activeElement?.getAttribute('aria-label') ?? null, swatches: node.querySelectorAll('[data-filter-color]').length };
+});
+assert.deepEqual(colorFacetOpen, { width: 202, focused: 'Hex color', swatches: 6 });
+await colorFacet.locator('[data-filter-color="purple"]').click();
+await colorFacet.locator('[aria-label="Color accuracy"]').focus();
+await page.keyboard.press('ArrowRight');
+assert.equal(await observation('facet-menu-color'), '#6D50ED;accuracy:21');
+await page.keyboard.press('Escape');
+await colorFacet.waitFor({ state: 'hidden' });
+const colorFacetClosed = await page.evaluate(() => document.activeElement?.getAttribute('data-ui-test-id') ?? null);
+assert.equal(colorFacetClosed, 'color-facet-trigger');
+host.filterFacetMenu = { folder: { open: folderFacetOpen, states: folderFacetStates }, color: { open: colorFacetOpen, closed: colorFacetClosed } };
 
 await fixtureReady('visual-baseline');
 const zoom = page.locator('[data-ui-kit-probe="workspace"] [role="group"][aria-label="Asset zoom"]');

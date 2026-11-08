@@ -211,6 +211,52 @@ assert(filterSaved?.includes('poster'), 'FilterPanel save contract failed');
 assert(filterApplied?.includes('poster') && filterCount === '12 results', 'FilterPanel apply/result count contract failed');
 assert(filterClosed === 'true', 'FilterPanel close contract failed');
 
+const folderFacetTrigger = 'loc=css:[data-ui-test-id="folder-facet-trigger"]';
+await page.click(folderFacetTrigger);
+await page.waitForSelector('loc=css:[data-ui-kit-probe="filter-facet-menu"] [data-filter-facet-kind="folder"]', {state:"visible"});
+const folderFacetOpen = await page.evaluate(() => {
+  const menu = document.querySelector('[data-ui-kit-probe="filter-facet-menu"] [data-filter-facet-kind="folder"]');
+  const rect = menu?.getBoundingClientRect();
+  return {
+    width: rect?.width ?? 0,
+    height: rect?.height ?? 0,
+    focused: document.activeElement?.getAttribute('aria-label') ?? null,
+    options: document.querySelectorAll('[data-ui-kit-probe="filter-facet-menu"] [data-filter-option]').length,
+    rule: document.querySelector('[data-ui-kit-probe="filter-facet-menu"] [data-filter-rule="OR"]')?.getAttribute('aria-selected') ?? null,
+  };
+});
+assert(folderFacetOpen.width === 360 && folderFacetOpen.options === 3 && folderFacetOpen.focused === 'Folders search', 'Folder facet menu geometry/focus contract failed');
+await page.click('loc=css:[data-ui-kit-probe="filter-facet-menu"] [data-filter-option="reference"]');
+const folderIncluded = await page.evaluate(() => document.querySelector('[data-ui-kit-probe="filter-facet-menu"] [data-filter-option="reference"]')?.getAttribute('data-filter-state') ?? null);
+const folderArchiveBox = await page.evaluate(() => { const node = document.querySelector('[data-ui-kit-probe="filter-facet-menu"] [data-filter-option="archive"]'); const rect = node?.getBoundingClientRect(); return rect ? {x: rect.x + rect.width / 2, y: rect.y + rect.height / 2} : null; });
+assert(folderArchiveBox, 'Folder facet archive option rectangle unavailable');
+await page.cdp("Input.dispatchMouseEvent", {type:"mousePressed",x:folderArchiveBox.x,y:folderArchiveBox.y,button:"right",clickCount:1});
+await page.cdp("Input.dispatchMouseEvent", {type:"mouseReleased",x:folderArchiveBox.x,y:folderArchiveBox.y,button:"right",clickCount:1});
+const folderExcluded = await page.evaluate(() => document.querySelector('[data-ui-kit-probe="filter-facet-menu"] [data-filter-option="archive"]')?.getAttribute('data-filter-state') ?? null);
+assert(folderIncluded === 'included' && folderExcluded === 'excluded', 'Folder facet pointer include/exclude contract failed');
+await page.keyboard.press("Escape");
+await page.waitForFunction(() => document.querySelector('[data-ui-kit-probe="filter-facet-menu"] [data-filter-facet-kind="folder"]') === null);
+const folderFacetClosed = await page.evaluate(() => document.activeElement?.getAttribute('data-ui-test-id') ?? null);
+assert(folderFacetClosed === 'folder-facet-trigger', 'Folder facet Escape focus restoration contract failed');
+
+await page.click('loc=css:[data-ui-test-id="color-facet-trigger"]');
+await page.waitForSelector('loc=css:[data-ui-kit-probe="filter-facet-menu"] [data-filter-facet-kind="color"]', {state:"visible"});
+const colorFacetOpen = await page.evaluate(() => {
+  const menu = document.querySelector('[data-ui-kit-probe="filter-facet-menu"] [data-filter-facet-kind="color"]');
+  const rect = menu?.getBoundingClientRect();
+  return {width: rect?.width ?? 0, focused: document.activeElement?.getAttribute('aria-label') ?? null, swatches: document.querySelectorAll('[data-ui-kit-probe="filter-facet-menu"] [data-filter-color]').length};
+});
+assert(colorFacetOpen.width === 202 && colorFacetOpen.swatches === 6 && colorFacetOpen.focused === 'Hex color', 'Color facet menu geometry/focus contract failed');
+await page.click('loc=css:[data-ui-kit-probe="filter-facet-menu"] [data-filter-color="purple"]');
+await page.focus('loc=css:[data-ui-kit-probe="filter-facet-menu"] [aria-label="Color accuracy"]');
+await page.keyboard.press("ArrowRight");
+const colorFacetChanged = await page.evaluate(() => ({hex: document.querySelector('[data-ui-kit-observation="facet-menu-color"]')?.textContent ?? null, accuracy: document.querySelector('[data-ui-kit-probe="filter-facet-menu"] [aria-label="Color accuracy"]')?.getAttribute('value') ?? null}));
+assert(colorFacetChanged.hex?.includes('#6D50ED') && colorFacetChanged.accuracy === '21', 'Color facet preset/accuracy contract failed');
+await page.keyboard.press("Escape");
+await page.waitForFunction(() => document.querySelector('[data-ui-kit-probe="filter-facet-menu"] [data-filter-facet-kind="color"]') === null);
+const colorFacetClosed = await page.evaluate(() => document.activeElement?.getAttribute('data-ui-test-id') ?? null);
+assert(colorFacetClosed === 'color-facet-trigger', 'Color facet Escape focus restoration contract failed');
+
 const inspector = 'loc=css:[data-ui-kit-probe="inspector"]';
 await page.evaluate(() => document.querySelector('[data-ui-kit-probe="inspector"] [aria-label="Pin inspector"]')?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
 await page.waitForFunction(() => document.querySelector('[data-ui-kit-probe="inspector"] [aria-label="Unpin inspector"]')?.getAttribute('aria-pressed') === 'true');
@@ -228,6 +274,20 @@ const inspectorSaved = await page.evaluate(() => ({
 assert(inspectorPinned.pressed === 'true', 'Inspector pin contract failed');
 assert(inspectorPinned.state === 'name:Astronaut poster;pinned:true;save:idle', 'Inspector pin observation failed');
 assert(inspectorSaved.status === 'Saved', 'Inspector save status contract failed');
+const inspectorEvidence = await page.evaluate(() => {
+  const preview = document.querySelector('[data-ui-kit-probe="inspector"] .velvet-inspector__preview');
+  const rect = preview?.getBoundingClientRect();
+  return {
+    palette: document.querySelectorAll('[data-ui-kit-probe="inspector"] [data-palette-id]').length,
+    sections: document.querySelectorAll('[data-ui-kit-probe="inspector"] [data-inspector-section]').length,
+    previewHeight: rect?.height ?? 0,
+    previewImageHeight: document.querySelector('[data-ui-kit-probe="inspector"] .velvet-inspector__preview img')?.getBoundingClientRect().height ?? 0,
+  };
+});
+assert(inspectorEvidence.palette === 3 && inspectorEvidence.sections === 2 && inspectorEvidence.previewHeight >= 200 && inspectorEvidence.previewImageHeight <= 200, 'Inspector palette/group/preview evidence contract failed');
+await page.click('loc=css:[data-ui-kit-probe="inspector"] [aria-controls="velvet-inspector-section-content-metadata"]');
+const inspectorCollapsed = await page.evaluate(() => document.querySelector('[data-ui-kit-probe="inspector"] [aria-controls="velvet-inspector-section-content-metadata"]')?.getAttribute('aria-expanded') ?? null);
+assert(inspectorCollapsed === 'false', 'Inspector section collapse contract failed');
 assert(inspectorSaved.state === 'name:Renamed poster;pinned:true;save:saved', 'Inspector save observation failed');
 
 const result = {
@@ -243,7 +303,8 @@ const result = {
   commandPalette: {open: paletteOpen, scope: paletteScope, hostResults: paletteHostResults, filtered: paletteFiltered, selected: paletteSelected, closed: paletteClosed},
   quickSearch: {open: quickSearchOpen, hostResults: quickSearchHostResults, selected: quickSearchSelected, folderResult: quickSearchFolderResult, history: quickSearchHistory, historySelected: quickSearchHistorySelected, closed: quickSearchClosed},
   filterPanel: {semanticSchema: filterSemanticSchema, changed: filterChanged, reset: filterReset, saved: filterSaved, applied: filterApplied, resultCount: filterCount, closed: filterClosed},
-  inspector: {pinned: inspectorPinned, saved: inspectorSaved},
+  filterFacetMenu: {folder: {open: folderFacetOpen, included: folderIncluded, excluded: folderExcluded, closed: folderFacetClosed}, color: {open: colorFacetOpen, changed: colorFacetChanged, closed: colorFacetClosed}},
+  inspector: {pinned: inspectorPinned, saved: inspectorSaved, evidence: inspectorEvidence, collapsed: inspectorCollapsed},
 };
 await (await import("node:fs/promises")).writeFile(${JSON.stringify(outputPath)}, JSON.stringify(result, null, 2));
 console.log(JSON.stringify(result, null, 2));

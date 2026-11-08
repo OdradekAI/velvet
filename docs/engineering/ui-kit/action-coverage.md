@@ -20,13 +20,13 @@ contract test rejects an action that appears in neither set.
 | VelvetDialog | — | `open`, `close`, `submit` — overlay fixture |
 | VelvetContextMenu | — | `open`, `select`, `dismiss`, `navigate` — overlay fixture (including submenu) |
 | VelvetPreviewHost | `retry`, `change-mode`, `open-external` — `preview-host/retry`, `preview-host/toolbar-mode` | error announcement, retry, mode toggle, toolbar and external-open callback in host fixture |
-| VelvetInspector | `pin`, `open`, `edit`, `save`, `retry` — Inspector stories | pin/edit/save in host fixture; grouped fields and palette fixture in Node runner |
+| VelvetInspector | `pin`, `open`, `edit`, `save`, `retry`, `toggle-section` — Inspector stories | pin/edit/save in host fixture; grouped fields, palette, 200px preview region and section collapse in Node/browser fixtures |
 | VelvetAssetGrid | `select`, `navigate`, `open`, `drag`, `drop` — AssetGrid stories (including grid metrics, Shift range hint and waterfall geometry) | keyboard/open/Shift selection and grid semantics in host fixture |
 | VelvetDataTable | `select`, `sort` — `data-table/default`, `data-table/sort-direction`; empty status in `data-table/empty` | keyboard row selection, sort direction and `aria-sort` in host fixture |
 | VelvetCommandPalette | `query`, `select`, `navigate`, `scope-change`, `close` — `command-palette/open`, `command-palette/scope`, `command-palette/controlled-query`, `command-palette/host-results` | host result replacement, query callback, selection/navigation/scope/close plus active descendant and focus restoration in host fixture |
 | VelvetQuickSearch | `query`, `select`, `navigate`, `tab-change`, `history-select`, `close` — `quick-search/open`, `quick-search/tabs-history`, `quick-search/keyboard-focus` | host result/history projection, tab switching, selection/navigation and focus restoration in host fixture |
 | VelvetFilterPanel | `change`, `apply`, `reset`, `save`, `close` — `filter-panel/default`, `filter-panel/reset-save`, `filter-panel/keyboard-close` | text rule, typed operators, result count, apply/reset/save and close in host fixture |
-| VelvetFilterFacetMenu | `query`, `folder-rule`, `folder-include`, `folder-exclude`, `color-select`, `color-hex`, `color-accuracy`, `clear`, `close` — `filter-facet-menu/folder-default`, `filter-facet-menu/color-default` | Node-qualified geometry and host callbacks; browser pointer/context-menu qualification pending |
+| VelvetFilterFacetMenu | `query`, `folder-rule`, `folder-include`, `folder-exclude`, `color-select`, `color-hex`, `color-accuracy`, `clear`, `close` — `filter-facet-menu/folder-default`, `filter-facet-menu/color-default` | pointer include/exclude, geometry, focus entry, Escape dismissal and trigger restoration in host fixture |
 | VelvetZoomControl | `increment`, `decrement`, `change` — `zoom-control/default` | keyboard step, bounds and button actions in the visual-baseline fixture |
 | VelvetPane | semantic region checkpoint — `pane/navigation` | role, heading link, zone marker and body in host fixture |
 | VelvetPanel | semantic region checkpoint — `panel/panel` | role, heading link, surface and body in host fixture |

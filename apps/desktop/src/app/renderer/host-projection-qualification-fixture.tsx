@@ -5,6 +5,7 @@ import {
   VelvetButton,
   VelvetCommandPalette,
   VelvetDataTable,
+  VelvetFilterFacetMenu,
   VelvetFilterPanel,
   VelvetInspector,
   VelvetPane,
@@ -16,6 +17,7 @@ import {
   VelvetZoomControl,
 } from '../ui/index.js';
 import type { VelvetFilterRule } from '../ui/index.js';
+import type { VelvetFilterFolderOption, VelvetFilterFolderRule, VelvetInspectorSection } from '../ui/index.js';
 
 const ASSETS = [
   { id: 'asset-1', label: 'Astronaut poster', secondary: 'Illustration' },
@@ -58,6 +60,21 @@ const FILTER_FACETS = [
   { id: 'annotation', label: 'Annotation', kind: 'text' as const, placeholder: 'Contains…' },
 ] as const;
 
+const FOLDER_FACET_OPTIONS: readonly VelvetFilterFolderOption[] = [
+  { id: 'reference', label: 'Reference', count: 12, depth: 0, state: 'idle' },
+  { id: 'illustration', label: 'Illustration', count: 8, depth: 1, state: 'idle' },
+  { id: 'archive', label: 'Archive', count: 3, depth: 0, state: 'idle' },
+];
+
+const COLOR_FACET_SWATCHES = [
+  { id: 'black', color: '#111111', label: 'Black' },
+  { id: 'white', color: '#FFFFFF', label: 'White' },
+  { id: 'blue', color: '#2B76E7', label: 'Blue' },
+  { id: 'purple', color: '#6D50ED', label: 'Purple' },
+] as const;
+
+const INSPECTOR_PREVIEW = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 240"><rect width="320" height="240" fill="#6d50ed"/><circle cx="250" cy="60" r="42" fill="#c8b5ff"/><path d="M0 200 100 120l58 50 62-70 100 100v40H0Z" fill="#33245f"/></svg>')}`;
+
 export function HostProjectionQualificationFixture() {
   const [selectedAsset, setSelectedAsset] = useState('asset-1');
   const [activeWorkspace, setActiveWorkspace] = useState('library');
@@ -87,8 +104,20 @@ export function HostProjectionQualificationFixture() {
   const [savedFilterRules, setSavedFilterRules] = useState<readonly VelvetFilterRule[]>([]);
   const [appliedFilterRules, setAppliedFilterRules] = useState<readonly VelvetFilterRule[]>([]);
   const [filterClosed, setFilterClosed] = useState(false);
+  const [facetMenu, setFacetMenu] = useState<'folder' | 'color' | null>(null);
+  const [folderFacetOptions, setFolderFacetOptions] = useState(FOLDER_FACET_OPTIONS);
+  const [folderFacetRule, setFolderFacetRule] = useState<VelvetFilterFolderRule>('OR');
+  const [folderFacetQuery, setFolderFacetQuery] = useState('');
+  const [colorFacetHex, setColorFacetHex] = useState('#FFFFFF');
+  const [colorFacetAccuracy, setColorFacetAccuracy] = useState(20);
+  const [inspectorSections, setInspectorSections] = useState<VelvetInspectorSection[]>([
+    { id: 'metadata', label: 'Metadata', fields: [{ id: 'name', label: 'Name', value: inspectorName, inputValue: inspectorName, editable: true }, { id: 'dimensions', label: 'Dimensions', value: '320 × 240' }], expanded: true },
+    { id: 'source', label: 'Source', fields: [{ id: 'folder', label: 'Folder', value: 'Reference' }], expanded: true },
+  ]);
   const paletteTriggerRef = useRef<HTMLButtonElement>(null);
   const quickSearchTriggerRef = useRef<HTMLButtonElement>(null);
+  const folderFacetTriggerRef = useRef<HTMLButtonElement>(null);
+  const colorFacetTriggerRef = useRef<HTMLButtonElement>(null);
   const hostCommands = COMMANDS.filter((command) => commandScope === 'all' || command.scope === undefined || command.scope === commandScope).filter((command) => commandQuery.length === 0 || `${command.label} ${command.description ?? ''}`.toLowerCase().includes(commandQuery.toLowerCase()));
   const hostQuickSearchResults = QUICK_SEARCH_RESULTS.filter((result) => result.kind === quickSearchTab);
 
@@ -198,6 +227,41 @@ export function HostProjectionQualificationFixture() {
         <output data-ui-kit-observation="filter-applied">{JSON.stringify(appliedFilterRules)}</output>
         <output data-ui-kit-observation="filter-closed">{String(filterClosed)}</output>
       </section>
+      <section aria-label="Filter facet menu qualification" data-ui-kit-probe="filter-facet-menu">
+        <VelvetStack direction="row" gap="sm">
+          <VelvetButton onClick={() => setFacetMenu('folder')} ref={folderFacetTriggerRef} testId="folder-facet-trigger">Open folder facet</VelvetButton>
+          <VelvetButton onClick={() => setFacetMenu('color')} ref={colorFacetTriggerRef} testId="color-facet-trigger">Open color facet</VelvetButton>
+        </VelvetStack>
+        {facetMenu === 'folder' ? <VelvetFilterFacetMenu
+          kind="folder"
+          onClear={() => setFolderFacetOptions(FOLDER_FACET_OPTIONS)}
+          onClose={() => { setFacetMenu(null); folderFacetTriggerRef.current?.focus(); }}
+          onOptionAction={(id, action) => setFolderFacetOptions((options) => options.map((option) => option.id === id ? { ...option, state: action === 'include' ? 'included' : 'excluded' } : option))}
+          onQueryChange={setFolderFacetQuery}
+          onRuleChange={setFolderFacetRule}
+          open
+          options={folderFacetOptions}
+          query={folderFacetQuery}
+          rule={folderFacetRule}
+          title="Folders"
+        /> : null}
+        {facetMenu === 'color' ? <VelvetFilterFacetMenu
+          accuracy={colorFacetAccuracy}
+          hexValue={colorFacetHex}
+          kind="color"
+          onAccuracyChange={setColorFacetAccuracy}
+          onClose={() => { setFacetMenu(null); colorFacetTriggerRef.current?.focus(); }}
+          onHexChange={setColorFacetHex}
+          onPresetChange={(value) => { if (value && value !== 'gray') setColorFacetHex(value); }}
+          open
+          selectedColor={colorFacetHex}
+          swatches={COLOR_FACET_SWATCHES}
+          title="Color"
+        /> : null}
+        <output data-ui-kit-observation="facet-menu-state">{facetMenu ?? 'closed'}</output>
+        <output data-ui-kit-observation="facet-menu-folder">{folderFacetOptions.map((option) => `${option.id}:${option.state}`).join('|')}</output>
+        <output data-ui-kit-observation="facet-menu-color">{colorFacetHex};accuracy:{colorFacetAccuracy}</output>
+      </section>
       <section aria-label="Inspector qualification" data-ui-kit-probe="inspector">
         <VelvetStack gap="sm">
           <VelvetText as="h2">Inspector</VelvetText>
@@ -206,15 +270,18 @@ export function HostProjectionQualificationFixture() {
               { id: 'name', label: 'Name', value: inspectorName, inputValue: inspectorName, editable: true },
               { id: 'type', label: 'Type', value: 'Illustration' },
             ]}
-            onFieldChange={(fieldId, value) => { if (fieldId === 'name') { setInspectorName(value); setInspectorSaveState('idle'); } }}
+            onFieldChange={(fieldId, value) => { if (fieldId === 'name') { setInspectorName(value); setInspectorSections((sections) => sections.map((section) => ({ ...section, fields: section.fields.map((field) => field.id === 'name' ? { ...field, value, inputValue: value } : field) }))); setInspectorSaveState('idle'); } }}
             onPin={setInspectorPinned}
             onSave={() => setInspectorSaveState('saved')}
+            onSectionToggle={(sectionId, expanded) => setInspectorSections((sections) => sections.map((section) => section.id === sectionId ? { ...section, expanded } : section))}
             pinned={inspectorPinned}
+            palette={[{ id: 'blue', color: '#5d8dff', ratio: 42.5, label: 'Blue' }, { id: 'gray', color: '#8d95a2', ratio: 18.25, label: 'Gray' }, { id: 'pink', color: '#fc85b3', ratio: 9.5, label: 'Pink' }]}
             saveState={inspectorSaveState}
+            sections={inspectorSections}
             selectedCount={1}
             title="Inspector"
+            preview={<div data-ui-kit-probe="inspector-preview"><img alt="Astronaut poster preview" height={240} src={INSPECTOR_PREVIEW} width={320} /></div>}
           >
-            <span data-ui-kit-probe="inspector-preview">Preview: Astronaut poster</span>
           </VelvetInspector>
           <output data-ui-kit-observation="inspector-state">name:{inspectorName};pinned:{String(inspectorPinned)};save:{inspectorSaveState}</output>
         </VelvetStack>
