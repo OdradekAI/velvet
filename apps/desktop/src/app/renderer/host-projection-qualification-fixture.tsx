@@ -10,6 +10,7 @@ import {
   VelvetPane,
   VelvetPanel,
   VelvetPreviewHost,
+  VelvetQuickSearch,
   VelvetStack,
   VelvetText,
   VelvetZoomControl,
@@ -33,6 +34,20 @@ const COMMANDS = [
   { id: 'command.pin', label: 'Pin selected asset', description: 'Keep the asset visible', scope: 'current' as const },
 ] as const;
 
+const QUICK_SEARCH_TABS = [
+  { id: 'folders' as const, label: 'Folders' },
+  { id: 'items' as const, label: 'Items' },
+  { id: 'tags' as const, label: 'Tags' },
+  { id: 'smart-folders' as const, label: 'Smart Folders' },
+];
+
+const QUICK_SEARCH_RESULTS = [
+  { id: 'quick.item.beijing', kind: 'items' as const, label: '北京海报', searchAliases: ['beijing haibao', '北京海報'], score: 0.9 },
+  { id: 'quick.folder.reference', kind: 'folders' as const, label: '参考资料', searchAliases: ['cankao ziliao', '參考資料'], score: 0.8 },
+  { id: 'quick.tag.inspiration', kind: 'tags' as const, label: '灵感', searchAliases: ['linggan', '靈感'], score: 0.8 },
+  { id: 'quick.smart.recent', kind: 'smart-folders' as const, label: '最近添加', searchAliases: ['recent'], score: 0.7 },
+];
+
 const FILTER_FACETS = [
   { id: 'type', label: 'Type', kind: 'multi' as const, options: [{ id: 'image', label: 'Image', count: 12 }, { id: 'video', label: 'Video', count: 2 }] },
   { id: 'folder', label: 'Folder', semantic: 'folder' as const, kind: 'single' as const, options: [{ id: 'reference', label: 'Reference', count: 8 }, { id: 'inspiration', label: 'Inspiration', count: 4 }] },
@@ -54,6 +69,11 @@ export function HostProjectionQualificationFixture() {
   const [selectedCommand, setSelectedCommand] = useState('');
   const [commandScope, setCommandScope] = useState<'all' | 'current'>('all');
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [quickSearchOpen, setQuickSearchOpen] = useState(false);
+  const [quickSearchTab, setQuickSearchTab] = useState<'folders' | 'items' | 'tags' | 'smart-folders'>('items');
+  const [quickSearchQuery, setQuickSearchQuery] = useState('');
+  const [quickSearchSelection, setQuickSearchSelection] = useState('');
+  const [quickSearchSelectionKind, setQuickSearchSelectionKind] = useState('');
   const [inspectorPinned, setInspectorPinned] = useState(false);
   const [inspectorName, setInspectorName] = useState('Astronaut poster');
   const [inspectorSaveState, setInspectorSaveState] = useState<'idle' | 'saved'>('idle');
@@ -67,6 +87,7 @@ export function HostProjectionQualificationFixture() {
   const [appliedFilterRules, setAppliedFilterRules] = useState<readonly VelvetFilterRule[]>([]);
   const [filterClosed, setFilterClosed] = useState(false);
   const paletteTriggerRef = useRef<HTMLButtonElement>(null);
+  const quickSearchTriggerRef = useRef<HTMLButtonElement>(null);
 
   return (
     <main aria-label="Velvet host projection qualification fixture" data-ui-kit-fixture="host-projections" data-ui-kit-viewport="1280x800" style={{ display: 'grid', gap: 24, padding: 24, minHeight: '100%', background: 'var(--velvet-surface-app)' }}>
@@ -131,6 +152,31 @@ export function HostProjectionQualificationFixture() {
           <VelvetButton onClick={() => setPaletteOpen(true)} ref={paletteTriggerRef} testId="command-palette-trigger">Open commands</VelvetButton>
           <VelvetCommandPalette commands={COMMANDS} onClose={() => setPaletteOpen(false)} onScopeChange={setCommandScope} onSelect={(id) => { setSelectedCommand(id); setPaletteOpen(false); }} open={paletteOpen} restoreFocusRef={paletteTriggerRef} scope={commandScope} scopeOptions={[{ id: 'all', label: 'All' }, { id: 'current', label: 'Current' }]} />
           <output data-ui-kit-observation="command-selection">selected:{selectedCommand}</output>
+        </VelvetStack>
+      </section>
+      <section aria-label="Quick Search qualification" data-ui-kit-probe="quick-search">
+        <VelvetStack gap="sm">
+          <VelvetText as="h2">Quick Search</VelvetText>
+          <VelvetButton onClick={() => { setQuickSearchQuery(''); setQuickSearchOpen(true); }} ref={quickSearchTriggerRef} testId="quick-search-trigger">Open quick search</VelvetButton>
+          <VelvetQuickSearch
+            activeTab={quickSearchTab}
+            history={['北京', '北京', '灵感']}
+            historyLimit={2}
+            onClose={() => setQuickSearchOpen(false)}
+            onHistorySelect={setQuickSearchQuery}
+            onQueryChange={setQuickSearchQuery}
+            onSelect={(id, kind) => { setQuickSearchSelection(id); setQuickSearchSelectionKind(kind); setQuickSearchOpen(false); }}
+            onTabChange={setQuickSearchTab}
+            open={quickSearchOpen}
+            query={quickSearchQuery}
+            restoreFocusRef={quickSearchTriggerRef}
+            results={QUICK_SEARCH_RESULTS}
+            tabs={QUICK_SEARCH_TABS}
+          />
+          <output data-ui-kit-observation="quick-search-query">{quickSearchQuery}</output>
+          <output data-ui-kit-observation="quick-search-tab">{quickSearchTab}</output>
+          <output data-ui-kit-observation="quick-search-selection">{quickSearchSelection};{quickSearchSelectionKind}</output>
+          <output data-ui-kit-observation="quick-search-history">北京,灵感</output>
         </VelvetStack>
       </section>
       <section aria-label="Filter panel qualification" data-ui-kit-probe="filter-panel">

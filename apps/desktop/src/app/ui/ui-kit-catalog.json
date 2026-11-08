@@ -1737,6 +1737,157 @@
       }
     },
     {
+      "id": "quick-search",
+      "name": "VelvetQuickSearch",
+      "category": "composite",
+      "layer": "host-projections",
+      "qualification": "both",
+      "contractId": "quick-search",
+      "documentation": "docs/engineering/ui-kit/components/host-projections/quick-search.md",
+      "purpose": "Host-owned quick search overlay for folders, items, tags and smart folders.",
+      "ownership": "host",
+      "states": [
+        "closed",
+        "open",
+        "empty",
+        "history",
+        "selected"
+      ],
+      "props": [
+        "open",
+        "tabs",
+        "activeTab",
+        "results",
+        "query",
+        "history",
+        "historyLimit",
+        "onQueryChange",
+        "onTabChange",
+        "onHistorySelect",
+        "onSelect",
+        "onClose",
+        "restoreFocusRef"
+      ],
+      "keyboard": [
+        "Arrow keys",
+        "Home",
+        "End",
+        "Enter",
+        "Escape"
+      ],
+      "accessibility": [
+        "dialog/listbox semantics and focus entry",
+        "active descendant links the query to the selected result",
+        "tabs expose folder/item/tag/smart-folder scope",
+        "pinyin and traditional aliases are host-provided search tokens",
+        "history is bounded and deduplicated"
+      ],
+      "stories": [
+        "open",
+        "tabs-history",
+        "keyboard-focus"
+      ],
+      "slots": [
+        "tabs",
+        "results",
+        "history"
+      ],
+      "actions": [
+        "query",
+        "tab-change",
+        "history-select",
+        "select",
+        "navigate",
+        "close"
+      ],
+      "observables": [
+        "dialog-role",
+        "input-focus",
+        "tablist-role",
+        "active-descendant",
+        "pinyin-alias",
+        "traditional-alias",
+        "history",
+        "selection",
+        "focus-restore"
+      ],
+      "browserActions": [
+        "query",
+        "tab-change",
+        "history-select",
+        "select",
+        "navigate",
+        "close"
+      ],
+      "visual": {
+        "profile": "overlay",
+        "surfaces": {
+          "root": "overlay",
+          "interactive": "active",
+          "selected": "active"
+        },
+        "radius": "md",
+        "density": "compact",
+        "geometry": [
+          "surface:600px",
+          "row:34px",
+          "history-chip:24px",
+          "tabs:24px"
+        ]
+      },
+      "behavior": {
+        "stateOwner": "host",
+        "focus": "restore",
+        "selection": "host",
+        "actionLifecycle": [
+          {
+            "action": "query",
+            "transitions": [
+              "requested",
+              "committed"
+            ]
+          },
+          {
+            "action": "tab-change",
+            "transitions": [
+              "requested",
+              "committed"
+            ]
+          },
+          {
+            "action": "history-select",
+            "transitions": [
+              "requested",
+              "committed"
+            ]
+          },
+          {
+            "action": "select",
+            "transitions": [
+              "requested",
+              "committed",
+              "failed"
+            ]
+          },
+          {
+            "action": "navigate",
+            "transitions": [
+              "requested",
+              "committed"
+            ]
+          },
+          {
+            "action": "close",
+            "transitions": [
+              "requested",
+              "committed",
+              "cancelled"
+            ]
+          }
+        ]
+      }
+    },
+    {
       "id": "zoom-control",
       "name": "VelvetZoomControl",
       "category": "composite",

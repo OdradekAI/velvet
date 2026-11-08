@@ -7,4 +7,5 @@ export { VelvetInspectorContract } from './inspector.contract.js';
 export { VelvetPaneContract } from './pane.contract.js';
 export { VelvetPanelContract } from './panel.contract.js';
 export { VelvetPreviewHostContract } from './preview-host.contract.js';
+export { VelvetQuickSearchContract } from './quick-search.contract.js';
 export { VelvetZoomControlContract } from './zoom-control.contract.js';

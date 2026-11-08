@@ -5,8 +5,8 @@ const { COMPONENT_META } = await import('/tmp/velvet-plugin-tests/app/ui/compone
 const contracts = await import('/tmp/velvet-plugin-tests/app/ui/contracts/index.js');
 const { UI_KIT_STORY_REGISTRY } = await import('/tmp/velvet-plugin-tests/app/ui/story-registry.js');
 
-assert.equal(COMPONENT_META.length, 27);
-const alignedComponents = new Set(['asset-grid', 'command-palette', 'context-menu', 'data-table', 'filter-panel', 'inspector', 'preview-host', 'zoom-control']);
+assert.equal(COMPONENT_META.length, 28);
+const alignedComponents = new Set(['asset-grid', 'command-palette', 'context-menu', 'data-table', 'filter-panel', 'inspector', 'preview-host', 'quick-search', 'zoom-control']);
 
 for (const meta of COMPONENT_META) {
   const exportName = `${meta.name}Contract`;

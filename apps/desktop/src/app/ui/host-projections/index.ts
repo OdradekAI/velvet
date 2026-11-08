@@ -7,4 +7,5 @@ export { VelvetInspector, type VelvetInspectorField, type VelvetInspectorProps }
 export { VelvetPane, type VelvetPaneProps } from './pane.js';
 export { VelvetPanel, type VelvetPanelProps } from './panel.js';
 export { VelvetPreviewHost, type VelvetPreviewHostProps, type VelvetPreviewMode, type VelvetPreviewProviderAction } from './preview-host.js';
+export { VelvetQuickSearch, type VelvetQuickSearchProps, type VelvetQuickSearchResult, type VelvetQuickSearchTab, type VelvetQuickSearchTabId } from './quick-search.js';
 export { VelvetZoomControl, type VelvetZoomControlProps } from './zoom-control.js';
