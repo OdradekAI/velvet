@@ -154,7 +154,7 @@ export function VisualQualificationFixture() {
             <VelvetInput ariaLabel="Search assets" onChange={(event) => setQuery(event.target.value)} placeholder="Search" value={query} />
             <VelvetIconButton icon="⌕" label="Search" variant="quiet" />
             <VelvetIconButton icon="≡" label="Filter" variant="quiet" />
-            <VelvetContextMenu actions={[{ id: 'pin', label: 'Pin selection', checked: true, onSelect: () => setContextAction('pin') }, { id: 'open', label: 'Open in preview', onSelect: () => setContextAction('open'), shortcutHint: 'Enter' }]}>
+            <VelvetContextMenu actions={[{ id: 'pin', label: 'Pin selection', checked: true, onSelect: () => setContextAction('pin') }, { id: 'open', label: 'Open in preview', onSelect: () => setContextAction('open'), shortcutHint: 'Enter' }, { id: 'more', label: 'More actions', submenu: [{ id: 'reveal', label: 'Reveal in library', onSelect: () => setContextAction('reveal') }, { id: 'copy', label: 'Copy link', shortcutHint: '⌘L', onSelect: () => setContextAction('copy') }] }]}>
               <div className="velvet-visual-fixture__context-trigger" data-ui-kit-probe="context-trigger" role="button" tabIndex={0}>Actions</div>
             </VelvetContextMenu>
             <VelvetSelect ariaLabel="Sort assets" onChange={(event) => setSort(event.target.value)} value={sort}>

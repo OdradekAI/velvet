@@ -14,6 +14,19 @@ export interface VelvetInspectorField {
   readonly error?: string;
 }
 
+export interface VelvetInspectorSection {
+  readonly id: string;
+  readonly label: string;
+  readonly fields: readonly VelvetInspectorField[];
+}
+
+export interface VelvetInspectorPaletteEntry {
+  readonly id: string;
+  readonly color: string;
+  readonly ratio: number;
+  readonly label?: string;
+}
+
 export type VelvetInspectorSaveState = 'idle' | 'saving' | 'saved' | 'error' | 'cancelled';
 
 export interface VelvetInspectorProps extends UiCommonProps {
@@ -21,6 +34,8 @@ export interface VelvetInspectorProps extends UiCommonProps {
   readonly selectedCount: number;
   readonly preview?: ReactNode;
   readonly fields?: readonly VelvetInspectorField[];
+  readonly sections?: readonly VelvetInspectorSection[];
+  readonly palette?: readonly VelvetInspectorPaletteEntry[];
   readonly emptyMessage?: string;
   readonly onFieldChange?: (fieldId: string, value: string) => void;
   readonly onSave?: () => void;
@@ -39,6 +54,8 @@ export function VelvetInspector({
   selectedCount,
   preview,
   fields = [],
+  sections = [],
+  palette = [],
   emptyMessage = 'Select an asset to inspect it.',
   onFieldChange,
   onSave,
@@ -54,7 +71,30 @@ export function VelvetInspector({
 }: VelvetInspectorProps) {
   const headingId = useId();
   const selectionMode = selectedCount === 0 ? 'empty' : selectedCount === 1 ? 'single' : 'multiple';
-  const editableFields = fields.filter((field) => field.editable);
+  const groupedFields = sections.length > 0 ? sections.flatMap((section) => section.fields) : fields;
+  const editableFields = groupedFields.filter((field) => field.editable);
+  const renderFields = (nextFields: readonly VelvetInspectorField[]) => (
+    <dl className="velvet-inspector__metadata">
+      {nextFields.map((field) => (
+        <div key={field.id}>
+          <dt><label htmlFor={`velvet-inspector-field-${field.id}`}>{field.label}</label></dt>
+          <dd>
+            {field.editable ? (
+              <VelvetInput
+                ariaLabel={field.label}
+                describedBy={field.error ? `velvet-inspector-error-${field.id}` : undefined}
+                id={`velvet-inspector-field-${field.id}`}
+                onChange={(event) => onFieldChange?.(field.id, event.target.value)}
+                placeholder={field.placeholder}
+                value={field.inputValue ?? (typeof field.value === 'string' ? field.value : '')}
+              />
+            ) : field.value}
+            {field.error ? <small id={`velvet-inspector-error-${field.id}`} role="alert">{field.error}</small> : null}
+          </dd>
+        </div>
+      ))}
+    </dl>
+  );
   return (
     <aside
       {...uiDataProps(common)}
@@ -84,27 +124,25 @@ export function VelvetInspector({
       ) : (
         <>
           {preview ? <div className="velvet-inspector__preview">{preview}</div> : null}
-          {fields.length > 0 ? (
-            <dl className="velvet-inspector__metadata">
-              {fields.map((field) => (
-                <div key={field.id}>
-                  <dt><label htmlFor={`velvet-inspector-field-${field.id}`}>{field.label}</label></dt>
-                  <dd>
-                    {field.editable ? (
-                      <VelvetInput
-                        ariaLabel={field.label}
-                        describedBy={field.error ? `velvet-inspector-error-${field.id}` : undefined}
-                        id={`velvet-inspector-field-${field.id}`}
-                        onChange={(event) => onFieldChange?.(field.id, event.target.value)}
-                        placeholder={field.placeholder}
-                        value={field.inputValue ?? (typeof field.value === 'string' ? field.value : '')}
-                      />
-                    ) : field.value}
-                    {field.error ? <small id={`velvet-inspector-error-${field.id}`} role="alert">{field.error}</small> : null}
-                  </dd>
-                </div>
-              ))}
-            </dl>
+          {sections.length > 0 ? sections.map((section) => (
+            <section aria-labelledby={`velvet-inspector-section-${section.id}`} className="velvet-inspector__section" data-inspector-section={section.id} key={section.id}>
+              <h3 id={`velvet-inspector-section-${section.id}`}>{section.label}</h3>
+              {renderFields(section.fields)}
+            </section>
+          )) : fields.length > 0 ? renderFields(fields) : null}
+          {palette.length > 0 ? (
+            <section aria-label="Color palette" className="velvet-inspector__palette" data-inspector-palette="true">
+              <h3>Color palette</h3>
+              <ul>
+                {palette.map((entry) => (
+                  <li data-palette-id={entry.id} key={entry.id}>
+                    <span aria-label={entry.label ?? entry.color} className="velvet-inspector__swatch" role="img" style={{ backgroundColor: entry.color }} />
+                    <span>{entry.label ?? entry.color}</span>
+                    <data value={String(entry.ratio)}>{entry.ratio}%</data>
+                  </li>
+                ))}
+              </ul>
+            </section>
           ) : null}
           {children}
           {editableFields.length > 0 && onSave ? (

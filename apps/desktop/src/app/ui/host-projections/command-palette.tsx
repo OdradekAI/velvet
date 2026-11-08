@@ -55,6 +55,8 @@ export function VelvetCommandPalette({
             if (event.key === 'Escape') onClose();
             if (event.key === 'ArrowDown') { event.preventDefault(); setIndex((value) => Math.min(filtered.length - 1, value + 1)); }
             if (event.key === 'ArrowUp') { event.preventDefault(); setIndex((value) => Math.max(0, value - 1)); }
+            if (event.key === 'Home') { event.preventDefault(); setIndex(0); }
+            if (event.key === 'End') { event.preventDefault(); setIndex(Math.max(0, filtered.length - 1)); }
             if (event.key === 'Enter') { event.preventDefault(); selectCurrent(); }
           }}
           placeholder={placeholder}

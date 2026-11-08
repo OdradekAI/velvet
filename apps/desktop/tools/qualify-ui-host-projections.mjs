@@ -41,7 +41,11 @@ await page.waitForFunction(() => document.querySelector('[data-ui-kit-observatio
 const previewReady = await page.evaluate(() => ({
   state: document.querySelector('[data-ui-kit-observation="preview-host-state"]')?.textContent ?? null,
   region: document.querySelector('[data-ui-kit-probe="preview-host"] .velvet-preview-host')?.getAttribute('role') ?? null,
+  mode: document.querySelector('[data-ui-kit-probe="preview-host"] .velvet-preview-host')?.getAttribute('data-preview-mode') ?? null,
+  toolbar: document.querySelector('[data-ui-kit-probe="preview-host"] [role="toolbar"] [data-preview-toolbar-action="rotate"]')?.textContent ?? null,
 }));
+await page.click('loc=css:[data-ui-kit-probe="preview-host"] [data-preview-action="open-external"]');
+const previewExternalOpened = await page.evaluate(() => document.querySelector('[data-ui-kit-observation="preview-external-opened"]')?.textContent ?? null);
 
 await page.focus('loc=css:[data-ui-kit-probe="zoom-control"] input[aria-label="Zoom level"]');
 await page.keyboard.press("ArrowRight");
@@ -107,7 +111,7 @@ assert(activityBar.selected === 'selected:feed' && activityBar.focused === 'Feed
 assert(paneSemantics.role === 'region' && paneSemantics.labelledBy && paneSemantics.heading === 'Qualification navigation' && paneSemantics.body === 'Pane content', 'Pane accessibility contract failed');
 assert(panelSemantics.role === 'region' && panelSemantics.labelledBy && panelSemantics.heading === 'Qualification panel' && panelSemantics.raised, 'Panel accessibility contract failed');
 assert(previewError.state === 'error' && previewError.alert?.includes('Preview failed'), 'PreviewHost error announcement contract failed');
-assert(previewReady.state === 'ready' && previewReady.region === 'region', 'PreviewHost retry/region contract failed');
+assert(previewReady.state === 'ready' && previewReady.region === 'region' && previewReady.mode === 'fit' && previewReady.toolbar === 'Rotate' && previewExternalOpened === 'true', 'PreviewHost retry/mode/toolbar contract failed');
 assert(zoomControl.value === '185' && zoomControl.inputValue === '185' && zoomControl.live === 'polite', 'ZoomControl keyboard/value contract failed');
 assert(tableSelected.state === 'selected:row-1;sorted:', 'DataTable row selection contract failed');
 assert(tableSorted === 'selected:row-1;sorted:name', 'DataTable sort contract failed');
@@ -159,7 +163,7 @@ const result = {
   activityBar,
   pane: paneSemantics,
   panel: panelSemantics,
-  previewHost: {error: previewError, ready: previewReady},
+  previewHost: {error: previewError, ready: previewReady, externalOpened: previewExternalOpened},
   zoomControl,
   assetGrid: {moved: assetMoved, opened: assetOpened, rangeSelected: assetRangeSelected, semantics: assetGridSemantics},
   dataTable: {selected: tableSelected, sorted: tableSorted},

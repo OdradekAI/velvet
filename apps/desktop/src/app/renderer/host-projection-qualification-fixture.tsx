@@ -52,6 +52,7 @@ export function HostProjectionQualificationFixture() {
   const [inspectorName, setInspectorName] = useState('Astronaut poster');
   const [inspectorSaveState, setInspectorSaveState] = useState<'idle' | 'saved'>('idle');
   const [previewState, setPreviewState] = useState<'error' | 'ready'>('error');
+  const [previewExternalOpened, setPreviewExternalOpened] = useState(false);
   const [zoom, setZoom] = useState(180);
   const [filterRules, setFilterRules] = useState<readonly VelvetFilterRule[]>([]);
   const [savedFilterRules, setSavedFilterRules] = useState<readonly VelvetFilterRule[]>([]);
@@ -79,10 +80,11 @@ export function HostProjectionQualificationFixture() {
         <VelvetPanel surface="raised" title="Qualification panel">Panel content</VelvetPanel>
       </section>
       <section aria-label="Preview host qualification" data-ui-kit-probe="preview-host">
-        <VelvetPreviewHost message="Provider failed" onRetry={() => setPreviewState('ready')} state={previewState}>
+        <VelvetPreviewHost mode="fit" message="Provider failed" onOpenExternal={() => setPreviewExternalOpened(true)} onRetry={() => setPreviewState('ready')} state={previewState} toolbar={previewState === 'ready' ? <button data-preview-toolbar-action="rotate" type="button">Rotate</button> : undefined}>
           <VelvetText>Preview ready</VelvetText>
         </VelvetPreviewHost>
         <output data-ui-kit-observation="preview-host-state">{previewState}</output>
+        <output data-ui-kit-observation="preview-external-opened">{String(previewExternalOpened)}</output>
       </section>
       <section aria-label="Zoom control qualification" data-ui-kit-probe="zoom-control">
         <VelvetZoomControl max={500} min={25} onChange={setZoom} step={5} value={zoom} />

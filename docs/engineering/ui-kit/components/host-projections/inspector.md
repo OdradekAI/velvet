@@ -7,8 +7,8 @@ Workbench host.
 
 ## Contract
 
-- **Props:** `title`, `selectedCount`, `preview`, `fields`, `emptyMessage`, `onFieldChange`, `onSave`, `onRetry`, `saveState`, `saveError`, `pinned`, `onPin`, `onOpen`, `children`
-- **States:** empty, single, multiple, pinned, editing, saving, saved, error, cancelled
+- **Props:** `title`, `selectedCount`, `preview`, `fields`, `sections`, `palette`, `emptyMessage`, `onFieldChange`, `onSave`, `onRetry`, `saveState`, `saveError`, `pinned`, `onPin`, `onOpen`, `children`
+- **States:** empty, single, multiple, pinned, editing, saving, saved, error, cancelled, grouped, palette
 - **Actions:** pin, open, edit, save, retry
 - **Slots:** preview, metadata, actions, children
 - **Contract:** `apps/desktop/src/app/ui/contracts/host-projections/inspector.contract.ts`
@@ -18,7 +18,13 @@ Workbench host.
 `selectedCount` is a host projection. The component does not inspect the Asset
 store or derive selection itself. Editable fields are controlled through
 `onFieldChange`; save state and validation messages come from the host. The
-component does not persist edits or infer save success.
+component does not persist edits or infer save success. `sections` supplies
+labelled field groups, while `palette` renders precomputed color ratios supplied
+by the host; the renderer never inspects files or calculates colors.
+
+The semantic visual contract reserves a compact 250px Inspector column, 28px
+editable controls and grouped sections on the panel surface. The host remains
+the owner of selection, field values, persistence and save lifecycle.
 
 ## Evidence
 

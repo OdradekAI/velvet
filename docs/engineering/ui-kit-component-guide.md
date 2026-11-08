@@ -133,6 +133,14 @@ The action matrix is documented in
 `scenario.covers`, while browser-only actions are published as
 `browserActions` in the typed contract and catalog.
 
+High-impact host projections also publish a typed visual and behavior alignment
+contract. The visual section names semantic surfaces, density, radius and
+geometry invariants; the behavior section names the state owner, focus model,
+selection owner and requested/committed/cancelled/failed/retry transitions for
+each action. These fields are catalog metadata, not CSS or Radix API. The
+component contract test rejects drift between the typed contract and generated
+catalog.
+
 Host-owned surfaces include Activity Bar, Navigation, Context, Inspector,
 Operations, PreviewHost, global overlays and global shortcuts. Plugins can contribute to
 those surfaces through registries and bridge requests, but cannot import the

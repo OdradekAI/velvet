@@ -17,7 +17,7 @@ export interface VelvetAssetGridItem {
   readonly pinned?: boolean;
 }
 
-export type VelvetAssetGridLayout = 'grid' | 'square' | 'list' | 'justified';
+export type VelvetAssetGridLayout = 'grid' | 'square' | 'list' | 'justified' | 'waterfall';
 
 export interface VelvetAssetGridProps extends UiCommonProps {
   readonly items: readonly VelvetAssetGridItem[];
@@ -46,7 +46,7 @@ export function VelvetAssetGrid({
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const effectiveColumns = layout === 'list' ? 1 : columns;
-  const semanticColumns = layout === 'justified' ? undefined : effectiveColumns;
+  const semanticColumns = layout === 'justified' || layout === 'waterfall' ? undefined : effectiveColumns;
   const semanticRows = semanticColumns && items.length > 0 ? Math.ceil(items.length / semanticColumns) : undefined;
   const move = (index: number, delta: number): void => {
     const next = Math.max(0, Math.min(items.length - 1, index + delta));

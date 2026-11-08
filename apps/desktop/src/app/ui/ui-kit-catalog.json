@@ -580,28 +580,83 @@
       ],
       "stories": [
         "default",
-        "checked"
+        "checked",
+        "submenu"
       ],
       "slots": [
         "trigger",
-        "actions"
+        "actions",
+        "submenu.actions"
       ],
       "actions": [
         "open",
         "select",
-        "dismiss"
+        "dismiss",
+        "navigate"
       ],
       "observables": [
         "menu-role",
         "checked-state",
         "focus",
-        "dismissal"
+        "dismissal",
+        "submenu"
       ],
       "browserActions": [
         "open",
         "select",
-        "dismiss"
-      ]
+        "dismiss",
+        "navigate"
+      ],
+      "visual": {
+        "profile": "overlay",
+        "surfaces": {
+          "root": "overlay",
+          "interactive": "active",
+          "selected": "active"
+        },
+        "radius": "sm",
+        "density": "compact",
+        "geometry": [
+          "row:28px",
+          "surface-radius:4px"
+        ]
+      },
+      "behavior": {
+        "stateOwner": "host",
+        "focus": "roving",
+        "selection": "none",
+        "actionLifecycle": [
+          {
+            "action": "open",
+            "transitions": [
+              "requested",
+              "committed"
+            ]
+          },
+          {
+            "action": "select",
+            "transitions": [
+              "requested",
+              "committed"
+            ]
+          },
+          {
+            "action": "dismiss",
+            "transitions": [
+              "requested",
+              "committed",
+              "cancelled"
+            ]
+          },
+          {
+            "action": "navigate",
+            "transitions": [
+              "requested",
+              "committed"
+            ]
+          }
+        ]
+      }
     },
     {
       "id": "tabs",
@@ -903,6 +958,8 @@
         "selectedCount",
         "preview",
         "fields",
+        "sections",
+        "palette",
         "emptyMessage",
         "onFieldChange",
         "onSave",
@@ -918,12 +975,14 @@
         "Enter on actions"
       ],
       "accessibility": [
-        "complementary landmark, labelled heading, metadata, editable fields and status empty state"
+        "complementary landmark, labelled heading, metadata, editable fields and status empty state",
+        "grouped metadata sections and palette ratios are labelled"
       ],
       "stories": [
         "empty",
         "single",
         "multiple",
+        "grouped-palette",
         "edit-success",
         "edit-validation-error",
         "edit-failure-retry"
@@ -931,6 +990,8 @@
       "slots": [
         "preview",
         "metadata",
+        "sections",
+        "palette",
         "actions",
         "children"
       ],
@@ -945,6 +1006,8 @@
         "inspector-role",
         "selection-mode",
         "metadata",
+        "field-groups",
+        "palette",
         "pin-state",
         "open-callback",
         "edit-field",
@@ -956,7 +1019,68 @@
         "open",
         "edit",
         "save"
-      ]
+      ],
+      "visual": {
+        "profile": "dense-panel",
+        "surfaces": {
+          "root": "panel",
+          "interactive": "raised",
+          "selected": "active"
+        },
+        "radius": "sm",
+        "density": "compact",
+        "geometry": [
+          "column:250px",
+          "control:28px",
+          "control-radius:16px"
+        ]
+      },
+      "behavior": {
+        "stateOwner": "host",
+        "focus": "pointer",
+        "selection": "host",
+        "actionLifecycle": [
+          {
+            "action": "pin",
+            "transitions": [
+              "requested",
+              "committed"
+            ]
+          },
+          {
+            "action": "open",
+            "transitions": [
+              "requested",
+              "committed"
+            ]
+          },
+          {
+            "action": "edit",
+            "transitions": [
+              "requested",
+              "committed"
+            ]
+          },
+          {
+            "action": "save",
+            "transitions": [
+              "requested",
+              "committed",
+              "cancelled",
+              "failed",
+              "retrying"
+            ]
+          },
+          {
+            "action": "retry",
+            "transitions": [
+              "requested",
+              "committed",
+              "failed"
+            ]
+          }
+        ]
+      }
     },
     {
       "id": "preview-host",
@@ -978,20 +1102,27 @@
       "props": [
         "state",
         "message",
+        "mode",
+        "toolbar",
         "onRetry",
+        "onOpenExternal",
         "children"
       ],
       "keyboard": [
-        "Enter on retry"
+        "Enter on retry",
+        "Escape",
+        "Zoom shortcuts"
       ],
       "accessibility": [
         "named preview region",
-        "loading is busy and error/empty states are announced"
+        "loading is busy and error/empty states are announced",
+        "provider toolbar remains labelled"
       ],
       "stories": [
         "ready",
         "error",
         "retry",
+        "toolbar-mode",
         "async-success",
         "async-cancelled",
         "async-timeout",
@@ -999,19 +1130,25 @@
         "async-retry"
       ],
       "slots": [
-        "children"
+        "children",
+        "toolbar"
       ],
       "actions": [
-        "retry"
+        "retry",
+        "open-external"
       ],
       "observables": [
         "preview-region",
         "fallback-state",
         "state-announcement",
-        "retry-callback"
+        "retry-callback",
+        "preview-mode",
+        "toolbar",
+        "external-open-callback"
       ],
       "browserActions": [
-        "retry"
+        "retry",
+        "open-external"
       ],
       "asyncLifecycle": [
         "success",
@@ -1019,7 +1156,45 @@
         "timeout",
         "failure",
         "retry"
-      ]
+      ],
+      "visual": {
+        "profile": "preview",
+        "surfaces": {
+          "root": "canvas",
+          "interactive": "active",
+          "overlay": "overlay"
+        },
+        "radius": "sm",
+        "density": "compact",
+        "geometry": [
+          "zoom:5-800",
+          "toolbar:48px"
+        ]
+      },
+      "behavior": {
+        "stateOwner": "host",
+        "focus": "restore",
+        "selection": "host",
+        "actionLifecycle": [
+          {
+            "action": "retry",
+            "transitions": [
+              "requested",
+              "committed",
+              "failed",
+              "retrying"
+            ]
+          },
+          {
+            "action": "open-external",
+            "transitions": [
+              "requested",
+              "committed",
+              "failed"
+            ]
+          }
+        ]
+      }
     },
     {
       "id": "asset-grid",
@@ -1066,11 +1241,12 @@
         "grid-semantics",
         "layout-modes",
         "selection-modifiers",
-        "zoom-layout"
+        "zoom-layout",
+        "waterfall-layout"
       ],
       "slots": [
         "items",
-        "item.metadata"
+        "items.metadata"
       ],
       "actions": [
         "select",
@@ -1095,7 +1271,67 @@
         "select",
         "open",
         "navigate"
-      ]
+      ],
+      "visual": {
+        "profile": "gallery",
+        "surfaces": {
+          "root": "canvas",
+          "interactive": "panel",
+          "selected": "active"
+        },
+        "radius": "sm",
+        "density": "compact",
+        "geometry": [
+          "thumbnail:4/3",
+          "card-radius:4px",
+          "layout:waterfall"
+        ]
+      },
+      "behavior": {
+        "stateOwner": "host",
+        "focus": "roving",
+        "selection": "host",
+        "actionLifecycle": [
+          {
+            "action": "select",
+            "transitions": [
+              "requested",
+              "committed"
+            ]
+          },
+          {
+            "action": "open",
+            "transitions": [
+              "requested",
+              "committed",
+              "failed"
+            ]
+          },
+          {
+            "action": "navigate",
+            "transitions": [
+              "requested",
+              "committed"
+            ]
+          },
+          {
+            "action": "drag",
+            "transitions": [
+              "requested",
+              "committed",
+              "cancelled"
+            ]
+          },
+          {
+            "action": "drop",
+            "transitions": [
+              "requested",
+              "committed",
+              "failed"
+            ]
+          }
+        ]
+      }
     },
     {
       "id": "data-table",
@@ -1242,6 +1478,8 @@
       ],
       "keyboard": [
         "Arrow keys",
+        "Home",
+        "End",
         "Enter",
         "Escape"
       ],
@@ -1272,7 +1510,58 @@
         "select",
         "navigate",
         "close"
-      ]
+      ],
+      "visual": {
+        "profile": "overlay",
+        "surfaces": {
+          "root": "overlay",
+          "interactive": "active",
+          "selected": "active"
+        },
+        "radius": "md",
+        "density": "compact",
+        "geometry": [
+          "surface:600px",
+          "row:34px"
+        ]
+      },
+      "behavior": {
+        "stateOwner": "host",
+        "focus": "restore",
+        "selection": "host",
+        "actionLifecycle": [
+          {
+            "action": "query",
+            "transitions": [
+              "requested",
+              "committed"
+            ]
+          },
+          {
+            "action": "select",
+            "transitions": [
+              "requested",
+              "committed",
+              "failed"
+            ]
+          },
+          {
+            "action": "navigate",
+            "transitions": [
+              "requested",
+              "committed"
+            ]
+          },
+          {
+            "action": "close",
+            "transitions": [
+              "requested",
+              "committed",
+              "cancelled"
+            ]
+          }
+        ]
+      }
     },
     {
       "id": "zoom-control",

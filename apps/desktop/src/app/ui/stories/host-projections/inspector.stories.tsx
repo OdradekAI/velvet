@@ -43,6 +43,20 @@ function InspectorFailureRetryStory() {
   );
 }
 
+function InspectorGroupedPaletteStory() {
+  return (
+    <VelvetInspector
+      palette={[{ id: 'blue', color: '#5d8dff', ratio: 42.5, label: 'Blue' }, { id: 'gray', color: '#8d95a2', ratio: 18.25, label: 'Gray' }]}
+      sections={[
+        { id: 'metadata', label: 'Metadata', fields: [{ id: 'type', label: 'Type', value: 'Illustration' }] },
+        { id: 'source', label: 'Source', fields: [{ id: 'folder', label: 'Folder', value: 'Reference' }] },
+      ]}
+      selectedCount={1}
+      title="Inspector"
+    />
+  );
+}
+
 export const inspectorStories: readonly UiKitStory[] = [
   {
     id: 'inspector/empty',
@@ -76,6 +90,19 @@ export const inspectorStories: readonly UiKitStory[] = [
     name: 'Multiple selection',
     description: 'Aggregated fields for multiple selected assets.',
     render: () => <VelvetInspector title="Inspector" selectedCount={2} fields={[{ id: 'selection', label: 'Selection', value: '2 assets' }, { id: 'size', label: 'Size', value: '4.2 MB' }]} />,
+  },
+  {
+    id: 'inspector/grouped-palette',
+    componentId: 'inspector',
+    name: 'Grouped metadata and palette',
+    description: 'Host-projected field groups and precomputed color ratios.',
+    render: () => <InspectorGroupedPaletteStory />,
+    scenario: {
+      actions: [],
+      checkpoints: [{ name: 'groups and palette', assert: (runtime) => {
+        if (runtime.root.querySelectorAll('[data-inspector-section]').length !== 2 || runtime.root.querySelectorAll('[data-palette-id]').length !== 2) throw new Error('Inspector grouped palette contract failed');
+      } }],
+    },
   },
   {
     id: 'inspector/edit-success',

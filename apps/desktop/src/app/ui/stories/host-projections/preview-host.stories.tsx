@@ -5,6 +5,7 @@ import { VelvetPreviewHost } from '../../host-projections/index.js';
 const noop = () => undefined;
 let activeOperation: UiKitStoryAsyncOperation<string> | undefined;
 let retried = 0;
+let openedExternally = false;
 
 function operation(): UiKitStoryAsyncOperation<string> {
   if (!activeOperation) {
@@ -25,6 +26,21 @@ function clearOperation(): void {
 export const previewHostStories: readonly UiKitStory[] = [
   { id: 'preview-host/ready', componentId: 'preview-host', name: 'Ready', description: 'Ready preview.', render: () => <VelvetPreviewHost state="ready"><VelvetText>Preview</VelvetText></VelvetPreviewHost> },
   { id: 'preview-host/error', componentId: 'preview-host', name: 'Error', description: 'Retryable preview error.', render: () => <VelvetPreviewHost state="error" message="Provider failed" onRetry={noop} />, scenario: { covers: ['retry'], actions: [], checkpoints: [{ name: 'error announcement', assert: (runtime) => { if (runtime.root.querySelector('[role="region"]')?.getAttribute('data-preview-state') !== 'error' || runtime.root.querySelector('[role="alert"]') === null || runtime.root.querySelector('button') === null) throw new Error('PreviewHost error accessibility contract failed'); } }] } },
+  {
+    id: 'preview-host/toolbar-mode',
+    componentId: 'preview-host',
+    name: 'Toolbar and mode',
+    description: 'Provider toolbar and external-open action remain host-owned projections.',
+    render: () => <VelvetPreviewHost mode="actual" onOpenExternal={() => { openedExternally = true; }} state="ready" toolbar={<button data-preview-toolbar-action="rotate" type="button">Rotate</button>}><VelvetText>Preview</VelvetText></VelvetPreviewHost>,
+    scenario: {
+      covers: ['open-external'],
+      setup: () => { openedExternally = false; },
+      actions: [(runtime) => runtime.act(async () => { runtime.root.querySelector<HTMLButtonElement>('[data-preview-action="open-external"]')?.click(); })],
+      checkpoints: [{ name: 'mode and toolbar', afterAction: 0, assert: (runtime) => {
+        if (runtime.root.querySelector('[data-preview-mode="actual"]') === null || runtime.root.querySelector('[role="toolbar"] [data-preview-toolbar-action="rotate"]') === null || !openedExternally) throw new Error('PreviewHost toolbar/mode contract failed');
+      } }],
+    },
+  },
   {
     id: 'preview-host/retry',
     componentId: 'preview-host',

@@ -6,8 +6,8 @@ remains available from `apps/desktop/src/app/ui/index.ts`.
 
 ## Contract
 
-- **Props:** `actions`, `children`
-- **States:** default, checked
+- **Props:** `actions`, `children`; each action may include a recursive `submenu`
+- **States:** default, checked, disabled, submenu
 - **Contract:** `apps/desktop/src/app/ui/contracts/overlays/context-menu.contract.ts`
 - **Stories:** `apps/desktop/src/app/ui/stories/overlays/context-menu.stories.tsx`
 - **Qualification:** browser (Radix portal, pointer dismissal and keyboard selection)
@@ -20,9 +20,14 @@ classes and Workbench implementation details are not public API.
 
 - `context-menu/default`
 - `context-menu/checked`
+- `context-menu/submenu`
 
 The real-browser fixture adds `context-menu/select`, `context-menu/cancel-escape`
 and `context-menu/cancel-outside` coverage, including checked item semantics.
+
+Nested actions render through the Velvet wrapper's submenu slot. Radix owns the
+portal, roving focus and directional submenu transitions; the host still owns
+the action callbacks and any command lifecycle.
 
 
 The current story runner provides deterministic fixture coverage. Required for overlays and host projections: run the real-browser qualification fixture when changing focus, portal, geometry or host projection behavior.

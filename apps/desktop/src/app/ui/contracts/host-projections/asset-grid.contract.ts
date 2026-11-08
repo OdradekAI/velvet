@@ -19,11 +19,13 @@ export const VelvetAssetGridContract = defineComponentContract<
   actions: ['select', 'open', 'navigate', 'drag', 'drop'],
   browserActions: ['select', 'open', 'navigate'],
   observables: ['grid-role', 'grid-metrics', 'selection', 'selection-modifier', 'focus', 'open-callback', 'layout', 'drag-and-drop', 'pinned', 'metadata'],
-  stories: ['default', 'selected', 'grid-semantics', 'layout-modes', 'selection-modifiers', 'zoom-layout'],
+  stories: ['default', 'selected', 'grid-semantics', 'layout-modes', 'selection-modifiers', 'zoom-layout', 'waterfall-layout'],
   documentation: 'docs/engineering/ui-kit/components/host-projections/asset-grid.md',
   evidence: [
     { kind: 'host-guarantee', reference: 'docs/engineering/ui-kit-component-guide.md', claim: 'Velvet host ownership and semantic behavior rules' },
     { kind: 'observed', reference: 'apps/desktop/test/ui-kit-components.test.mjs', claim: 'Grid layout, selection modifiers, pinned metadata and drag/drop behavior' },
     { kind: 'observed', reference: 'apps/desktop/tools/qualify-ui-host-projections.mjs', claim: 'Browser qualification for grid focus, range selection and row/column semantics' },
   ],
+  visual: { profile: 'gallery', surfaces: { root: 'canvas', interactive: 'panel', selected: 'active' }, radius: 'sm', density: 'compact', geometry: ['thumbnail:4/3', 'card-radius:4px', 'layout:waterfall'] },
+  behavior: { stateOwner: 'host', focus: 'roving', selection: 'host', actionLifecycle: [{ action: 'select', transitions: ['requested', 'committed'] }, { action: 'open', transitions: ['requested', 'committed', 'failed'] }, { action: 'navigate', transitions: ['requested', 'committed'] }, { action: 'drag', transitions: ['requested', 'committed', 'cancelled'] }, { action: 'drop', transitions: ['requested', 'committed', 'failed'] }] },
 } satisfies ComponentContract<VelvetAssetGridProps, 'default' | 'selected' | 'disabled' | 'empty' | 'layout' | 'dragging' | 'pinned', 'select' | 'open' | 'navigate' | 'drag' | 'drop', 'grid-role' | 'grid-metrics' | 'selection' | 'selection-modifier' | 'focus' | 'open-callback' | 'layout' | 'drag-and-drop' | 'pinned' | 'metadata'>);

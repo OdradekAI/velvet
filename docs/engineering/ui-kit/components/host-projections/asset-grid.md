@@ -20,7 +20,8 @@ classes and Workbench implementation details are not public API.
 
 ## Layout and drag/drop
 
-`layout` accepts `grid` (default), `square`, `list` or `justified`. An item may
+`layout` accepts `grid` (default), `square`, `list`, `justified` or `waterfall`.
+An item may
 provide `aspectRatio`, `metadata` and `pinned`; those values are rendered as
 host-owned projection state. `metadata` is a React slot so the host can project
 tags, resolution, rating or extension details without making those fields part
@@ -48,6 +49,7 @@ are intentionally outside this component's public API.
 - `asset-grid/layout-modes`
 - `asset-grid/selection-modifiers`
 - `asset-grid/zoom-layout`
+- `asset-grid/waterfall-layout`
 
 `asset-grid/zoom-layout` is an integration story: `VelvetZoomControl` stays
 separate, and the host maps its value to `columns`. It records the observed
@@ -57,8 +59,14 @@ that mapping a public AssetGrid algorithm.
 The grid exposes `aria-multiselectable="true"` because selection modifiers are
 reported to the host. For `grid`, `square` and `list` layouts it also exposes
 `aria-rowcount`, `aria-colcount`, `aria-rowindex` and `aria-colindex` using the
-host-projected column count. `justified` keeps these metrics unset because its
-CSS auto-fit geometry is not a stable public row/column contract.
+host-projected column count. `justified` and `waterfall` keep these metrics
+unset because their responsive geometry is not a stable public row/column
+contract. Waterfall preserves each item's aspect ratio and leaves column
+measurement to the host layout surface.
+
+The semantic visual contract uses a compact gallery profile, a `4/3` thumbnail
+invariant for the default card and an active-surface selection state. The
+contract deliberately names those invariants without exposing CSS selectors.
 
 
 The current story runner provides deterministic fixture coverage. Required for overlays and host projections: run the real-browser qualification fixture when changing focus, portal, geometry or host projection behavior.

@@ -9,6 +9,7 @@ export interface VelvetContextMenuAction {
   readonly shortcutHint?: string;
   readonly separatorBefore?: boolean;
   readonly group?: string;
+  readonly submenu?: readonly VelvetContextMenuAction[];
   readonly onSelect?: () => void;
 }
 
@@ -18,6 +19,37 @@ export interface VelvetContextMenuProps {
 }
 
 export function VelvetContextMenu({ children, actions }: VelvetContextMenuProps) {
+  const renderActions = (items: readonly VelvetContextMenuAction[]): ReactNode => items.map((action) => (
+    <span key={action.id}>
+      {action.separatorBefore ? <ContextMenu.Separator className="velvet-context-menu__separator" /> : null}
+      {action.submenu && action.submenu.length > 0 ? (
+        <ContextMenu.Sub>
+          <ContextMenu.SubTrigger className="velvet-context-menu__item" data-submenu="true" disabled={action.disabled}>
+            <span>{action.label}</span>
+            {action.shortcutHint ? <kbd>{action.shortcutHint}</kbd> : null}
+          </ContextMenu.SubTrigger>
+          <ContextMenu.Portal>
+            <ContextMenu.SubContent className="velvet-context-menu">
+              {renderActions(action.submenu)}
+            </ContextMenu.SubContent>
+          </ContextMenu.Portal>
+        </ContextMenu.Sub>
+      ) : (
+        <ContextMenu.Item
+          aria-checked={action.checked}
+          className="velvet-context-menu__item"
+          data-checked={action.checked ? 'true' : undefined}
+          disabled={action.disabled}
+          onSelect={action.onSelect}
+          role={action.checked === undefined ? undefined : 'menuitemcheckbox'}
+        >
+          <span>{action.label}</span>
+          {action.shortcutHint ? <kbd>{action.shortcutHint}</kbd> : null}
+        </ContextMenu.Item>
+      )}
+    </span>
+  ));
+
   return (
     <ContextMenu.Root>
       <ContextMenu.Trigger className="velvet-context-target">
@@ -25,22 +57,7 @@ export function VelvetContextMenu({ children, actions }: VelvetContextMenuProps)
       </ContextMenu.Trigger>
       <ContextMenu.Portal>
         <ContextMenu.Content className="velvet-context-menu">
-          {actions.map((action) => (
-            <span key={action.id}>
-              {action.separatorBefore ? <ContextMenu.Separator className="velvet-context-menu__separator" /> : null}
-              <ContextMenu.Item
-                aria-checked={action.checked}
-                className="velvet-context-menu__item"
-                data-checked={action.checked ? 'true' : undefined}
-                disabled={action.disabled}
-                onSelect={action.onSelect}
-                role={action.checked === undefined ? undefined : 'menuitemcheckbox'}
-              >
-                <span>{action.label}</span>
-                {action.shortcutHint ? <kbd>{action.shortcutHint}</kbd> : null}
-              </ContextMenu.Item>
-            </span>
-          ))}
+          {renderActions(actions)}
         </ContextMenu.Content>
       </ContextMenu.Portal>
     </ContextMenu.Root>

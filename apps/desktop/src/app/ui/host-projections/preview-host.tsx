@@ -1,20 +1,36 @@
 import type { ReactNode } from 'react';
-import { VelvetState, type VelvetStateKind } from '../primitives/index.js';
+import { VelvetButton, VelvetState, type VelvetStateKind } from '../primitives/index.js';
+
+export type VelvetPreviewMode = 'fit' | 'actual';
 
 export interface VelvetPreviewHostProps {
   readonly state: 'loading' | 'ready' | 'empty' | 'error' | 'disabled';
+  readonly mode?: VelvetPreviewMode;
+  readonly toolbar?: ReactNode;
   readonly children?: ReactNode;
   readonly message?: string;
   readonly onRetry?: () => void;
+  readonly onOpenExternal?: () => void;
 }
 
-export function VelvetPreviewHost({ state, children, message, onRetry }: VelvetPreviewHostProps) {
+export function VelvetPreviewHost({ state, mode = 'fit', toolbar, children, message, onRetry, onOpenExternal }: VelvetPreviewHostProps) {
   if (state === 'ready') {
-    return <section aria-label="Preview" className="velvet-preview-host" data-preview-state={state} role="region">{children}</section>;
+    return (
+      <section aria-label="Preview" className="velvet-preview-host" data-preview-mode={mode} data-preview-state={state} role="region">
+        {toolbar || onOpenExternal ? (
+          <div aria-label="Preview controls" className="velvet-preview-host__toolbar" role="toolbar">
+            <span className="velvet-preview-host__mode" data-preview-mode-label="true">{mode === 'actual' ? 'Actual size' : 'Fit'}</span>
+            {toolbar}
+            {onOpenExternal ? <VelvetButton data-preview-action="open-external" onClick={onOpenExternal} variant="quiet">Open externally</VelvetButton> : null}
+          </div>
+        ) : null}
+        {children}
+      </section>
+    );
   }
   const kind: VelvetStateKind = state === 'loading' ? 'loading' : state === 'error' ? 'error' : 'empty';
   return (
-    <section aria-busy={state === 'loading' ? 'true' : undefined} aria-label="Preview" className="velvet-preview-host" data-preview-state={state} role="region">
+    <section aria-busy={state === 'loading' ? 'true' : undefined} aria-label="Preview" className="velvet-preview-host" data-preview-mode={mode} data-preview-state={state} role="region">
       <VelvetState
         description={message}
         kind={kind}

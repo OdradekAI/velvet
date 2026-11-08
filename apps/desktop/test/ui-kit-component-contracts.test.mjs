@@ -6,6 +6,7 @@ const contracts = await import('/tmp/velvet-plugin-tests/app/ui/contracts/index.
 const { UI_KIT_STORY_REGISTRY } = await import('/tmp/velvet-plugin-tests/app/ui/story-registry.js');
 
 assert.equal(COMPONENT_META.length, 27);
+const alignedComponents = new Set(['asset-grid', 'command-palette', 'context-menu', 'inspector', 'preview-host']);
 
 for (const meta of COMPONENT_META) {
   const exportName = `${meta.name}Contract`;
@@ -20,6 +21,16 @@ for (const meta of COMPONENT_META) {
   assert.deepEqual(contract.stories, meta.stories);
   assert.deepEqual(contract.asyncLifecycle ?? [], meta.asyncLifecycle ?? []);
   assert.deepEqual(contract.browserActions ?? [], meta.browserActions ?? []);
+  if (alignedComponents.has(meta.id)) {
+    assert.deepEqual(contract.visual, meta.visual, `${meta.id} visual contract drifted from catalog metadata`);
+    assert.deepEqual(contract.behavior, meta.behavior, `${meta.id} behavior contract drifted from catalog metadata`);
+    assert.ok(contract.visual?.geometry?.length, `${meta.id} should publish named geometry invariants`);
+    assert.equal(contract.behavior?.stateOwner, 'host', `${meta.id} should keep state ownership in the host`);
+    const lifecycleActions = new Set((contract.behavior?.actionLifecycle ?? []).map((entry) => entry.action));
+    for (const action of meta.actions ?? []) {
+      assert.ok(lifecycleActions.has(action), `${meta.id} should define lifecycle transitions for ${action}`);
+    }
+  }
   const storyActions = new Set(
     UI_KIT_STORY_REGISTRY
       .forComponent(meta.id)

@@ -28,7 +28,10 @@ host command data.
 
 The current story runner provides deterministic fixture coverage. Required for overlays and host projections: run the real-browser qualification fixture when changing focus, portal, geometry or host projection behavior.
 The `command-palette/open` scenario covers query filtering, keyboard navigation,
-selection and Escape dismissal.
+selection and Escape dismissal. Home and End remain part of the keyboard
+contract even when a host supplies a filtered command list. The visual contract
+uses an overlay surface, compact rows and restored trigger focus; command
+execution remains a host lifecycle rather than a renderer side effect.
 Unverified external behavior remains `unknown` until a runtime capture proves it.
 
 ## Validation

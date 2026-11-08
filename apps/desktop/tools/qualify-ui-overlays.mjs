@@ -70,8 +70,25 @@ await page.keyboard.press("Enter");
 await waitFor('context menu selection', () => !document.querySelector('.velvet-context-menu'));
 const contextKeyboardDismissed = await page.evaluate(() => !document.querySelector('.velvet-context-menu'));
 const contextSelected = await page.evaluate(() => document.querySelector('[data-ui-kit-observation="context-action"]')?.textContent ?? null);
-assert(contextOpen.open && contextOpen.items.length === 2 && contextOpen.items[0]?.checked === 'true', 'Context menu open/checked contract failed');
+assert(contextOpen.open && contextOpen.items.length === 3 && contextOpen.items[0]?.checked === 'true', 'Context menu open/checked contract failed');
 assert(contextKeyboardDismissed && contextSelected === 'context:pin', 'Context menu keyboard selection contract failed: ' + contextKeyboardDismissed + '/' + contextSelected);
+
+await page.focus(contextTrigger);
+const submenuRect = await page.evaluate(() => { const node = document.querySelector('[data-ui-kit-probe="context-trigger"]'); const rect = node?.getBoundingClientRect(); return rect ? {x:rect.x + rect.width / 2, y:rect.y + rect.height / 2} : null; });
+if (!submenuRect) throw new Error('context trigger rectangle unavailable for submenu');
+await page.cdp("Input.dispatchMouseEvent", {type:"mousePressed",x:submenuRect.x,y:submenuRect.y,button:"right",clickCount:1});
+await page.cdp("Input.dispatchMouseEvent", {type:"mouseReleased",x:submenuRect.x,y:submenuRect.y,button:"right",clickCount:1});
+await page.waitForSelector('loc=css:.velvet-context-menu', {state:"visible"});
+await page.click('loc=css:.velvet-context-menu__item[data-submenu="true"]');
+await page.waitForFunction(() => document.querySelectorAll('.velvet-context-menu').length === 2);
+const contextSubmenu = await page.evaluate(() => ({
+  menus: document.querySelectorAll('.velvet-context-menu').length,
+  items: [...document.querySelectorAll('.velvet-context-menu')].at(-1)?.querySelectorAll('.velvet-context-menu__item').length ?? 0,
+}));
+await page.evaluate(() => [...document.querySelectorAll('.velvet-context-menu')].at(-1)?.querySelector('.velvet-context-menu__item')?.click());
+await waitFor('context submenu selection', () => !document.querySelector('.velvet-context-menu'));
+const contextSubmenuSelected = await page.evaluate(() => document.querySelector('[data-ui-kit-observation="context-action"]')?.textContent ?? null);
+assert(contextSubmenu.menus === 2 && contextSubmenu.items === 2 && contextSubmenuSelected === 'context:reveal', 'Context menu submenu keyboard contract failed: ' + JSON.stringify({contextSubmenu, contextSubmenuSelected}));
 
 await page.focus(contextTrigger);
 const secondRect = await page.evaluate(() => { const node = document.querySelector('[data-ui-kit-probe="context-trigger"]'); const rect = node?.getBoundingClientRect(); return rect ? {x:rect.x + rect.width / 2, y:rect.y + rect.height / 2} : null; });
@@ -101,10 +118,10 @@ await page.cdp("Input.dispatchMouseEvent", {type:"mouseReleased",x:300,y:36,butt
 await waitFor('context menu outside click', () => !document.querySelector('.velvet-context-menu'));
 const contextOutsideDismissed = await page.evaluate(() => !document.querySelector('.velvet-context-menu'));
 const contextOutsideCancelled = await page.evaluate(() => document.querySelector('[data-ui-kit-observation="context-action"]')?.textContent ?? null);
-assert(contextEscapeCancelled.closed && contextEscapeCancelled.action === 'context:pin', 'Context menu Escape cancellation contract failed: ' + JSON.stringify(contextEscapeCancelled));
+assert(contextEscapeCancelled.closed && contextEscapeCancelled.action === 'context:reveal', 'Context menu Escape cancellation contract failed: ' + JSON.stringify(contextEscapeCancelled));
 assert(contextOutsideDismissed && contextOutsideCancelled === 'context:idle', 'Context menu outside dismissal contract failed: ' + contextOutsideDismissed + '/' + contextOutsideCancelled);
 
-console.log(JSON.stringify({viewport:{width:await page.evaluate(() => innerWidth),height:await page.evaluate(() => innerHeight)},dialogOpen,dialogSubmitted,dialogCancelled,dialogEscapeCancelled,contextOpen,contextSelected,contextKeyboardDismissed,contextEscapeCancelled,contextOutsideDismissed,contextOutsideCancelled,dialogScreenshot,contextScreenshot}, null, 2));
+console.log(JSON.stringify({viewport:{width:await page.evaluate(() => innerWidth),height:await page.evaluate(() => innerHeight)},dialogOpen,dialogSubmitted,dialogCancelled,dialogEscapeCancelled,contextOpen,contextSelected,contextKeyboardDismissed,contextSubmenu,contextSubmenuSelected,contextEscapeCancelled,contextOutsideDismissed,contextOutsideCancelled,dialogScreenshot,contextScreenshot}, null, 2));
 `;
 
 const result = spawnSync('ego-browser', ['nodejs'], { input: script, encoding: 'utf8', stdio: ['pipe', 'inherit', 'inherit'] });

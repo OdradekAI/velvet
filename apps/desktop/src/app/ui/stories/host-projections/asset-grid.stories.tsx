@@ -127,6 +127,20 @@ export const assetGridStories: readonly UiKitStory[] = [
       } }],
     },
   },
+  {
+    id: 'asset-grid/waterfall-layout',
+    componentId: 'asset-grid',
+    name: 'Waterfall layout',
+    description: 'Aspect-ratio-preserving waterfall layout leaves row geometry host-owned.',
+    render: () => <VelvetAssetGrid columns={3} layout="waterfall" items={[{ id: 'a', label: 'A', aspectRatio: '4 / 3' }, { id: 'b', label: 'B', aspectRatio: '3 / 4' }, { id: 'c', label: 'C', aspectRatio: '16 / 9' }]} onSelect={() => undefined} />,
+    scenario: {
+      actions: [],
+      checkpoints: [{ name: 'waterfall geometry', assert: (runtime) => {
+        const grid = runtime.root.querySelector<HTMLElement>('[role="grid"]');
+        if (grid?.classList.contains('velvet-asset-grid--waterfall') !== true || grid?.hasAttribute('aria-rowcount') || grid?.hasAttribute('aria-colcount')) throw new Error('AssetGrid waterfall geometry contract failed');
+      } }],
+    },
+  },
 ];
 
 function ZoomLayoutStory() {

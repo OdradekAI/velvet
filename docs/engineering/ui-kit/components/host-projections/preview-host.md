@@ -6,7 +6,7 @@ import remains available from `apps/desktop/src/app/ui/index.ts`.
 
 ## Contract
 
-- **Props:** `state`, `message`, `children`, `onRetry`
+- **Props:** `state`, `mode`, `message`, `toolbar`, `children`, `onRetry`, `onOpenExternal`
 - **States:** loading, ready, empty, error, disabled
 - **Async lifecycle:** success, cancelled, timeout, failure, retry
 - **Accessibility:** named preview region; loading is busy and error/empty fallback states are announced
@@ -22,6 +22,7 @@ classes and Workbench implementation details are not public API.
 - `preview-host/ready`
 - `preview-host/error`
 - `preview-host/retry`
+- `preview-host/toolbar-mode`
 - `preview-host/async-success`
 - `preview-host/async-cancelled`
 - `preview-host/async-timeout`
@@ -35,7 +36,13 @@ the component only renders the host-owned projection state and never owns the
 underlying transport or job.
 
 The browser fixture verifies the error live region, retry action and transition
-to the ready preview state.
+to the ready preview state, plus the provider toolbar, mode marker and explicit
+external-open callback.
+
+The semantic visual contract keeps the preview on the canvas surface, reserves
+a 48px control strip for provider actions and keeps zoom bounds in the host
+projection (`5–800`). These are named catalog invariants; CSS classes remain
+private.
 
 
 The current story runner provides deterministic fixture coverage. Required for overlays and host projections: run the real-browser qualification fixture when changing focus, portal, geometry or host projection behavior.
