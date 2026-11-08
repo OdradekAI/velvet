@@ -46,6 +46,12 @@ const previewReady = await page.evaluate(() => ({
 }));
 await page.click('loc=css:[data-ui-kit-probe="preview-host"] [data-preview-action="toggle-mode"]');
 const previewModeChanged = await page.evaluate(() => document.querySelector('[data-ui-kit-probe="preview-host"] .velvet-preview-host')?.getAttribute('data-preview-mode') ?? null);
+await page.click('loc=css:[data-ui-kit-probe="preview-host"] [data-preview-provider-action="rotate-right"]');
+const previewProviderAction = await page.evaluate(() => ({
+  action: document.querySelector('[data-ui-kit-observation="preview-provider-action"]')?.textContent ?? null,
+  pressed: document.querySelector('[data-ui-kit-probe="preview-host"] [data-preview-provider-action="rotate-right"]')?.getAttribute('aria-pressed') ?? null,
+  slideshowDisabled: document.querySelector('[data-ui-kit-probe="preview-host"] [data-preview-provider-action="slideshow"]')?.hasAttribute('disabled') ?? false,
+}));
 await page.click('loc=css:[data-ui-kit-probe="preview-host"] [data-preview-action="open-external"]');
 const previewExternalOpened = await page.evaluate(() => document.querySelector('[data-ui-kit-observation="preview-external-opened"]')?.textContent ?? null);
 
@@ -123,7 +129,7 @@ assert(activityBar.selected === 'selected:feed' && activityBar.focused === 'Feed
 assert(paneSemantics.role === 'region' && paneSemantics.labelledBy && paneSemantics.heading === 'Qualification navigation' && paneSemantics.body === 'Pane content', 'Pane accessibility contract failed');
 assert(panelSemantics.role === 'region' && panelSemantics.labelledBy && panelSemantics.heading === 'Qualification panel' && panelSemantics.raised, 'Panel accessibility contract failed');
 assert(previewError.state === 'error' && previewError.alert?.includes('Preview failed'), 'PreviewHost error announcement contract failed');
-assert(previewReady.state === 'ready' && previewReady.region === 'region' && previewReady.mode === 'fit' && previewReady.toolbar === 'Rotate' && previewModeChanged === 'actual' && previewExternalOpened === 'true', 'PreviewHost retry/mode/toolbar contract failed');
+assert(previewReady.state === 'ready' && previewReady.region === 'region' && previewReady.mode === 'fit' && previewReady.toolbar === 'Rotate' && previewModeChanged === 'actual' && previewProviderAction.action === 'rotate-right' && previewProviderAction.pressed === 'true' && previewProviderAction.slideshowDisabled && previewExternalOpened === 'true', 'PreviewHost retry/mode/provider action/toolbar contract failed');
 assert(zoomControl.value === '185' && zoomControl.inputValue === '185' && zoomControl.valueText === '185%' && zoomControl.live === 'polite', 'ZoomControl keyboard/value contract failed');
 assert(tableSelected.state === 'selected:row-1;sorted:', 'DataTable row selection contract failed');
 assert(tableSorted === 'selected:row-1;sorted:name' && tableSortAscending === 'ascending' && tableSortDescending === 'descending', 'DataTable sort direction contract failed');
@@ -180,7 +186,7 @@ const result = {
   activityBar,
   pane: paneSemantics,
   panel: panelSemantics,
-  previewHost: {error: previewError, ready: previewReady, modeChanged: previewModeChanged, externalOpened: previewExternalOpened},
+  previewHost: {error: previewError, ready: previewReady, modeChanged: previewModeChanged, providerAction: previewProviderAction, externalOpened: previewExternalOpened},
   zoomControl,
   assetGrid: {moved: assetMoved, opened: assetOpened, rangeSelected: assetRangeSelected, semantics: assetGridSemantics},
   dataTable: {selected: tableSelected, sorted: tableSorted, ascending: tableSortAscending, descending: tableSortDescending},

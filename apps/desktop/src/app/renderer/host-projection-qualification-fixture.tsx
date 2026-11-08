@@ -55,6 +55,7 @@ export function HostProjectionQualificationFixture() {
   const [inspectorSaveState, setInspectorSaveState] = useState<'idle' | 'saved'>('idle');
   const [previewState, setPreviewState] = useState<'error' | 'ready'>('error');
   const [previewMode, setPreviewMode] = useState<'fit' | 'actual'>('fit');
+  const [previewProviderAction, setPreviewProviderAction] = useState('');
   const [previewExternalOpened, setPreviewExternalOpened] = useState(false);
   const [zoom, setZoom] = useState(180);
   const [filterRules, setFilterRules] = useState<readonly VelvetFilterRule[]>([]);
@@ -84,10 +85,21 @@ export function HostProjectionQualificationFixture() {
         <VelvetPanel surface="raised" title="Qualification panel">Panel content</VelvetPanel>
       </section>
       <section aria-label="Preview host qualification" data-ui-kit-probe="preview-host">
-        <VelvetPreviewHost mode={previewMode} message="Provider failed" onModeChange={setPreviewMode} onOpenExternal={() => setPreviewExternalOpened(true)} onRetry={() => setPreviewState('ready')} state={previewState} toolbar={previewState === 'ready' ? <button data-preview-toolbar-action="rotate" type="button">Rotate</button> : undefined}>
+        <VelvetPreviewHost
+          mode={previewMode}
+          message="Provider failed"
+          onModeChange={setPreviewMode}
+          onOpenExternal={() => setPreviewExternalOpened(true)}
+          onProviderAction={setPreviewProviderAction}
+          onRetry={() => setPreviewState('ready')}
+          providerActions={previewState === 'ready' ? [{ id: 'rotate-right', label: 'Rotate', pressed: previewProviderAction === 'rotate-right' }, { id: 'slideshow', label: 'Slideshow', disabled: true }] : undefined}
+          state={previewState}
+          toolbar={previewState === 'ready' ? <button data-preview-toolbar-action="rotate" type="button">Rotate</button> : undefined}
+        >
           <VelvetText>Preview ready</VelvetText>
         </VelvetPreviewHost>
         <output data-ui-kit-observation="preview-host-state">{previewState}</output>
+        <output data-ui-kit-observation="preview-provider-action">{previewProviderAction}</output>
         <output data-ui-kit-observation="preview-external-opened">{String(previewExternalOpened)}</output>
       </section>
       <section aria-label="Zoom control qualification" data-ui-kit-probe="zoom-control">

@@ -1106,6 +1106,8 @@
         "toolbar",
         "onRetry",
         "onModeChange",
+        "providerActions",
+        "onProviderAction",
         "onOpenExternal",
         "children"
       ],
@@ -1117,13 +1119,15 @@
       "accessibility": [
         "named preview region",
         "loading is busy and error/empty states are announced",
-        "provider toolbar remains labelled"
+        "provider toolbar remains labelled",
+        "provider actions expose labels and pressed/disabled state"
       ],
       "stories": [
         "ready",
         "error",
         "retry",
         "toolbar-mode",
+        "provider-actions",
         "async-success",
         "async-cancelled",
         "async-timeout",
@@ -1132,11 +1136,13 @@
       ],
       "slots": [
         "children",
-        "toolbar"
+        "toolbar",
+        "provider-actions"
       ],
       "actions": [
         "retry",
         "change-mode",
+        "provider-action",
         "open-external"
       ],
       "observables": [
@@ -1147,11 +1153,14 @@
         "preview-mode",
         "toolbar",
         "mode-change-callback",
+        "provider-actions",
+        "provider-action-callback",
         "external-open-callback"
       ],
       "browserActions": [
         "retry",
         "change-mode",
+        "provider-action",
         "open-external"
       ],
       "asyncLifecycle": [
@@ -1194,6 +1203,14 @@
             "transitions": [
               "requested",
               "committed"
+            ]
+          },
+          {
+            "action": "provider-action",
+            "transitions": [
+              "requested",
+              "committed",
+              "failed"
             ]
           },
           {

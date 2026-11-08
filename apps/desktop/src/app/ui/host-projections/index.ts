@@ -6,5 +6,5 @@ export { VelvetFilterPanel, type VelvetFilterFacet, type VelvetFilterFacetKind, 
 export { VelvetInspector, type VelvetInspectorField, type VelvetInspectorProps } from './inspector.js';
 export { VelvetPane, type VelvetPaneProps } from './pane.js';
 export { VelvetPanel, type VelvetPanelProps } from './panel.js';
-export { VelvetPreviewHost, type VelvetPreviewHostProps } from './preview-host.js';
+export { VelvetPreviewHost, type VelvetPreviewHostProps, type VelvetPreviewMode, type VelvetPreviewProviderAction } from './preview-host.js';
 export { VelvetZoomControl, type VelvetZoomControlProps } from './zoom-control.js';

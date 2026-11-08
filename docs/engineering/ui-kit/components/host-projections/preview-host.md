@@ -6,7 +6,7 @@ import remains available from `apps/desktop/src/app/ui/index.ts`.
 
 ## Contract
 
-- **Props:** `state`, `mode`, `message`, `toolbar`, `children`, `onRetry`, `onModeChange`, `onOpenExternal`
+- **Props:** `state`, `mode`, `message`, `toolbar`, `providerActions`, `children`, `onRetry`, `onModeChange`, `onProviderAction`, `onOpenExternal`
 - **States:** loading, ready, empty, error, disabled
 - **Async lifecycle:** success, cancelled, timeout, failure, retry
 - **Accessibility:** named preview region; loading is busy and error/empty fallback states are announced
@@ -23,6 +23,7 @@ classes and Workbench implementation details are not public API.
 - `preview-host/error`
 - `preview-host/retry`
 - `preview-host/toolbar-mode`
+- `preview-host/provider-actions`
 - `preview-host/async-success`
 - `preview-host/async-cancelled`
 - `preview-host/async-timeout`
@@ -36,11 +37,16 @@ the component only renders the host-owned projection state and never owns the
 underlying transport or job.
 
 The browser fixture verifies the error live region, retry action and transition
-to the ready preview state, plus the provider toolbar, mode marker, mode toggle
-and explicit external-open callback.
+to the ready preview state, plus the provider toolbar, mode marker, mode toggle,
+provider action pressed/disabled state and explicit external-open callback.
 
 `mode` is host-controlled. `onModeChange` and `onOpenExternal` are explicit host
-actions; the component never stores zoom mode or opens a file directly.
+
+`providerActions` is a typed host slot for provider-specific controls such as
+rotate, pan or slideshow. Each action supplies a stable id and accessible label;
+the host owns pressed/disabled state and receives the selected id through
+`onProviderAction`. The component does not infer provider capabilities or call a
+preview provider directly.
 
 The semantic visual contract keeps the preview on the canvas surface, reserves
 a 48px control strip for provider actions and keeps zoom bounds in the host

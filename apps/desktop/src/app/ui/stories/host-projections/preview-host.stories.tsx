@@ -7,6 +7,7 @@ const noop = () => undefined;
 let activeOperation: UiKitStoryAsyncOperation<string> | undefined;
 let retried = 0;
 let openedExternally = false;
+let providerAction = '';
 
 function operation(): UiKitStoryAsyncOperation<string> {
   if (!activeOperation) {
@@ -44,6 +45,22 @@ export const previewHostStories: readonly UiKitStory[] = [
         { name: 'mode and toolbar', afterAction: 0, assert: (runtime) => { if (runtime.root.querySelector('[data-preview-mode="fit"]') === null || runtime.root.querySelector('[role="toolbar"] [data-preview-toolbar-action="rotate"]') === null) throw new Error('PreviewHost toolbar/mode contract failed'); } },
         { name: 'external open', afterAction: 1, assert: () => { if (!openedExternally) throw new Error('PreviewHost external open contract failed'); } },
       ],
+    },
+  },
+  {
+    id: 'preview-host/provider-actions',
+    componentId: 'preview-host',
+    name: 'Provider actions',
+    description: 'Typed provider actions remain host-owned and expose pressed/disabled state.',
+    render: () => <PreviewProviderActionsStory />,
+    scenario: {
+      covers: ['provider-action'],
+      setup: () => { providerAction = ''; },
+      actions: [(runtime) => runtime.act(async () => { runtime.root.querySelector<HTMLButtonElement>('[data-preview-provider-action="rotate-right"]')?.click(); })],
+      checkpoints: [{ name: 'provider action callback', afterAction: 0, assert: (runtime) => {
+        const action = runtime.root.querySelector<HTMLButtonElement>('[data-preview-provider-action="rotate-right"]');
+        if (providerAction !== 'rotate-right' || action?.getAttribute('aria-pressed') !== 'true' || runtime.root.querySelector<HTMLButtonElement>('[data-preview-provider-action="slideshow"]')?.disabled !== true) throw new Error('PreviewHost provider action contract failed');
+      } }],
     },
   },
   {
@@ -143,4 +160,17 @@ export const previewHostStories: readonly UiKitStory[] = [
 function PreviewToolbarModeStory() {
   const [mode, setMode] = useState<'fit' | 'actual'>('actual');
   return <VelvetPreviewHost mode={mode} onModeChange={setMode} onOpenExternal={() => { openedExternally = true; }} state="ready" toolbar={<button data-preview-toolbar-action="rotate" type="button">Rotate</button>}><VelvetText>Preview</VelvetText></VelvetPreviewHost>;
+}
+
+function PreviewProviderActionsStory() {
+  return <VelvetPreviewHost
+    onProviderAction={(actionId) => { providerAction = actionId; }}
+    providerActions={[
+      { id: 'rotate-right', label: 'Rotate', pressed: true },
+      { id: 'slideshow', label: 'Slideshow', disabled: true },
+    ]}
+    state="ready"
+  >
+    <VelvetText>Preview</VelvetText>
+  </VelvetPreviewHost>;
 }
