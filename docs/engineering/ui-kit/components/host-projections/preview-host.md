@@ -69,6 +69,21 @@ a fake `CoreTransport`. It asserts provider failure and retry, the provider
 renderer adapter, the augmentation renderer, and release of both native preview
 sessions after close.
 
+The native smoke qualification uses the real Rust `ApplicationCore`,
+`velvet-tauri-adapter::TauriTransport` session handshake and request envelope.
+It injects a bounded in-memory preview runtime only at the plugin runtime seam:
+the first provider request fails, the retry returns a UI Bridge provider and a
+metadata augmentation, and release requests revoke both session action
+authorizations. Run it with:
+
+```sh
+npm run qualify:native-preview
+```
+
+This test qualifies the Rust/Tauri transport and preview lifecycle without
+claiming that a platform WebView renderer was launched; WebView geometry and
+focus remain covered by the browser qualification fixture.
+
 The semantic visual contract keeps the preview on the canvas surface, reserves
 a 48px control strip for provider actions and keeps zoom bounds in the host
 projection (`5–800`). These are named catalog invariants; CSS classes remain

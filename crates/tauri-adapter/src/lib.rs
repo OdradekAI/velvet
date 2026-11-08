@@ -6,3 +6,7 @@
 mod transport;
 
 pub use transport::*;
+
+#[cfg(test)]
+#[path = "native_preview_smoke_tests.rs"]
+mod native_preview_smoke_tests;

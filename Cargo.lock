@@ -544,11 +544,13 @@ version = "0.0.6"
 dependencies = [
  "serde_json",
  "velvet-application-core",
+ "velvet-asset-core",
  "velvet-job-system",
  "velvet-layout-model",
  "velvet-persistence",
  "velvet-plugin-api",
  "velvet-plugin-host",
+ "velvet-preview-core",
  "velvet-workbench-protocol",
 ]
 
