@@ -15,20 +15,18 @@ export interface VelvetQuickSearchResult {
   readonly kind: VelvetQuickSearchTabId;
   readonly label: string;
   readonly description?: string;
-  /** Host-provided simplified/traditional/pinyin aliases used for matching. */
-  readonly searchAliases?: readonly string[];
-  readonly score?: number;
   readonly disabled?: boolean;
 }
 
 export interface VelvetQuickSearchProps extends UiCommonProps {
   readonly open: boolean;
   readonly tabs: readonly VelvetQuickSearchTab[];
+  /** Results are already scoped, filtered and ordered by the host adapter. */
   readonly results: readonly VelvetQuickSearchResult[];
   readonly activeTab?: VelvetQuickSearchTabId;
   readonly query?: string;
+  /** History is already ordered, deduplicated and bounded by the host. */
   readonly history?: readonly string[];
-  readonly historyLimit?: number;
   readonly onQueryChange?: (query: string) => void;
   readonly onTabChange?: (tab: VelvetQuickSearchTabId) => void;
   readonly onHistorySelect?: (query: string) => void;
@@ -45,7 +43,6 @@ export function VelvetQuickSearch({
   activeTab,
   query,
   history = [],
-  historyLimit = 100,
   onQueryChange,
   onTabChange,
   onHistorySelect,
@@ -60,14 +57,8 @@ export function VelvetQuickSearch({
   const listId = useId();
   const currentTab = activeTab ?? tabs[0]?.id ?? 'items';
   const resolvedQuery = query ?? internalQuery;
-  const normalizedQuery = normalizeQuickSearchValue(resolvedQuery);
-  const tabResults = results.filter((result) => result.kind === currentTab);
-  const filteredResults = [...tabResults
-    .filter((result) => matchesQuickSearchResult(result, normalizedQuery))]
-    .sort((left, right) => (right.score ?? 0) - (left.score ?? 0));
-  const visibleHistory = dedupeHistory(history, historyLimit);
 
-  useEffect(() => setIndex(0), [currentTab, normalizedQuery]);
+  useEffect(() => setIndex(0), [currentTab, results]);
   useEffect(() => {
     if (previousOpenRef.current && !open) queueMicrotask(() => restoreFocusRef?.current?.focus());
     previousOpenRef.current = open;
@@ -80,7 +71,7 @@ export function VelvetQuickSearch({
     onQueryChange?.(nextQuery);
   };
   const selectCurrent = (): void => {
-    const result = filteredResults[index];
+    const result = results[index];
     if (result && !result.disabled) onSelect(result.id, result.kind);
   };
   const selectHistory = (historyQuery: string): void => {
@@ -92,18 +83,18 @@ export function VelvetQuickSearch({
     <div className="velvet-quick-search__overlay" onMouseDown={onClose}>
       <section aria-label="Quick Search" className="velvet-quick-search" onMouseDown={(event) => event.stopPropagation()} role="dialog">
         <VelvetInput
-          aria-activedescendant={filteredResults[index] ? `${listId}-${filteredResults[index].id}` : undefined}
+          aria-activedescendant={results[index] ? `${listId}-${results[index].id}` : undefined}
           aria-controls={listId}
           ariaLabel={placeholder}
           autoFocus
-          data-quick-search-matching="aliases"
+          data-quick-search-results="host"
           onChange={(event) => updateQuery(event.currentTarget.value)}
           onKeyDown={(event: KeyboardEvent<HTMLInputElement>) => {
             if (event.key === 'Escape') onClose();
-            if (event.key === 'ArrowDown') { event.preventDefault(); setIndex((value) => Math.min(filteredResults.length - 1, value + 1)); }
+            if (event.key === 'ArrowDown') { event.preventDefault(); setIndex((value) => Math.min(results.length - 1, value + 1)); }
             if (event.key === 'ArrowUp') { event.preventDefault(); setIndex((value) => Math.max(0, value - 1)); }
             if (event.key === 'Home') { event.preventDefault(); setIndex(0); }
-            if (event.key === 'End') { event.preventDefault(); setIndex(Math.max(0, filteredResults.length - 1)); }
+            if (event.key === 'End') { event.preventDefault(); setIndex(Math.max(0, results.length - 1)); }
             if (event.key === 'Enter') { event.preventDefault(); selectCurrent(); }
           }}
           placeholder={placeholder}
@@ -116,17 +107,17 @@ export function VelvetQuickSearch({
             </button>
           ))}
         </div>
-        {normalizedQuery.length === 0 && visibleHistory.length > 0 ? (
+        {resolvedQuery.length === 0 && history.length > 0 ? (
           <div aria-label="Recent searches" className="velvet-quick-search__history" data-quick-search-history="true">
             <span className="velvet-quick-search__section-label">Recent searches</span>
             <div className="velvet-quick-search__history-list">
-              {visibleHistory.map((historyQuery) => <button className="velvet-quick-search__history-item" data-quick-search-history-item="true" key={historyQuery} onClick={() => selectHistory(historyQuery)} type="button">{historyQuery}</button>)}
+              {history.map((historyQuery, historyIndex) => <button className="velvet-quick-search__history-item" data-quick-search-history-item="true" key={`${historyQuery}-${historyIndex}`} onClick={() => selectHistory(historyQuery)} type="button">{historyQuery}</button>)}
             </div>
           </div>
         ) : null}
         <div className="velvet-quick-search__list" id={listId} role="listbox">
-          {filteredResults.length === 0 ? <VelvetState kind="empty" title={normalizedQuery.length === 0 ? 'No results' : 'No matches'} /> : null}
-          {filteredResults.map((result, resultIndex) => (
+          {results.length === 0 ? <VelvetState kind="empty" title="No results" /> : null}
+          {results.map((result, resultIndex) => (
             <button
               aria-selected={resultIndex === index}
               className="velvet-quick-search__item"
@@ -144,27 +135,4 @@ export function VelvetQuickSearch({
       </section>
     </div>
   );
-}
-
-function normalizeQuickSearchValue(value: string): string {
-  return value.normalize('NFKC').toLocaleLowerCase().trim();
-}
-
-function matchesQuickSearchResult(result: VelvetQuickSearchResult, normalizedQuery: string): boolean {
-  if (!normalizedQuery) return true;
-  return [result.label, result.description ?? '', ...(result.searchAliases ?? [])]
-    .some((value) => normalizeQuickSearchValue(value).includes(normalizedQuery));
-}
-
-function dedupeHistory(history: readonly string[], historyLimit: number): readonly string[] {
-  const seen = new Set<string>();
-  const result: string[] = [];
-  for (const value of history) {
-    const normalized = normalizeQuickSearchValue(value);
-    if (!normalized || seen.has(normalized)) continue;
-    seen.add(normalized);
-    result.push(value);
-    if (result.length >= Math.max(0, historyLimit)) break;
-  }
-  return result;
 }

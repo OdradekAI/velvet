@@ -64,7 +64,7 @@ export const commandPaletteStories: readonly UiKitStory[] = [
     id: 'command-palette/controlled-query',
     componentId: 'command-palette',
     name: 'Controlled query',
-    description: 'Host-owned query text keeps filtering and input observation in one owner.',
+    description: 'Host-owned query text is reported while the result projection remains host-owned.',
     render: () => <ControlledQueryStory />,
     scenario: {
       covers: ['query'],
@@ -77,29 +77,26 @@ export const commandPaletteStories: readonly UiKitStory[] = [
       })],
       checkpoints: [{ name: 'host query owner', afterAction: 0, assert: (runtime) => {
         const input = runtime.root.querySelector<HTMLInputElement>('[role="dialog"] input');
-        if (input?.value !== 'Pin' || runtime.root.querySelectorAll('[role="option"]').length !== 1 || runtime.root.querySelector('[role="option"]')?.textContent?.trim() !== 'Pin selected') throw new Error('CommandPalette controlled query contract failed');
+        if (input?.value !== 'Pin' || runtime.root.querySelector('[data-command-results="host"]') === null) throw new Error('CommandPalette controlled query contract failed');
       } }],
     },
   },
   {
-    id: 'command-palette/boolean-query',
+    id: 'command-palette/host-results',
     componentId: 'command-palette',
-    name: 'Boolean query',
-    description: 'Quoted terms, OR groups and negation use deterministic host search semantics.',
-    render: () => <VelvetCommandPalette
-      commands={[{ id: 'blue-sky', label: 'Blue sky' }, { id: 'blue-ocean', label: 'Blue ocean' }, { id: 'red-sky', label: 'Red sky' }, { id: 'green-field', label: 'Green field' }]}
-      onClose={noop}
-      onQueryChange={noop}
-      onSelect={noop}
-      open
-      query={'"Blue sky" || ocean -red'}
-    />,
+    name: 'Host results',
+    description: 'The host updates the result list after receiving a query change.',
+    render: () => <HostResultsStory />,
     scenario: {
       covers: ['query'],
-      actions: [],
-      checkpoints: [{ name: 'boolean query semantics', assert: (runtime) => {
-        const results = [...runtime.root.querySelectorAll('[role="option"]')].map((node) => node.textContent?.trim());
-        if (runtime.root.querySelector('[data-command-query-semantics="boolean"]') === null || results.length !== 2 || !results.some((result) => result === 'Blue sky') || !results.some((result) => result === 'Blue ocean')) throw new Error('CommandPalette boolean query contract failed');
+      actions: [(runtime) => runtime.act(async () => {
+        const input = runtime.root.querySelector<HTMLInputElement>('[role="dialog"] input');
+        if (!input) throw new Error('CommandPalette host result input missing');
+        Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input), 'value')?.set?.call(input, 'Pin');
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      })],
+      checkpoints: [{ name: 'host result projection', afterAction: 0, assert: (runtime) => {
+        if (runtime.root.querySelector('[role="option"]')?.textContent?.trim() !== 'Pin selected' || runtime.root.querySelector('[data-command-results="host"]') === null) throw new Error('CommandPalette host results contract failed');
       } }],
     },
   },
@@ -107,15 +104,34 @@ export const commandPaletteStories: readonly UiKitStory[] = [
 
 function CommandScopeStory() {
   const [scope, setScope] = useState<'all' | 'current'>('all');
-  return <VelvetCommandPalette commands={[{ id: 'all', label: 'Open all libraries', scope: 'all' }, { id: 'current', label: 'Open current library', scope: 'current' }]} onClose={noop} onScopeChange={setScope} onSelect={noop} open scope={scope} scopeOptions={[{ id: 'all', label: 'All' }, { id: 'current', label: 'Current' }]} />;
+  const commands = scope === 'current' ? [{ id: 'current', label: 'Open current library', scope: 'current' as const }] : [{ id: 'all', label: 'Open all libraries', scope: 'all' as const }, { id: 'current', label: 'Open current library', scope: 'current' as const }];
+  return <VelvetCommandPalette commands={commands} onClose={noop} onScopeChange={setScope} onSelect={noop} open scope={scope} scopeOptions={[{ id: 'all', label: 'All' }, { id: 'current', label: 'Current' }]} />;
 }
 
 function ControlledQueryStory() {
   const [query, setQuery] = useState('');
+  const [commands, setCommands] = useState([{ id: 'open', label: 'Open selected' }, { id: 'pin', label: 'Pin selected' }]);
+  const onQueryChange = (nextQuery: string) => {
+    setQuery(nextQuery);
+    setCommands(nextQuery.toLowerCase().includes('pin') ? [{ id: 'pin', label: 'Pin selected' }] : [{ id: 'open', label: 'Open selected' }, { id: 'pin', label: 'Pin selected' }]);
+  };
   return <VelvetCommandPalette
-    commands={[{ id: 'open', label: 'Open selected' }, { id: 'pin', label: 'Pin selected' }]}
+    commands={commands}
     onClose={noop}
-    onQueryChange={setQuery}
+    onQueryChange={onQueryChange}
+    onSelect={noop}
+    open
+    query={query}
+  />;
+}
+
+function HostResultsStory() {
+  const [query, setQuery] = useState('');
+  const [commands, setCommands] = useState([{ id: 'open', label: 'Open selected' }, { id: 'pin', label: 'Pin selected' }]);
+  return <VelvetCommandPalette
+    commands={commands}
+    onClose={noop}
+    onQueryChange={(nextQuery) => { setQuery(nextQuery); setCommands(nextQuery === 'Pin' ? [{ id: 'pin', label: 'Pin selected' }] : []); }}
     onSelect={noop}
     open
     query={query}

@@ -42,7 +42,7 @@ internals without changing the contract.
 `VelvetSeparator`, `VelvetTabs`, `VelvetProgress`, `VelvetState`,
 `VelvetToastProvider`, `VelvetToastHost`, `VelvetActivityBar`, `VelvetPane`,
 `VelvetPreviewHost`, `VelvetAssetGrid`, `VelvetDataTable`,
-`VelvetCommandPalette`, `VelvetInspector` and `VelvetZoomControl` are
+`VelvetCommandPalette`, `VelvetQuickSearch`, `VelvetInspector` and `VelvetZoomControl` are
 host-owned renderer components. `VelvetPanel`,
 `VelvetDialog` and `VelvetContextMenu` are the compatibility wrappers used by
 existing Workbench surfaces and now use the same token, focus and state rules.
@@ -146,6 +146,13 @@ Operations, PreviewHost, global overlays and global shortcuts. Plugins can contr
 those surfaces through registries and bridge requests, but cannot import the
 React components, change the Workbench grid, create a global portal or attach a
 document-level keyboard listener.
+
+CommandPalette and QuickSearch are projection-only UI surfaces. They accept
+host-prepared commands/results and history, report raw query/tab/selection
+actions, and own only transient keyboard/focus presentation. Query parsing,
+indexing, pinyin or simplified/traditional matching, scoring, history
+persistence and invalidation belong to Workbench/CoreTransport and are not part
+of the UI Kit contract.
 
 ## State and accessibility rules
 

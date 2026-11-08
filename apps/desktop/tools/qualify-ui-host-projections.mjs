@@ -104,14 +104,13 @@ const paletteScope = await page.evaluate(() => ({
   activeDescendant: document.querySelector('[data-ui-kit-probe="command-palette"] input')?.getAttribute('aria-activedescendant') ?? null,
 }));
 await page.evaluate(() => document.querySelector('[data-ui-kit-probe="command-palette"] [role="tab"][aria-label="All"]')?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
-await page.fill('loc=css:[data-ui-kit-probe="command-palette"] input[aria-label="Search commands"]', 'Open || Pin -missing');
-await page.waitForFunction(() => document.querySelectorAll('[data-ui-kit-probe="command-palette"] [role="option"]').length === 2);
-const paletteBoolean = await page.evaluate(() => ({
-  semantics: document.querySelector('[data-ui-kit-probe="command-palette"] input')?.getAttribute('data-command-query-semantics') ?? null,
-  results: [...document.querySelectorAll('[data-ui-kit-probe="command-palette"] [role="option"]')].map((node) => node.querySelector('strong')?.textContent?.trim() ?? null),
-}));
 await page.fill('loc=css:[data-ui-kit-probe="command-palette"] input[aria-label="Search commands"]', 'Pin');
 await page.waitForFunction(() => document.querySelectorAll('[data-ui-kit-probe="command-palette"] [role="option"]').length === 1);
+const paletteHostResults = await page.evaluate(() => ({
+  results: [...document.querySelectorAll('[data-ui-kit-probe="command-palette"] [role="option"]')].map((node) => node.querySelector('strong')?.textContent?.trim() ?? null),
+  query: document.querySelector('[data-ui-kit-observation="command-query"]')?.textContent ?? null,
+  semantics: document.querySelector('[data-ui-kit-probe="command-palette"] input')?.getAttribute('data-command-results') ?? null,
+}));
 const paletteFiltered = await page.evaluate(() => [...document.querySelectorAll('[data-ui-kit-probe="command-palette"] [role="option"]')].map((node) => node.textContent?.trim() ?? null));
 const paletteOpen = await page.evaluate(() => ({
   role: document.querySelector('[data-ui-kit-probe="command-palette"] [role="dialog"]')?.getAttribute('role') ?? null,
@@ -142,7 +141,7 @@ assert(tableSelected.state === 'selected:row-1;sorted:', 'DataTable row selectio
 assert(tableSorted === 'selected:row-1;sorted:name' && tableSortAscending === 'ascending' && tableSortDescending === 'descending', 'DataTable sort direction contract failed');
 assert(paletteOpen.role === 'dialog', 'CommandPalette dialog role contract failed');
 assert(paletteScope.selected === 'Current' && paletteScope.activeDescendant, 'CommandPalette scope/active descendant contract failed');
-assert(paletteBoolean.semantics === 'boolean' && paletteBoolean.results.length === 2 && paletteBoolean.results.includes('Open selected asset') && paletteBoolean.results.includes('Pin selected asset'), 'CommandPalette boolean query contract failed');
+assert(paletteHostResults.semantics === 'host' && paletteHostResults.query === 'Pin' && paletteHostResults.results.length === 1 && paletteHostResults.results[0] === 'Pin selected asset', 'CommandPalette host results contract failed');
 assert(paletteFiltered.length === 1 && paletteFiltered[0]?.startsWith('Pin selected asset'), 'CommandPalette query filter contract failed: ' + JSON.stringify(paletteFiltered));
 assert(paletteSelected === 'selected:command.pin', 'CommandPalette selection contract failed');
 assert(paletteClosed.closed && paletteClosed.restoredFocus === 'command-palette-trigger', 'CommandPalette focus restoration contract failed');
@@ -151,14 +150,15 @@ await page.waitForSelector('loc=css:[data-ui-kit-probe="quick-search"] [role="di
 const quickSearchOpen = await page.evaluate(() => ({
   tab: document.querySelector('[data-ui-kit-probe="quick-search"] [role="tab"][aria-selected="true"]')?.textContent?.trim() ?? null,
   focused: document.activeElement?.getAttribute('aria-label') ?? null,
-  semantics: document.querySelector('[data-ui-kit-probe="quick-search"] input')?.getAttribute('data-quick-search-matching') ?? null,
+  semantics: document.querySelector('[data-ui-kit-probe="quick-search"] input')?.getAttribute('data-quick-search-results') ?? null,
   history: [...document.querySelectorAll('[data-ui-kit-probe="quick-search"] [data-quick-search-history-item]')].map((node) => node.textContent?.trim() ?? null),
 }));
 await page.fill('loc=css:[data-ui-kit-probe="quick-search"] input[aria-label="Quick Search"]', 'beijing');
 await page.waitForFunction(() => document.querySelectorAll('[data-ui-kit-probe="quick-search"] [role="option"]').length === 1);
-const quickSearchPinyin = await page.evaluate(() => ({
+const quickSearchHostResults = await page.evaluate(() => ({
   result: document.querySelector('[data-ui-kit-probe="quick-search"] [role="option"] strong')?.textContent?.trim() ?? null,
   activeDescendant: document.querySelector('[data-ui-kit-probe="quick-search"] input')?.getAttribute('aria-activedescendant') ?? null,
+  query: document.querySelector('[data-ui-kit-observation="quick-search-query"]')?.textContent ?? null,
 }));
 await page.keyboard.press("ArrowDown");
 await page.keyboard.press("Enter");
@@ -167,9 +167,8 @@ const quickSearchSelected = await page.evaluate(() => document.querySelector('[d
 await page.evaluate(() => document.querySelector('[data-ui-test-id="quick-search-trigger"]')?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
 await page.waitForSelector('loc=css:[data-ui-kit-probe="quick-search"] [role="dialog"]', {state:"visible"});
 await page.evaluate(() => document.querySelector('[data-ui-kit-probe="quick-search"] [role="tab"][aria-label="Folders"]')?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
-await page.fill('loc=css:[data-ui-kit-probe="quick-search"] input[aria-label="Quick Search"]', '參考');
 await page.waitForFunction(() => document.querySelectorAll('[data-ui-kit-probe="quick-search"] [role="option"]').length === 1);
-const quickSearchTraditional = await page.evaluate(() => document.querySelector('[data-ui-kit-probe="quick-search"] [role="option"] strong')?.textContent?.trim() ?? null);
+const quickSearchFolderResult = await page.evaluate(() => document.querySelector('[data-ui-kit-probe="quick-search"] [role="option"] strong')?.textContent?.trim() ?? null);
 await page.fill('loc=css:[data-ui-kit-probe="quick-search"] input[aria-label="Quick Search"]', '');
 await page.waitForFunction(() => document.querySelectorAll('[data-ui-kit-probe="quick-search"] [data-quick-search-history-item]').length === 2);
 const quickSearchHistory = await page.evaluate(() => [...document.querySelectorAll('[data-ui-kit-probe="quick-search"] [data-quick-search-history-item]')].map((node) => node.textContent?.trim() ?? null));
@@ -181,11 +180,11 @@ const quickSearchClosed = await page.evaluate(() => ({
   closed: !document.querySelector('[data-ui-kit-probe="quick-search"] [role="dialog"]'),
   restoredFocus: document.activeElement?.getAttribute('data-ui-test-id') ?? null,
 }));
-assert(quickSearchOpen.tab === 'Items' && quickSearchOpen.focused === 'Quick Search' && quickSearchOpen.semantics === 'aliases' && quickSearchOpen.history.length === 2, 'Quick Search open/focus/history contract failed');
-assert(quickSearchPinyin.result === '北京海报' && quickSearchPinyin.activeDescendant, 'Quick Search pinyin alias contract failed');
+assert(quickSearchOpen.tab === 'Items' && quickSearchOpen.focused === 'Quick Search' && quickSearchOpen.semantics === 'host' && quickSearchOpen.history.length === 2, 'Quick Search open/focus/history contract failed');
+assert(quickSearchHostResults.result === '北京海报' && quickSearchHostResults.activeDescendant && quickSearchHostResults.query === 'beijing', 'Quick Search host results contract failed');
 assert(quickSearchSelected === 'quick.item.beijing;items', 'Quick Search keyboard selection contract failed');
-assert(quickSearchTraditional === '参考资料', 'Quick Search traditional alias contract failed');
-assert(quickSearchHistory.length === 2 && quickSearchHistory[0] === '北京' && quickSearchHistory[1] === '灵感' && quickSearchHistorySelected === '北京', 'Quick Search history dedupe/select contract failed');
+assert(quickSearchFolderResult === '参考资料', 'Quick Search host tab result contract failed');
+assert(quickSearchHistory.length === 2 && quickSearchHistory[0] === '北京' && quickSearchHistory[1] === '灵感' && quickSearchHistorySelected === '北京', 'Quick Search host history/select contract failed');
 assert(quickSearchClosed.closed && quickSearchClosed.restoredFocus === 'quick-search-trigger', 'Quick Search focus restoration contract failed');
 
 const filterPanel = 'loc=css:[data-ui-kit-probe="filter-panel"]';
@@ -241,8 +240,8 @@ const result = {
   zoomControl,
   assetGrid: {moved: assetMoved, opened: assetOpened, rangeSelected: assetRangeSelected, semantics: assetGridSemantics},
   dataTable: {selected: tableSelected, sorted: tableSorted, ascending: tableSortAscending, descending: tableSortDescending},
-  commandPalette: {open: paletteOpen, scope: paletteScope, boolean: paletteBoolean, filtered: paletteFiltered, selected: paletteSelected, closed: paletteClosed},
-  quickSearch: {open: quickSearchOpen, pinyin: quickSearchPinyin, selected: quickSearchSelected, traditional: quickSearchTraditional, history: quickSearchHistory, historySelected: quickSearchHistorySelected, closed: quickSearchClosed},
+  commandPalette: {open: paletteOpen, scope: paletteScope, hostResults: paletteHostResults, filtered: paletteFiltered, selected: paletteSelected, closed: paletteClosed},
+  quickSearch: {open: quickSearchOpen, hostResults: quickSearchHostResults, selected: quickSearchSelected, folderResult: quickSearchFolderResult, history: quickSearchHistory, historySelected: quickSearchHistorySelected, closed: quickSearchClosed},
   filterPanel: {semanticSchema: filterSemanticSchema, changed: filterChanged, reset: filterReset, saved: filterSaved, applied: filterApplied, resultCount: filterCount, closed: filterClosed},
   inspector: {pinned: inspectorPinned, saved: inspectorSaved},
 };

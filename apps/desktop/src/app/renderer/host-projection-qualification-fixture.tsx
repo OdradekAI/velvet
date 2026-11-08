@@ -42,10 +42,10 @@ const QUICK_SEARCH_TABS = [
 ];
 
 const QUICK_SEARCH_RESULTS = [
-  { id: 'quick.item.beijing', kind: 'items' as const, label: '北京海报', searchAliases: ['beijing haibao', '北京海報'], score: 0.9 },
-  { id: 'quick.folder.reference', kind: 'folders' as const, label: '参考资料', searchAliases: ['cankao ziliao', '參考資料'], score: 0.8 },
-  { id: 'quick.tag.inspiration', kind: 'tags' as const, label: '灵感', searchAliases: ['linggan', '靈感'], score: 0.8 },
-  { id: 'quick.smart.recent', kind: 'smart-folders' as const, label: '最近添加', searchAliases: ['recent'], score: 0.7 },
+  { id: 'quick.item.beijing', kind: 'items' as const, label: '北京海报' },
+  { id: 'quick.folder.reference', kind: 'folders' as const, label: '参考资料' },
+  { id: 'quick.tag.inspiration', kind: 'tags' as const, label: '灵感' },
+  { id: 'quick.smart.recent', kind: 'smart-folders' as const, label: '最近添加' },
 ];
 
 const FILTER_FACETS = [
@@ -68,6 +68,7 @@ export function HostProjectionQualificationFixture() {
   const [tableSort, setTableSort] = useState<{ columnId: string; direction: 'ascending' | 'descending' } | undefined>();
   const [selectedCommand, setSelectedCommand] = useState('');
   const [commandScope, setCommandScope] = useState<'all' | 'current'>('all');
+  const [commandQuery, setCommandQuery] = useState('');
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [quickSearchOpen, setQuickSearchOpen] = useState(false);
   const [quickSearchTab, setQuickSearchTab] = useState<'folders' | 'items' | 'tags' | 'smart-folders'>('items');
@@ -88,6 +89,8 @@ export function HostProjectionQualificationFixture() {
   const [filterClosed, setFilterClosed] = useState(false);
   const paletteTriggerRef = useRef<HTMLButtonElement>(null);
   const quickSearchTriggerRef = useRef<HTMLButtonElement>(null);
+  const hostCommands = COMMANDS.filter((command) => commandScope === 'all' || command.scope === undefined || command.scope === commandScope).filter((command) => commandQuery.length === 0 || `${command.label} ${command.description ?? ''}`.toLowerCase().includes(commandQuery.toLowerCase()));
+  const hostQuickSearchResults = QUICK_SEARCH_RESULTS.filter((result) => result.kind === quickSearchTab);
 
   return (
     <main aria-label="Velvet host projection qualification fixture" data-ui-kit-fixture="host-projections" data-ui-kit-viewport="1280x800" style={{ display: 'grid', gap: 24, padding: 24, minHeight: '100%', background: 'var(--velvet-surface-app)' }}>
@@ -150,8 +153,9 @@ export function HostProjectionQualificationFixture() {
         <VelvetStack gap="sm">
           <VelvetText as="h2">Command Palette</VelvetText>
           <VelvetButton onClick={() => setPaletteOpen(true)} ref={paletteTriggerRef} testId="command-palette-trigger">Open commands</VelvetButton>
-          <VelvetCommandPalette commands={COMMANDS} onClose={() => setPaletteOpen(false)} onScopeChange={setCommandScope} onSelect={(id) => { setSelectedCommand(id); setPaletteOpen(false); }} open={paletteOpen} restoreFocusRef={paletteTriggerRef} scope={commandScope} scopeOptions={[{ id: 'all', label: 'All' }, { id: 'current', label: 'Current' }]} />
+          <VelvetCommandPalette commands={hostCommands} onClose={() => setPaletteOpen(false)} onQueryChange={setCommandQuery} onScopeChange={setCommandScope} onSelect={(id) => { setSelectedCommand(id); setPaletteOpen(false); }} open={paletteOpen} query={commandQuery} restoreFocusRef={paletteTriggerRef} scope={commandScope} scopeOptions={[{ id: 'all', label: 'All' }, { id: 'current', label: 'Current' }]} />
           <output data-ui-kit-observation="command-selection">selected:{selectedCommand}</output>
+          <output data-ui-kit-observation="command-query">{commandQuery}</output>
         </VelvetStack>
       </section>
       <section aria-label="Quick Search qualification" data-ui-kit-probe="quick-search">
@@ -160,8 +164,7 @@ export function HostProjectionQualificationFixture() {
           <VelvetButton onClick={() => { setQuickSearchQuery(''); setQuickSearchOpen(true); }} ref={quickSearchTriggerRef} testId="quick-search-trigger">Open quick search</VelvetButton>
           <VelvetQuickSearch
             activeTab={quickSearchTab}
-            history={['北京', '北京', '灵感']}
-            historyLimit={2}
+            history={['北京', '灵感']}
             onClose={() => setQuickSearchOpen(false)}
             onHistorySelect={setQuickSearchQuery}
             onQueryChange={setQuickSearchQuery}
@@ -170,7 +173,7 @@ export function HostProjectionQualificationFixture() {
             open={quickSearchOpen}
             query={quickSearchQuery}
             restoreFocusRef={quickSearchTriggerRef}
-            results={QUICK_SEARCH_RESULTS}
+            results={hostQuickSearchResults}
             tabs={QUICK_SEARCH_TABS}
           />
           <output data-ui-kit-observation="quick-search-query">{quickSearchQuery}</output>

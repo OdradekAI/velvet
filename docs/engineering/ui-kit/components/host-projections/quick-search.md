@@ -2,40 +2,41 @@
 
 `VelvetQuickSearch` is the host projection for fast navigation across folders,
 items, tags and smart folders. It is separate from `VelvetCommandPalette`
-because its result model, tab scopes, alias matching and history are search
-navigation concerns rather than command execution.
+because its result model and tab scopes are navigation projections rather than
+command execution.
 
 ## Contract
 
-- **Props:** `open`, `tabs`, `activeTab`, `results`, `query`, `history`, `historyLimit`, `onQueryChange`, `onTabChange`, `onHistorySelect`, `onSelect`, `onClose`, `restoreFocusRef`
+- **Props:** `open`, `tabs`, `activeTab`, `results`, `query`, `history`, `onQueryChange`, `onTabChange`, `onHistorySelect`, `onSelect`, `onClose`, `restoreFocusRef`
 - **Tabs:** `folders`, `items`, `tags`, `smart-folders`
-- **Result aliases:** `searchAliases` is supplied by the host for pinyin and simplified/traditional variants. The component matches aliases after NFKC normalization and case folding.
-- **History:** the host owns persistence and ordering; the component deduplicates normalized values and applies `historyLimit` for the rendered list. The default limit is 100.
+- **Results:** `results` is already scoped, filtered and ordered by the host adapter. The component renders the list and reports selection.
+- **History:** `history` is already ordered, deduplicated and bounded by the host. The component renders entries and reports history selection.
 - **Keyboard:** ArrowUp/ArrowDown, Home, End, Enter and Escape operate on the result list; native tab buttons remain keyboard reachable.
 - **Focus:** opening enters the input; closing restores `restoreFocusRef` when supplied.
 - **Contract:** `apps/desktop/src/app/ui/contracts/host-projections/quick-search.contract.ts`
 - **Stories:** `apps/desktop/src/app/ui/stories/host-projections/quick-search.stories.tsx`
 
-The component never reads a library index, writes history, performs transliteration
-or calls CoreTransport. A host search adapter prepares result aliases and scores,
+The component never reads a library index, parses query syntax, performs
+transliteration, ranks results, deduplicates history, writes history or calls
+CoreTransport. A Workbench adapter prepares the result and history projections,
 then owns query, tab, selection and persistence state.
 
 ## Evidence boundary
 
 The local shipped-app research records four quick-search modes, pinyin and
 simplified/traditional matching, scoring, bounded history and Arrow/Enter/Escape
-behavior. It also records focus entry and restoration. Renderer timing and
-history persistence ownership remain unverified, so this contract keeps those
-responsibilities at the host boundary.
+behavior. It also records focus entry and restoration. This UI contract keeps
+the observed visual and keyboard surface while leaving search semantics,
+ranking, indexing and history persistence at the Workbench boundary.
 
 ## Stories and qualification
 
-- `quick-search/open` verifies pinyin alias matching, active descendant and keyboard selection.
-- `quick-search/tabs-history` verifies the four-tab projection and deduplicated history selection.
+- `quick-search/open` verifies host-provided results, active descendant and keyboard selection.
+- `quick-search/tabs-history` verifies the four-tab projection and host-provided history selection.
 - `quick-search/keyboard-focus` verifies input focus entry, Escape close and trigger focus restoration.
 
-The real-browser fixture additionally verifies pinyin, traditional alias
-matching, tab switching, bounded history, Arrow/Enter selection and restored
+The real-browser fixture additionally verifies host result replacement, tab
+switching, history rendering/selection, Arrow/Enter selection and restored
 trigger focus.
 
 ## Validation

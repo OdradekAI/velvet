@@ -34,9 +34,12 @@ browser qualification tier: the dedicated fixture checks native control
 semantics, live regions, labels, layout wrappers and Tabs focus movement. Toast
 uses the same fixture for live-region dismissal. Dialog and Context Menu require
 the real-browser overlay qualification tier; AssetGrid, DataTable, CommandPalette
-and Inspector use the host-projection keyboard/focus/edit qualification fixture.
+Inspector, CommandPalette and QuickSearch use the host-projection keyboard/focus
+qualification fixture.
 Dialog and Context Menu use the overlay browser qualification fixture for
-submit/select/cancel, portal and focus behavior. Run
+submit/select/cancel, portal and focus behavior. CommandPalette and QuickSearch
+are projection-only search surfaces: the host supplies result/history lists and
+the fixtures validate query callbacks, tabs, keyboard navigation and focus. Run
 `npm run qualify:ui-browser` from `apps/desktop` to execute all three fixtures
 at the canonical 1280×800 viewport, or use the full `npm run verify:ui-kit`
 acceptance gate. PreviewHost also owns the async

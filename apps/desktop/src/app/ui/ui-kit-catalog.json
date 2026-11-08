@@ -1606,7 +1606,7 @@
       "qualification": "both",
       "contractId": "command-palette",
       "documentation": "docs/engineering/ui-kit/components/host-projections/command-palette.md",
-      "purpose": "Host-owned command search overlay.",
+      "purpose": "Host-owned command result overlay.",
       "ownership": "host",
       "states": [
         "open",
@@ -1635,17 +1635,16 @@
       ],
       "accessibility": [
         "dialog/listbox semantics and focus entry",
-        "active descendant links the query to the selected command",
-        "scope tabs expose current/all search scope",
-        "query can be controlled by the host without duplicating input ownership",
-        "query supports quoted terms, AND, OR/||, parentheses and -negation"
+        "active descendant links the query to the selected host result",
+        "scope tabs expose host-controlled result scope",
+        "query can be controlled by the host without duplicating input ownership"
       ],
       "stories": [
         "open",
         "empty",
         "scope",
         "controlled-query",
-        "boolean-query"
+        "host-results"
       ],
       "slots": [
         "commands",
@@ -1666,7 +1665,7 @@
         "scope",
         "query",
         "query-change-callback",
-        "query-semantics",
+        "host-results",
         "selection"
       ],
       "browserActions": [
@@ -1744,7 +1743,7 @@
       "qualification": "both",
       "contractId": "quick-search",
       "documentation": "docs/engineering/ui-kit/components/host-projections/quick-search.md",
-      "purpose": "Host-owned quick search overlay for folders, items, tags and smart folders.",
+      "purpose": "Host-owned quick search result overlay for folders, items, tags and smart folders.",
       "ownership": "host",
       "states": [
         "closed",
@@ -1760,7 +1759,6 @@
         "results",
         "query",
         "history",
-        "historyLimit",
         "onQueryChange",
         "onTabChange",
         "onHistorySelect",
@@ -1777,10 +1775,9 @@
       ],
       "accessibility": [
         "dialog/listbox semantics and focus entry",
-        "active descendant links the query to the selected result",
+        "active descendant links the query to the selected host result",
         "tabs expose folder/item/tag/smart-folder scope",
-        "pinyin and traditional aliases are host-provided search tokens",
-        "history is bounded and deduplicated"
+        "history is rendered from host-provided entries"
       ],
       "stories": [
         "open",
@@ -1805,8 +1802,8 @@
         "input-focus",
         "tablist-role",
         "active-descendant",
-        "pinyin-alias",
-        "traditional-alias",
+        "host-results",
+        "host-history",
         "history",
         "selection",
         "focus-restore"
