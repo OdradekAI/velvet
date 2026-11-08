@@ -56,6 +56,13 @@ main-window lifecycle story and browser fixture cover open → loading → ready
 provider failure → retry, portrait/landscape content, no-preview fallback and
 close with focus returned by the host.
 
+The native Workbench `PreviewOverlay` now consumes this projection directly.
+Workbench `PreviewHost` remains the state owner and maps resolving/loading,
+ready, failed, unsupported and transport-recovery states into the UI Kit
+projection. Provider renderers, augmentation slots and the generic fallback
+remain host content inside the projection; the UI Kit does not resolve assets
+or call `CoreTransport`.
+
 The semantic visual contract keeps the preview on the canvas surface, reserves
 a 48px control strip for provider actions and keeps zoom bounds in the host
 projection (`5–800`). These are named catalog invariants; CSS classes remain

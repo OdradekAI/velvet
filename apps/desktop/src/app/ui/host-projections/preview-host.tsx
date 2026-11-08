@@ -63,6 +63,7 @@ export function VelvetPreviewHost({ state, mode = 'fit', toolbar, children, mess
         onRetry={state === 'error' ? onRetry : undefined}
         title={state === 'disabled' ? 'Preview unavailable' : state === 'loading' ? 'Loading preview' : state === 'error' ? 'Preview failed' : 'No preview'}
       />
+      {children ? <div className="velvet-preview-host__fallback-content" data-preview-fallback-content="true">{children}</div> : null}
     </section>
   );
 }

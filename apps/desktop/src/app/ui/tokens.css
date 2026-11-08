@@ -481,6 +481,7 @@ button {
 .velvet-preview-host { min-height: 120px; width: 100%; background: var(--velvet-surface-canvas); }
 .velvet-preview-host__toolbar { display: flex; min-height: 48px; align-items: center; gap: var(--velvet-spacing-3); padding: 0 var(--velvet-spacing-4); border-bottom: 1px solid var(--velvet-border-subtle); background: var(--velvet-surface-overlay); }
 .velvet-preview-host__mode { color: var(--velvet-text-muted); font-size: var(--velvet-font-size-label); }
+.velvet-preview-host__fallback-content { display: grid; gap: var(--velvet-spacing-4); padding: var(--velvet-spacing-4); }
 .velvet-asset-grid { display: grid; grid-template-columns: repeat(var(--velvet-grid-columns, 4), minmax(0, 1fr)); gap: var(--velvet-spacing-4); min-width: 0; }
 .velvet-asset-grid--justified { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
 .velvet-asset-grid--waterfall { display: block; column-width: 180px; column-count: var(--velvet-grid-columns, 4); column-gap: var(--velvet-spacing-4); }

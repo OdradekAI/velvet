@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import { VelvetDialog } from '../ui/velvet-ui.js';
+import { VelvetDialog, VelvetPreviewHost } from '../ui/velvet-ui.js';
 import {
   PreviewHost,
+  type PreviewHostState,
   type PreviewContext,
   type ResolvedPreview,
 } from '../../workbench/preview/preview-host.js';
@@ -33,6 +34,27 @@ export interface PreviewOverlayProps {
   readonly jobs: JobClient;
   readonly context: PreviewContext;
   readonly primaryRenderer?: (preview: ResolvedPreview) => ReactNode;
+}
+
+type PreviewProjectionState = 'loading' | 'ready' | 'empty' | 'error' | 'disabled';
+
+function toPreviewProjectionState(state: PreviewHostState): PreviewProjectionState {
+  switch (state) {
+    case 'ready':
+      return 'ready';
+    case 'failed':
+      return 'error';
+    case 'disabled':
+    case 'degraded':
+      return 'disabled';
+    case 'idle':
+    case 'disposed':
+    case 'unsupported':
+      return 'empty';
+    case 'resolving':
+    case 'loading':
+      return 'loading';
+  }
 }
 
 /** Host-owned Quick preview frame with extension-owned primary and augmentation slots. */
@@ -73,6 +95,8 @@ export function PreviewOverlay({
         session: null,
         diagnostic: null,
       }));
+  const projectionState = toPreviewProjectionState(snapshot.state);
+  const projectionMessage = snapshot.error ?? (snapshot.state === 'unsupported' ? 'No preview is available for this asset.' : snapshot.state === 'degraded' ? 'Preview is paused while the native core recovers.' : undefined);
 
   return (
     <VelvetDialog
@@ -86,87 +110,97 @@ export function PreviewOverlay({
       open={open}
       title={`Preview · ${context.contentKind}`}
     >
-      <section aria-live="polite" data-preview-host-state={snapshot.state}>
-        {snapshot.state === 'resolving' || snapshot.state === 'loading' ? (
-          <p data-preview-loading>Resolving preview…</p>
-        ) : null}
-        {snapshot.state === 'failed' ? (
-          <p aria-label="Preview fallback" data-preview-fallback role="status">
-            Preview provider failed. Showing the generic fallback.
-          </p>
-        ) : null}
-        {snapshot.preview ? (
-          <div data-preview-primary>
-            {snapshot.preview.diagnostic ? (
-              <p aria-label="Preview diagnostic" data-preview-diagnostic role="status">
-                {snapshot.preview.diagnostic}
-              </p>
-            ) : null}
-            {primaryRenderer?.(snapshot.preview) ?? (
-              snapshot.preview.session.renderer.kind === 'ui-bridge' &&
-              rendererRegistry &&
-              workspaceContext ? (
-                <PreviewRendererHost
-                  context={workspaceContext}
-                  preview={snapshot.preview}
-                  registry={rendererRegistry}
-                />
-              ) : snapshot.preview.session.renderer.kind === 'text' ||
-                snapshot.preview.session.renderer.kind === 'image' ? (
-                <BuiltinPreviewRenderer renderer={snapshot.preview.session.renderer} />
-              ) : (
-                <>
-                  <strong>{snapshot.preview.session.providerId}</strong>
-                  <p>Asset {snapshot.preview.session.context.assetId}</p>
-                </>
-              )
-            )}
-            <PreviewSessionActions
-              commands={commands}
-              contextKeys={contextKeys}
-              jobs={jobs}
-              session={snapshot.preview.session}
-              workspaceContext={workspaceContext}
-            />
-          </div>
-        ) : null}
-        {snapshot.error ? (
-          <p aria-label="Preview diagnostic" data-preview-error>{snapshot.error}</p>
-        ) : null}
-        {augmentations.length > 0 ? (
-          <div data-preview-augmentations>
-            {augmentations.map((augmentation) => (
-              <div
-                data-preview-augmentation={augmentation.augmentationId}
-                data-preview-slot={augmentation.slot}
-                key={augmentation.augmentationId}
-              >
-                <strong>{augmentation.augmentationId}</strong>
-                {augmentation.diagnostic ? (
-                  <p data-preview-augmentation-error role="status">
-                    {augmentation.diagnostic}
-                  </p>
-                ) : null}
-                {augmentation.session ? (
-                  <PreviewAugmentationSession
-                    augmentation={augmentation}
-                    basePreview={snapshot.preview}
+      <VelvetPreviewHost
+        message={projectionMessage}
+        onClose={() => {
+          host.close();
+          onOpenChange(false);
+        }}
+        onRetry={snapshot.state === 'failed' ? () => { void host.open(context); } : undefined}
+        state={projectionState}
+      >
+        <section aria-live="polite" data-preview-host-state={snapshot.state}>
+          {snapshot.state === 'resolving' || snapshot.state === 'loading' ? (
+            <p data-preview-loading>Resolving preview…</p>
+          ) : null}
+          {snapshot.state === 'failed' ? (
+            <p aria-label="Preview fallback" data-preview-fallback role="status">
+              Preview provider failed. Showing the generic fallback.
+            </p>
+          ) : null}
+          {snapshot.preview ? (
+            <div data-preview-primary>
+              {snapshot.preview.diagnostic ? (
+                <p aria-label="Preview diagnostic" data-preview-diagnostic role="status">
+                  {snapshot.preview.diagnostic}
+                </p>
+              ) : null}
+              {primaryRenderer?.(snapshot.preview) ?? (
+                snapshot.preview.session.renderer.kind === 'ui-bridge' &&
+                rendererRegistry &&
+                workspaceContext ? (
+                  <PreviewRendererHost
                     context={workspaceContext}
-                    commands={commands}
-                    contextKeys={contextKeys}
-                    jobs={jobs}
-                    rendererRegistry={rendererRegistry}
+                    preview={snapshot.preview}
+                    registry={rendererRegistry}
                   />
+                ) : snapshot.preview.session.renderer.kind === 'text' ||
+                  snapshot.preview.session.renderer.kind === 'image' ? (
+                  <BuiltinPreviewRenderer renderer={snapshot.preview.session.renderer} />
                 ) : (
-                  <p data-preview-augmentation-state="waiting" role="status">
-                    Waiting for the augmentation renderer.
-                  </p>
-                )}
-              </div>
-            ))}
-          </div>
-        ) : null}
-      </section>
+                  <>
+                    <strong>{snapshot.preview.session.providerId}</strong>
+                    <p>Asset {snapshot.preview.session.context.assetId}</p>
+                  </>
+                )
+              )}
+              <PreviewSessionActions
+                commands={commands}
+                contextKeys={contextKeys}
+                jobs={jobs}
+                session={snapshot.preview.session}
+                workspaceContext={workspaceContext}
+              />
+            </div>
+          ) : null}
+          {snapshot.error ? (
+            <p aria-label="Preview diagnostic" data-preview-error>{snapshot.error}</p>
+          ) : null}
+          {augmentations.length > 0 ? (
+            <div data-preview-augmentations>
+              {augmentations.map((augmentation) => (
+                <div
+                  data-preview-augmentation={augmentation.augmentationId}
+                  data-preview-slot={augmentation.slot}
+                  key={augmentation.augmentationId}
+                >
+                  <strong>{augmentation.augmentationId}</strong>
+                  {augmentation.diagnostic ? (
+                    <p data-preview-augmentation-error role="status">
+                      {augmentation.diagnostic}
+                    </p>
+                  ) : null}
+                  {augmentation.session ? (
+                    <PreviewAugmentationSession
+                      augmentation={augmentation}
+                      basePreview={snapshot.preview}
+                      context={workspaceContext}
+                      commands={commands}
+                      contextKeys={contextKeys}
+                      jobs={jobs}
+                      rendererRegistry={rendererRegistry}
+                    />
+                  ) : (
+                    <p data-preview-augmentation-state="waiting" role="status">
+                      Waiting for the augmentation renderer.
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </section>
+      </VelvetPreviewHost>
     </VelvetDialog>
   );
 }
