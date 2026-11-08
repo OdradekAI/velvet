@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { UiKitStory, UiKitStoryAsyncOperation } from '../../story-registry.js';
 import { VelvetText } from '../../primitives/index.js';
 import { VelvetPreviewHost } from '../../host-projections/index.js';
@@ -31,14 +32,18 @@ export const previewHostStories: readonly UiKitStory[] = [
     componentId: 'preview-host',
     name: 'Toolbar and mode',
     description: 'Provider toolbar and external-open action remain host-owned projections.',
-    render: () => <VelvetPreviewHost mode="actual" onOpenExternal={() => { openedExternally = true; }} state="ready" toolbar={<button data-preview-toolbar-action="rotate" type="button">Rotate</button>}><VelvetText>Preview</VelvetText></VelvetPreviewHost>,
+    render: () => <PreviewToolbarModeStory />,
     scenario: {
-      covers: ['open-external'],
+      covers: ['change-mode', 'open-external'],
       setup: () => { openedExternally = false; },
-      actions: [(runtime) => runtime.act(async () => { runtime.root.querySelector<HTMLButtonElement>('[data-preview-action="open-external"]')?.click(); })],
-      checkpoints: [{ name: 'mode and toolbar', afterAction: 0, assert: (runtime) => {
-        if (runtime.root.querySelector('[data-preview-mode="actual"]') === null || runtime.root.querySelector('[role="toolbar"] [data-preview-toolbar-action="rotate"]') === null || !openedExternally) throw new Error('PreviewHost toolbar/mode contract failed');
-      } }],
+      actions: [
+        (runtime) => runtime.act(async () => { runtime.root.querySelector<HTMLButtonElement>('[data-preview-action="toggle-mode"]')?.click(); }),
+        (runtime) => runtime.act(async () => { runtime.root.querySelector<HTMLButtonElement>('[data-preview-action="open-external"]')?.click(); }),
+      ],
+      checkpoints: [
+        { name: 'mode and toolbar', afterAction: 0, assert: (runtime) => { if (runtime.root.querySelector('[data-preview-mode="fit"]') === null || runtime.root.querySelector('[role="toolbar"] [data-preview-toolbar-action="rotate"]') === null) throw new Error('PreviewHost toolbar/mode contract failed'); } },
+        { name: 'external open', afterAction: 1, assert: () => { if (!openedExternally) throw new Error('PreviewHost external open contract failed'); } },
+      ],
     },
   },
   {
@@ -134,3 +139,8 @@ export const previewHostStories: readonly UiKitStory[] = [
     },
   },
 ];
+
+function PreviewToolbarModeStory() {
+  const [mode, setMode] = useState<'fit' | 'actual'>('actual');
+  return <VelvetPreviewHost mode={mode} onModeChange={setMode} onOpenExternal={() => { openedExternally = true; }} state="ready" toolbar={<button data-preview-toolbar-action="rotate" type="button">Rotate</button>}><VelvetText>Preview</VelvetText></VelvetPreviewHost>;
+}

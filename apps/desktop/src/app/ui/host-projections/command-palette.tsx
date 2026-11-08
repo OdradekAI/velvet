@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import type { KeyboardEvent, RefObject } from 'react';
 import { VelvetInput, VelvetState } from '../primitives/index.js';
 import type { UiCommonProps } from '../internal/types.js';
@@ -9,6 +9,14 @@ export interface VelvetCommandPaletteCommand {
   readonly description?: string;
   readonly shortcutHint?: string;
   readonly disabled?: boolean;
+  readonly scope?: VelvetCommandPaletteScope;
+}
+
+export type VelvetCommandPaletteScope = 'all' | 'current';
+
+export interface VelvetCommandPaletteScopeOption {
+  readonly id: VelvetCommandPaletteScope;
+  readonly label: string;
 }
 
 export interface VelvetCommandPaletteProps extends UiCommonProps {
@@ -16,6 +24,9 @@ export interface VelvetCommandPaletteProps extends UiCommonProps {
   readonly commands: readonly VelvetCommandPaletteCommand[];
   readonly onSelect: (id: string) => void;
   readonly onClose: () => void;
+  readonly scope?: VelvetCommandPaletteScope;
+  readonly scopeOptions?: readonly VelvetCommandPaletteScopeOption[];
+  readonly onScopeChange?: (scope: VelvetCommandPaletteScope) => void;
   readonly placeholder?: string;
   readonly restoreFocusRef?: RefObject<HTMLElement | null>;
 }
@@ -25,14 +36,19 @@ export function VelvetCommandPalette({
   commands,
   onSelect,
   onClose,
+  scope = 'all',
+  scopeOptions,
+  onScopeChange,
   placeholder = 'Search commands',
   restoreFocusRef,
 }: VelvetCommandPaletteProps) {
   const [query, setQuery] = useState('');
   const [index, setIndex] = useState(0);
   const previousOpenRef = useRef(open);
-  const filtered = commands.filter((command) => `${command.label} ${command.description ?? ''}`.toLowerCase().includes(query.toLowerCase()));
-  useEffect(() => setIndex(0), [query]);
+  const listId = useId();
+  const scopedCommands = commands.filter((command) => scope === 'all' || command.scope === undefined || command.scope === scope);
+  const filtered = scopedCommands.filter((command) => `${command.label} ${command.description ?? ''}`.toLowerCase().includes(query.toLowerCase()));
+  useEffect(() => setIndex(0), [query, scope]);
   useEffect(() => {
     if (previousOpenRef.current && !open) {
       queueMicrotask(() => restoreFocusRef?.current?.focus());
@@ -48,7 +64,9 @@ export function VelvetCommandPalette({
     <div className="velvet-command-palette__overlay" onMouseDown={onClose}>
       <section aria-label="Command Palette" className="velvet-command-palette" onMouseDown={(event) => event.stopPropagation()} role="dialog">
         <VelvetInput
+          aria-activedescendant={filtered[index] ? `${listId}-${filtered[index].id}` : undefined}
           ariaLabel={placeholder}
+          aria-controls={listId}
           autoFocus
           onChange={(event) => setQuery(event.currentTarget.value)}
           onKeyDown={(event: KeyboardEvent<HTMLInputElement>) => {
@@ -62,11 +80,19 @@ export function VelvetCommandPalette({
           placeholder={placeholder}
           value={query}
         />
-        <div className="velvet-command-palette__list" role="listbox">
+        {scopeOptions && scopeOptions.length > 0 ? (
+          <div aria-label="Command scope" className="velvet-command-palette__scopes" role="tablist">
+            {scopeOptions.map((option) => (
+              <button aria-label={option.label} aria-selected={scope === option.id} className="velvet-command-palette__scope" key={option.id} onClick={() => onScopeChange?.(option.id)} role="tab" type="button">{option.label}</button>
+            ))}
+          </div>
+        ) : null}
+        <div className="velvet-command-palette__list" id={listId} role="listbox">
           {filtered.length === 0 ? <VelvetState kind="empty" title="No commands found" /> : null}
           {filtered.map((command, commandIndex) => (
             <button
               aria-selected={commandIndex === index}
+              id={`${listId}-${command.id}`}
               className="velvet-command-palette__item"
               disabled={command.disabled}
               key={command.id}

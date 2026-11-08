@@ -10,16 +10,18 @@ export interface VelvetPreviewHostProps {
   readonly children?: ReactNode;
   readonly message?: string;
   readonly onRetry?: () => void;
+  readonly onModeChange?: (mode: VelvetPreviewMode) => void;
   readonly onOpenExternal?: () => void;
 }
 
-export function VelvetPreviewHost({ state, mode = 'fit', toolbar, children, message, onRetry, onOpenExternal }: VelvetPreviewHostProps) {
+export function VelvetPreviewHost({ state, mode = 'fit', toolbar, children, message, onRetry, onModeChange, onOpenExternal }: VelvetPreviewHostProps) {
   if (state === 'ready') {
     return (
       <section aria-label="Preview" className="velvet-preview-host" data-preview-mode={mode} data-preview-state={state} role="region">
-        {toolbar || onOpenExternal ? (
+        {toolbar || onModeChange || onOpenExternal ? (
           <div aria-label="Preview controls" className="velvet-preview-host__toolbar" role="toolbar">
             <span className="velvet-preview-host__mode" data-preview-mode-label="true">{mode === 'actual' ? 'Actual size' : 'Fit'}</span>
+            {onModeChange ? <VelvetButton data-preview-action="toggle-mode" onClick={() => onModeChange(mode === 'actual' ? 'fit' : 'actual')} variant="quiet">{mode === 'actual' ? 'Fit' : 'Actual size'}</VelvetButton> : null}
             {toolbar}
             {onOpenExternal ? <VelvetButton data-preview-action="open-external" onClick={onOpenExternal} variant="quiet">Open externally</VelvetButton> : null}
           </div>

@@ -19,12 +19,12 @@ contract test rejects an action that appears in neither set.
 | VelvetActivityBar | `select`, `navigate` — `activity-bar/default` | keyboard selection, disabled-item skip and focus movement in host fixture |
 | VelvetDialog | — | `open`, `close`, `submit` — overlay fixture |
 | VelvetContextMenu | — | `open`, `select`, `dismiss`, `navigate` — overlay fixture (including submenu) |
-| VelvetPreviewHost | `retry`, `open-external` — `preview-host/retry`, `preview-host/toolbar-mode` | error announcement, retry, toolbar/mode and external-open callback in host fixture |
+| VelvetPreviewHost | `retry`, `change-mode`, `open-external` — `preview-host/retry`, `preview-host/toolbar-mode` | error announcement, retry, mode toggle, toolbar and external-open callback in host fixture |
 | VelvetInspector | `pin`, `open`, `edit`, `save`, `retry` — Inspector stories | pin/edit/save in host fixture; grouped fields and palette fixture in Node runner |
 | VelvetAssetGrid | `select`, `navigate`, `open`, `drag`, `drop` — AssetGrid stories (including grid metrics, Shift range hint and waterfall geometry) | keyboard/open/Shift selection and grid semantics in host fixture |
-| VelvetDataTable | `select`, `sort` — `data-table/default` | keyboard/sort in host fixture |
-| VelvetCommandPalette | `select`, `navigate`, `close` — `command-palette/open` | query/select/navigation/close plus focus restoration in host fixture |
-| VelvetFilterPanel | `change`, `reset`, `save`, `close` — `filter-panel/default`, `filter-panel/reset-save`, `filter-panel/keyboard-close` | text rule, reset/save and close in host fixture |
+| VelvetDataTable | `select`, `sort` — `data-table/default`, `data-table/sort-direction`; empty status in `data-table/empty` | keyboard row selection, sort direction and `aria-sort` in host fixture |
+| VelvetCommandPalette | `select`, `navigate`, `scope-change`, `close` — `command-palette/open`, `command-palette/scope` | query/select/navigation/scope/close plus active descendant and focus restoration in host fixture |
+| VelvetFilterPanel | `change`, `apply`, `reset`, `save`, `close` — `filter-panel/default`, `filter-panel/reset-save`, `filter-panel/keyboard-close` | text rule, typed operators, result count, apply/reset/save and close in host fixture |
 | VelvetZoomControl | `increment`, `decrement`, `change` — `zoom-control/default` | keyboard step, bounds and button actions in the visual-baseline fixture |
 | VelvetPane | semantic region checkpoint — `pane/navigation` | role, heading link, zone marker and body in host fixture |
 | VelvetPanel | semantic region checkpoint — `panel/panel` | role, heading link, surface and body in host fixture |

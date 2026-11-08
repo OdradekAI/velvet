@@ -37,7 +37,7 @@ export function VelvetZoomControl({
       role="group"
     >
       <button aria-label="Zoom out" className="velvet-zoom-control__step" disabled={disabled || value <= min} onClick={() => nextValue(-step)} type="button">−</button>
-      <input aria-label="Zoom level" className="velvet-zoom-control__range" disabled={disabled} max={max} min={min} onChange={(event) => onChange(Number(event.target.value))} step={step} type="range" value={value} />
+      <input aria-label="Zoom level" aria-valuetext={`${value}%`} className="velvet-zoom-control__range" disabled={disabled} max={max} min={min} onChange={(event) => onChange(Number(event.target.value))} step={step} type="range" value={value} />
       <span aria-live="polite" className="velvet-zoom-control__value">{value}%</span>
       <button aria-label="Zoom in" className="velvet-zoom-control__step" disabled={disabled || value >= max} onClick={() => nextValue(step)} type="button">+</button>
     </div>

@@ -4,8 +4,8 @@ import { defineComponentContract, type ComponentContract } from '../../internal/
 export const VelvetPreviewHostContract = defineComponentContract<
   VelvetPreviewHostProps,
   'loading' | 'ready' | 'empty' | 'error' | 'disabled',
-  'retry' | 'open-external',
-  'preview-region' | 'fallback-state' | 'state-announcement' | 'retry-callback' | 'preview-mode' | 'toolbar' | 'external-open-callback'
+  'retry' | 'change-mode' | 'open-external',
+  'preview-region' | 'fallback-state' | 'state-announcement' | 'retry-callback' | 'preview-mode' | 'toolbar' | 'mode-change-callback' | 'external-open-callback'
 >({
   schema: 'velvet.ui.component-contract',
   schemaVersion: 1,
@@ -13,12 +13,12 @@ export const VelvetPreviewHostContract = defineComponentContract<
   layer: 'host-projections',
   qualification: 'both',
   owner: 'host',
-  props: ['state', 'message', 'mode', 'toolbar', 'children', 'onRetry', 'onOpenExternal'],
+  props: ['state', 'message', 'mode', 'toolbar', 'children', 'onRetry', 'onModeChange', 'onOpenExternal'],
   slots: ['children', 'toolbar'],
   states: ['loading', 'ready', 'empty', 'error', 'disabled'],
-  actions: ['retry', 'open-external'],
-  browserActions: ['retry', 'open-external'],
-  observables: ['preview-region', 'fallback-state', 'state-announcement', 'retry-callback', 'preview-mode', 'toolbar', 'external-open-callback'],
+  actions: ['retry', 'change-mode', 'open-external'],
+  browserActions: ['retry', 'change-mode', 'open-external'],
+  observables: ['preview-region', 'fallback-state', 'state-announcement', 'retry-callback', 'preview-mode', 'toolbar', 'mode-change-callback', 'external-open-callback'],
   asyncLifecycle: ['success', 'cancelled', 'timeout', 'failure', 'retry'],
   stories: ['ready', 'error', 'retry', 'toolbar-mode', 'async-success', 'async-cancelled', 'async-timeout', 'async-failure', 'async-retry'],
   documentation: 'docs/engineering/ui-kit/components/host-projections/preview-host.md',
@@ -27,5 +27,5 @@ export const VelvetPreviewHostContract = defineComponentContract<
     { kind: 'observed', reference: 'apps/desktop/src/app/ui/stories/velvet-ui.stories.tsx', claim: 'Existing compatibility story coverage' },
   ],
   visual: { profile: 'preview', surfaces: { root: 'canvas', interactive: 'active', overlay: 'overlay' }, radius: 'sm', density: 'compact', geometry: ['zoom:5-800', 'toolbar:48px'] },
-  behavior: { stateOwner: 'host', focus: 'restore', selection: 'host', actionLifecycle: [{ action: 'retry', transitions: ['requested', 'committed', 'failed', 'retrying'] }, { action: 'open-external', transitions: ['requested', 'committed', 'failed'] }] },
-} satisfies ComponentContract<VelvetPreviewHostProps, 'loading' | 'ready' | 'empty' | 'error' | 'disabled', 'retry' | 'open-external', 'preview-region' | 'fallback-state' | 'state-announcement' | 'retry-callback' | 'preview-mode' | 'toolbar' | 'external-open-callback'>);
+  behavior: { stateOwner: 'host', focus: 'restore', selection: 'host', actionLifecycle: [{ action: 'retry', transitions: ['requested', 'committed', 'failed', 'retrying'] }, { action: 'change-mode', transitions: ['requested', 'committed'] }, { action: 'open-external', transitions: ['requested', 'committed', 'failed'] }] },
+} satisfies ComponentContract<VelvetPreviewHostProps, 'loading' | 'ready' | 'empty' | 'error' | 'disabled', 'retry' | 'change-mode' | 'open-external', 'preview-region' | 'fallback-state' | 'state-announcement' | 'retry-callback' | 'preview-mode' | 'toolbar' | 'mode-change-callback' | 'external-open-callback'>);

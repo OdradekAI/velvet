@@ -3,6 +3,7 @@ import { VelvetButton, VelvetCheckbox, VelvetInput, VelvetSelect } from '../prim
 import type { UiCommonProps } from '../internal/types.js';
 
 export type VelvetFilterFacetKind = 'text' | 'single' | 'multi' | 'range';
+export type VelvetFilterOperator = 'contain' | 'equal' | 'intersection' | 'between' | 'before' | 'after' | 'within' | 'not' | 'or';
 export type VelvetFilterRuleValue = string | number | readonly string[];
 
 export interface VelvetFilterOption {
@@ -22,7 +23,7 @@ export interface VelvetFilterFacet {
 
 export interface VelvetFilterRule {
   readonly facetId: string;
-  readonly operator?: string;
+  readonly operator?: VelvetFilterOperator;
   readonly value: VelvetFilterRuleValue;
 }
 
@@ -31,7 +32,9 @@ export interface VelvetFilterPanelProps extends UiCommonProps {
   readonly title?: string;
   readonly facets: readonly VelvetFilterFacet[];
   readonly rules: readonly VelvetFilterRule[];
+  readonly resultCount?: number;
   readonly onRuleChange: (rules: readonly VelvetFilterRule[]) => void;
+  readonly onApply?: (rules: readonly VelvetFilterRule[]) => void;
   readonly onReset?: () => void;
   readonly onSave?: (rules: readonly VelvetFilterRule[]) => void;
   readonly onClose?: () => void;
@@ -43,7 +46,9 @@ export function VelvetFilterPanel({
   title = 'Filters',
   facets,
   rules,
+  resultCount,
   onRuleChange,
+  onApply,
   onReset,
   onSave,
   onClose,
@@ -70,6 +75,7 @@ export function VelvetFilterPanel({
     >
       <header className="velvet-filter-panel__header">
         <h2>{title}</h2>
+        {resultCount === undefined ? null : <output aria-live="polite" data-filter-result-count="true">{resultCount} results</output>}
         {onClose ? <VelvetButton onClick={onClose} variant="quiet">Close</VelvetButton> : null}
       </header>
       <div className="velvet-filter-panel__facets">
@@ -134,12 +140,13 @@ export function VelvetFilterPanel({
       <footer className="velvet-filter-panel__actions">
         {onReset ? <VelvetButton onClick={onReset} variant="quiet">Reset</VelvetButton> : null}
         {onSave ? <VelvetButton onClick={() => onSave(rules)}>Save filter</VelvetButton> : null}
+        {onApply ? <VelvetButton data-filter-action="apply" onClick={() => onApply(rules)}>Apply</VelvetButton> : null}
       </footer>
     </section>
   );
 }
 
-function operatorFor(kind: VelvetFilterFacetKind): string {
+function operatorFor(kind: VelvetFilterFacetKind): VelvetFilterOperator {
   if (kind === 'text') return 'contain';
   if (kind === 'multi') return 'intersection';
   if (kind === 'range') return 'between';

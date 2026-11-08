@@ -6,15 +6,19 @@ import remains available from `apps/desktop/src/app/ui/index.ts`.
 
 ## Contract
 
-- **Props:** `rows`, `columns`, `selectedId`, `onSelect`, `onSort`
-- **States:** default, selected
+- **Props:** `rows`, `columns`, `selectedId`, `sort`, `onSelect`, `onSort`, `emptyMessage`
+- **States:** default, selected, sortable, empty
 - **Contract:** `apps/desktop/src/app/ui/contracts/host-projections/data-table.contract.ts`
-- **Stories:** `apps/desktop/src/app/ui/stories/host-projections/data-table.stories.tsx`
+- **Stories:** `default`, `selected`, `sort-direction`, `empty`
 - **Qualification:** both Node/Happy DOM and real browser
 - **Host boundary:** layout, overlay, focus and projection state remain host-owned.
 
-The component contract is semantic. Radix types, private DOM structure, Tailwind
-classes and Workbench implementation details are not public API.
+The component contract is semantic. Sort state belongs to the host: `onSort`
+receives the column id and the next `ascending`/`descending` direction, while
+the controlled `sort` prop projects the committed state through `aria-sort`.
+Empty rows render a labelled status cell and do not create a second selection
+owner. Radix types, private DOM structure, Tailwind classes and Workbench
+implementation details are not public API.
 
 ## Stories and evidence
 

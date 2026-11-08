@@ -29,8 +29,8 @@ const ROWS = [
 ] as const;
 
 const COMMANDS = [
-  { id: 'command.open', label: 'Open selected asset', description: 'Open the current preview' },
-  { id: 'command.pin', label: 'Pin selected asset', description: 'Keep the asset visible' },
+  { id: 'command.open', label: 'Open selected asset', description: 'Open the current preview', scope: 'all' as const },
+  { id: 'command.pin', label: 'Pin selected asset', description: 'Keep the asset visible', scope: 'current' as const },
 ] as const;
 
 const FILTER_FACETS = [
@@ -46,16 +46,20 @@ export function HostProjectionQualificationFixture() {
   const [assetSelectionMode, setAssetSelectionMode] = useState('replace:single');
   const [selectedRow, setSelectedRow] = useState('');
   const [sortedBy, setSortedBy] = useState('');
+  const [tableSort, setTableSort] = useState<{ columnId: string; direction: 'ascending' | 'descending' } | undefined>();
   const [selectedCommand, setSelectedCommand] = useState('');
+  const [commandScope, setCommandScope] = useState<'all' | 'current'>('all');
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [inspectorPinned, setInspectorPinned] = useState(false);
   const [inspectorName, setInspectorName] = useState('Astronaut poster');
   const [inspectorSaveState, setInspectorSaveState] = useState<'idle' | 'saved'>('idle');
   const [previewState, setPreviewState] = useState<'error' | 'ready'>('error');
+  const [previewMode, setPreviewMode] = useState<'fit' | 'actual'>('fit');
   const [previewExternalOpened, setPreviewExternalOpened] = useState(false);
   const [zoom, setZoom] = useState(180);
   const [filterRules, setFilterRules] = useState<readonly VelvetFilterRule[]>([]);
   const [savedFilterRules, setSavedFilterRules] = useState<readonly VelvetFilterRule[]>([]);
+  const [appliedFilterRules, setAppliedFilterRules] = useState<readonly VelvetFilterRule[]>([]);
   const [filterClosed, setFilterClosed] = useState(false);
   const paletteTriggerRef = useRef<HTMLButtonElement>(null);
 
@@ -80,7 +84,7 @@ export function HostProjectionQualificationFixture() {
         <VelvetPanel surface="raised" title="Qualification panel">Panel content</VelvetPanel>
       </section>
       <section aria-label="Preview host qualification" data-ui-kit-probe="preview-host">
-        <VelvetPreviewHost mode="fit" message="Provider failed" onOpenExternal={() => setPreviewExternalOpened(true)} onRetry={() => setPreviewState('ready')} state={previewState} toolbar={previewState === 'ready' ? <button data-preview-toolbar-action="rotate" type="button">Rotate</button> : undefined}>
+        <VelvetPreviewHost mode={previewMode} message="Provider failed" onModeChange={setPreviewMode} onOpenExternal={() => setPreviewExternalOpened(true)} onRetry={() => setPreviewState('ready')} state={previewState} toolbar={previewState === 'ready' ? <button data-preview-toolbar-action="rotate" type="button">Rotate</button> : undefined}>
           <VelvetText>Preview ready</VelvetText>
         </VelvetPreviewHost>
         <output data-ui-kit-observation="preview-host-state">{previewState}</output>
@@ -101,7 +105,7 @@ export function HostProjectionQualificationFixture() {
       <section aria-label="Data table qualification" data-ui-kit-probe="data-table">
         <VelvetStack gap="sm">
           <VelvetText as="h2">Data Table</VelvetText>
-          <VelvetDataTable ariaLabel="Qualification rows" columns={[{ id: 'name', label: 'Name', render: (row) => row.name, sortable: true }, { id: 'type', label: 'Type', render: (row) => row.type }]} onSelect={setSelectedRow} onSort={setSortedBy} rowId={(row) => row.id} rows={ROWS} selectedId={selectedRow} />
+          <VelvetDataTable ariaLabel="Qualification rows" columns={[{ id: 'name', label: 'Name', render: (row) => row.name, sortable: true }, { id: 'type', label: 'Type', render: (row) => row.type }]} onSelect={setSelectedRow} onSort={(columnId, direction) => { setSortedBy(columnId); setTableSort({ columnId, direction }); }} rowId={(row) => row.id} rows={ROWS} selectedId={selectedRow} sort={tableSort} />
           <output data-ui-kit-observation="table-selection">selected:{selectedRow};sorted:{sortedBy}</output>
         </VelvetStack>
       </section>
@@ -109,21 +113,24 @@ export function HostProjectionQualificationFixture() {
         <VelvetStack gap="sm">
           <VelvetText as="h2">Command Palette</VelvetText>
           <VelvetButton onClick={() => setPaletteOpen(true)} ref={paletteTriggerRef} testId="command-palette-trigger">Open commands</VelvetButton>
-          <VelvetCommandPalette commands={COMMANDS} onClose={() => setPaletteOpen(false)} onSelect={(id) => { setSelectedCommand(id); setPaletteOpen(false); }} open={paletteOpen} restoreFocusRef={paletteTriggerRef} />
+          <VelvetCommandPalette commands={COMMANDS} onClose={() => setPaletteOpen(false)} onScopeChange={setCommandScope} onSelect={(id) => { setSelectedCommand(id); setPaletteOpen(false); }} open={paletteOpen} restoreFocusRef={paletteTriggerRef} scope={commandScope} scopeOptions={[{ id: 'all', label: 'All' }, { id: 'current', label: 'Current' }]} />
           <output data-ui-kit-observation="command-selection">selected:{selectedCommand}</output>
         </VelvetStack>
       </section>
       <section aria-label="Filter panel qualification" data-ui-kit-probe="filter-panel">
         <VelvetFilterPanel
           facets={FILTER_FACETS}
+          onApply={setAppliedFilterRules}
           onClose={() => setFilterClosed(true)}
           onReset={() => setFilterRules([])}
           onRuleChange={setFilterRules}
           onSave={setSavedFilterRules}
+          resultCount={12}
           rules={filterRules}
         />
         <output data-ui-kit-observation="filter-rules">{JSON.stringify(filterRules)}</output>
         <output data-ui-kit-observation="filter-saved">{JSON.stringify(savedFilterRules)}</output>
+        <output data-ui-kit-observation="filter-applied">{JSON.stringify(appliedFilterRules)}</output>
         <output data-ui-kit-observation="filter-closed">{String(filterClosed)}</output>
       </section>
       <section aria-label="Inspector qualification" data-ui-kit-probe="inspector">

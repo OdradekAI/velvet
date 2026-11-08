@@ -14,7 +14,7 @@ the component does not persist settings or resize content by itself.
   `zoom-control/bounds`, `zoom-control/disabled`
 - **Contract:** `apps/desktop/src/app/ui/contracts/host-projections/zoom-control.contract.ts`
 - **Implementation:** `apps/desktop/src/app/ui/host-projections/zoom-control.tsx`
-- **Accessibility:** named group, native range semantics, polite live value and keyboard step behavior
+- **Accessibility:** named group, native range semantics, polite live value, `aria-valuetext` and keyboard step behavior
 
 ## Evidence boundary
 

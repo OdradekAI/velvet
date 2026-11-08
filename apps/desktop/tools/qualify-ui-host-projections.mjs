@@ -44,6 +44,8 @@ const previewReady = await page.evaluate(() => ({
   mode: document.querySelector('[data-ui-kit-probe="preview-host"] .velvet-preview-host')?.getAttribute('data-preview-mode') ?? null,
   toolbar: document.querySelector('[data-ui-kit-probe="preview-host"] [role="toolbar"] [data-preview-toolbar-action="rotate"]')?.textContent ?? null,
 }));
+await page.click('loc=css:[data-ui-kit-probe="preview-host"] [data-preview-action="toggle-mode"]');
+const previewModeChanged = await page.evaluate(() => document.querySelector('[data-ui-kit-probe="preview-host"] .velvet-preview-host')?.getAttribute('data-preview-mode') ?? null);
 await page.click('loc=css:[data-ui-kit-probe="preview-host"] [data-preview-action="open-external"]');
 const previewExternalOpened = await page.evaluate(() => document.querySelector('[data-ui-kit-observation="preview-external-opened"]')?.textContent ?? null);
 
@@ -52,6 +54,7 @@ await page.keyboard.press("ArrowRight");
 const zoomControl = await page.evaluate(() => ({
   value: document.querySelector('[data-ui-kit-observation="zoom-control-value"]')?.textContent ?? null,
   inputValue: document.querySelector('[data-ui-kit-probe="zoom-control"] input[aria-label="Zoom level"]')?.value ?? null,
+  valueText: document.querySelector('[data-ui-kit-probe="zoom-control"] input[aria-label="Zoom level"]')?.getAttribute('aria-valuetext') ?? null,
   live: document.querySelector('[data-ui-kit-probe="zoom-control"] .velvet-zoom-control__value')?.getAttribute('aria-live') ?? null,
 }));
 
@@ -82,9 +85,18 @@ const tableSelected = await page.evaluate(() => ({
 }));
 await page.click('loc=css:[data-ui-kit-probe="data-table"] .velvet-data-table__sort');
 const tableSorted = await page.evaluate(() => document.querySelector('[data-ui-kit-observation="table-selection"]')?.textContent ?? null);
+const tableSortAscending = await page.evaluate(() => document.querySelector('[data-ui-kit-probe="data-table"] th')?.getAttribute('aria-sort') ?? null);
+await page.click('loc=css:[data-ui-kit-probe="data-table"] .velvet-data-table__sort');
+const tableSortDescending = await page.evaluate(() => document.querySelector('[data-ui-kit-probe="data-table"] th')?.getAttribute('aria-sort') ?? null);
 
 await page.click('loc=css:[data-ui-test-id="command-palette-trigger"]');
 await page.waitForSelector('loc=css:[data-ui-kit-probe="command-palette"] [role="dialog"]', {state:"visible"});
+await page.click('loc=css:[data-ui-kit-probe="command-palette"] [role="tab"][aria-label="Current"]');
+await page.waitForFunction(() => document.querySelectorAll('[data-ui-kit-probe="command-palette"] [role="option"]').length === 1);
+const paletteScope = await page.evaluate(() => ({
+  selected: document.querySelector('[data-ui-kit-probe="command-palette"] [role="tab"][aria-selected="true"]')?.textContent?.trim() ?? null,
+  activeDescendant: document.querySelector('[data-ui-kit-probe="command-palette"] input')?.getAttribute('aria-activedescendant') ?? null,
+}));
 await page.fill('loc=css:[data-ui-kit-probe="command-palette"] input[aria-label="Search commands"]', 'Pin');
 await page.waitForFunction(() => document.querySelectorAll('[data-ui-kit-probe="command-palette"] [role="option"]').length === 1);
 const paletteFiltered = await page.evaluate(() => [...document.querySelectorAll('[data-ui-kit-probe="command-palette"] [role="option"]')].map((node) => node.textContent?.trim() ?? null));
@@ -111,11 +123,12 @@ assert(activityBar.selected === 'selected:feed' && activityBar.focused === 'Feed
 assert(paneSemantics.role === 'region' && paneSemantics.labelledBy && paneSemantics.heading === 'Qualification navigation' && paneSemantics.body === 'Pane content', 'Pane accessibility contract failed');
 assert(panelSemantics.role === 'region' && panelSemantics.labelledBy && panelSemantics.heading === 'Qualification panel' && panelSemantics.raised, 'Panel accessibility contract failed');
 assert(previewError.state === 'error' && previewError.alert?.includes('Preview failed'), 'PreviewHost error announcement contract failed');
-assert(previewReady.state === 'ready' && previewReady.region === 'region' && previewReady.mode === 'fit' && previewReady.toolbar === 'Rotate' && previewExternalOpened === 'true', 'PreviewHost retry/mode/toolbar contract failed');
-assert(zoomControl.value === '185' && zoomControl.inputValue === '185' && zoomControl.live === 'polite', 'ZoomControl keyboard/value contract failed');
+assert(previewReady.state === 'ready' && previewReady.region === 'region' && previewReady.mode === 'fit' && previewReady.toolbar === 'Rotate' && previewModeChanged === 'actual' && previewExternalOpened === 'true', 'PreviewHost retry/mode/toolbar contract failed');
+assert(zoomControl.value === '185' && zoomControl.inputValue === '185' && zoomControl.valueText === '185%' && zoomControl.live === 'polite', 'ZoomControl keyboard/value contract failed');
 assert(tableSelected.state === 'selected:row-1;sorted:', 'DataTable row selection contract failed');
-assert(tableSorted === 'selected:row-1;sorted:name', 'DataTable sort contract failed');
+assert(tableSorted === 'selected:row-1;sorted:name' && tableSortAscending === 'ascending' && tableSortDescending === 'descending', 'DataTable sort direction contract failed');
 assert(paletteOpen.role === 'dialog', 'CommandPalette dialog role contract failed');
+assert(paletteScope.selected === 'Current' && paletteScope.activeDescendant, 'CommandPalette scope/active descendant contract failed');
 assert(paletteFiltered.length === 1 && paletteFiltered[0]?.startsWith('Pin selected asset'), 'CommandPalette query filter contract failed: ' + JSON.stringify(paletteFiltered));
 assert(paletteSelected === 'selected:command.pin', 'CommandPalette selection contract failed');
 assert(paletteClosed.closed && paletteClosed.restoredFocus === 'command-palette-trigger', 'CommandPalette focus restoration contract failed');
@@ -131,11 +144,15 @@ const filterReset = await page.evaluate(() => document.querySelector('[data-ui-k
 await page.fill(filterPanel + ' input[aria-label="Annotation"]', 'poster');
 await page.click(filterPanel + ' .velvet-filter-panel__actions button:nth-of-type(2)');
 const filterSaved = await page.evaluate(() => document.querySelector('[data-ui-kit-observation="filter-saved"]')?.textContent ?? null);
+await page.click(filterPanel + ' [data-filter-action="apply"]');
+const filterApplied = await page.evaluate(() => document.querySelector('[data-ui-kit-observation="filter-applied"]')?.textContent ?? null);
+const filterCount = await page.evaluate(() => document.querySelector('[data-filter-result-count="true"]')?.textContent ?? null);
 await page.click(filterPanel + ' .velvet-filter-panel__header button');
 const filterClosed = await page.evaluate(() => document.querySelector('[data-ui-kit-observation="filter-closed"]')?.textContent ?? null);
 assert(filterChanged?.includes('poster'), 'FilterPanel text rule contract failed');
 assert(filterReset === '[]', 'FilterPanel reset contract failed');
 assert(filterSaved?.includes('poster'), 'FilterPanel save contract failed');
+assert(filterApplied?.includes('poster') && filterCount === '12 results', 'FilterPanel apply/result count contract failed');
 assert(filterClosed === 'true', 'FilterPanel close contract failed');
 
 const inspector = 'loc=css:[data-ui-kit-probe="inspector"]';
@@ -163,12 +180,12 @@ const result = {
   activityBar,
   pane: paneSemantics,
   panel: panelSemantics,
-  previewHost: {error: previewError, ready: previewReady, externalOpened: previewExternalOpened},
+  previewHost: {error: previewError, ready: previewReady, modeChanged: previewModeChanged, externalOpened: previewExternalOpened},
   zoomControl,
   assetGrid: {moved: assetMoved, opened: assetOpened, rangeSelected: assetRangeSelected, semantics: assetGridSemantics},
-  dataTable: {selected: tableSelected, sorted: tableSorted},
-  commandPalette: {open: paletteOpen, filtered: paletteFiltered, selected: paletteSelected, closed: paletteClosed},
-  filterPanel: {changed: filterChanged, reset: filterReset, saved: filterSaved, closed: filterClosed},
+  dataTable: {selected: tableSelected, sorted: tableSorted, ascending: tableSortAscending, descending: tableSortDescending},
+  commandPalette: {open: paletteOpen, scope: paletteScope, filtered: paletteFiltered, selected: paletteSelected, closed: paletteClosed},
+  filterPanel: {changed: filterChanged, reset: filterReset, saved: filterSaved, applied: filterApplied, resultCount: filterCount, closed: filterClosed},
   inspector: {pinned: inspectorPinned, saved: inspectorSaved},
 };
 await (await import("node:fs/promises")).writeFile(${JSON.stringify(outputPath)}, JSON.stringify(result, null, 2));

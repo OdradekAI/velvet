@@ -1,4 +1,5 @@
 import type { UiKitStory } from '../../story-registry.js';
+import { useState } from 'react';
 import { VelvetCommandPalette } from '../../host-projections/index.js';
 
 let selectedCommand = '';
@@ -45,4 +46,23 @@ export const commandPaletteStories: readonly UiKitStory[] = [
     },
   },
   { id: 'command-palette/empty', componentId: 'command-palette', name: 'Empty', description: 'Empty command result.', render: () => <VelvetCommandPalette open commands={[]} onSelect={noop} onClose={noop} /> },
+  {
+    id: 'command-palette/scope',
+    componentId: 'command-palette',
+    name: 'Scope tabs',
+    description: 'Host-controlled current/all search scope with active descendant semantics.',
+    render: () => <CommandScopeStory />,
+    scenario: {
+      covers: ['scope-change', 'query'],
+      actions: [(runtime) => runtime.act(async () => { runtime.root.querySelector<HTMLButtonElement>('[role="tab"][aria-label="Current"]')?.click(); })],
+      checkpoints: [{ name: 'scope and active descendant', afterAction: 0, assert: (runtime) => {
+        if (runtime.root.querySelector('[role="tab"][aria-selected="true"]')?.textContent !== 'Current' || runtime.root.querySelector('[role="option"]') === null || runtime.root.querySelector('input')?.getAttribute('aria-activedescendant') === null) throw new Error('CommandPalette scope/active descendant contract failed');
+      } }],
+    },
+  },
 ];
+
+function CommandScopeStory() {
+  const [scope, setScope] = useState<'all' | 'current'>('all');
+  return <VelvetCommandPalette commands={[{ id: 'all', label: 'Open all libraries', scope: 'all' }, { id: 'current', label: 'Open current library', scope: 'current' }]} onClose={noop} onScopeChange={setScope} onSelect={noop} open scope={scope} scopeOptions={[{ id: 'all', label: 'All' }, { id: 'current', label: 'Current' }]} />;
+}

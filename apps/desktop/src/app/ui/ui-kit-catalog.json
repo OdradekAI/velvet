@@ -1105,6 +1105,7 @@
         "mode",
         "toolbar",
         "onRetry",
+        "onModeChange",
         "onOpenExternal",
         "children"
       ],
@@ -1135,6 +1136,7 @@
       ],
       "actions": [
         "retry",
+        "change-mode",
         "open-external"
       ],
       "observables": [
@@ -1144,10 +1146,12 @@
         "retry-callback",
         "preview-mode",
         "toolbar",
+        "mode-change-callback",
         "external-open-callback"
       ],
       "browserActions": [
         "retry",
+        "change-mode",
         "open-external"
       ],
       "asyncLifecycle": [
@@ -1183,6 +1187,13 @@
               "committed",
               "failed",
               "retrying"
+            ]
+          },
+          {
+            "action": "change-mode",
+            "transitions": [
+              "requested",
+              "committed"
             ]
           },
           {
@@ -1353,19 +1364,26 @@
         "rows",
         "columns",
         "selectedId",
+        "sort",
         "onSelect",
-        "onSort"
+        "onSort",
+        "emptyMessage"
       ],
       "keyboard": [
         "Tab",
-        "Enter"
+        "Enter",
+        "Space"
       ],
       "accessibility": [
-        "table headers, labelled rows and selection"
+        "table headers, labelled rows and selection",
+        "aria-sort exposes the host sort direction",
+        "empty result status is announced"
       ],
       "stories": [
         "default",
-        "selected"
+        "selected",
+        "sort-direction",
+        "empty"
       ],
       "slots": [
         "cells"
@@ -1378,12 +1396,50 @@
         "table-role",
         "selection",
         "sort-callback",
+        "sort-direction",
+        "empty-state",
         "focus"
       ],
       "browserActions": [
         "select",
         "sort"
-      ]
+      ],
+      "visual": {
+        "profile": "dense-panel",
+        "surfaces": {
+          "root": "panel",
+          "interactive": "raised",
+          "selected": "active"
+        },
+        "radius": "sm",
+        "density": "compact",
+        "geometry": [
+          "row:32px",
+          "header:32px"
+        ]
+      },
+      "behavior": {
+        "stateOwner": "host",
+        "focus": "pointer",
+        "selection": "host",
+        "actionLifecycle": [
+          {
+            "action": "select",
+            "transitions": [
+              "requested",
+              "committed"
+            ]
+          },
+          {
+            "action": "sort",
+            "transitions": [
+              "requested",
+              "committed",
+              "failed"
+            ]
+          }
+        ]
+      }
     },
     {
       "id": "filter-panel",
@@ -1399,14 +1455,17 @@
         "open",
         "closed",
         "filtered",
-        "empty"
+        "empty",
+        "applied"
       ],
       "props": [
         "open",
         "title",
         "facets",
         "rules",
+        "resultCount",
         "onRuleChange",
+        "onApply",
         "onReset",
         "onSave",
         "onClose"
@@ -1418,13 +1477,15 @@
       ],
       "accessibility": [
         "named region with fieldset/legend facet groups",
-        "native control semantics are preserved"
+        "native control semantics are preserved",
+        "result count is announced"
       ],
       "stories": [
         "default",
         "multi-select",
         "reset-save",
-        "keyboard-close"
+        "keyboard-close",
+        "closed"
       ],
       "slots": [
         "facets",
@@ -1433,6 +1494,7 @@
       ],
       "actions": [
         "change",
+        "apply",
         "reset",
         "save",
         "close"
@@ -1441,17 +1503,80 @@
         "region-role",
         "facet-groups",
         "rule-values",
+        "operator-values",
+        "result-count",
         "selection",
         "reset-callback",
+        "apply-callback",
         "save-callback",
         "focus"
       ],
       "browserActions": [
         "change",
+        "apply",
         "reset",
         "save",
         "close"
-      ]
+      ],
+      "visual": {
+        "profile": "dense-panel",
+        "surfaces": {
+          "root": "panel",
+          "interactive": "active",
+          "selected": "active"
+        },
+        "radius": "md",
+        "density": "compact",
+        "geometry": [
+          "chip:24px",
+          "panel-radius:6px"
+        ]
+      },
+      "behavior": {
+        "stateOwner": "host",
+        "focus": "pointer",
+        "selection": "host",
+        "actionLifecycle": [
+          {
+            "action": "change",
+            "transitions": [
+              "requested",
+              "committed"
+            ]
+          },
+          {
+            "action": "apply",
+            "transitions": [
+              "requested",
+              "committed",
+              "failed"
+            ]
+          },
+          {
+            "action": "reset",
+            "transitions": [
+              "requested",
+              "committed"
+            ]
+          },
+          {
+            "action": "save",
+            "transitions": [
+              "requested",
+              "committed",
+              "failed"
+            ]
+          },
+          {
+            "action": "close",
+            "transitions": [
+              "requested",
+              "committed",
+              "cancelled"
+            ]
+          }
+        ]
+      }
     },
     {
       "id": "command-palette",
@@ -1472,6 +1597,9 @@
       "props": [
         "open",
         "commands",
+        "scope",
+        "scopeOptions",
+        "onScopeChange",
         "onSelect",
         "onClose",
         "restoreFocusRef"
@@ -1484,17 +1612,22 @@
         "Escape"
       ],
       "accessibility": [
-        "dialog/listbox semantics and focus entry"
+        "dialog/listbox semantics and focus entry",
+        "active descendant links the query to the selected command",
+        "scope tabs expose current/all search scope"
       ],
       "stories": [
         "open",
-        "empty"
+        "empty",
+        "scope"
       ],
       "slots": [
-        "commands"
+        "commands",
+        "scope-options"
       ],
       "actions": [
         "query",
+        "scope-change",
         "select",
         "navigate",
         "close"
@@ -1503,10 +1636,13 @@
         "dialog-role",
         "listbox-role",
         "focus-entry",
+        "active-descendant",
+        "scope",
         "selection"
       ],
       "browserActions": [
         "query",
+        "scope-change",
         "select",
         "navigate",
         "close"
@@ -1522,7 +1658,8 @@
         "density": "compact",
         "geometry": [
           "surface:600px",
-          "row:34px"
+          "row:34px",
+          "scope-chip:24px"
         ]
       },
       "behavior": {
@@ -1532,6 +1669,13 @@
         "actionLifecycle": [
           {
             "action": "query",
+            "transitions": [
+              "requested",
+              "committed"
+            ]
+          },
+          {
+            "action": "scope-change",
             "transitions": [
               "requested",
               "committed"
@@ -1595,7 +1739,7 @@
       ],
       "accessibility": [
         "group and native range semantics",
-        "live zoom value"
+        "live zoom value and aria-valuetext"
       ],
       "stories": [
         "default",
@@ -1613,6 +1757,7 @@
         "group-role",
         "slider-role",
         "value",
+        "value-text",
         "focus",
         "disabled"
       ],
@@ -1620,7 +1765,48 @@
         "increment",
         "decrement",
         "change"
-      ]
+      ],
+      "visual": {
+        "profile": "compact-control",
+        "surfaces": {
+          "root": "canvas",
+          "interactive": "active"
+        },
+        "radius": "sm",
+        "density": "compact",
+        "geometry": [
+          "control:24px",
+          "zoom:5-800"
+        ]
+      },
+      "behavior": {
+        "stateOwner": "host",
+        "focus": "pointer",
+        "selection": "none",
+        "actionLifecycle": [
+          {
+            "action": "increment",
+            "transitions": [
+              "requested",
+              "committed"
+            ]
+          },
+          {
+            "action": "decrement",
+            "transitions": [
+              "requested",
+              "committed"
+            ]
+          },
+          {
+            "action": "change",
+            "transitions": [
+              "requested",
+              "committed"
+            ]
+          }
+        ]
+      }
     }
   ]
 }

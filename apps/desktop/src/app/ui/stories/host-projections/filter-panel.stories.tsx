@@ -10,6 +10,7 @@ const facets = [
 
 let currentRules: readonly VelvetFilterRule[] = [];
 let savedRules: readonly VelvetFilterRule[] = [];
+let appliedRules: readonly VelvetFilterRule[] = [];
 let closed = false;
 let changeRules: ((rules: readonly VelvetFilterRule[]) => void) | undefined;
 
@@ -49,18 +50,20 @@ export const filterPanelStories: readonly UiKitStory[] = [
     id: 'filter-panel/reset-save',
     componentId: 'filter-panel',
     name: 'Reset and save',
-    description: 'Reset and save actions are reported to the host.',
-    render: () => <StoryFilterPanel onReset={() => undefined} onSave={(rules) => { savedRules = rules; }} />,
+    description: 'Reset, save and apply actions are reported to the host.',
+    render: () => <StoryFilterPanel onApply={(rules) => { appliedRules = rules; }} onReset={() => undefined} onSave={(rules) => { savedRules = rules; }} resultCount={42} />,
     scenario: {
-      covers: ['reset', 'save'],
-      setup: () => { currentRules = [{ facetId: 'type', operator: 'intersection', value: ['image'] }]; savedRules = []; },
+      covers: ['reset', 'save', 'apply'],
+      setup: () => { currentRules = [{ facetId: 'type', operator: 'intersection', value: ['image'] }]; savedRules = []; appliedRules = []; },
       actions: [
         (runtime) => runtime.act(async () => { runtime.root.querySelector<HTMLButtonElement>('button')?.click(); }),
         (runtime) => runtime.act(async () => { runtime.root.querySelectorAll<HTMLButtonElement>('button')[1]?.click(); }),
+        (runtime) => runtime.act(async () => { runtime.root.querySelector<HTMLButtonElement>('[data-filter-action="apply"]')?.click(); }),
       ],
       checkpoints: [
         { name: 'reset', afterAction: 0, assert: () => { if (currentRules.length !== 0) throw new Error('FilterPanel reset contract failed'); } },
         { name: 'save', afterAction: 1, assert: () => { if (savedRules.length !== 0) throw new Error('FilterPanel save contract failed'); } },
+        { name: 'apply and result count', afterAction: 2, assert: (runtime) => { if (appliedRules.length !== 0 || runtime.root.querySelector('[data-filter-result-count="true"]')?.textContent !== '42 results') throw new Error('FilterPanel apply/result count contract failed'); } },
       ],
     },
   },
@@ -81,15 +84,32 @@ export const filterPanelStories: readonly UiKitStory[] = [
       checkpoints: [{ name: 'close action', afterAction: 0, assert: () => { if (!closed) throw new Error('FilterPanel close contract failed'); } }],
     },
   },
+  {
+    id: 'filter-panel/closed',
+    componentId: 'filter-panel',
+    name: 'Closed',
+    description: 'Closed filter projection does not own or render query state.',
+    render: () => <StoryFilterPanel open={false} />,
+    scenario: {
+      actions: [],
+      checkpoints: [{ name: 'closed projection', assert: (runtime) => { if (runtime.root.querySelector('[data-ui-kit-component="filter-panel"]') !== null) throw new Error('FilterPanel closed state contract failed'); } }],
+    },
+  },
 ];
 
 function StoryFilterPanel({
   onClose,
+  onApply,
+  open = true,
+  resultCount,
   onSave,
 }: {
   readonly onClose?: () => void;
+  readonly onApply?: (rules: readonly VelvetFilterRule[]) => void;
+  readonly open?: boolean;
   readonly onReset?: () => void;
   readonly onSave?: (rules: readonly VelvetFilterRule[]) => void;
+  readonly resultCount?: number;
 }) {
   const [rules, setRules] = useState<readonly VelvetFilterRule[]>(currentRules);
   const updateRules = (nextRules: readonly VelvetFilterRule[]) => {
@@ -100,10 +120,13 @@ function StoryFilterPanel({
   return (
     <VelvetFilterPanel
       facets={facets}
+      onApply={onApply}
       onClose={onClose}
       onReset={() => { updateRules([]); }}
       onRuleChange={updateRules}
       onSave={onSave}
+      open={open}
+      resultCount={resultCount}
       rules={rules}
     />
   );
