@@ -9,6 +9,7 @@ import { DEFAULT_UI_THEME } from '../../workbench/plugins/ui-kit.js';
 import { VisualQualificationFixture } from './visual-qualification-fixture.js';
 import { HostProjectionQualificationFixture } from './host-projection-qualification-fixture.js';
 import { PrimitiveQualificationFixture } from './primitive-qualification-fixture.js';
+import { NativePreviewQualificationFixture } from './native-preview-qualification-fixture.js';
 
 const root = document.querySelector('#root');
 
@@ -21,9 +22,10 @@ applyUiThemeSnapshot(DEFAULT_UI_THEME);
 const isVisualQualificationFixture = new URLSearchParams(window.location.search).get('fixture') === 'visual-baseline';
 const isHostProjectionQualificationFixture = new URLSearchParams(window.location.search).get('fixture') === 'host-projections';
 const isPrimitiveQualificationFixture = new URLSearchParams(window.location.search).get('fixture') === 'primitives-overlays';
+const isNativePreviewQualificationFixture = new URLSearchParams(window.location.search).get('fixture') === 'native-preview';
 
 createRoot(root).render(
   <StrictMode>
-    {isVisualQualificationFixture ? <VisualQualificationFixture /> : isHostProjectionQualificationFixture ? <HostProjectionQualificationFixture /> : isPrimitiveQualificationFixture ? <PrimitiveQualificationFixture /> : isTauri() ? <NativeWorkbenchApp /> : <DemoApp />}
+    {isVisualQualificationFixture ? <VisualQualificationFixture /> : isHostProjectionQualificationFixture ? <HostProjectionQualificationFixture /> : isPrimitiveQualificationFixture ? <PrimitiveQualificationFixture /> : isNativePreviewQualificationFixture ? <NativePreviewQualificationFixture /> : isTauri() ? <NativeWorkbenchApp /> : <DemoApp />}
   </StrictMode>,
 );

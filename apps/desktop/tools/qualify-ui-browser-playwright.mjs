@@ -7,7 +7,13 @@ const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, dev
 
 async function fixtureReady(fixture) {
   await page.goto(`${baseUrl}/?fixture=${fixture}`);
-  const fixtureId = fixture === 'visual-baseline' ? 'visual-baseline' : fixture === 'host-projections' ? 'host-projections' : 'primitives-overlays';
+  const fixtureId = fixture === 'visual-baseline'
+    ? 'visual-baseline'
+    : fixture === 'host-projections'
+      ? 'host-projections'
+      : fixture === 'native-preview'
+        ? 'native-preview'
+        : 'primitives-overlays';
   await page.locator(`[data-ui-kit-fixture="${fixtureId}"]`).waitFor({ state: 'visible' });
   await page.waitForTimeout(150);
 }
@@ -418,5 +424,53 @@ assert.equal(primitives.stateRetry, '1');
 assert.deepEqual(primitives.toast, { role: 'status', live: 'polite', count: '1' });
 assert.equal(primitives.toastDismissed, '0');
 
-console.log(JSON.stringify({ engine: 'playwright', visual, overlay, host, primitives }, null, 2));
+const nativePreview = {};
+await fixtureReady('native-preview');
+const nativeFixture = page.locator('[data-ui-kit-fixture="native-preview"]');
+const nativeObservation = (name) => nativeFixture.locator(`[data-native-preview-observation="${name}"]`).textContent();
+await nativeFixture.locator('[data-ui-test-id="native-preview-open"]').click();
+await page.locator('[role="dialog"]').waitFor({ state: 'visible' });
+await page.waitForFunction(() => document.querySelector('[data-native-preview-observation="host-state"]')?.textContent === 'failed');
+nativePreview.failed = {
+  state: await nativeObservation('host-state'),
+  attempts: await nativeObservation('attempts'),
+  fallback: await page.locator('[data-preview-fallback]').textContent(),
+};
+await page.locator('[role="dialog"] [role="alert"] button', { hasText: 'Retry' }).click();
+await page.waitForFunction(() => document.querySelector('[data-native-preview-observation="attempts"]')?.textContent === '2');
+await page.waitForFunction(() => document.querySelector('[data-native-preview-observation="host-state"]')?.textContent === 'ready');
+await page.locator('[data-native-provider-renderer="true"]').waitFor({ state: 'visible' });
+await page.locator('[data-preview-augmentation="native.metadata"] [data-preview-text]').waitFor({ state: 'visible' });
+nativePreview.ready = {
+  state: await nativeObservation('host-state'),
+  attempts: await nativeObservation('attempts'),
+  providerRenderer: await page.locator('[data-native-provider-renderer="true"]').textContent(),
+  augmentation: await page.locator('[data-preview-augmentation="native.metadata"] [data-preview-text]').textContent(),
+  rendererMounts: await nativeObservation('provider-renderer'),
+};
+await page.locator('[data-preview-action="close"]').click();
+await page.locator('[role="dialog"]').waitFor({ state: 'hidden' });
+await page.waitForFunction(() => document.querySelector('[data-native-preview-observation="host-state"]')?.textContent === 'idle');
+await page.waitForFunction(() => Number(document.querySelector('[data-native-preview-observation="provider-disposals"]')?.textContent ?? '0') >= 1);
+nativePreview.closed = {
+  state: await nativeObservation('host-state'),
+  released: await nativeObservation('released-sessions'),
+  rendererDisposals: await nativeObservation('provider-disposals'),
+};
+assert.deepEqual(nativePreview.failed, {
+  state: 'failed',
+  attempts: '1',
+  fallback: 'Preview provider failed. Showing the generic fallback.',
+});
+assert.equal(nativePreview.ready.state, 'ready');
+assert.equal(nativePreview.ready.attempts, '2');
+assert.equal(nativePreview.ready.providerRenderer, 'Native provider renderer mounted');
+assert.equal(nativePreview.ready.augmentation, 'Metadata augmentation mounted');
+assert.equal(nativePreview.closed.state, 'idle');
+assert.equal(nativePreview.closed.released, 'builtin.generic-fallback,native.image:native-asset-1,native.metadata:native-asset-1');
+assert.ok(Number(nativePreview.ready.rendererMounts) >= 1, 'provider renderer did not mount');
+assert.ok(Number(nativePreview.closed.rendererDisposals) >= 1, 'provider renderer did not dispose');
+assert.equal(nativePreview.closed.rendererDisposals, nativePreview.ready.rendererMounts, 'renderer mount/dispose counts diverged');
+
+console.log(JSON.stringify({ engine: 'playwright', visual, overlay, host, primitives, nativePreview }, null, 2));
 await browser.close();

@@ -63,6 +63,12 @@ projection. Provider renderers, augmentation slots and the generic fallback
 remain host content inside the projection; the UI Kit does not resolve assets
 or call `CoreTransport`.
 
+The browser qualification fixture at `?fixture=native-preview` mounts the real
+`PreviewHost`, `PreviewOverlay`, `PreviewRendererRegistry` and `JobClient` with
+a fake `CoreTransport`. It asserts provider failure and retry, the provider
+renderer adapter, the augmentation renderer, and release of both native preview
+sessions after close.
+
 The semantic visual contract keeps the preview on the canvas surface, reserves
 a 48px control strip for provider actions and keeps zoom bounds in the host
 projection (`5–800`). These are named catalog invariants; CSS classes remain
