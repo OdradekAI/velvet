@@ -98,6 +98,9 @@ starts and cleans up a temporary one.
 CI sets `UI_BROWSER_ENGINE=playwright` and runs the same gate with a managed
 headless Chromium instance; local runs use the installed ego-browser engine by
 default.
+The Playwright qualification also records the canonical 1280×800 visual baseline
+and rejects drift in shared shell density, equal navigation/Inspector zones,
+toolbar/facet surface hierarchy, selected-card geometry and 4:3 asset thumbnails.
 The fake host adapter also exposes typed deferred operations for asynchronous
 stories. They record `requested → pending → committed` for success and the
 terminal `cancelled`, `timed-out` or `failed` states. `retry()` starts a fresh
