@@ -9,10 +9,10 @@ import { VelvetIcon } from './app/ui/index.js';
 
 ## Contract
 
-- **Props:** `children`, `label`, `className`
+- **Props:** `name`, `children`, `label`, `className`
 - **State:** default, labelled
 - **Owner:** see `apps/desktop/src/app/ui/contracts/primitives/icon.contract.ts`.
-- **Slots:** the contract file lists the supported child/data slots.
+- **Slots:** `name` selects a host-owned semantic glyph; `children` remains a compatibility slot for custom renderer content.
 - **Actions:** No semantic action; this component preserves child semantics.
 - **Keyboard and accessibility:** No keyboard behavior is introduced by this layout or display component.
 
@@ -26,6 +26,7 @@ The executable stories are in
 
 - `icon/default`
 - `icon/labelled`
+- `icon/semantic-name`
 
 
 ## Evidence

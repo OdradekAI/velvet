@@ -2,7 +2,7 @@ export { VelvetBadge, type VelvetBadgeProps } from './badge.js';
 export { VelvetButton, type VelvetButtonProps } from './button.js';
 export { VelvetCheckbox, type VelvetCheckboxProps } from './checkbox.js';
 export { VelvetIconButton, type VelvetIconButtonProps } from './icon-button.js';
-export { VelvetIcon, type VelvetIconProps } from './icon.js';
+export { VelvetIcon, type VelvetIconName, type VelvetIconProps } from './icon.js';
 export { VelvetInline, type VelvetInlineProps } from './inline.js';
 export { VelvetInput, type VelvetInputProps } from './input.js';
 export { VelvetProgress, type VelvetProgressProps } from './progress.js';

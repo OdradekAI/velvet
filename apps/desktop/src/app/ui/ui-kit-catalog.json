@@ -47,31 +47,36 @@
       "qualification": "both",
       "contractId": "icon",
       "documentation": "docs/engineering/ui-kit/components/primitives/icon.md",
-      "purpose": "Accessible or decorative icon wrapper for toolbars and controls.",
+      "purpose": "Accessible or decorative semantic icon wrapper for toolbars and controls.",
       "ownership": "host",
       "states": [
         "default",
         "decorative"
       ],
       "props": [
+        "name",
         "label",
         "children"
       ],
       "keyboard": [],
       "accessibility": [
-        "decorative icons are hidden; labelled icons expose a name"
+        "decorative icons are hidden; labelled icons expose a name",
+        "semantic names render a stable host-owned glyph"
       ],
       "stories": [
         "default",
-        "labelled"
+        "labelled",
+        "semantic-name"
       ],
       "slots": [
+        "name",
         "children"
       ],
       "actions": [],
       "observables": [
         "semantic-dom",
-        "accessible-name"
+        "accessible-name",
+        "semantic-name"
       ]
     },
     {

@@ -6,6 +6,7 @@ import {
   VelvetContextMenu,
   VelvetDialog,
   VelvetIconButton,
+  VelvetIcon,
   VelvetInput,
   VelvetInspector,
   VelvetPane,
@@ -52,14 +53,14 @@ const LIBRARY_ENTRIES = [
   ['trash', 'Trash', '137'],
 ] as const;
 
-function libraryRowIcon(id: string): string {
+function libraryRowIcon(id: string): 'all' | 'clock' | 'shuffle' | 'community' | 'tag' | 'trash' | 'folder' {
   switch (id) {
-    case 'recent': return '◷';
-    case 'random': return '⌁';
-    case 'community': return '▣';
-    case 'tags': return '◇';
-    case 'trash': return '▱';
-    default: return '□';
+    case 'recent': return 'clock';
+    case 'random': return 'shuffle';
+    case 'community': return 'community';
+    case 'tags': return 'tag';
+    case 'trash': return 'trash';
+    default: return id === 'all' ? 'all' : 'folder';
   }
 }
 
@@ -94,8 +95,8 @@ export function VisualQualificationFixture() {
         <VelvetText as="strong">Graphic Design</VelvetText>
         <VelvetText tone="muted">Library</VelvetText>
         <VelvetStack direction="row" gap="xs" className="velvet-visual-fixture__title-actions">
-          <VelvetIconButton icon="⌘K" label="Quick search" variant="quiet" />
-          <VelvetIconButton icon="⋯" label="More actions" variant="quiet" />
+          <VelvetIconButton icon={<span aria-hidden="true">⌘K</span>} label="Quick search" variant="quiet" />
+          <VelvetIconButton icon={<VelvetIcon name="more" />} label="More actions" variant="quiet" />
           <VelvetButton data-ui-kit-probe="dialog-trigger" onClick={() => { setDialogAction('idle'); setDialogOpen(true); }} ref={dialogTriggerRef} variant="quiet">Open dialog</VelvetButton>
         </VelvetStack>
       </header>
@@ -106,7 +107,7 @@ export function VisualQualificationFixture() {
           <VelvetStack gap="sm">
             <VelvetStack direction="row" gap="xs" className="velvet-visual-fixture__library-switcher">
               <VelvetButton className="velvet-visual-fixture__library-name" variant="quiet">Graphic Design⌄</VelvetButton>
-              <VelvetIconButton icon="+" label="Create folder" variant="quiet" />
+              <VelvetIconButton icon={<VelvetIcon name="add" />} label="Create folder" variant="quiet" />
             </VelvetStack>
             <VelvetSeparator />
             <nav aria-label="Library navigation" className="velvet-visual-fixture__library-list">
@@ -118,7 +119,7 @@ export function VisualQualificationFixture() {
                   key={id}
                   variant="quiet"
                 >
-                  <span aria-hidden="true" className="velvet-visual-fixture__library-icon">{libraryRowIcon(id)}</span>
+                  <span aria-hidden="true" className="velvet-visual-fixture__library-icon"><VelvetIcon name={libraryRowIcon(id)} /></span>
                   <span>{label}</span>
                   {count ? <VelvetBadge>{count}</VelvetBadge> : null}
                 </VelvetButton>
@@ -126,20 +127,20 @@ export function VisualQualificationFixture() {
             </nav>
             <VelvetText as="small" tone="muted" className="velvet-visual-fixture__section-label">Smart Folders (4)</VelvetText>
             <VelvetButton className="velvet-visual-fixture__library-row" variant="quiet">
-              <span aria-hidden="true" className="velvet-visual-fixture__library-icon">⌁</span>
+              <span aria-hidden="true" className="velvet-visual-fixture__library-icon"><VelvetIcon name="spark" /></span>
               <span>Inspiration</span>
               <VelvetBadge tone="info">91</VelvetBadge>
             </VelvetButton>
             <VelvetText as="small" tone="muted" className="velvet-visual-fixture__section-label">Folders (63)</VelvetText>
             {['Poster Design', 'Illustration', 'Packaging Design'].map((folder) => (
               <VelvetButton className="velvet-visual-fixture__library-row velvet-visual-fixture__library-row--folder" key={folder} variant="quiet">
-                <span aria-hidden="true" className="velvet-visual-fixture__library-icon">▸</span>
+                <span aria-hidden="true" className="velvet-visual-fixture__library-icon"><VelvetIcon name="folder" /></span>
                 <span>{folder}</span>
               </VelvetButton>
             ))}
           </VelvetStack>
           <VelvetButton className="velvet-visual-fixture__sidebar-filter" variant="quiet">
-            <span aria-hidden="true">▽</span>
+            <VelvetIcon name="filter" />
             <span>Filter</span>
           </VelvetButton>
           </div>
@@ -148,12 +149,12 @@ export function VisualQualificationFixture() {
         <section aria-label="Asset browser" className="velvet-visual-fixture__workspace" data-ui-kit-region="preview" data-ui-kit-probe="workspace">
           <div className="velvet-visual-fixture__toolbar" data-ui-kit-probe="toolbar">
             <VelvetStack direction="row" gap="xs">
-              <VelvetIconButton icon="←" label="Back" variant="quiet" />
-              <VelvetIconButton icon="→" label="Forward" variant="quiet" />
+              <VelvetIconButton icon={<VelvetIcon name="back" />} label="Back" variant="quiet" />
+              <VelvetIconButton icon={<VelvetIcon name="forward" />} label="Forward" variant="quiet" />
             </VelvetStack>
             <VelvetInput ariaLabel="Search assets" onChange={(event) => setQuery(event.target.value)} placeholder="Search" value={query} />
-            <VelvetIconButton icon="⌕" label="Search" variant="quiet" />
-            <VelvetIconButton icon="≡" label="Filter" variant="quiet" />
+            <VelvetIconButton icon={<VelvetIcon name="search" />} label="Search" variant="quiet" />
+            <VelvetIconButton icon={<VelvetIcon name="filter" />} label="Filter" variant="quiet" />
             <VelvetContextMenu actions={[{ id: 'pin', label: 'Pin selection', checked: true, onSelect: () => setContextAction('pin') }, { id: 'open', label: 'Open in preview', onSelect: () => setContextAction('open'), shortcutHint: 'Enter' }, { id: 'more', label: 'More actions', submenu: [{ id: 'reveal', label: 'Reveal in library', onSelect: () => setContextAction('reveal') }, { id: 'copy', label: 'Copy link', shortcutHint: '⌘L', onSelect: () => setContextAction('copy') }] }]}>
               <div className="velvet-visual-fixture__context-trigger" data-ui-kit-probe="context-trigger" role="button" tabIndex={0}>Actions</div>
             </VelvetContextMenu>
@@ -165,19 +166,19 @@ export function VisualQualificationFixture() {
           </div>
           <div className="velvet-visual-fixture__facet-strip" data-ui-kit-probe="facets">
             {[
-              ['◉', 'Color'],
-              ['◇', 'Tags'],
-              ['□', 'Folders'],
-              ['▣', 'Shapes'],
-              ['☆', 'Rating'],
-              ['<>', 'Format'],
+              ['color', 'Color'],
+              ['tag', 'Tags'],
+              ['folder', 'Folders'],
+              ['shape', 'Shapes'],
+              ['rating', 'Rating'],
+              ['format', 'Format'],
             ].map(([icon, label]) => (
               <VelvetButton className="velvet-visual-fixture__facet" key={label} variant="quiet">
-                <span aria-hidden="true">{icon}</span>
+                <VelvetIcon name={icon as 'color' | 'tag' | 'folder' | 'shape' | 'rating' | 'format'} />
                 <span>{label}</span>
               </VelvetButton>
             ))}
-            <VelvetIconButton icon="+" label="Add filter" variant="quiet" />
+            <VelvetIconButton icon={<VelvetIcon name="add" />} label="Add filter" variant="quiet" />
           </div>
           <VelvetSeparator />
           <div className="velvet-visual-fixture__grid-wrap" data-ui-kit-probe="grid">

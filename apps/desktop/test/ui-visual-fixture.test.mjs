@@ -37,9 +37,14 @@ assert.ok(host.querySelector('[data-ui-kit-probe="dialog-trigger"]'));
 assert.ok(host.querySelector('[data-ui-kit-probe="context-trigger"]'));
 assert.deepEqual(
   [...host.querySelectorAll('[data-ui-kit-probe="facets"] .velvet-visual-fixture__facet')].map((node) => node.textContent?.trim()),
-  ['◉Color', '◇Tags', '□Folders', '▣Shapes', '☆Rating', '<>Format'],
+  ['Color', 'Tags', 'Folders', 'Shapes', 'Rating', 'Format'],
 );
-assert.equal(host.querySelector('.velvet-visual-fixture__sidebar-filter')?.textContent?.trim(), '▽Filter');
+assert.deepEqual(
+  [...host.querySelectorAll('[data-ui-kit-probe="facets"] .velvet-visual-fixture__facet [data-icon-name]')].map((node) => node.getAttribute('data-icon-name')),
+  ['color', 'tag', 'folder', 'shape', 'rating', 'format'],
+);
+assert.equal(host.querySelector('.velvet-visual-fixture__sidebar-filter')?.textContent?.trim(), 'Filter');
+assert.equal(host.querySelector('.velvet-visual-fixture__sidebar-filter [data-icon-name="filter"]') !== null, true);
 assert.equal(host.querySelector('[role="dialog"]'), null);
 assert.equal(host.querySelector('.velvet-context-menu'), null);
 
