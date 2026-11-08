@@ -3,6 +3,7 @@ export { VelvetAssetGridContract } from './asset-grid.contract.js';
 export { VelvetCommandPaletteContract } from './command-palette.contract.js';
 export { VelvetDataTableContract } from './data-table.contract.js';
 export { VelvetFilterPanelContract } from './filter-panel.contract.js';
+export { VelvetFilterFacetMenuContract } from './filter-facet-menu.contract.js';
 export { VelvetInspectorContract } from './inspector.contract.js';
 export { VelvetPaneContract } from './pane.contract.js';
 export { VelvetPanelContract } from './panel.contract.js';

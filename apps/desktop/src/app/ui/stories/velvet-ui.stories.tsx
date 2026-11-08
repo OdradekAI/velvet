@@ -8,6 +8,7 @@ import { paneStories } from './host-projections/pane.stories.js';
 import { panelStories } from './host-projections/panel.stories.js';
 import { previewHostStories } from './host-projections/preview-host.stories.js';
 import { quickSearchStories } from './host-projections/quick-search.stories.js';
+import { filterFacetMenuStories } from './host-projections/filter-facet-menu.stories.js';
 import { zoomControlStories } from './host-projections/zoom-control.stories.js';
 import { contextMenuStories } from './overlays/context-menu.stories.js';
 import { dialogStories } from './overlays/dialog.stories.js';
@@ -22,6 +23,7 @@ export const velvetUiStories: readonly UiKitStory[] = [
   ...paneStories,
   ...previewHostStories,
   ...quickSearchStories,
+  ...filterFacetMenuStories,
   ...assetGridStories,
   ...dataTableStories,
   ...inspectorStories,

@@ -1604,6 +1604,172 @@
       }
     },
     {
+      "id": "filter-facet-menu",
+      "name": "VelvetFilterFacetMenu",
+      "category": "composite",
+      "layer": "host-projections",
+      "qualification": "node",
+      "contractId": "filter-facet-menu",
+      "documentation": "docs/engineering/ui-kit/components/host-projections/filter-facet-menu.md",
+      "purpose": "Evidence-backed folder or color facet menu with host-owned filter actions.",
+      "ownership": "host",
+      "states": [
+        "closed",
+        "folder",
+        "color",
+        "included",
+        "excluded",
+        "selected"
+      ],
+      "props": [
+        "open",
+        "kind",
+        "options",
+        "rule",
+        "swatches",
+        "selectedColor",
+        "graySelected",
+        "hexValue",
+        "accuracy",
+        "onQueryChange",
+        "onRuleChange",
+        "onOptionAction",
+        "onPresetChange",
+        "onHexChange",
+        "onAccuracyChange",
+        "onClear",
+        "onClose"
+      ],
+      "keyboard": [
+        "Tab",
+        "Enter",
+        "Space"
+      ],
+      "accessibility": [
+        "dialog surface and labelled controls",
+        "folder options expose include/exclude state",
+        "color presets expose selected state and labels"
+      ],
+      "stories": [
+        "folder-default",
+        "color-default",
+        "closed"
+      ],
+      "slots": [
+        "folder.options",
+        "color.swatches",
+        "footer"
+      ],
+      "actions": [
+        "query",
+        "folder-rule",
+        "folder-include",
+        "folder-exclude",
+        "color-select",
+        "color-hex",
+        "color-accuracy",
+        "clear",
+        "close"
+      ],
+      "observables": [
+        "menu-role",
+        "folder-rule",
+        "folder-option-state",
+        "color-palette",
+        "color-accuracy",
+        "focus"
+      ],
+      "visual": {
+        "profile": "overlay",
+        "surfaces": {
+          "root": "overlay",
+          "interactive": "active",
+          "selected": "active"
+        },
+        "radius": "md",
+        "density": "compact",
+        "geometry": [
+          "folder:360px",
+          "color:202px",
+          "header:40px",
+          "row:26px",
+          "swatch:20px",
+          "footer:40px"
+        ]
+      },
+      "behavior": {
+        "stateOwner": "host",
+        "focus": "pointer",
+        "selection": "host",
+        "actionLifecycle": [
+          {
+            "action": "query",
+            "transitions": [
+              "requested",
+              "committed"
+            ]
+          },
+          {
+            "action": "folder-rule",
+            "transitions": [
+              "requested",
+              "committed"
+            ]
+          },
+          {
+            "action": "folder-include",
+            "transitions": [
+              "requested",
+              "committed"
+            ]
+          },
+          {
+            "action": "folder-exclude",
+            "transitions": [
+              "requested",
+              "committed"
+            ]
+          },
+          {
+            "action": "color-select",
+            "transitions": [
+              "requested",
+              "committed"
+            ]
+          },
+          {
+            "action": "color-hex",
+            "transitions": [
+              "requested",
+              "committed"
+            ]
+          },
+          {
+            "action": "color-accuracy",
+            "transitions": [
+              "requested",
+              "committed"
+            ]
+          },
+          {
+            "action": "clear",
+            "transitions": [
+              "requested",
+              "committed"
+            ]
+          },
+          {
+            "action": "close",
+            "transitions": [
+              "requested",
+              "committed",
+              "cancelled"
+            ]
+          }
+        ]
+      }
+    },
+    {
       "id": "command-palette",
       "name": "VelvetCommandPalette",
       "category": "composite",

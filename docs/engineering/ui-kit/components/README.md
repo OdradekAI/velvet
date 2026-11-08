@@ -56,6 +56,12 @@ The first evidence-derived host projection added in this wave is
 filter rules in the host, supports text/single/multi/range facets, and is
 qualified in both the Node story runner and the real-browser host fixture.
 
+`VelvetFilterFacetMenu` ([manual](host-projections/filter-facet-menu.md)) is the
+separate folder/color projection. It keeps the observed 360px folder menu and
+202px color menu geometry, include/exclude and OR/AND/EQUAL actions, palette,
+hex and accuracy controls behind host callbacks. It is currently Node-qualified;
+pointer geometry and native context-menu browser qualification remain a follow-up.
+
 The current semantic and visual mapping is maintained in the local research
 notes; product contracts keep only the resulting host ownership and action
 semantics.
