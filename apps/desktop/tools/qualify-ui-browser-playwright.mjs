@@ -18,6 +18,47 @@ async function observation(name) {
 
 const overlay = {};
 await fixtureReady('visual-baseline');
+const visual = await page.evaluate(() => {
+  const readRegion = (selector) => {
+    const node = document.querySelector(selector);
+    if (!node) return null;
+    const rect = node.getBoundingClientRect();
+    const style = getComputedStyle(node);
+    return {
+      rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+      background: style.backgroundColor,
+      fontSize: style.fontSize,
+    };
+  };
+  const selectedCell = document.querySelector('[data-ui-kit-probe="grid"] [role="gridcell"][aria-selected="true"]');
+  const selectedImage = selectedCell?.querySelector('img');
+  const selectedCellStyle = selectedCell ? getComputedStyle(selectedCell) : null;
+  const imageRect = selectedImage?.getBoundingClientRect();
+  return {
+    root: readRegion('[data-ui-kit-fixture="visual-baseline"]'),
+    navigation: readRegion('[data-ui-kit-probe="navigation"]'),
+    toolbar: readRegion('[data-ui-kit-probe="toolbar"]'),
+    facets: readRegion('[data-ui-kit-probe="facets"]'),
+    workspace: readRegion('[data-ui-kit-probe="workspace"]'),
+    inspector: readRegion('[data-ui-kit-probe="inspector"]'),
+    selectedCell: selectedCellStyle ? {
+      borderWidth: selectedCellStyle.borderWidth,
+      borderRadius: selectedCellStyle.borderRadius,
+      background: selectedCellStyle.backgroundColor,
+    } : null,
+    selectedImage: imageRect ? { width: imageRect.width, height: imageRect.height } : null,
+  };
+});
+assert.ok(visual.root, 'visual fixture root is unavailable');
+assert.equal(visual.root.fontSize, '12px');
+assert.ok(visual.navigation && visual.inspector, 'visual side zones are unavailable');
+assert.equal(visual.navigation.rect.width, visual.inspector.rect.width);
+assert.equal(visual.toolbar?.background, visual.navigation.background);
+assert.equal(visual.facets?.background, visual.navigation.background);
+assert.equal(visual.selectedCell?.borderWidth, '1px');
+assert.equal(visual.selectedCell?.borderRadius, '4px');
+assert.ok(visual.selectedImage, 'selected asset image is unavailable');
+assert.ok(Math.abs(visual.selectedImage.width / visual.selectedImage.height - 4 / 3) < 0.01, 'asset thumbnail ratio drifted from 4:3');
 const dialogTrigger = page.locator('[data-ui-kit-probe="dialog-trigger"]');
 const dialog = page.locator('[role="dialog"]');
 await dialogTrigger.click();
@@ -70,7 +111,8 @@ await page.mouse.click(300, 36);
 await contextMenu.waitFor({ state: 'hidden' });
 const contextOutsideCancelled = await observation('context-action');
 overlay.context = { items: contextItems, selected: contextSelected, outsideCancelled: contextOutsideCancelled };
-assert.equal(contextItems.length, 2);
+assert.equal(contextItems.length, 3);
+assert.deepEqual(contextItems.map((item) => item.label), ['Pin selection', 'Open in previewEnter', 'More actions']);
 assert.equal(contextItems[0].checked, 'true');
 assert.equal(contextSelected, 'context:pin');
 assert.equal(contextOutsideCancelled, 'context:idle');
@@ -220,5 +262,5 @@ assert.equal(primitives.stateRetry, '1');
 assert.deepEqual(primitives.toast, { role: 'status', live: 'polite', count: '1' });
 assert.equal(primitives.toastDismissed, '0');
 
-console.log(JSON.stringify({ engine: 'playwright', overlay, host, primitives }, null, 2));
+console.log(JSON.stringify({ engine: 'playwright', visual, overlay, host, primitives }, null, 2));
 await browser.close();
