@@ -188,6 +188,7 @@ apps/desktop/
 
 ## Project documents
 
+- [Docusaurus documentation app](apps/docs/README.md)
 - [Glossary](docs/GLOSSARY.md)
 - [Architecture decisions](docs/adr/)
 - [Workbench foundation plan](docs/engineering/workbench-foundation-plan.md)

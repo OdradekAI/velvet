@@ -1,0 +1,54 @@
+{
+  "version.label": {
+    "message": "Next",
+    "description": "The label for version current"
+  },
+  "sidebar.docs.category.Plugin Platform": {
+    "message": "插件平台",
+    "description": "The label for category 'Plugin Platform' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Maintainer guide": {
+    "message": "维护者指南",
+    "description": "The label for category 'Maintainer guide' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Get started": {
+    "message": "开始使用",
+    "description": "The label for category 'Get started' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Contributions": {
+    "message": "插件贡献",
+    "description": "The label for category 'Contributions' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.UI surfaces": {
+    "message": "UI surface",
+    "description": "The label for category 'UI surfaces' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.UI Kit": {
+    "message": "UI Kit",
+    "description": "The label for category 'UI Kit' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Components": {
+    "message": "组件",
+    "description": "The label for category 'Components' in sidebar 'docs'"
+  },
+  "sidebar.docs.link.Manifest reference": {
+    "message": "Manifest 参考",
+    "description": "The label for link 'Manifest reference' in sidebar 'docs', linking to '/reference/plugin-manifest-v1'"
+  },
+  "sidebar.docs.link.Contract matrix": {
+    "message": "Contract matrix",
+    "description": "The label for link 'Contract matrix' in sidebar 'docs', linking to '/reference/plugin-contract-matrix'"
+  },
+  "sidebar.docs.link.All component manuals": {
+    "message": "全部组件手册",
+    "description": "The label for link 'All component manuals' in sidebar 'docs', linking to '/reference/ui-kit/components'"
+  },
+  "sidebar.docs.link.UI Kit contract": {
+    "message": "UI Kit contract",
+    "description": "The label for link 'UI Kit contract' in sidebar 'docs', linking to '/reference/ui-kit-contract-v1'"
+  },
+  "sidebar.docs.link.Component guide": {
+    "message": "组件指南",
+    "description": "The label for link 'Component guide' in sidebar 'docs', linking to '/reference/ui-kit-component-guide'"
+  }
+}

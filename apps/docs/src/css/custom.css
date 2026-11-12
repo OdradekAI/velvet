@@ -1,0 +1,46 @@
+:root {
+  --ifm-color-primary: #6d7cff;
+  --ifm-color-primary-dark: #5667ff;
+  --ifm-color-primary-darker: #4a5cff;
+  --ifm-color-primary-darkest: #2c40ef;
+  --ifm-color-primary-light: #8793ff;
+  --ifm-color-primary-lighter: #939eff;
+  --ifm-color-primary-lightest: #b9c0ff;
+  --ifm-code-font-size: 95%;
+  --velvet-surface: #17181a;
+  --velvet-surface-raised: #202225;
+  --velvet-border: #34383e;
+}
+
+html[data-theme='dark'] {
+  --ifm-background-color: var(--velvet-surface);
+  --ifm-background-surface-color: var(--velvet-surface-raised);
+  --ifm-navbar-background-color: rgba(23, 24, 26, 0.88);
+  --ifm-footer-background-color: #121315;
+  --ifm-toc-border-color: var(--velvet-border);
+  --ifm-color-emphasis-300: var(--velvet-border);
+}
+
+.navbar {
+  backdrop-filter: blur(16px);
+  border-bottom: 1px solid color-mix(in srgb, var(--velvet-border) 75%, transparent);
+}
+
+.theme-doc-sidebar-container {
+  border-right-color: var(--velvet-border);
+}
+
+.theme-doc-markdown h1,
+.theme-doc-markdown h2,
+.theme-doc-markdown h3 {
+  letter-spacing: -0.02em;
+}
+
+.theme-doc-markdown table {
+  display: table;
+  width: 100%;
+}
+
+.theme-doc-markdown code {
+  border: 1px solid color-mix(in srgb, var(--velvet-border) 75%, transparent);
+}

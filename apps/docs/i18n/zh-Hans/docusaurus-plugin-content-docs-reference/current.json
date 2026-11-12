@@ -1,0 +1,30 @@
+{
+  "version.label": {
+    "message": "Next",
+    "description": "The label for version current"
+  },
+  "sidebar.reference.category.Plugin Platform reference": {
+    "message": "插件平台参考",
+    "description": "The label for category 'Plugin Platform reference' in sidebar 'reference'"
+  },
+  "sidebar.reference.category.UI Kit contract and components": {
+    "message": "UI Kit contract 与组件",
+    "description": "The label for category 'UI Kit contract and components' in sidebar 'reference'"
+  },
+  "sidebar.reference.category.Component manuals": {
+    "message": "组件手册",
+    "description": "The label for category 'Component manuals' in sidebar 'reference'"
+  },
+  "sidebar.reference.category.host-projections": {
+    "message": "宿主投影",
+    "description": "The label for category 'host-projections' in sidebar 'reference'"
+  },
+  "sidebar.reference.category.overlays": {
+    "message": "覆盖层",
+    "description": "The label for category 'overlays' in sidebar 'reference'"
+  },
+  "sidebar.reference.category.primitives": {
+    "message": "基础组件",
+    "description": "The label for category 'primitives' in sidebar 'reference'"
+  }
+}

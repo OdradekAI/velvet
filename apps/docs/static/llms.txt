@@ -1,0 +1,80 @@
+# Velvet Docs
+
+This is the machine-readable entry point for the Velvet Plugin Platform documentation.
+
+The default locale is English. The Chinese mirror uses the `/zh-Hans/` route prefix.
+
+## Current status
+
+- The repository contains an Alpha UI Kit contract and local qualification fixtures.
+- The external Plugin SDK, Marketplace ABI, and production WASM/sidecar runtime remain release gates.
+- Host React wrappers are first-party surfaces. Third-party UI uses the framework-neutral UI Bridge.
+
+## Plugin Platform
+
+- /platform/overview
+- /platform/quick-start
+- /platform/choose-contribution
+- /platform/contributions
+- /platform/ui-bridge
+- /platform/security
+- /platform/testing
+- /platform/integrations
+- /platform/migration
+
+## Maintainer docs
+
+- /maintenance/documentation-structure
+
+### UI surfaces
+
+- /ui-kit
+- /ui-kit/showcase
+- /ui-kit/components/button
+- /ui-kit/components/input
+- /ui-kit/components/select
+- /ui-kit/components/tabs
+- /ui-kit/components/checkbox
+- /ui-kit/components/badge
+- /ui-kit/components/icon-button
+- /ui-kit/components/progress
+- /ui-kit/components/state
+- /ui-kit/components/icon
+- /ui-kit/components/text
+- /ui-kit/components/stack
+- /ui-kit/components/inline
+- /ui-kit/components/separator
+- /ui-kit/components/dialog
+- /ui-kit/components/context-menu
+- /ui-kit/components/toast
+- /ui-kit/customization
+- /ui-kit/accessibility
+
+### UI Kit reference
+
+- /reference/ui-kit-contract-v1
+- /reference/ui-kit-component-guide
+- /reference/ui-kit/components
+- /reference/ui-kit/action-coverage
+
+#### Host projections
+
+- /reference/ui-kit/components/host-projections/activity-bar
+- /reference/ui-kit/components/host-projections/asset-grid
+- /reference/ui-kit/components/host-projections/command-palette
+- /reference/ui-kit/components/host-projections/data-table
+- /reference/ui-kit/components/host-projections/filter-facet-menu
+- /reference/ui-kit/components/host-projections/filter-panel
+- /reference/ui-kit/components/host-projections/inspector
+- /reference/ui-kit/components/host-projections/pane
+- /reference/ui-kit/components/host-projections/panel
+- /reference/ui-kit/components/host-projections/preview-host
+- /reference/ui-kit/components/host-projections/quick-search
+- /reference/ui-kit/components/host-projections/zoom-control
+
+### Plugin Platform reference
+
+- /reference/plugin-manifest-v1
+- /reference/plugin-developer-guide
+- /reference/plugin-contract-matrix
+- /reference/plugin-ecosystem-qualification

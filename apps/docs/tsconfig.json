@@ -1,0 +1,17 @@
+{
+  "extends": "@docusaurus/tsconfig",
+  "compilerOptions": {
+    "types": ["node"],
+    "baseUrl": ".",
+    "ignoreDeprecations": "6.0",
+    "paths": {
+      "@velvet-desktop/*": ["../desktop/src/*"]
+    }
+  },
+  "include": [
+    "docusaurus.config.ts",
+    "sidebars.ts",
+    "sidebars-reference.ts",
+    "src/**/*"
+  ]
+}

@@ -1,0 +1,54 @@
+{
+  "version.label": {
+    "message": "Next",
+    "description": "The label for version current"
+  },
+  "sidebar.docs.category.Plugin Platform": {
+    "message": "Plugin Platform",
+    "description": "The label for category 'Plugin Platform' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Maintainer guide": {
+    "message": "Maintainer guide",
+    "description": "The label for category 'Maintainer guide' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Get started": {
+    "message": "Get started",
+    "description": "The label for category 'Get started' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Contributions": {
+    "message": "Contributions",
+    "description": "The label for category 'Contributions' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.UI surfaces": {
+    "message": "UI surfaces",
+    "description": "The label for category 'UI surfaces' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.UI Kit": {
+    "message": "UI Kit",
+    "description": "The label for category 'UI Kit' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Components": {
+    "message": "Components",
+    "description": "The label for category 'Components' in sidebar 'docs'"
+  },
+  "sidebar.docs.link.Manifest reference": {
+    "message": "Manifest reference",
+    "description": "The label for link 'Manifest reference' in sidebar 'docs'"
+  },
+  "sidebar.docs.link.Contract matrix": {
+    "message": "Contract matrix",
+    "description": "The label for link 'Contract matrix' in sidebar 'docs'"
+  },
+  "sidebar.docs.link.All component manuals": {
+    "message": "All component manuals",
+    "description": "The label for link 'All component manuals' in sidebar 'docs'"
+  },
+  "sidebar.docs.link.UI Kit contract": {
+    "message": "UI Kit contract",
+    "description": "The label for link 'UI Kit contract' in sidebar 'docs'"
+  },
+  "sidebar.docs.link.Component guide": {
+    "message": "Component guide",
+    "description": "The label for link 'Component guide' in sidebar 'docs'"
+  }
+}

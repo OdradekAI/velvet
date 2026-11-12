@@ -1,0 +1,30 @@
+{
+  "version.label": {
+    "message": "Next",
+    "description": "The label for version current"
+  },
+  "sidebar.reference.category.Plugin Platform reference": {
+    "message": "Plugin Platform reference",
+    "description": "The label for category 'Plugin Platform reference' in sidebar 'reference'"
+  },
+  "sidebar.reference.category.UI Kit contract and components": {
+    "message": "UI Kit contract and components",
+    "description": "The label for category 'UI Kit contract and components' in sidebar 'reference'"
+  },
+  "sidebar.reference.category.Component manuals": {
+    "message": "Component manuals",
+    "description": "The label for category 'Component manuals' in sidebar 'reference'"
+  },
+  "sidebar.reference.category.host-projections": {
+    "message": "Host projections",
+    "description": "The label for the host-projections category in sidebar 'reference'"
+  },
+  "sidebar.reference.category.overlays": {
+    "message": "Overlays",
+    "description": "The label for the overlays category in sidebar 'reference'"
+  },
+  "sidebar.reference.category.primitives": {
+    "message": "Primitives",
+    "description": "The label for the primitives category in sidebar 'reference'"
+  }
+}

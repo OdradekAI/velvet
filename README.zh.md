@@ -148,6 +148,7 @@ apps/desktop/
 
 ## 项目文档
 
+- [Docusaurus 文档应用](apps/docs/README.md)
 - [术语表](docs/GLOSSARY.md)
 - [架构决策](docs/adr/)
 - [工作台基础计划](docs/engineering/workbench-foundation-plan.md)

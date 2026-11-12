@@ -124,9 +124,48 @@ jobs:
           UI_BROWSER_ENGINE: playwright
         run: npm run verify:ui-kit
 
+  docs:
+    name: Documentation
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: apps/docs/package-lock.json
+
+      - name: Install documentation dependencies
+        working-directory: apps/docs
+        run: npm ci
+
+      - name: Verify documentation release build
+        working-directory: apps/docs
+        run: npm run verify:release
+
+      - name: Verify canonical English Reference link
+        working-directory: apps/docs
+        run: npm run check:source-link
+
+      - name: Audit documentation dependencies
+        working-directory: apps/docs
+        run: npm audit --audit-level=low
+
+      - name: Upload documentation release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: velvet-docs-${{ github.sha }}
+          path: apps/docs/build
+          if-no-files-found: error
+          retention-days: 14
+
   build:
     name: Build (${{ matrix.os }} ${{ matrix.arch }})
-    needs: [test, ui-kit]
+    needs: [test, ui-kit, docs]
     env:
       VELVET_TARGET_TRIPLE: ${{ matrix.target }}
     strategy:

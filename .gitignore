@@ -6,6 +6,9 @@
 /apps/desktop/src-tauri/binaries/
 /apps/desktop/src-tauri/gen/
 /apps/desktop/src-tauri/tauri.release.generated.json
+/apps/docs/node_modules/
+/apps/docs/.docusaurus/
+/apps/docs/build/
 .DS_Store
 .serena/
 .baoyu-skills/
