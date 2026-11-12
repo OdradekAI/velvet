@@ -57,21 +57,6 @@ html[data-theme='dark'] {
   border-color: var(--ifm-color-warning);
 }
 
-.velvet-doc-search input {
-  display: block;
-  width: 100%;
-  margin: 0.5rem 0 1rem;
-  padding: 0.75rem;
-  color: var(--ifm-font-color-base);
-  background: var(--ifm-background-surface-color);
-  border: 1px solid var(--ifm-color-emphasis-500);
-  border-radius: 0.4rem;
-}
-
-.velvet-doc-search input:focus-visible {
-  outline: 2px solid var(--ifm-color-primary);
-  outline-offset: 2px;
-}
 .velvet-doc-anchor {
   display: block;
   scroll-margin-top: calc(var(--ifm-navbar-height) + 1rem);

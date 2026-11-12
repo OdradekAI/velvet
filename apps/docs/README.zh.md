@@ -77,7 +77,7 @@ node tools/review-translation.mjs docs/platform/quick-start.md reviewed
 
 UI 示例通过 `@velvet-ui` 使用桌面端现有的公共 UI 入口。示例状态放在 `src/components/playgrounds/`，组件应从该入口导入，避免直接依赖桌面端内部模块。站点代码必须通过严格 TypeScript 检查。桌面端行为变更应在桌面应用中实现，并执行对应验证。
 
-索引生成器从已发布源文件生成搜索数据、页面提示和路由清单。`npm run start`、`npm run build` 和 `npm run typecheck` 会自动运行生成器。也可以手动刷新：
+元数据生成器从已发布源文件生成页面提示和路由清单。`npm run start`、`npm run build` 和 `npm run typecheck` 会自动运行生成器。也可以手动刷新：
 
 ```sh
 npm run generate:index
@@ -86,12 +86,23 @@ npm run generate:index
 | 生成路径 | 版本控制方式 |
 | --- | --- |
 | `static/llms.txt` | 已发布路由变化时，提交相应变更 |
-| `static/search-index.json`、`src/generated/` | 已忽略；在本地重新生成 |
-| `.docusaurus/`、`build/` | 已忽略的缓存和构建产物 |
+| `src/generated/` | 已忽略的页面元数据；在本地重新生成 |
+| `.docusaurus/`、`build/` | 已忽略的缓存、搜索索引和构建产物 |
 
 修改源文件，不直接编辑生成产物。依赖变更应连同对应的 `package-lock.json` 一起提交，并执行完整发布检查。
+应用专属的忽略规则放在 [`.gitignore`](.gitignore)，仓库通用规则仍放在根目录。
 
 共用品牌资源位于 [`docs/logo`](../../docs/logo/)。本手册使用 `logo.png`；`static/img/favicon.svg` 链接到 `logo_simple.svg`。保留相对符号链接，让站点图标只有一份权威来源。
+
+## 搜索与阅读组件
+
+[`@easyops-cn/docusaurus-search-local`](https://github.com/easyops-cn/docusaurus-search-local) 提供导航栏搜索和 `/search` 结果页。读者可以用 **Cmd/Ctrl+K** 聚焦搜索框，用方向键选择建议，按 Enter 打开结果，按 Escape 关闭建议。结果包含章节路径和匹配摘要；打开结果后，页面会高亮搜索词。
+
+插件从已发布 HTML 中为每种语言分别生成索引，中文页面同时支持中文分词和英文 API 标识符。现有参考发布清单仍控制公开范围，无需托管搜索账号或 API 密钥。搜索配置集中在 `docusaurus.config.ts`，搜索路由由插件提供，避免再添加占用相同路径的 Markdown 页面。
+
+搜索索引在**生产构建**时生成，开发服务器不会生成索引。修改内容或搜索配置后，先运行 `npm run build`，再运行 `npm run serve`，验证两个语言版本的搜索结果。页面复核提示仍由 `generate:index` 维护。
+
+经典主题自带章节目录、代码复制、上一篇／下一篇和返回顶部控件。读者可以收起侧栏，扩大阅读区域；展开一个分类时，同级分类会自动收起。新增自制阅读组件前，优先使用这些主题能力。
 
 ## 提交 PR 前验证
 
@@ -101,7 +112,7 @@ npm run generate:index
 npm run verify:release
 ```
 
-该命令会重新生成索引、检查所有译文是否已完整复核、校验内容与 API 一致性、运行检查器回归测试、检查站点代码类型，并构建两个语言版本。生产构建会因失效链接或锚点而失败。
+该命令会重新生成索引、检查所有译文是否已完整复核、校验内容与 API 一致性、运行检查器回归测试、检查站点代码类型，构建两个语言版本，并检查生成索引的搜索覆盖范围和章节链接。生产构建会因失效链接或锚点而失败。
 
 编辑过程中可以按需运行更小范围的检查：
 
@@ -113,12 +124,13 @@ npm run verify:release
 | `npm run check:source-link` | 英文参考文档的受版本控制符号链接 |
 | `npm run test:docs` | 文档检查器回归测试 |
 | `npm run typecheck` | 严格 TypeScript 验证 |
+| `npm run check:search` | 已有生产构建的公开页面覆盖范围与章节跳转目标 |
 
 修改 UI 或导航后，还需检查构建页面、语言切换、搜索和交互示例。[`Documentation checks`](../../.github/workflows/docs-checks.yml) 工作流会在 PR 中执行发布检查和文档中的 Asset Inspector fixture，仅持有仓库只读权限。
 
 ## 构建与部署
 
-[`Documentation Pages`](../../.github/workflows/docs-pages.yml) 工作流验证 `main` 分支并将其发布到 [GitHub Pages](https://odradekai.github.io/velvet/)，也支持手动触发。部署任务通过 `github-pages` 环境发布 `build/` 产物；PR 检查不执行部署。
+[`GitHub Pages`](../../.github/workflows/github-pages.yml) 工作流验证 `main` 分支并将其发布到 [GitHub Pages](https://odradekai.github.io/velvet/)，也支持手动触发。部署任务通过 `github-pages` 环境发布 `build/` 产物；PR 检查不执行部署。
 
 在本地复现 Pages 构建时，为构建和预览同时设置部署环境（POSIX shell）：
 
@@ -142,7 +154,8 @@ npm run serve
 | 现象 | 处理方法 |
 | --- | --- |
 | 缺少桌面端 UI 依赖或无法导入 `@velvet-ui` | 在仓库根目录运行 `npm --prefix apps/desktop ci`，确认使用完整仓库 |
-| 搜索结果或翻译状态提示未更新 | 运行 `npm run generate:index`，然后重启开发服务器 |
+| 搜索提示需要构建，或结果未更新 | 运行 `npm run build`，再运行 `npm run serve`；搜索在生产预览中可用 |
+| 翻译状态提示未更新 | 运行 `npm run generate:index`，然后重启开发服务器 |
 | 修改配置或依赖后提示缺少打包分块 | 运行 `npm run start:clean`，然后强制刷新浏览器 |
 | 开发时语言切换失败 | 构建两个语言版本，再用 `npm run serve` 预览 |
 | 翻译复核记录过期 | 对照并修正相应页面对，然后重新记录复核结果 |

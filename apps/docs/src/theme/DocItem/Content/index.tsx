@@ -3,7 +3,6 @@ import { useDoc } from '@docusaurus/plugin-content-docs/client';
 import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
 import OriginalContent from '@theme-original/DocItem/Content';
 import pageMetadata from '../../../generated/page-metadata.json';
-import '../../../css/custom.css';
 
 type PageMetadata = {
   readonly audience: string;

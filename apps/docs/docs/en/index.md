@@ -19,6 +19,6 @@ Velvet is a desktop Workbench with host-owned state, layout, permissions and ext
 | Look up a declaration or message | [API and protocol index](/reference/plugin-api-index) |
 | Develop trusted host UI | [UI system](./ui-kit), including live component examples |
 | Maintain the repository | [Maintainer map](/maintenance) |
-| Find a page or identifier | [Search](./search) |
+| Find a page or identifier | [Search](/search) |
 
 Third-party extensions use declared contributions and bounded protocols. The React components in the UI system are for trusted host code. [Choose a contribution](./platform/choose-contribution) before choosing a custom UI surface.

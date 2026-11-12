@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- Replaced the bespoke docs search with a bilingual local-search plugin, navbar shortcuts, section results and a collapsible sidebar; moved application ignore rules into each app and added desktop maintainer handbooks.
 - Organized documentation into plugin development, API/protocol, trusted UI and maintainer paths, with a runnable first fixture and local search.
 - Corrected bilingual Manifest and transport references and added translation review status, contract consistency checks and a documentation PR gate.
 - Completed all Chinese reference translations and reviewed every bilingual page against source contracts; documentation releases now require complete review and matching code examples, API types and defaults.

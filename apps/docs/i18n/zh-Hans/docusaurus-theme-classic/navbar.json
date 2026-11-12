@@ -22,9 +22,5 @@
   "item.label.Maintainers": {
     "message": "维护者",
     "description": "Navbar item with label Maintainers"
-  },
-  "item.label.Search": {
-    "message": "搜索",
-    "description": "Navbar item with label Search"
   }
 }

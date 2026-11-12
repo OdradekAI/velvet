@@ -1,6 +1,7 @@
 import path from 'node:path';
 
 import type { Config } from '@docusaurus/types';
+import type { PluginOptions as SearchOptions } from '@easyops-cn/docusaurus-search-local';
 import referencePages from './reference-pages.json';
 
 const siteDirectory = __dirname;
@@ -68,7 +69,30 @@ const config: Config = {
       en: { label: 'English', htmlLang: 'en' },
     },
   },
-  themes: ['@docusaurus/theme-classic'],
+  themes: [
+    ['@docusaurus/theme-classic', { customCss: ['./src/css/custom.css'] }],
+    [
+      require.resolve('@easyops-cn/docusaurus-search-local'),
+      {
+        hashed: 'filename',
+        // The plugin initializes its tokenizer once across all locale builds.
+        language: ['en', 'zh'],
+        docsDir: [docsContentPath, referenceContentPath],
+        docsRouteBasePath: ['/', 'reference'],
+        indexDocs: true,
+        indexBlog: false,
+        indexPages: false,
+        explicitSearchResultPath: true,
+        highlightSearchTermsOnTargetPage: true,
+        searchResultLimits: 8,
+        searchResultContextMaxLength: 80,
+        searchBarShortcut: true,
+        searchBarShortcutHint: true,
+        searchBarShortcutKeymap: 'mod+k',
+        searchBarPosition: 'auto',
+      } satisfies SearchOptions,
+    ],
+  ],
   plugins: [
     desktopUiAliasPlugin,
     [
@@ -93,6 +117,9 @@ const config: Config = {
     ],
   ],
   themeConfig: {
+    docs: {
+      sidebar: { hideable: true, autoCollapseCategories: true },
+    },
     colorMode: {
       defaultMode: 'dark',
       disableSwitch: false,
@@ -126,7 +153,7 @@ const config: Config = {
           label: 'Maintainers',
           position: 'left',
         },
-        { to: '/search', label: 'Search', position: 'right' },
+        { type: 'search', position: 'right' },
         {
           href: 'https://github.com/OdradekAI/velvet',
           label: 'GitHub',

@@ -17,7 +17,6 @@ const sidebars: SidebarsConfig = {
     },
     'platform/ui-bridge', 'platform/integrations', 'platform/testing', 'platform/migration',
     { type: 'link', label: 'API and protocol index', href: '/reference/plugin-api-index' },
-    'search',
   ],
   ui: [
     'ui-kit/index', 'ui-kit/showcase',

@@ -22,9 +22,5 @@
   "item.label.Maintainers": {
     "message": "Maintainers",
     "description": "Navbar item with label Maintainers"
-  },
-  "item.label.Search": {
-    "message": "Search",
-    "description": "Navbar item with label Search"
   }
 }

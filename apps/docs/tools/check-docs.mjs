@@ -195,6 +195,12 @@ async function assertMarkdownLinks() {
           continue;
         }
 
+        // The search theme owns this route; the production build validates it.
+        if (target === '/search') {
+          checkedLinks += 1;
+          continue;
+        }
+
         const candidates = target.startsWith('/')
           ? routeToSourcePaths(target, source.locale)
           : relativeLinkCandidates(file, target);

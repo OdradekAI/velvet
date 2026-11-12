@@ -16,13 +16,13 @@
   },
   "docs/index.md": {
     "status": "reviewed",
-    "sourceHash": "fe0e1cc5f2cfae3d4368f138319dc79f5628d1094a373357e40a40e7c760c8bb",
-    "translationHash": "5c4dea80d3e4d6e658edfd9204dc96ecac6e18d654ba7471de99869494091f2c"
+    "sourceHash": "18b33dd8c08d374a0ae0e7858a0b42f3c99416ded31d5e279f85b9ddea5866cc",
+    "translationHash": "8fd230ce263a99f4168a1e9d2dfb776ff256b74db68a06f8e03bdc92dc411972"
   },
   "docs/maintenance/documentation-structure.md": {
     "status": "reviewed",
-    "sourceHash": "0b4146cff2db74a5f42bf336c00b50c70c02821e22db18e40a4b3820e4e33dbc",
-    "translationHash": "b0e32545e787c525be2959b82a4936a9b12e7cb54830a8f5be809bba6e5be4eb"
+    "sourceHash": "02b4807d5e1ce9ffeb9bc203a288af450b7bc66e680cfaec89c4c7a47bb0e70a",
+    "translationHash": "5a3d0c0145205649a4a5c391d6e0136d6feb36eacc19273c6fe5f25b6782340a"
   },
   "docs/maintenance/index.md": {
     "status": "reviewed",
@@ -83,11 +83,6 @@
     "status": "reviewed",
     "sourceHash": "383cdcda64b3217fd3901250e0bef28700be47f4d7b10ab487b79ea8c4078731",
     "translationHash": "5ccc6e2172fc638be52ac0af4ab7ef57f213113647f1b3e9d11389ec97180981"
-  },
-  "docs/search.md": {
-    "status": "reviewed",
-    "sourceHash": "d4f7e6985af04e9b79e966481d20cd19de9c72dfb285b4515bbdb8f010fc23a2",
-    "translationHash": "24150221d50eeb4403dcd3cacb322026a919300c8a76b376ce512a1fd1bc8ff8"
   },
   "docs/ui-kit/accessibility.md": {
     "status": "reviewed",

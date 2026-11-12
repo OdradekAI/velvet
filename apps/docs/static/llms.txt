@@ -62,7 +62,6 @@ Chinese routes use /zh-Hans/. See each page for audience and translation status.
 - /reference/ui-kit/components/primitives/state
 - /reference/ui-kit/components/primitives/tabs
 - /reference/ui-kit/components/primitives/text
-- /search
 - /ui-kit
 - /ui-kit/accessibility
 - /ui-kit/components/badge

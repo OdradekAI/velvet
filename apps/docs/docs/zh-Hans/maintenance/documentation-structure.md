@@ -27,7 +27,7 @@ title: 文档结构与维护
 | `apps/docs/reference-pages.json` | 构建、检查和索引共用的明确参考发布清单 |
 | `apps/docs/translation-status.json` | 英文源文与中文内容的审阅状态及 hash |
 
-`src/generated/page-metadata.json` 与 `static/search-index.json` 是忽略提交的构建投影；`static/llms.txt` 自动生成并提交。不能扫描整个 `docs/engineering` 或仓库来建立公开索引，未发布的工程记录和 scratch 资料不能因目录发现而进入站点。
+`src/generated/page-metadata.json` 是忽略提交的构建投影；`static/llms.txt` 自动生成并提交。本地搜索主题只在生产构建时索引已发布 HTML，并提供每种语言的 `/search` 路由。生成的索引保留在已忽略的构建产物中。不能扫描整个 `docs/engineering` 或仓库来建立公开索引，未发布的工程记录和 scratch 资料不能因目录发现而进入站点。
 
 ## 阅读路径与 URL
 
@@ -76,6 +76,6 @@ npm --prefix apps/docs run verify:release
 
 第一条命令安装文档演示依赖的真实 UI 依赖，不因此抽出 SDK package。文档 tsconfig 保持 `strict` 和 `isolatedModules` 开启。
 
-`Documentation checks` 在 PR 上以仓库只读权限运行，不部署。`Documentation Pages` 构建 main，部署权限仅授予 deploy job。两者 checkout Git 历史，使最后更新时间来自源文件提交，而非复制时间。未提交的新页面没有可靠历史时间。
+`Documentation checks` 在 PR 上以仓库只读权限运行，不部署。`GitHub Pages` 构建 main，部署权限仅授予 deploy job。两者 checkout Git 历史，使最后更新时间来自源文件提交，而非复制时间。未提交的新页面没有可靠历史时间。
 
-开发命令和支持的 Node 版本见 `apps/docs/README.md`。搜索和提示在 start/build 时生成；修改索引内容或翻译记录后重启开发服务器。
+开发命令和支持的 Node 版本见 `apps/docs/README.md`。提示在 start/build 时生成；修改翻译记录后重启开发服务器。搜索需要生产构建：内容变化后运行 `npm run build` 和 `npm run serve`，验证两个语言版本。应用专属的生成文件由 `apps/docs/.gitignore` 排除。

@@ -25,7 +25,7 @@ The docs app owns navigation, translation review metadata, local search projecti
 | `apps/docs/reference-pages.json` | Explicit public reference allow-list shared by build, checks and indexes |
 | `apps/docs/translation-status.json` | Review status and hashes for English source and Chinese content |
 
-`src/generated/page-metadata.json` and `static/search-index.json` are ignored build projections. `static/llms.txt` is generated and tracked. Never index all of `docs/engineering` or the repository: unpublished engineering records and scratch material must not enter the site by directory discovery.
+`src/generated/page-metadata.json` is an ignored build projection; `static/llms.txt` is generated and tracked. The local search theme indexes only published HTML during a production build and owns the `/search` route in each locale. Its generated indexes stay in the ignored build output. Never index all of `docs/engineering` or the repository: unpublished engineering records and scratch material must not enter the site by directory discovery.
 
 ## Reading paths and routes
 
@@ -74,6 +74,6 @@ npm --prefix apps/docs run verify:release
 
 The first command installs the real UI dependencies consumed by docs demos. No SDK package is extracted for that dependency. The docs tsconfig keeps `strict` and `isolatedModules` enabled.
 
-`Documentation checks` runs on PRs with read-only repository permissions; it does not deploy. `Documentation Pages` builds main and deploys with permissions scoped to its deploy job. Both check out Git history, so last-updated dates describe source commits rather than file-copy time. New uncommitted pages have no reliable historical timestamp.
+`Documentation checks` runs on PRs with read-only repository permissions; it does not deploy. `GitHub Pages` builds main and deploys with permissions scoped to its deploy job. Both check out Git history, so last-updated dates describe source commits rather than file-copy time. New uncommitted pages have no reliable historical timestamp.
 
-See `apps/docs/README.md` for development commands and supported Node version. Search and notices are regenerated at start/build; restart the development server after changing indexed content or translation records.
+See `apps/docs/README.md` for development commands and supported Node version. Notices are regenerated at start/build; restart the development server after changing translation records. Search requires a production build: run `npm run build` and `npm run serve` after content changes to verify both locales. Application-specific generated files are excluded by `apps/docs/.gitignore`.
