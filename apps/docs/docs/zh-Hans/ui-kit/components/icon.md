@@ -4,7 +4,7 @@ title: Icon
 sidebar_label: Icon
 ---
 
-import { IconPlayground } from '@site/src/components/UiKitPrimitivePlaygrounds';
+import { IconPlayground } from '@site/src/components/playgrounds/icon';
 
 # VelvetIcon
 
@@ -20,7 +20,7 @@ import { IconPlayground } from '@site/src/components/UiKitPrimitivePlaygrounds';
 | --- | --- | --- | --- |
 | `name` | `VelvetIconName` | — | 宿主 glyph 名称 |
 | `children` | `ReactNode` | — | 自定义 renderer 内容 |
-| `label` | `string` | — | 可访问名称，存在时 role 为 `img` |
+| `label` | `string` | — | 可访问名称，存在时添加 `role="img"` |
 | `className` | `string` | — | 宿主允许的语义样式扩展 |
 | `apiVersion` | `string` | `1.0` | UI Kit contract 版本标记 |
 | `testId` | `string` | — | qualification 使用的稳定标识 |

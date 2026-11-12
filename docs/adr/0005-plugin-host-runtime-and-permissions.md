@@ -92,7 +92,7 @@ a separate bounded extraction adapter and then reuse the directory-package
 transaction; other archive formats and non-localization binary resources remain
 future adapters over the same seam.
 
-The runtime declaration is one of `builtin`, `wasm` or `sidecar` in the alpha
+The runtime declaration is one of `built-in`, `wasm` or `sidecar` in the alpha
 manifest. A target manifest major also admits a declarative/no-runtime package
 for contributions that need no executable code; it must not use a dummy
 in-process adapter. `extensionKind` describes `ui`, `workspace` and/or

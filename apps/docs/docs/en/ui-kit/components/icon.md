@@ -4,7 +4,7 @@ title: Icon
 sidebar_label: Icon
 ---
 
-import { IconPlayground } from '@site/src/components/UiKitPrimitivePlaygrounds';
+import { IconPlayground } from '@site/src/components/playgrounds/icon';
 
 # VelvetIcon
 

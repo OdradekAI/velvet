@@ -1,0 +1,39 @@
+name: Documentation checks
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  docs:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            apps/docs/package-lock.json
+            apps/desktop/package-lock.json
+      - run: npm ci
+        working-directory: apps/desktop
+      - run: npm ci
+        working-directory: apps/docs
+      - name: Check docs and build both locales
+        run: npm run verify:release
+        working-directory: apps/docs
+        env:
+          DOCS_DEPLOY_TARGET: github-pages
+          DOCS_BASE_URL: /velvet/
+      - name: Run the documented first fixture
+        run: node examples/plugins/asset-inspector/run-demo.mjs

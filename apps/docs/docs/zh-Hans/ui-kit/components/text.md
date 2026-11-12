@@ -4,11 +4,11 @@ title: Text
 sidebar_label: Text
 ---
 
-import { TextPlayground } from '@site/src/components/UiKitPrimitivePlaygrounds';
+import { TextPlayground } from '@site/src/components/playgrounds/text';
 
 # VelvetText
 
-`VelvetText` 用于语义化文本和 tone wrapper。它让插件 surface 使用宿主的字体、颜色和 HTML 元素语义。
+`VelvetText` 用于语义化文本和 tone wrapper。可信宿主 UI 用它表达字体、颜色和 HTML 元素语义；隔离扩展消费主题投影并自行渲染文字。
 
 ## Demo
 

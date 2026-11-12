@@ -1,20 +1,18 @@
 ---
 id: testing
 title: Testing and qualification
-sidebar_label: Testing
 ---
 
 # Testing and qualification
 
-Platform contracts require schema, behavior, browser, and recovery evidence. UI Kit stories are executable evidence rather than static screenshots.
+The first fixture runs with Node alone. For the desktop/transport contract tests, prepare the repository once:
 
 ```sh
-cd apps/desktop
-npm run typecheck
-npm run generate:ui-kit-catalog
-npm test
-npm run qualify:ui-browser
-npm run verify:ui-kit
+npm --prefix apps/desktop ci
+npm --prefix apps/desktop run test:compile
+node apps/desktop/test/asset-inspector-demo.test.mjs
 ```
 
-Every cross-boundary capability should cover valid projection, rejection, cancellation or timeout, owner failure, cleanup, and migration or recovery.
+Choose the focused test linked by the capability guide. A successful exit proves the named fixture seam. Cover success, permission/version rejection, cancellation or timeout, stale results, owner failure and cleanup. Keep unrelated extensions and core state usable.
+
+Full repository gates, browser qualification and native release matrices belong to the [maintainer map](/maintenance) and [contract matrix](/reference/plugin-contract-matrix). Passing a local fixture does not qualify production package trust, a security sandbox or every OS/WebView.

@@ -3,52 +3,56 @@
     "message": "Next",
     "description": "The label for version current"
   },
-  "sidebar.docs.category.Plugin Platform": {
-    "message": "插件平台",
-    "description": "The label for category 'Plugin Platform' in sidebar 'docs'"
-  },
-  "sidebar.docs.category.Maintainer guide": {
-    "message": "维护者指南",
-    "description": "The label for category 'Maintainer guide' in sidebar 'docs'"
-  },
   "sidebar.docs.category.Get started": {
     "message": "开始使用",
     "description": "The label for category 'Get started' in sidebar 'docs'"
   },
-  "sidebar.docs.category.Contributions": {
-    "message": "插件贡献",
-    "description": "The label for category 'Contributions' in sidebar 'docs'"
+  "sidebar.docs.category.Concepts": {
+    "message": "核心概念",
+    "description": "The label for category 'Concepts' in sidebar 'docs'"
   },
-  "sidebar.docs.category.UI surfaces": {
-    "message": "UI surface",
-    "description": "The label for category 'UI surfaces' in sidebar 'docs'"
+  "sidebar.docs.category.Build with capabilities": {
+    "message": "按任务开发",
+    "description": "The label for category 'Build with capabilities' in sidebar 'docs'"
   },
-  "sidebar.docs.category.UI Kit": {
-    "message": "UI Kit",
-    "description": "The label for category 'UI Kit' in sidebar 'docs'"
+  "sidebar.docs.link.API and protocol index": {
+    "message": "API 与协议索引",
+    "description": "The label for link 'API and protocol index' in sidebar 'docs', linking to '/reference/plugin-api-index'"
   },
-  "sidebar.docs.category.Components": {
-    "message": "组件",
-    "description": "The label for category 'Components' in sidebar 'docs'"
+  "sidebar.ui.category.Primitives": {
+    "message": "基础组件",
+    "description": "The label for category 'Primitives' in sidebar 'ui'"
   },
-  "sidebar.docs.link.Manifest reference": {
-    "message": "Manifest 参考",
-    "description": "The label for link 'Manifest reference' in sidebar 'docs', linking to '/reference/plugin-manifest-v1'"
+  "sidebar.ui.category.Host overlays": {
+    "message": "宿主浮层",
+    "description": "The label for category 'Host overlays' in sidebar 'ui'"
   },
-  "sidebar.docs.link.Contract matrix": {
-    "message": "Contract matrix",
-    "description": "The label for link 'Contract matrix' in sidebar 'docs', linking to '/reference/plugin-contract-matrix'"
+  "sidebar.ui.link.Host component contracts": {
+    "message": "宿主组件契约",
+    "description": "The label for link 'Host component contracts' in sidebar 'ui', linking to '/reference/ui-kit-component-guide'"
   },
-  "sidebar.docs.link.All component manuals": {
-    "message": "全部组件手册",
-    "description": "The label for link 'All component manuals' in sidebar 'docs', linking to '/reference/ui-kit/components'"
+  "sidebar.ui.link.Third-party UI Bridge": {
+    "message": "第三方 UI Bridge",
+    "description": "The label for link 'Third-party UI Bridge' in sidebar 'ui', linking to '/platform/ui-bridge'"
   },
-  "sidebar.docs.link.UI Kit contract": {
-    "message": "UI Kit contract",
-    "description": "The label for link 'UI Kit contract' in sidebar 'docs', linking to '/reference/ui-kit-contract-v1'"
+  "sidebar.maintainers.link.Registry implementation": {
+    "message": "Registry 实现",
+    "description": "The label for link 'Registry implementation' in sidebar 'maintainers', linking to '/reference/plugin-registry-v1'"
   },
-  "sidebar.docs.link.Component guide": {
-    "message": "组件指南",
-    "description": "The label for link 'Component guide' in sidebar 'docs', linking to '/reference/ui-kit-component-guide'"
+  "sidebar.maintainers.link.Contract validation matrix": {
+    "message": "契约验证矩阵",
+    "description": "The label for link 'Contract validation matrix' in sidebar 'maintainers', linking to '/reference/plugin-contract-matrix'"
+  },
+  "sidebar.maintainers.link.Ecosystem qualification": {
+    "message": "生态发布门禁",
+    "description": "The label for link 'Ecosystem qualification' in sidebar 'maintainers', linking to '/reference/plugin-ecosystem-qualification'"
+  },
+  "sidebar.maintainers.link.UI action coverage": {
+    "message": "UI 动作覆盖",
+    "description": "The label for link 'UI action coverage' in sidebar 'maintainers', linking to '/reference/ui-kit/action-coverage'"
+  },
+  "sidebar.maintainers.link.Architecture decisions": {
+    "message": "架构决策",
+    "description": "The label for link 'Architecture decisions' in sidebar 'maintainers', linking to 'https://github.com/OdradekAI/velvet/tree/main/docs/adr'"
   }
 }

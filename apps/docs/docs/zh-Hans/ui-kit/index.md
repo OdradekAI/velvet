@@ -6,6 +6,8 @@ sidebar_label: UI Kit 概览
 
 # UI Kit
 
+这里的 React 示例面向可信宿主 UI。第三方作者从 [UI Bridge](/platform/ui-bridge) 开始，消费语义 token 和消息；当前没有已发布的 React SDK 包。
+
 UI Kit 是 Plugin Platform 的 UI 能力层。它服务于两个对象：
 
 1. 受信任的 first-party extension，通过 React wrapper 共享宿主视觉和交互实现。

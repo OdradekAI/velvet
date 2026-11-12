@@ -1,33 +1,18 @@
 ---
 id: ui-bridge
 title: UI Bridge
-sidebar_label: UI Bridge
 ---
 
 # UI Bridge
 
-UI Bridge 是 third-party UI surface 与宿主之间的框架无关边界。它把 UI 的渲染实现留给插件，把布局、焦点、Overlay、权限和生命周期留给宿主。
+Bridge 将隔离 surface 连接到宿主拥有的布局、焦点、overlay 和生命周期。它传递语义消息以及只读上下文、主题和 locale 投影，不暴露宿主 React 组件。
 
-## 宿主 → surface
+<span id="宿主--surface" className="velvet-doc-anchor" />
+<span id="surface--宿主" className="velvet-doc-anchor" />
 
-- `host.ready`
-- `host.context`
-- `host.theme`
-- `host.locale`
-- `host.resize`
-- `host.focus`
-- `host.dispose`
-- `host.error`
+- [连接 surface](../guides/isolated-ui)：时序、示例与验证。
+- [消息参考](/reference/ui-bridge-protocol-v1)：字段、版本、错误与销毁。
+- [主题和组件契约](/reference/ui-kit-contract-v1)：语义 token 与协商。
+- [安全边界](./security)：来源、会话和能力的执行责任。
 
-## Surface → 宿主
-
-- `surface.ready`
-- `surface.focus-request`
-- `surface.command`
-- `surface.overlay-request`
-- `surface.notification`
-- `surface.progress`
-- `surface.close`
-- `surface.error`
-
-消息版本、entrypoint、origin、token、size 和 failure 规则见 [UI Kit contract v1](/reference/ui-kit-contract-v1)。
+当前契约是仓库内 Alpha。存在 adapter 不代表已经验证生产 SDK 或所有原生 WebView。

@@ -1,18 +1,14 @@
 ---
 id: integrations
-title: 集成
-sidebar_label: 集成
+title: UI 集成选择
 ---
 
-# 集成
+# UI 集成选择
 
-平台按 surface 提供不同集成方式。
+<span id="集成" className="velvet-doc-anchor" />
 
-| 集成方式 | 适用对象 | 当前边界 |
-| --- | --- | --- |
-| Velvet React wrapper | 受信任的 first-party extension | 只允许使用 Velvet-owned wrapper |
-| iframe surface | third-party browser UI | origin、CSP、Bridge message validation |
-| Tauri child WebView | 经过宿主批准的本地 surface | 需要显式 capability 和 lifecycle cleanup |
-| Plain HTML / Vue / Svelte | isolated surface | 通过 framework-neutral Bridge 通信 |
+若宿主 Commands、菜单、通知和进度已满足任务，就使用这些能力。自定义 surface 是可选项。
 
-插件不要直接依赖宿主 Tailwind build、Radix type 或 React component。UI Kit 组件页提供 semantic props 和交互 contract，UI Bridge 页提供跨框架消息 contract。
+可信第一方 UI 使用[宿主 React wrapper](../ui-kit)。第三方 surface 渲染自己的内容，通过框架无关的 [Bridge](./ui-bridge) 接入。React、Vue、Svelte 和纯 HTML 是渲染选择，不是分别发布的 Velvet SDK。
+
+仓库有 iframe 和 Tauri child-WebView adapter，其 Alpha 和原生验证限制见[隔离 UI 指南](../guides/isolated-ui)。宿主 Tailwind class、Radix 类型、私有 DOM 和内部 React 组件不属于第三方契约。

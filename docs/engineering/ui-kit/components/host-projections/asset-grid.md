@@ -26,9 +26,9 @@ provide `aspectRatio`, `metadata` and `pinned`; those values are rendered as
 host-owned projection state. `metadata` is a React slot so the host can project
 tags, resolution, rating or extension details without making those fields part
 of the grid's selection state. Pinned state has an accessible marker but no
-implicit persistence action. Drag/drop is opt-in: when `onDragStart` and `onDrop` are
-provided, the component exposes native draggable cells and reports typed source
-and target ids. It does not persist ordering or read transport state.
+implicit persistence action. Drag/drop is opt-in: `onDragStart` enables native draggable cells and reports the source
+id; `onDrop` independently enables drop handling and reports typed source and
+target ids. It does not persist ordering or read transport state.
 
 `onSelect(id, additive, range)` reports the pointer modifier that produced the
 selection. The populated-library probe showed Shift-click selecting a
@@ -53,13 +53,13 @@ are intentionally outside this component's public API.
 
 `asset-grid/zoom-layout` is an integration story: `VelvetZoomControl` stays
 separate, and the host maps its value to `columns`. It records the observed
-Observed geometry checkpoints of eight columns at `180` and five at `230` without making
+geometry checkpoints of eight columns at `180` and five at `230` without making
 that mapping a public AssetGrid algorithm.
 
 The grid exposes `aria-multiselectable="true"` because selection modifiers are
 reported to the host. For `grid`, `square` and `list` layouts it also exposes
 `aria-rowcount`, `aria-colcount`, `aria-rowindex` and `aria-colindex` using the
-host-projected column count. `justified` and `waterfall` keep these metrics
+host-projected column count (with one column in `list` mode). `justified` and `waterfall` keep these metrics
 unset because their responsive geometry is not a stable public row/column
 contract. Waterfall preserves each item's aspect ratio and leaves column
 measurement to the host layout surface.
@@ -73,6 +73,8 @@ The current story runner provides deterministic fixture coverage. Required for o
 Unverified external behavior remains `unknown` until a runtime capture proves it.
 
 ## Validation
+
+Run from `apps/desktop`:
 
 ```sh
 npm run typecheck

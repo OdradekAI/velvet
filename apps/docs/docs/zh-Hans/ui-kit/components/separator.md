@@ -4,7 +4,7 @@ title: Separator
 sidebar_label: Separator
 ---
 
-import { SeparatorPlayground } from '@site/src/components/UiKitPrimitivePlaygrounds';
+import { SeparatorPlayground } from '@site/src/components/playgrounds/separator';
 
 # VelvetSeparator
 

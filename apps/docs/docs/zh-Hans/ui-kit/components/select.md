@@ -4,7 +4,7 @@ title: Select
 sidebar_label: Select
 ---
 
-import { SelectPlayground } from '@site/src/components/UiKitPrimitivePlaygrounds';
+import { SelectPlayground } from '@site/src/components/playgrounds/select';
 
 # VelvetSelect
 
@@ -27,7 +27,7 @@ import { SelectPlayground } from '@site/src/components/UiKitPrimitivePlaygrounds
 | `busy` | `boolean` | `false` | 设置 busy 语义并禁止选择 |
 | `ariaLabel` | `string` | — | 映射为原生 `aria-label` |
 | `describedBy` | `string` | — | 映射为原生 `aria-describedby` |
-| `ariaLive` | `off \| polite \| assertive` | — | 设置 live region 语义 |
+| `ariaLive` | `off \| polite \| assertive` | — | 公共类型已声明；当前 wrapper 未映射到原生 `aria-live` |
 | `apiVersion` | `string` | `1.0` | UI Kit contract 版本标记 |
 | `testId` | `string` | — | qualification 使用的稳定标识 |
 | `className` | `string` | — | 宿主允许的语义样式扩展 |
@@ -47,6 +47,8 @@ import { SelectPlayground } from '@site/src/components/UiKitPrimitivePlaygrounds
 ## 无障碍
 
 组件输出原生 `<select>`，保留 option 朗读、方向键选择和表单提交语义。页面应使用可见 `<label>` 关联控件，无法提供可见标签时使用 `ariaLabel`。多选控件应同时说明选择方式和可用选项数量。
+
+当前实现将 `ariaLive` 作为 camelCase 属性转发，没有映射成 `aria-live`；直接传入原生 `aria-live` 也会被公共属性投影覆盖。此实现缺口修复前，应通过独立动态播报区域提供通知。
 
 真实行为与 story、浏览器证据见 [Select manual](/reference/ui-kit/components/primitives/select)。
 

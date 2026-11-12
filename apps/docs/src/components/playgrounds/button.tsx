@@ -1,6 +1,7 @@
 import { useState } from 'react';
 
-import { VelvetButton } from '@velvet-desktop/app/ui/primitives/button';
+import { VelvetButton } from '@velvet-ui';
+import '../../css/ui-kit-showcase.css';
 
 export function ButtonPlayground() {
   const [label, setLabel] = useState('Save changes');

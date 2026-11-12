@@ -3,10 +3,6 @@
     "message": "Velvet Docs",
     "description": "The title in the navbar"
   },
-  "item.label.Plugin Platform": {
-    "message": "Plugin Platform",
-    "description": "Navbar item with label Plugin Platform"
-  },
   "item.label.API Reference": {
     "message": "API Reference",
     "description": "Navbar item with label API Reference"
@@ -14,5 +10,21 @@
   "item.label.GitHub": {
     "message": "GitHub",
     "description": "Navbar item with label GitHub"
+  },
+  "item.label.Plugin development": {
+    "message": "Plugin development",
+    "description": "Navbar item with label Plugin development"
+  },
+  "item.label.UI system": {
+    "message": "UI system",
+    "description": "Navbar item with label UI system"
+  },
+  "item.label.Maintainers": {
+    "message": "Maintainers",
+    "description": "Navbar item with label Maintainers"
+  },
+  "item.label.Search": {
+    "message": "Search",
+    "description": "Navbar item with label Search"
   }
 }

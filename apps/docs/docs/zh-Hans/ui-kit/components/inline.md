@@ -4,7 +4,7 @@ title: Inline
 sidebar_label: Inline
 ---
 
-import { InlinePlayground } from '@site/src/components/UiKitPrimitivePlaygrounds';
+import { InlinePlayground } from '@site/src/components/playgrounds/inline';
 
 # VelvetInline
 
@@ -26,7 +26,7 @@ import { InlinePlayground } from '@site/src/components/UiKitPrimitivePlaygrounds
 
 ## 状态与无障碍
 
-Inline 输出水平布局容器，不改变子元素的阅读顺序、焦点顺序或键盘行为。需要换行或复杂布局时使用 Stack 或宿主 projection。
+Inline 输出水平布局容器，不改变子元素的阅读顺序、焦点顺序或键盘行为。需要选择行或列方向时使用 Stack。这两个 wrapper 都没有换行属性，复杂布局由宿主组合层处理。
 
 真实行为见 [Inline manual](/reference/ui-kit/components/primitives/inline)。
 

@@ -9,6 +9,8 @@
 /apps/docs/node_modules/
 /apps/docs/.docusaurus/
 /apps/docs/build/
+/apps/docs/src/generated/
+/apps/docs/static/search-index.json
 .DS_Store
 .serena/
 .baoyu-skills/

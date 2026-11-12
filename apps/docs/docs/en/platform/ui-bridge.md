@@ -1,15 +1,15 @@
 ---
 id: ui-bridge
 title: UI Bridge
-sidebar_label: UI Bridge
 ---
 
 # UI Bridge
 
-The UI Bridge is the framework-neutral boundary between an isolated plugin surface and the host. Plugins own rendering. The host owns layout, focus, overlays, permissions, and lifecycle.
+The Bridge connects an isolated surface to host-owned layout, focus, overlays and lifecycle. It carries semantic messages and read-only context/theme/locale projections; it does not expose host React components.
 
-Host-to-surface messages include `host.ready`, `host.context`, `host.theme`, `host.locale`, `host.resize`, `host.focus`, `host.dispose`, and `host.error`.
+- [Connect a surface](../guides/isolated-ui): sequence, example and verification.
+- [Message reference](/reference/ui-bridge-protocol-v1): fields, versions, errors and disposal.
+- [Theme and component contract](/reference/ui-kit-contract-v1): semantic tokens and negotiation.
+- [Security boundaries](./security): origin, session and capability responsibilities.
 
-Surface-to-host messages include `surface.ready`, `surface.focus-request`, `surface.command`, `surface.overlay-request`, `surface.notification`, `surface.progress`, `surface.close`, and `surface.error`.
-
-Version, origin, entrypoint, token, and failure rules are defined in the [UI Kit contract](/reference/ui-kit-contract-v1).
+The current contract is an in-repository Alpha. The existence of an adapter does not qualify a production SDK or every native WebView.

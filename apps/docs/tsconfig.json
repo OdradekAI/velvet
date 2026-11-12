@@ -4,8 +4,12 @@
     "types": ["node"],
     "baseUrl": ".",
     "ignoreDeprecations": "6.0",
+    "strict": true,
+    "isolatedModules": true,
+    "resolveJsonModule": true,
     "paths": {
-      "@velvet-desktop/*": ["../desktop/src/*"]
+      "@site/*": ["./*"],
+      "@velvet-ui": ["../desktop/src/app/ui/index.ts"]
     }
   },
   "include": [

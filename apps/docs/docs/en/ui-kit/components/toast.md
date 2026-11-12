@@ -4,7 +4,7 @@ title: Toast
 sidebar_label: Toast
 ---
 
-import { ToastPlayground } from '@site/src/components/UiKitPrimitivePlaygrounds';
+import { ToastPlayground } from '@site/src/components/playgrounds/toast';
 
 # VelvetToastHost
 
@@ -24,7 +24,7 @@ import { ToastPlayground } from '@site/src/components/UiKitPrimitivePlaygrounds'
 
 ### VelvetToastItem
 
-`id`, `message`, `title`, `severity`, and optional `action` form the notification contract. `useVelvetToast` exposes `push` and `dismiss` through the Provider.
+`id` and `message` are required; `title`, `severity` and `action` are optional. `severity` defaults to `info`. `useVelvetToast` exposes `push(item: Omit<VelvetToastItem, 'id'>): string` and `dismiss(id: string): void` inside `VelvetToastProvider`; using the hook outside that provider throws. `push` assigns an ID. The host does not auto-dismiss notifications; callers control removal. An isolated extension requests notifications through the host protocol, not this React hook.
 
 ## States and accessibility
 

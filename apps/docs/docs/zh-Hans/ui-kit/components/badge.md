@@ -4,7 +4,7 @@ title: Badge
 sidebar_label: Badge
 ---
 
-import { BadgePlayground } from '@site/src/components/UiKitPrimitivePlaygrounds';
+import { BadgePlayground } from '@site/src/components/playgrounds/badge';
 
 # VelvetBadge
 

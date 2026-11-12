@@ -4,11 +4,11 @@ title: Tabs
 sidebar_label: Tabs
 ---
 
-import { TabsPlayground } from '@site/src/components/UiKitPrimitivePlaygrounds';
+import { TabsPlayground } from '@site/src/components/playgrounds/tabs';
 
 # VelvetTabs
 
-`VelvetTabs` switches content within one semantic region. It provides a tablist, roving tabindex, selection state, and keyboard navigation. The host or plugin surface composes the content panel.
+`VelvetTabs` switches content within one semantic region. It provides a tablist, roving tabindex, selection state, and keyboard navigation. The trusted wrapper caller composes the content panel.
 
 ## Demo
 
@@ -22,8 +22,8 @@ import { TabsPlayground } from '@site/src/components/UiKitPrimitivePlaygrounds';
 | `selectedId` | `string` | — | Selected tab id |
 | `onSelect` | `(id: string) => void` | — | Selection and keyboard navigation callback |
 | `ariaLabel` | `string` | `Tabs` | Accessible tablist name |
-| `describedBy` | `string` | — | Tablist description reference |
-| `ariaLive` | `off \| polite \| assertive` | — | Tablist live-region semantics |
+| `describedBy` | `string` | — | Outer-wrapper description reference |
+| `ariaLive` | `off \| polite \| assertive` | — | Outer-wrapper live-region semantics |
 | `apiVersion` | `string` | `1.0` | UI Kit contract version marker |
 | `testId` | `string` | — | Stable qualification hook |
 | `className` | `string` | — | Host-approved semantic style extension |
@@ -49,7 +49,7 @@ Click, Enter, and Space activate `onSelect`. Horizontal tabs use ArrowLeft and A
 
 ## Accessibility
 
-The component renders `role="tablist"` and `role="tab"`, exposes selection through `aria-selected`, and keeps one keyboard entry point through roving `tabIndex`. It does not create a `tabpanel`. The host must pair the selected tab with the panel, `aria-controls`, and `aria-labelledby`.
+The component renders `role="tablist"` and `role="tab"`, exposes selection through `aria-selected`, and keeps one keyboard entry point through roving `tabIndex`. It does not create a `tabpanel`. The host can label its panel with `aria-labelledby` referencing `velvet-tab-${id}`. The current `VelvetTab` shape has no panel ID or `aria-controls` field, so the wrapper does not wire that relationship. A valid enabled `selectedId` is required to retain a keyboard entry point; all tab IDs must also be unique across rendered tablists.
 
 Behavior, stories, and browser evidence are listed in the [Tabs manual](/reference/ui-kit/components/primitives/tabs).
 

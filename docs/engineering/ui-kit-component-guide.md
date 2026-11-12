@@ -27,8 +27,10 @@ implementation details and must not become extension or plugin contracts.
 - `UI_KIT_API_VERSION` is `1.0` for host component behavior.
 - `velvet.ui.theme/1` is the read-only semantic token snapshot sent to plugin
   surfaces.
-- UI bridge component contract `1` is negotiated before a surface becomes
-  active. An incompatible surface is failed and disposed in isolation.
+- UI bridge component contract `1` is advertised by the host. Registration
+  validates descriptor compatibility; an incompatible bridge or component version
+  reported in `surface.ready` fails and disposes the surface in isolation.
+  Activation does not wait for `surface.ready`.
 
 Additive fields and optional tokens are compatible. A changed token meaning,
 keyboard model or state owner requires a new major contract version and a
@@ -38,11 +40,11 @@ internals without changing the contract.
 ## Host components
 
 `VelvetButton`, `VelvetIconButton`, `VelvetInput`, `VelvetSelect`,
-`VelvetCheckbox`, `VelvetText`, `VelvetStack`, `VelvetInline`,
+`VelvetCheckbox`, `VelvetText`, `VelvetIcon`, `VelvetBadge`, `VelvetStack`, `VelvetInline`,
 `VelvetSeparator`, `VelvetTabs`, `VelvetProgress`, `VelvetState`,
 `VelvetToastProvider`, `VelvetToastHost`, `VelvetActivityBar`, `VelvetPane`,
 `VelvetPreviewHost`, `VelvetAssetGrid`, `VelvetDataTable`,
-`VelvetCommandPalette`, `VelvetQuickSearch`, `VelvetFilterFacetMenu`, `VelvetInspector` and `VelvetZoomControl` are
+`VelvetCommandPalette`, `VelvetQuickSearch`, `VelvetFilterPanel`, `VelvetFilterFacetMenu`, `VelvetInspector` and `VelvetZoomControl` are
 host-owned renderer components. `VelvetPanel`,
 `VelvetDialog` and `VelvetContextMenu` are the compatibility wrappers used by
 existing Workbench surfaces and now use the same token, focus and state rules.
@@ -69,7 +71,7 @@ apps/desktop/src/app/ui/
 
 `overlays/` owns the Dialog, Context Menu and Toast implementations, and
 `host-projections/` owns Panel, Activity Bar, Pane, PreviewHost, Inspector,
-AssetGrid, DataTable, FilterPanel, FilterFacetMenu, CommandPalette and ZoomControl. Radix dependencies stay behind the Velvet
+AssetGrid, DataTable, FilterPanel, FilterFacetMenu, CommandPalette, QuickSearch and ZoomControl. Radix dependencies stay behind the Velvet
 overlay wrappers. `legacy-components.tsx` is now a compatibility re-export
 barrel only.
 
@@ -91,8 +93,8 @@ behavior are involved.
 
 The unified UI Kit acceptance gate is `npm run verify:ui-kit` from
 `apps/desktop`. It runs typed compile/catalog checks, the Node/Happy DOM
-contract and story suite, the production build, and both real-browser
-qualification layers. The browser layer expects the Vite fixture server at
+contract and story suite, the production build, and the real-browser
+qualification fixtures. The browser layer expects the Vite fixture server at
 `http://127.0.0.1:5173`; `qualify:ui-browser` reuses an existing server or
 starts and cleans up a temporary one.
 CI sets `UI_BROWSER_ENGINE=playwright` and runs the same gate with a managed
@@ -133,7 +135,7 @@ generated output is `ui-kit-catalog.json`. Run
 story names; CI must fail if generation produces a diff.
 The action matrix is documented in
 `docs/engineering/ui-kit/action-coverage.md`; each scenario declares
-`scenario.covers`, while browser-only actions are published as
+`scenario.covers`, while browser-qualified actions are published as
 `browserActions` in the typed contract and catalog.
 
 High-impact host projections also publish a typed visual and behavior alignment
@@ -145,7 +147,7 @@ component contract test rejects drift between the typed contract and generated
 catalog.
 
 Host-owned surfaces include Activity Bar, Navigation, Context, Inspector,
-Operations, PreviewHost, global overlays and global shortcuts. Plugins can contribute to
+Operations, PreviewHost, global overlays and global shortcuts. Isolated plugins can contribute to
 those surfaces through registries and bridge requests, but cannot import the
 React components, change the Workbench grid, create a global portal or attach a
 document-level keyboard listener.

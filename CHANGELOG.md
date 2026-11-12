@@ -4,6 +4,14 @@ All notable changes to Velvet (白翎) are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- Organized documentation into plugin development, API/protocol, trusted UI and maintainer paths, with a runnable first fixture and local search.
+- Corrected bilingual Manifest and transport references and added translation review status, contract consistency checks and a documentation PR gate.
+- Completed all Chinese reference translations and reviewed every bilingual page against source contracts; documentation releases now require complete review and matching code examples, API types and defaults.
+
 ## [0.0.6] - 2026-11-07
 
 ### Added

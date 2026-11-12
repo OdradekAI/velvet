@@ -1,64 +1,38 @@
 # Velvet Docs
 
-This is the machine-readable entry point for the Velvet Plugin Platform documentation.
+In-repository Alpha contracts; no published external SDK. Host React UI is for trusted host code.
+Chinese routes use /zh-Hans/. See each page for audience and translation status.
 
-The default locale is English. The Chinese mirror uses the `/zh-Hans/` route prefix.
+## Published English routes
 
-## Current status
-
-- The repository contains an Alpha UI Kit contract and local qualification fixtures.
-- The external Plugin SDK, Marketplace ABI, and production WASM/sidecar runtime remain release gates.
-- Host React wrappers are first-party surfaces. Third-party UI uses the framework-neutral UI Bridge.
-
-## Plugin Platform
-
-- /platform/overview
-- /platform/quick-start
+- /
+- /guides/asset-analysis
+- /guides/commands-and-views
+- /guides/isolated-ui
+- /maintenance
+- /maintenance/documentation-structure
+- /platform/capabilities
 - /platform/choose-contribution
+- /platform/concepts
 - /platform/contributions
-- /platform/ui-bridge
-- /platform/security
-- /platform/testing
 - /platform/integrations
 - /platform/migration
-
-## Maintainer docs
-
-- /maintenance/documentation-structure
-
-### UI surfaces
-
-- /ui-kit
-- /ui-kit/showcase
-- /ui-kit/components/button
-- /ui-kit/components/input
-- /ui-kit/components/select
-- /ui-kit/components/tabs
-- /ui-kit/components/checkbox
-- /ui-kit/components/badge
-- /ui-kit/components/icon-button
-- /ui-kit/components/progress
-- /ui-kit/components/state
-- /ui-kit/components/icon
-- /ui-kit/components/text
-- /ui-kit/components/stack
-- /ui-kit/components/inline
-- /ui-kit/components/separator
-- /ui-kit/components/dialog
-- /ui-kit/components/context-menu
-- /ui-kit/components/toast
-- /ui-kit/customization
-- /ui-kit/accessibility
-
-### UI Kit reference
-
-- /reference/ui-kit-contract-v1
+- /platform/overview
+- /platform/quick-start
+- /platform/security
+- /platform/testing
+- /platform/ui-bridge
+- /reference/plugin-api-index
+- /reference/plugin-contract-matrix
+- /reference/plugin-developer-guide
+- /reference/plugin-ecosystem-qualification
+- /reference/plugin-manifest-v1
+- /reference/plugin-registry-v1
+- /reference/ui-bridge-protocol-v1
 - /reference/ui-kit-component-guide
-- /reference/ui-kit/components
+- /reference/ui-kit-contract-v1
 - /reference/ui-kit/action-coverage
-
-#### Host projections
-
+- /reference/ui-kit/components
 - /reference/ui-kit/components/host-projections/activity-bar
 - /reference/ui-kit/components/host-projections/asset-grid
 - /reference/ui-kit/components/host-projections/command-palette
@@ -71,10 +45,42 @@ The default locale is English. The Chinese mirror uses the `/zh-Hans/` route pre
 - /reference/ui-kit/components/host-projections/preview-host
 - /reference/ui-kit/components/host-projections/quick-search
 - /reference/ui-kit/components/host-projections/zoom-control
-
-### Plugin Platform reference
-
-- /reference/plugin-manifest-v1
-- /reference/plugin-developer-guide
-- /reference/plugin-contract-matrix
-- /reference/plugin-ecosystem-qualification
+- /reference/ui-kit/components/overlays/context-menu
+- /reference/ui-kit/components/overlays/dialog
+- /reference/ui-kit/components/overlays/toast
+- /reference/ui-kit/components/primitives/badge
+- /reference/ui-kit/components/primitives/button
+- /reference/ui-kit/components/primitives/checkbox
+- /reference/ui-kit/components/primitives/icon
+- /reference/ui-kit/components/primitives/icon-button
+- /reference/ui-kit/components/primitives/inline
+- /reference/ui-kit/components/primitives/input
+- /reference/ui-kit/components/primitives/progress
+- /reference/ui-kit/components/primitives/select
+- /reference/ui-kit/components/primitives/separator
+- /reference/ui-kit/components/primitives/stack
+- /reference/ui-kit/components/primitives/state
+- /reference/ui-kit/components/primitives/tabs
+- /reference/ui-kit/components/primitives/text
+- /search
+- /ui-kit
+- /ui-kit/accessibility
+- /ui-kit/components/badge
+- /ui-kit/components/button
+- /ui-kit/components/checkbox
+- /ui-kit/components/context-menu
+- /ui-kit/components/dialog
+- /ui-kit/components/icon
+- /ui-kit/components/icon-button
+- /ui-kit/components/inline
+- /ui-kit/components/input
+- /ui-kit/components/progress
+- /ui-kit/components/select
+- /ui-kit/components/separator
+- /ui-kit/components/stack
+- /ui-kit/components/state
+- /ui-kit/components/tabs
+- /ui-kit/components/text
+- /ui-kit/components/toast
+- /ui-kit/customization
+- /ui-kit/showcase

@@ -7,11 +7,11 @@ import remains available from `apps/desktop/src/app/ui/index.ts`.
 ## Contract
 
 - **Props:** `title`, `surface`, `children`
-- **States:** panel, raised
+- **States:** panel, raised, overlay
 - **Contract:** `apps/desktop/src/app/ui/contracts/host-projections/panel.contract.ts`
-- **Stories:** `apps/desktop/src/app/ui/stories/overlays/panel.stories.tsx`
+- **Stories:** `apps/desktop/src/app/ui/stories/host-projections/panel.stories.tsx`
 - **Host boundary:** layout, overlay, focus and projection state remain host-owned.
-- **Accessibility:** named `region` with a linked heading and explicit surface state
+- **Accessibility:** named `region` using `ariaLabel`, a linked heading when a title is supplied, or the default name `Panel`; explicit surface state
 
 The component contract is semantic. Radix types, private DOM structure, Tailwind
 classes and Workbench implementation details are not public API.
@@ -29,6 +29,8 @@ The current story runner provides deterministic fixture coverage. Required for o
 Unverified external behavior remains `unknown` until a runtime capture proves it.
 
 ## Validation
+
+Run from `apps/desktop`:
 
 ```sh
 npm run typecheck

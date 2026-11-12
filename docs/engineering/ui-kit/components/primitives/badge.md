@@ -10,11 +10,15 @@ import { VelvetBadge } from './app/ui/index.js';
 ## Contract
 
 - **Props:** `children`, `tone`, `className`
-- **State:** default, tones
-- **Owner:** see `apps/desktop/src/app/ui/contracts/primitives/badge.contract.ts`.
-- **Slots:** the contract file lists the supported child/data slots.
-- **Actions:** No semantic action; this component preserves child semantics.
-- **Keyboard and accessibility:** No keyboard behavior is introduced by this layout or display component.
+- **States:** `default`, `tone`
+- **Owner:** `component`; see `apps/desktop/src/app/ui/contracts/primitives/badge.contract.ts`.
+- **Slots:** `children`.
+- **Actions:** No semantic action is defined.
+- **Keyboard and accessibility:** No keyboard behavior is introduced; child semantics are preserved.
+
+`children: ReactNode` is required. `tone` is `'neutral' | 'info' | 'success' | 'warning' | 'danger'` and defaults to `'neutral'`. The wrapper renders a non-focusable span; it does not announce status changes automatically.
+
+The wrapper also accepts `UiCommonProps`: `apiVersion` (default `'1.0'`), `testId`, `ariaLabel`, `describedBy`, `disabled`, `busy`, `ariaLive?: 'off' | 'polite' | 'assertive'` and `data-*` metadata. See `apps/desktop/src/app/ui/internal/types.ts` and `apps/desktop/src/app/ui/internal/ui-data-props.ts`; these props do not imply uniform disabling behavior across display and interactive components. `className` is supported.
 
 The contract is semantic. React implementation details, Tailwind classes, Radix
 attributes and private DOM structure are not public API.
@@ -37,8 +41,12 @@ The executable stories are in
 
 ## Validation
 
+Run from `apps/desktop`:
+
 ```sh
 npm run typecheck
 npm run generate:ui-kit-catalog
 npm test
 ```
+
+See [VelvetBadge API and Playground](/ui-kit/components/badge) for interactive examples and prop controls.

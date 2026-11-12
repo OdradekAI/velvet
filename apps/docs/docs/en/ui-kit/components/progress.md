@@ -4,7 +4,7 @@ title: Progress
 sidebar_label: Progress
 ---
 
-import { ProgressPlayground } from '@site/src/components/UiKitPrimitivePlaygrounds';
+import { ProgressPlayground } from '@site/src/components/playgrounds/progress';
 
 # VelvetProgress
 

@@ -10,21 +10,21 @@ Workbench host.
 - **Props:** `title`, `selectedCount`, `preview`, `fields`, `sections`, `palette`, `emptyMessage`, `onFieldChange`, `onSave`, `onRetry`, `saveState`, `saveError`, `pinned`, `onPin`, `onOpen`, `onSectionToggle`, `children`
 - **States:** empty, single, multiple, pinned, editing, saving, saved, error, cancelled, grouped, palette, preview-landscape, preview-portrait, no-preview
 - **Actions:** pin, open, edit, save, retry, toggle-section
-- **Slots:** preview, metadata, actions, children
+- **Slots:** preview, metadata, sections, palette, actions, children
 - **Contract:** `apps/desktop/src/app/ui/contracts/host-projections/inspector.contract.ts`
 - **Stories:** `apps/desktop/src/app/ui/stories/host-projections/inspector.stories.tsx`
 - **Qualification:** both Node/Happy DOM and real browser
 
 `selectedCount` is a host projection. The component does not inspect the Asset
-store or derive selection itself. Multiple selection announces a compact selected
+store or derive selection itself. Multiple selection displays a compact selected
 count. Editable fields are controlled through
 `onFieldChange`; save state and validation messages come from the host. The
 component does not persist edits or infer save success. `sections` supplies
 labelled, host-expandable field groups, while `palette` renders precomputed
 color ratios supplied by the host as a compact swatch pill; the renderer never
-inspects files or calculates colors. Preview content is constrained to a
-200px-high fit region and preserves the supplied asset aspect ratio. Landscape
-and portrait assets use the same slot; `noPreview` assets omit the slot while
+inspects files or calculates colors. The preview region has a 200px minimum height; its content is constrained to
+a 200px maximum height and preserves the supplied asset aspect ratio. Landscape
+and portrait assets use the same slot; assets without preview content omit the slot while
 keeping metadata visible. The host may render a multi-selection summary without
 preview content.
 
@@ -49,9 +49,11 @@ The qualification fixture exposes four host-owned scenarios with stable test
 IDs: `inspector-scenario-landscape`, `inspector-scenario-portrait`,
 `inspector-scenario-no-preview` and `inspector-scenario-multiple`. The Playwright
 and CUA browser runners assert selection mode, preview presence, aspect ratio,
-section count, palette count and the selected-count announcement for each.
+section count, palette count and the selected-count text for each.
 
 ## Validation
+
+Run from `apps/desktop`:
 
 ```sh
 npm run typecheck

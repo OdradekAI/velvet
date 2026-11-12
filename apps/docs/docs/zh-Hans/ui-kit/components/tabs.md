@@ -4,11 +4,11 @@ title: Tabs
 sidebar_label: Tabs
 ---
 
-import { TabsPlayground } from '@site/src/components/UiKitPrimitivePlaygrounds';
+import { TabsPlayground } from '@site/src/components/playgrounds/tabs';
 
 # VelvetTabs
 
-`VelvetTabs` 用于在同一语义区域内切换内容。它提供 tablist、roving tabindex、选中状态和键盘导航，内容 panel 仍由宿主或插件 surface 负责组合。
+`VelvetTabs` 用于在同一语义区域内切换内容。它提供 tablist、roving tabindex、选中状态和键盘导航，内容面板由可信 wrapper 的调用方组合。
 
 ## Demo
 
@@ -22,8 +22,8 @@ import { TabsPlayground } from '@site/src/components/UiKitPrimitivePlaygrounds';
 | `selectedId` | `string` | — | 当前选中 Tab 的 id |
 | `onSelect` | `(id: string) => void` | — | 选中或键盘导航回调 |
 | `ariaLabel` | `string` | `Tabs` | tablist 的可访问名称 |
-| `describedBy` | `string` | — | tablist 的说明节点引用 |
-| `ariaLive` | `off \| polite \| assertive` | — | tablist 的 live region 语义 |
+| `describedBy` | `string` | — | 外层 wrapper 的说明节点引用 |
+| `ariaLive` | `off \| polite \| assertive` | — | 外层 wrapper 的动态播报语义 |
 | `apiVersion` | `string` | `1.0` | UI Kit contract 版本标记 |
 | `testId` | `string` | — | qualification 使用的稳定标识 |
 | `className` | `string` | — | 宿主允许的语义样式扩展 |
@@ -49,7 +49,7 @@ import { TabsPlayground } from '@site/src/components/UiKitPrimitivePlaygrounds';
 
 ## 无障碍
 
-组件输出 `role="tablist"` 和 `role="tab"`，使用 `aria-selected` 表达当前状态，并通过 roving `tabIndex` 保持单一键盘入口。组件本身不生成 `tabpanel`，宿主必须将选中 Tab 与对应内容区域、`aria-controls` 和 `aria-labelledby` 组合起来。
+组件输出 `role="tablist"` 和 `role="tab"`，使用 `aria-selected` 表达当前状态，并通过 roving `tabIndex` 保持单一键盘入口。组件本身不生成 `tabpanel`，宿主可以用 `aria-labelledby` 引用 `velvet-tab-${id}`，为对应面板命名。当前 `VelvetTab` 没有 panel ID 或 `aria-controls` 字段，wrapper 不会建立该关系。必须提供有效且可用的 `selectedId` 才能保留键盘入口；所有 Tab ID 在已渲染的多个 tablist 之间也必须唯一。
 
 真实行为与 story、浏览器证据见 [Tabs manual](/reference/ui-kit/components/primitives/tabs)。
 

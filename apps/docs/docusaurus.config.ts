@@ -1,7 +1,7 @@
-import { stat } from 'node:fs/promises';
 import path from 'node:path';
 
-import type { Config, VcsConfig } from '@docusaurus/types';
+import type { Config } from '@docusaurus/types';
+import referencePages from './reference-pages.json';
 
 const siteDirectory = __dirname;
 const deployTarget = process.env.DOCS_DEPLOY_TARGET ?? 'local';
@@ -20,31 +20,6 @@ const docsContentPath = path.resolve(siteDirectory, 'docs', contentLocaleDirecto
 const referenceContentPath = currentLocale === 'zh-Hans'
   ? path.resolve(siteDirectory, 'reference/zh-Hans')
   : path.resolve(siteDirectory, '../../docs/engineering');
-const referenceInclude = [
-  'ui-kit/**/*.md',
-  'ui-kit-contract-v1.md',
-  'ui-kit-component-guide.md',
-  'plugin-developer-guide.md',
-  'plugin-manifest-v1.md',
-  'plugin-registry-v1.md',
-  'plugin-contract-matrix.md',
-  'plugin-ecosystem-qualification.md',
-];
-
-async function readFileMtime(filePath: string) {
-  try {
-    const fileStats = await stat(filePath);
-    return { timestamp: fileStats.mtimeMs, author: '' };
-  } catch {
-    return null;
-  }
-}
-
-const filesystemVcs: VcsConfig = {
-  initialize: () => {},
-  getFileCreationInfo: readFileMtime,
-  getFileLastUpdateInfo: readFileMtime,
-};
 
 const desktopUiAliasPlugin = function () {
   return {
@@ -56,7 +31,7 @@ const desktopUiAliasPlugin = function () {
             '.js': ['.ts', '.tsx', '.js'],
           },
           alias: {
-            '@velvet-desktop': path.resolve(siteDirectory, '../desktop/src'),
+            '@velvet-ui$': path.resolve(siteDirectory, '../desktop/src/app/ui/index.ts'),
           },
         },
       };
@@ -73,14 +48,14 @@ const config: Config = {
   organizationName: 'OdradekAI',
   projectName: 'velvet',
   onBrokenLinks: 'throw',
+  onBrokenAnchors: 'throw',
   markdown: {
     hooks: {
-      onBrokenMarkdownLinks: 'warn',
+      onBrokenMarkdownLinks: 'throw',
     },
   },
   future: {
     v4: true,
-    experimental_vcs: filesystemVcs,
     faster: {
       rspackPersistentCache: false,
     },
@@ -112,7 +87,7 @@ const config: Config = {
         path: referenceContentPath,
         routeBasePath: 'reference',
         sidebarPath: path.resolve(siteDirectory, 'sidebars-reference.ts'),
-        include: referenceInclude,
+        include: referencePages,
         showLastUpdateTime: true,
       },
     ],
@@ -129,7 +104,7 @@ const config: Config = {
         {
           type: 'docSidebar',
           sidebarId: 'docs',
-          label: 'Plugin Platform',
+          label: 'Plugin development',
           position: 'left',
         },
         {
@@ -139,6 +114,19 @@ const config: Config = {
           label: 'API Reference',
           position: 'left',
         },
+        {
+          type: 'docSidebar',
+          sidebarId: 'ui',
+          label: 'UI system',
+          position: 'left',
+        },
+        {
+          type: 'docSidebar',
+          sidebarId: 'maintainers',
+          label: 'Maintainers',
+          position: 'left',
+        },
+        { to: '/search', label: 'Search', position: 'right' },
         {
           href: 'https://github.com/OdradekAI/velvet',
           label: 'GitHub',

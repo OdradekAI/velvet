@@ -10,11 +10,13 @@ import { VelvetSeparator } from './app/ui/index.js';
 ## Contract
 
 - **Props:** `orientation`
-- **State:** horizontal, vertical
-- **Owner:** see `apps/desktop/src/app/ui/contracts/primitives/separator.contract.ts`.
-- **Slots:** the contract file lists the supported child/data slots.
-- **Actions:** No semantic action; this component preserves child semantics.
-- **Keyboard and accessibility:** No keyboard behavior is introduced by this layout or display component.
+- **States:** `horizontal`, `vertical`
+- **Owner:** `component`; see `apps/desktop/src/app/ui/contracts/primitives/separator.contract.ts`.
+- **Slots:** none.
+- **Actions:** No semantic action is defined.
+- **Keyboard and accessibility:** The non-focusable divider renders `role="separator"` and `aria-orientation`. It introduces no keyboard behavior.
+
+The sole prop is `orientation?: 'horizontal' | 'vertical'`, defaulting to `'horizontal'`. This wrapper does not accept `UiCommonProps`, `children` or `className`.
 
 The contract is semantic. React implementation details, Tailwind classes, Radix
 attributes and private DOM structure are not public API.
@@ -37,8 +39,12 @@ The executable stories are in
 
 ## Validation
 
+Run from `apps/desktop`:
+
 ```sh
 npm run typecheck
 npm run generate:ui-kit-catalog
 npm test
 ```
+
+See [VelvetSeparator API and Playground](/ui-kit/components/separator) for interactive examples and prop controls.

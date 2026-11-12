@@ -4,7 +4,7 @@ title: Input
 sidebar_label: Input
 ---
 
-import { InputPlayground } from '@site/src/components/UiKitPrimitivePlaygrounds';
+import { InputPlayground } from '@site/src/components/playgrounds/input';
 
 # VelvetInput
 
@@ -27,7 +27,7 @@ import { InputPlayground } from '@site/src/components/UiKitPrimitivePlaygrounds'
 | `busy` | `boolean` | `false` | 设置 busy 语义并禁止编辑 |
 | `ariaLabel` | `string` | — | 映射为原生 `aria-label` |
 | `describedBy` | `string` | — | 映射为原生 `aria-describedby` |
-| `ariaLive` | `off \| polite \| assertive` | — | 设置 live region 语义 |
+| `ariaLive` | `off \| polite \| assertive` | — | 公共类型已声明；当前 wrapper 未映射到原生 `aria-live` |
 | `apiVersion` | `string` | `1.0` | UI Kit contract 版本标记 |
 | `testId` | `string` | — | qualification 使用的稳定标识 |
 | `className` | `string` | — | 宿主允许的语义样式扩展 |
@@ -43,11 +43,13 @@ import { InputPlayground } from '@site/src/components/UiKitPrimitivePlaygrounds'
 - `busy`
 - `change`
 
-`value` 和 `defaultValue` 分别对应受控与非受控用法。`busy` 会设置 `aria-busy="true"` 并阻止编辑。输入事件通过 `onChange` 返回给宿主或插件 surface。
+`value` 和 `defaultValue` 分别对应受控与非受控用法。`busy` 会设置 `aria-busy="true"` 并阻止编辑。输入事件通过 `onChange` 返回给可信 wrapper 的调用方。
 
 ## 无障碍
 
 组件输出原生 `<input>`，保留文本编辑、Tab 聚焦和浏览器键盘行为。页面应使用可见 `<label>` 关联输入，无法提供可见标签时再使用 `ariaLabel`。错误、帮助和格式说明通过 `describedBy` 关联到说明节点。
+
+当前实现将 `ariaLive` 作为 camelCase 属性转发，没有映射成 `aria-live`；直接传入原生 `aria-live` 也会被公共属性投影覆盖。此实现缺口修复前，应通过独立动态播报区域提供通知。
 
 真实行为与 story、浏览器证据见 [Input manual](/reference/ui-kit/components/primitives/input)。
 

@@ -4,7 +4,7 @@ title: Toast
 sidebar_label: Toast
 ---
 
-import { ToastPlayground } from '@site/src/components/UiKitPrimitivePlaygrounds';
+import { ToastPlayground } from '@site/src/components/playgrounds/toast';
 
 # VelvetToastHost
 
@@ -24,7 +24,7 @@ import { ToastPlayground } from '@site/src/components/UiKitPrimitivePlaygrounds'
 
 ### VelvetToastItem
 
-`id`、`message`、`title`、`severity` 和可选 `action` 构成通知 contract。`useVelvetToast` 通过 Provider 提供 `push` 和 `dismiss`。
+`id` 和 `message` 必填，`title`、`severity`、`action` 可选，`severity` 默认为 `info`。`useVelvetToast` 在 `VelvetToastProvider` 内提供 `push(item: Omit<VelvetToastItem, 'id'>): string` 和 `dismiss(id: string): void`；在该 provider 外使用会抛错。`push` 分配 ID，宿主不会自动移除通知，由调用方控制移除。隔离扩展通过宿主协议请求通知，不调用此 React hook。
 
 ## 状态与无障碍
 

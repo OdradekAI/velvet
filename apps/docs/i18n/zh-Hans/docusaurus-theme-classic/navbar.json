@@ -3,10 +3,6 @@
     "message": "Velvet Docs",
     "description": "The title in the navbar"
   },
-  "item.label.Plugin Platform": {
-    "message": "插件平台",
-    "description": "Navbar item with label Plugin Platform"
-  },
   "item.label.API Reference": {
     "message": "API 参考",
     "description": "Navbar item with label API Reference"
@@ -14,5 +10,21 @@
   "item.label.GitHub": {
     "message": "GitHub",
     "description": "Navbar item with label GitHub"
+  },
+  "item.label.Plugin development": {
+    "message": "插件开发",
+    "description": "Navbar item with label Plugin development"
+  },
+  "item.label.UI system": {
+    "message": "UI 系统",
+    "description": "Navbar item with label UI system"
+  },
+  "item.label.Maintainers": {
+    "message": "维护者",
+    "description": "Navbar item with label Maintainers"
+  },
+  "item.label.Search": {
+    "message": "搜索",
+    "description": "Navbar item with label Search"
   }
 }

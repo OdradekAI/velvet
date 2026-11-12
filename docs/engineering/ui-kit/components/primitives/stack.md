@@ -10,11 +10,15 @@ import { VelvetStack } from './app/ui/index.js';
 ## Contract
 
 - **Props:** `children`, `direction`, `gap`, `className`
-- **State:** default, directions
-- **Owner:** see `apps/desktop/src/app/ui/contracts/primitives/stack.contract.ts`.
-- **Slots:** the contract file lists the supported child/data slots.
-- **Actions:** No semantic action; this component preserves child semantics.
-- **Keyboard and accessibility:** No keyboard behavior is introduced by this layout or display component.
+- **States:** `default`, `direction`, `gap`
+- **Owner:** `component`; see `apps/desktop/src/app/ui/contracts/primitives/stack.contract.ts`.
+- **Slots:** `children`.
+- **Actions:** No semantic action is defined.
+- **Keyboard and accessibility:** No keyboard behavior is introduced; child reading order, focus order and semantics are preserved.
+
+`children: ReactNode` is required. `direction` is `'column' | 'row'` and defaults to `'column'`; `gap` is `'none' | 'xs' | 'sm' | 'md' | 'lg'` and defaults to `'md'`. The component owns presentation only and does not reorder children.
+
+The wrapper also accepts `UiCommonProps`: `apiVersion` (default `'1.0'`), `testId`, `ariaLabel`, `describedBy`, `disabled`, `busy`, `ariaLive?: 'off' | 'polite' | 'assertive'` and `data-*` metadata. See `apps/desktop/src/app/ui/internal/types.ts` and `apps/desktop/src/app/ui/internal/ui-data-props.ts`; these props do not imply uniform disabling behavior across display and interactive components. `className` is supported.
 
 The contract is semantic. React implementation details, Tailwind classes, Radix
 attributes and private DOM structure are not public API.
@@ -37,8 +41,12 @@ The executable stories are in
 
 ## Validation
 
+Run from `apps/desktop`:
+
 ```sh
 npm run typecheck
 npm run generate:ui-kit-catalog
 npm test
 ```
+
+See [VelvetStack API and Playground](/ui-kit/components/stack) for interactive examples and prop controls.

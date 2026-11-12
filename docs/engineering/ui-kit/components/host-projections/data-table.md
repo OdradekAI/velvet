@@ -6,7 +6,7 @@ import remains available from `apps/desktop/src/app/ui/index.ts`.
 
 ## Contract
 
-- **Props:** `rows`, `columns`, `selectedId`, `sort`, `onSelect`, `onSort`, `emptyMessage`
+- **Props:** `rows`, `columns`, `rowId`, `selectedId`, `sort`, `onSelect`, `onSort`, `emptyMessage`
 - **States:** default, selected, sortable, empty
 - **Contract:** `apps/desktop/src/app/ui/contracts/host-projections/data-table.contract.ts`
 - **Stories:** `default`, `selected`, `sort-direction`, `empty`
@@ -24,12 +24,16 @@ implementation details are not public API.
 
 - `data-table/default`
 - `data-table/selected`
+- `data-table/sort-direction`
+- `data-table/empty`
 
 
 The current story runner provides deterministic fixture coverage. Required for overlays and host projections: run the real-browser qualification fixture when changing focus, portal, geometry or host projection behavior.
 Unverified external behavior remains `unknown` until a runtime capture proves it.
 
 ## Validation
+
+Run from `apps/desktop`:
 
 ```sh
 npm run typecheck

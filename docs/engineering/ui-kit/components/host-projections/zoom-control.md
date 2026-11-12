@@ -18,16 +18,19 @@ the component does not persist settings or resize content by itself.
 
 ## Evidence boundary
 
-The qualification fixture exposes an `AXSlider` with increment/decrement
+The local external-app research probe exposes an `AXSlider` with increment/decrement
 actions and an initial value of `180`. A controlled probe moved the value to
 `505`, one decrement produced `500`, and 64 more decrements restored `180`,
-establishing an observed step of `5` for that fixture state. This proves the
+establishing an observed step of `5` for that captured state. The observation
+is recorded in `docs/research/eagle/ui-kit/visual-qualification.md`. This proves the
 slider and step behavior only; external minimum, maximum, persistence and grid
 reflow semantics remain unknown.
 
 The Velvet wrapper therefore defaults to `min=25`, `max=500` and `step=5` as
 host policy, while keeping all three values configurable. These defaults are a
 Velvet design choice, not a claim about an external application full range.
+The catalog visual metadata currently names `zoom:5-800`; that label does not
+change the implementation defaults or enforce a range.
 
 ## Usage
 
@@ -42,5 +45,8 @@ Velvet design choice, not a claim about an external application full range.
 />
 ```
 
-The component uses native range semantics, so browser qualification covers
-keyboard focus, arrow-key changes, bounds, disabled state and visual geometry.
+The component uses native range semantics. The browser qualification covers
+keyboard focus, arrow-key changes, live values and increment/decrement actions.
+The bounds and disabled stories render those states in Node, but currently
+have no action checkpoints. Geometry is part of the visual fixture,
+not proof of an external application range.

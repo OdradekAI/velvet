@@ -4,7 +4,7 @@ title: Stack
 sidebar_label: Stack
 ---
 
-import { StackPlayground } from '@site/src/components/UiKitPrimitivePlaygrounds';
+import { StackPlayground } from '@site/src/components/playgrounds/stack';
 
 # VelvetStack
 

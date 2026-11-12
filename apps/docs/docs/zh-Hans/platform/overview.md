@@ -6,7 +6,7 @@ sidebar_label: 总览
 
 # Velvet Plugin Platform
 
-Velvet 的插件平台是文档主线。插件通过 manifest、contribution、capability 和 UI surface 扩展 Workbench。UI Kit 是插件平台提供的 UI 能力之一，服务于受信任的 first-party UI 和隔离的 third-party UI surface。
+插件平台是 Velvet 的主要扩展边界。插件通过 manifest、contribution、capability 和 UI surface 扩展 Workbench。UI Kit 是插件平台提供的 UI 能力之一，服务于受信任的 第一方 UI 和隔离的 第三方 UI surface。
 
 ## 平台分层
 

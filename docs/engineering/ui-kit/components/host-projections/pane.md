@@ -7,8 +7,8 @@ import remains available from `apps/desktop/src/app/ui/index.ts`.
 ## Contract
 
 - **Props:** `title`, `region`, `children`
-- **States:** navigation, context
-- **Accessibility:** named `region` with a heading linked by `aria-labelledby`
+- **States:** navigation, context, operations, preview
+- **Accessibility:** named `region` using `ariaLabel` when supplied, otherwise a heading linked by `aria-labelledby`
 - **Contract:** `apps/desktop/src/app/ui/contracts/host-projections/pane.contract.ts`
 - **Stories:** `apps/desktop/src/app/ui/stories/host-projections/pane.stories.tsx`
 - **Host boundary:** layout, overlay, focus and projection state remain host-owned.
@@ -29,6 +29,8 @@ The current story runner provides deterministic fixture coverage. Required for o
 Unverified external behavior remains `unknown` until a runtime capture proves it.
 
 ## Validation
+
+Run from `apps/desktop`:
 
 ```sh
 npm run typecheck

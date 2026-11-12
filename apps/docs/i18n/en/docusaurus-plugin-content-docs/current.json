@@ -3,52 +3,56 @@
     "message": "Next",
     "description": "The label for version current"
   },
-  "sidebar.docs.category.Plugin Platform": {
-    "message": "Plugin Platform",
-    "description": "The label for category 'Plugin Platform' in sidebar 'docs'"
-  },
-  "sidebar.docs.category.Maintainer guide": {
-    "message": "Maintainer guide",
-    "description": "The label for category 'Maintainer guide' in sidebar 'docs'"
-  },
   "sidebar.docs.category.Get started": {
     "message": "Get started",
     "description": "The label for category 'Get started' in sidebar 'docs'"
   },
-  "sidebar.docs.category.Contributions": {
-    "message": "Contributions",
-    "description": "The label for category 'Contributions' in sidebar 'docs'"
+  "sidebar.docs.category.Concepts": {
+    "message": "Concepts",
+    "description": "The label for category 'Concepts' in sidebar 'docs'"
   },
-  "sidebar.docs.category.UI surfaces": {
-    "message": "UI surfaces",
-    "description": "The label for category 'UI surfaces' in sidebar 'docs'"
+  "sidebar.docs.category.Build with capabilities": {
+    "message": "Build with capabilities",
+    "description": "The label for category 'Build with capabilities' in sidebar 'docs'"
   },
-  "sidebar.docs.category.UI Kit": {
-    "message": "UI Kit",
-    "description": "The label for category 'UI Kit' in sidebar 'docs'"
+  "sidebar.docs.link.API and protocol index": {
+    "message": "API and protocol index",
+    "description": "The label for link 'API and protocol index' in sidebar 'docs', linking to '/reference/plugin-api-index'"
   },
-  "sidebar.docs.category.Components": {
-    "message": "Components",
-    "description": "The label for category 'Components' in sidebar 'docs'"
+  "sidebar.ui.category.Primitives": {
+    "message": "Primitives",
+    "description": "The label for category 'Primitives' in sidebar 'ui'"
   },
-  "sidebar.docs.link.Manifest reference": {
-    "message": "Manifest reference",
-    "description": "The label for link 'Manifest reference' in sidebar 'docs'"
+  "sidebar.ui.category.Host overlays": {
+    "message": "Host overlays",
+    "description": "The label for category 'Host overlays' in sidebar 'ui'"
   },
-  "sidebar.docs.link.Contract matrix": {
-    "message": "Contract matrix",
-    "description": "The label for link 'Contract matrix' in sidebar 'docs'"
+  "sidebar.ui.link.Host component contracts": {
+    "message": "Host component contracts",
+    "description": "The label for link 'Host component contracts' in sidebar 'ui', linking to '/reference/ui-kit-component-guide'"
   },
-  "sidebar.docs.link.All component manuals": {
-    "message": "All component manuals",
-    "description": "The label for link 'All component manuals' in sidebar 'docs'"
+  "sidebar.ui.link.Third-party UI Bridge": {
+    "message": "Third-party UI Bridge",
+    "description": "The label for link 'Third-party UI Bridge' in sidebar 'ui', linking to '/platform/ui-bridge'"
   },
-  "sidebar.docs.link.UI Kit contract": {
-    "message": "UI Kit contract",
-    "description": "The label for link 'UI Kit contract' in sidebar 'docs'"
+  "sidebar.maintainers.link.Registry implementation": {
+    "message": "Registry implementation",
+    "description": "The label for link 'Registry implementation' in sidebar 'maintainers', linking to '/reference/plugin-registry-v1'"
   },
-  "sidebar.docs.link.Component guide": {
-    "message": "Component guide",
-    "description": "The label for link 'Component guide' in sidebar 'docs'"
+  "sidebar.maintainers.link.Contract validation matrix": {
+    "message": "Contract validation matrix",
+    "description": "The label for link 'Contract validation matrix' in sidebar 'maintainers', linking to '/reference/plugin-contract-matrix'"
+  },
+  "sidebar.maintainers.link.Ecosystem qualification": {
+    "message": "Ecosystem qualification",
+    "description": "The label for link 'Ecosystem qualification' in sidebar 'maintainers', linking to '/reference/plugin-ecosystem-qualification'"
+  },
+  "sidebar.maintainers.link.UI action coverage": {
+    "message": "UI action coverage",
+    "description": "The label for link 'UI action coverage' in sidebar 'maintainers', linking to '/reference/ui-kit/action-coverage'"
+  },
+  "sidebar.maintainers.link.Architecture decisions": {
+    "message": "Architecture decisions",
+    "description": "The label for link 'Architecture decisions' in sidebar 'maintainers', linking to 'https://github.com/OdradekAI/velvet/tree/main/docs/adr'"
   }
 }

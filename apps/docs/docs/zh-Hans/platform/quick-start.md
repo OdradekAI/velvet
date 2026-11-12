@@ -1,22 +1,63 @@
 ---
 id: quick-start
-title: 快速开始
-sidebar_label: 快速开始
+title: 运行首个插件 fixture
 ---
 
-# 快速开始
+# 运行首个插件 fixture
 
-当前平台是 Alpha contract。最小开发路径是：
+<span id="快速开始" className="velvet-doc-anchor" />
 
-1. 定义稳定的 extension id 和 manifest version。
-2. 声明 contribution、target app、zone 和 required capabilities。
-3. 选择 host projection、trusted UI 或 isolated UI surface。
-4. 通过宿主注册的 Command、View、Preview 或 Job 进入平台能力。
-5. 用 contract fixture 和浏览器 qualification 验证成功、失败、取消和重试。
+本教程使用确定性的内存宿主运行 Asset Inspector。需要本仓库的 checkout 和 **Node.js 22**（CI 基线）。它不会向桌面 Profile 安装插件，也不会读取你的素材。fixture 宿主不是可下载的 SDK。
 
-## 当前可运行样例
+<span id="当前可运行样例" className="velvet-doc-anchor" />
 
-- Asset Inspector 展示 View、context command、Preview augmentation、Job 和 namespaced facet。
-- Echo sidecar 展示外部 runtime、UI Bridge 和失败恢复。
+## 1. 在仓库根目录运行
 
-这两个样例位于 `examples/plugins/`，详细说明见[插件开发者指南](/reference/plugin-developer-guide)。当前仓库没有发布独立的外部 SDK package，样例使用的是 in-repository Alpha contract。
+```sh
+node --version
+node examples/plugins/asset-inspector/run-demo.mjs
+```
+
+首次运行不需要 npm install 或 Rust 构建。JSON 输出包含：
+
+```json
+{
+  "extensionId": "com.acme.asset-inspector",
+  "status": "completed",
+  "registeredContributions": 7,
+  "facets": ["com.acme.asset-inspector/quality:asset-1"]
+}
+```
+
+输出还包含 `uiComponents` 和本机 `packageRoot`。成功表示 fixture 完成了贡献注册、假数据选区分析、自己的 facet 写入与注册清理，不代表生产运行时或安装程序已经通过验证。
+
+## 2. 认识插件包
+
+| 文件 | 阅读重点 |
+| --- | --- |
+| `examples/plugins/asset-inspector/manifest.json` | 身份、API 范围、贡献、能力和存储 schema |
+| `examples/plugins/asset-inspector/src/asset-inspector.mjs` | `activate(host)`、`analyzeSelection`、取消和销毁 |
+| `examples/plugins/asset-inspector/src/fixture-host.mjs` | 假数据与调用记录；这是测试设施 |
+| `examples/plugins/asset-inspector/run-demo.mjs` | 有界选区和预期结果 |
+
+[查看示例源码](https://github.com/OdradekAI/velvet/tree/main/examples/plugins/asset-inspector)，并对照 [schema 参考](/reference/plugin-manifest-v1)。复制示例时，同时修改导出的身份常量、校验逻辑和 manifest；只改 manifest ID 会按设计触发校验失败。
+
+## 3. 验证失败路径
+
+安装桌面测试依赖、编译测试输入，再运行针对性的契约测试：
+
+```sh
+npm --prefix apps/desktop ci
+npm --prefix apps/desktop run test:compile
+node apps/desktop/test/asset-inspector-demo.test.mjs
+```
+
+测试覆盖权限拒绝、过期指纹、取消、未知结果、runner 失败、迁移与清理。预期进程成功退出。[测试指南](./testing) 说明这些证据的适用范围。
+
+## 排错与下一步
+
+- `Cannot find module`：确认位于仓库根目录，示例文件完整。
+- `manifest-invalid` 或 `manifest-incompatible`：对照示例常量及 schema 检查 ID 和版本范围，不绕过校验。
+- 测试失败应保留证据排查，不应重置真实 Profile。
+
+继续阅读[能力目录](./capabilities)、[Commands 与 Views](../guides/commands-and-views) 或 [Asset 分析](../guides/asset-analysis)。独立 JSONL 进程示例见[隔离 UI 与 sidecar](../guides/isolated-ui)。

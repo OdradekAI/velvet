@@ -4,11 +4,11 @@ title: State
 sidebar_label: State
 ---
 
-import { StatePlayground } from '@site/src/components/UiKitPrimitivePlaygrounds';
+import { StatePlayground } from '@site/src/components/playgrounds/state';
 
 # VelvetState
 
-`VelvetState` composes loading, empty, and error states. It centralizes state semantics, live regions, error retry, and optional action slots in a host-owned projection.
+`VelvetState` composes loading, empty, and error states. This primitive renders caller-owned state semantics, live regions, error retry and optional action slots. It does not own the operation or retry lifecycle.
 
 ## Demo
 

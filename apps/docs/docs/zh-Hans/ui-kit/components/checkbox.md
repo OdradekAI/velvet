@@ -4,7 +4,7 @@ title: Checkbox
 sidebar_label: Checkbox
 ---
 
-import { CheckboxPlayground } from '@site/src/components/UiKitPrimitivePlaygrounds';
+import { CheckboxPlayground } from '@site/src/components/playgrounds/checkbox';
 
 # VelvetCheckbox
 
@@ -42,7 +42,7 @@ Checkbox 是受控组件。宿主接收 `onCheckedChange` 后，应更新下一�
 
 ## 无障碍
 
-组件输出原生 `<input type="checkbox">`，通过生成的 id 将可见 `label` 与控件关联。键盘用户可以使用 Tab 聚焦并使用 Space 切换。优先提供清晰的可见 label，`ariaLabel` 只用于补充无法从 label 推断出的上下文。
+组件输出原生 `<input type="checkbox">`，通过生成的 id 将可见 `label` 与控件关联。键盘用户可以使用 Tab 聚焦并使用 Space 切换。优先提供清晰的可见 `label`。`ariaLabel` 和 `describedBy` 作用于 label wrapper，不直接作用于 input，不能代替控件的可见 `label`，也不能视为已经建立 input 的描述关联。
 
 真实行为与 story、浏览器证据见 [Checkbox manual](/reference/ui-kit/components/primitives/checkbox)。
 

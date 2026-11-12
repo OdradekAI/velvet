@@ -33,7 +33,7 @@ implementations are split into their own files. All primitives now carry a
 browser qualification tier: the dedicated fixture checks native control
 semantics, live regions, labels, layout wrappers and Tabs focus movement. Toast
 uses the same fixture for live-region dismissal. Dialog and Context Menu require
-the real-browser overlay qualification tier; AssetGrid, DataTable, CommandPalette
+the real-browser overlay qualification tier; AssetGrid, DataTable,
 Inspector, CommandPalette and QuickSearch use the host-projection keyboard/focus
 qualification fixture.
 Dialog and Context Menu use the overlay browser qualification fixture for

@@ -25,9 +25,10 @@ objects, Tauri state, database handles or filesystem paths.
 `PluginHost::registry_snapshot` is the read seam for `ApplicationCore` and
 transport adapters. `ContributionRegistrationHandle` is an opaque host handle
 for the one registration that created it. `dispose_contribution` is
-idempotent: the first call removes that contribution and later calls are
-no-ops. The extension lifecycle remains active until the host deactivates or
-quarantines it.
+idempotent while the extension remains registered: the first call removes that
+contribution and later calls are no-ops. After uninstall, the same handle returns
+`PluginError::NotFound`. Disposing one contribution does not change the
+extension lifecycle; only host lifecycle operations do.
 
 ## Lifecycle rules
 

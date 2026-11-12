@@ -4,7 +4,7 @@ title: Checkbox
 sidebar_label: Checkbox
 ---
 
-import { CheckboxPlayground } from '@site/src/components/UiKitPrimitivePlaygrounds';
+import { CheckboxPlayground } from '@site/src/components/playgrounds/checkbox';
 
 # VelvetCheckbox
 
@@ -42,7 +42,7 @@ Clicking the label or checkbox calls `onCheckedChange`. Disabled checkboxes do n
 
 ## Accessibility
 
-The component renders a native `<input type="checkbox">` and links the visible `label` to the control through a generated id. Keyboard users can focus with Tab and toggle with Space. Prefer a clear visible label. Use `ariaLabel` only to add context that cannot be inferred from the label.
+The component renders a native `<input type="checkbox">` and links the visible `label` to the control through a generated id. Keyboard users can focus with Tab and toggle with Space. Prefer a clear visible label. `ariaLabel` and `describedBy` apply to the label wrapper, not directly to the input. They must not be treated as a replacement for the control's visible `label` or a guaranteed input description association.
 
 Behavior, stories, and browser evidence are listed in the [Checkbox manual](/reference/ui-kit/components/primitives/checkbox).
 

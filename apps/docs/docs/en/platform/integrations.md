@@ -1,11 +1,14 @@
 ---
 id: integrations
-title: Integrations
-sidebar_label: Integrations
+title: UI integration choices
 ---
 
-# Integrations
+# UI integration choices
 
-Velvet supports different integrations by surface. Trusted first-party extensions use Velvet React wrappers. Third-party extensions can use iframe, Tauri child WebView, Vue, Svelte, React, or plain HTML through the framework-neutral Bridge.
+<span id="integrations" className="velvet-doc-anchor" />
 
-Plugins should not depend on the host Tailwind build, Radix types, private DOM, or internal React components.
+Use host Commands, menus, notifications and progress when they meet the task. A custom surface is optional.
+
+Trusted first-party UI uses the [host React wrappers](../ui-kit). Third-party surfaces render their own content and consume the framework-neutral [Bridge](./ui-bridge). React, Vue, Svelte and plain HTML are possible rendering choices, not separately shipped Velvet SDKs.
+
+The repository has iframe and Tauri child-WebView adapters. Their Alpha and native qualification limits are described in the [isolated UI guide](../guides/isolated-ui). Host Tailwind classes, Radix types, private DOM and internal React components are outside the third-party contract.

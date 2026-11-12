@@ -22,9 +22,5 @@
   "link.item.label.Changelog": {
     "message": "变更记录",
     "description": "The label of footer link with label=Changelog linking to https://github.com/OdradekAI/velvet/blob/main/CHANGELOG.md"
-  },
-  "copyright": {
-    "message": "Velvet 2026",
-    "description": "The footer copyright"
   }
 }

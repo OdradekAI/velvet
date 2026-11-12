@@ -11,8 +11,8 @@ unrestricted in-process runtime exists.
 The repository currently freezes the manifest schema, identifiers and API
 ranges, host-owned registries, capability checks, Job/diagnostic seams and the
 framework-neutral UI Kit bridge as an in-repository Alpha contract. Major
-mismatches, unknown required fields, invalid capabilities/zones and incompatible
-UI surfaces fail closed; minor changes are optional and additive only.
+mismatches, unknown non-reserved manifest fields, invalid capabilities/zones
+and incompatible UI surfaces fail closed; minor changes are optional and additive only.
 
 The Asset Inspector, Echo sidecar and `HostFacade` are deterministic fixtures,
 so their `pass (fixture)` results prove the host seam rather than a production
@@ -91,16 +91,18 @@ uses independent compatibility surfaces:
 | --- | --- |
 | `id` | Stable extension identity. Keep it across upgrades. |
 | Contribution `id` | Stable within the manifest and unique for that extension. |
-| `manifestSchema` | Current canonical schema is `1`. Unknown required fields fail closed; only top-level `x-*` metadata is reserved. |
+| `manifestSchema` | Current canonical schema is `1`. Unknown fields fail closed except reserved top-level `x-*` metadata. |
 | `hostApi` | Host contract range. A major mismatch prevents activation. |
 | `bridgeApi` | UI Bridge contract range. An incompatible surface is failed and disposed. |
 | `runtimeProtocol` | Runtime envelope range for an external runner. |
-| `targetApp` and `scope` | Keep WorkbenchApp and semantic zone explicit. The host owns placement. |
+| `targetApp`, contribution `scope` and `zone` | Keep the target WorkbenchApp and contribution scope explicit; UI placement uses the declared semantic zone. The host owns placement. |
 | `requiredCapabilities` / `optionalCapabilities` | Declarations only. Effective grants are host policy. |
 | `storage` | Namespaced extension schema and quota declaration. It does not expose a raw path. |
 
-Use the extension ID as the root of contribution IDs and facet namespaces. Do
-not use a user path, Asset path or React component name as an identity.
+Prefer the extension ID as the prefix of contribution IDs; this is a naming
+convention, not a prefix validation rule. Keep facets in an extension-owned
+namespace. Do not use a user path, Asset path or React component name as an
+identity.
 
 ## Activation and lifecycle
 
@@ -110,16 +112,24 @@ an extension. Activation registers declarative contributions through host
 registries. Deactivation, disable, runtime crash, rollback and uninstall must
 dispose every contribution owned by that extension.
 
-The current host lifecycle is:
+The projected `ExtensionState` values are `registered`, `starting`, `active`,
+`disabled`, `failed` and `quarantined`. Discovery and validation precede
+registration; recovery and uninstall are operations, not additional states:
 
 ```text
-discovered → validated → registered → active
-                                      ├─ disabled
-                                      ├─ failed
-                                      └─ quarantined
-active → recovered → active
-active → uninstalled → absent
+registered → starting → active
+                         ├─ disabled
+                         ├─ failed
+                         └─ quarantined
+failed / registered → recover → starting → active
+uninstall → extension absent
 ```
+
+`recover-plugin` accepts failed or registered extensions and is a no-op for an
+active extension. It rejects starting, disabled and quarantined states; it is
+not an enable command. Manifest event matching currently lives in the host-local
+`activation_candidates` and `activate_for_event` seams, which are not wired to a
+complete CoreTransport event bus.
 
 The renderer receives projections after Rust accepts the registration. It may
 cache descriptors, but it cannot make an inactive extension active by mutating
@@ -132,15 +142,15 @@ transport. A developer can walk it without calling a private Tauri API:
 
 1. Choose **Browse directory…** or **Browse .zip…** and select a package.
 2. The host sends `inspect-plugin` or `inspect-plugin-archive`. It parses the
-   manifest before copying bytes and returns the extension ID, version, target
-   app, host API compatibility, runtime and requested permissions. An
+   manifest before changing the installed package and returns the extension ID,
+   version, target app, host API compatibility, runtime and requested permissions. An
    incompatible or malformed package stops here.
 3. Review the preview. The host then stages the package with `install-plugin`
    or `install-plugin-archive`. Staging leaves the old committed package and
    extension data available.
-4. The host activates the staged extension lazily, projects its contributions,
-   and commits with `commit-plugin-install` only after activation and UI
-   projection succeed. A projection, activation or runtime failure invokes
+4. The install response leaves the package registered. The Extensions UI then
+   explicitly sends `activate-plugin`, projects its contributions, and commits
+   with `commit-plugin-install` only after activation and UI projection succeed. A projection, activation or runtime failure invokes
    `rollback-plugin-install`, removes a new package or restores the previous
    package, and leaves unrelated extensions active.
 5. An upgrade keeps the same extension ID and supplies a newer numeric
@@ -149,8 +159,8 @@ transport. A developer can walk it without calling a private Tauri API:
    package policy unless an explicit recovery path permits it.
 6. Disable/recover actions use the host-owned `disable-plugin` and
    `recover-plugin` commands. Disable removes the extension's contributions
-   and cancels its owned Jobs; recovery starts a fresh runtime and reprojects
-   the validated manifest.
+   and cancels its owned Jobs; recovery of a failed or registered extension
+   starts a fresh runtime and reprojects the validated manifest.
 7. After confirmation, **Uninstall** sends `uninstall-plugin`, stops the
    runtime, removes the installed package and unregisters its projections.
    Extension data is retained by default for migration, reinstall or explicit
@@ -168,8 +178,9 @@ rollback and uninstall fixtures are listed in the
 Register a command, menu item, keybinding, View, Preview provider/augmentation
 or Job in the manifest and let the host create its registration. The host owns
 Activity Bar entries, pane layout, PreviewHost primary selection, Operations
-Panel, global overlays and global shortcuts. A contribution declares its
-semantic zone (`navigation`, `contextual` or `operations`) and stays inside it.
+Panel, global overlays and global shortcuts. A contribution with a UI
+placement declares its semantic zone (`navigation`, `contextual` or
+`operations`) and stays inside it.
 
 The plugin may provide content for a registered View through the UI Bridge and
 may use host semantic tokens. It cannot inject arbitrary DOM or CSS, call
@@ -184,8 +195,8 @@ table names the structural fake used by
 understand the intended ownership boundary without mistaking it for a stable
 SDK.
 
-The fake methods only record calls and return bounded fixture values. The last
-column describes host policy that the real PluginHost/registry/transport must
+The fake records registrations and calls, keeps in-memory fixture data, and
+models selected validation and failure cases. The last column describes host policy that the real PluginHost/registry/transport must
 enforce; it is not evidence that the fake replaces the host. The fixture's
 concrete assertions are in `apps/desktop/test/asset-inspector-demo.test.mjs`,
 and `node examples/plugins/asset-inspector/run-demo.mjs` runs the same package
@@ -193,7 +204,7 @@ without the desktop renderer.
 
 | Fixture handle | Operation | Host owner | Plugin may read/write | Capability and failure rule |
 | --- | --- | --- | --- | --- |
-| `commands.register(id, handler)` | Register a command callback | Command registry / PluginHost | Register and dispose its own command | Manifest command plus declared zone; duplicate or undeclared IDs fail locally. |
+| `commands.register(id, handler)` | Register a command callback | Command registry / PluginHost | Register and dispose its own command | Manifest command plus declared scope/namespace; the host must reject duplicate or undeclared IDs; the fake registration helper does not validate them. |
 | `menus.register(id)` | Register a context-menu contribution | Menu registry / PluginHost | Register and dispose its own menu item | Menu location and `when` expression are host-validated. |
 | `keybindings.register(id)` | Register a keybinding | Keybinding registry / host | Register and dispose its own binding | The host resolves conflicts and keeps global shortcut ownership. |
 | `views.register(id)` | Register a View descriptor | View registry / Workbench | Register a declarative View | Zone, container and namespace are host-owned; no sibling View handle is exposed. |
@@ -217,9 +228,11 @@ Rust objects or framework components.
 The Asset Inspector pattern is the safe default for analysis extensions:
 
 1. read a path-free Asset projection;
-2. capture the current selection revision, content fingerprint and config
-   version in Job provenance;
-3. submit work to the Rust-owned JobSystem;
+2. include selection revision, Asset fingerprints and config version in the
+   bounded Job input; the fixture also records owner/provider identity, provider
+   version, combined input fingerprint and schema version in provenance;
+3. submit through the host Job handle, whose production owner is the Rust
+   JobSystem (the fixture simulates it in memory);
 4. reject or discard results whose fingerprint is stale;
 5. write only a namespaced, schema-versioned facet;
 6. expose the facet through a Preview augmentation or contextual View.

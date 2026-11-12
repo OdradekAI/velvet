@@ -4,7 +4,7 @@ title: Input
 sidebar_label: Input
 ---
 
-import { InputPlayground } from '@site/src/components/UiKitPrimitivePlaygrounds';
+import { InputPlayground } from '@site/src/components/playgrounds/input';
 
 # VelvetInput
 
@@ -27,7 +27,7 @@ import { InputPlayground } from '@site/src/components/UiKitPrimitivePlaygrounds'
 | `busy` | `boolean` | `false` | Sets busy semantics and prevents editing |
 | `ariaLabel` | `string` | — | Maps to native `aria-label` |
 | `describedBy` | `string` | — | Maps to native `aria-describedby` |
-| `ariaLive` | `off \| polite \| assertive` | — | Live-region semantics |
+| `ariaLive` | `off \| polite \| assertive` | — | Declared in the common type; current wrapper does not map it to native `aria-live` |
 | `apiVersion` | `string` | `1.0` | UI Kit contract version marker |
 | `testId` | `string` | — | Stable qualification hook |
 | `className` | `string` | — | Host-approved semantic style extension |
@@ -43,11 +43,13 @@ import { InputPlayground } from '@site/src/components/UiKitPrimitivePlaygrounds'
 - `busy`
 - `change`
 
-Use `value` for controlled input and `defaultValue` for uncontrolled input. `busy` sets `aria-busy="true"` and prevents editing. Input events reach the host or plugin surface through `onChange`.
+Use `value` for controlled input and `defaultValue` for uncontrolled input. `busy` sets `aria-busy="true"` and prevents editing. Input events reach the trusted wrapper caller through `onChange`.
 
 ## Accessibility
 
 The component renders a native `<input>` and keeps text editing, Tab focus, and browser keyboard behavior. Use a visible `<label>` when possible. Use `ariaLabel` when no visible label exists, and connect help or error text through `describedBy`.
+
+The current implementation forwards `ariaLive` as a camelCase prop instead of mapping it to `aria-live`; even a direct native `aria-live` prop is overwritten by the common-prop projection. Use a separate live region for announcements until this implementation gap is fixed.
 
 Behavior, stories, and browser evidence are listed in the [Input manual](/reference/ui-kit/components/primitives/input).
 

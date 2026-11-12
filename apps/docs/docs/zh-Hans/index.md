@@ -1,33 +1,26 @@
 ---
 id: index
-title: Velvet Plugin Platform
+title: Velvet 开发者文档
 slug: /
-sidebar_position: 1
 ---
 
-# Velvet Plugin Platform
+# Velvet 开发者文档
 
-Velvet 是一个由宿主 Workbench 管理布局、权限、插件生命周期和核心状态的桌面工作台。插件可以贡献 View、Command、Preview、Job 和 UI surface，UI Kit 是插件平台提供的 UI 能力层。
+<span id="velvet-plugin-platform" className="velvet-doc-anchor" />
 
-文档从插件平台开始，再进入 contribution、UI surface、UI Kit、Bridge、安全和 qualification。这样可以先说明插件能向宿主贡献什么，再说明组件如何渲染。
+<span id="状态" className="velvet-doc-anchor" />
 
-## 从这里开始
+Velvet 是一个由宿主拥有状态、布局、权限和扩展生命周期的桌面 Workbench。当前插件契约处于 **Alpha，仅在仓库内维护**，尚未发布外部 SDK。可运行 fixture 证明特定边界，不代表生产沙箱或所有目标平台已经通过验证。
 
-- [插件平台总览](./platform/overview)
-- [快速开始](./platform/quick-start)
-- [选择 contribution](./platform/choose-contribution)
-- [UI Kit 总览](./ui-kit)
-- [UI Kit Showcase](./ui-kit/showcase)
-- [Button API 与 Playground](./ui-kit/components/button)
+<span id="从这里开始" className="velvet-doc-anchor" />
+<span id="参考层" className="velvet-doc-anchor" />
 
-## 参考层
+| 你的任务 | 从这里开始 |
+| --- | --- |
+| 开发产品扩展 | [运行首个 fixture](./platform/quick-start)，再[查找能力](./platform/capabilities) |
+| 查声明或消息字段 | [API 与协议索引](/reference/plugin-api-index) |
+| 开发可信宿主 UI | [UI 系统](./ui-kit)，包括真实组件交互示例 |
+| 维护系统仓库 | [维护者地图](/maintenance) |
+| 查找页面或标识符 | [搜索](./search) |
 
-- [插件 manifest](/reference/plugin-manifest-v1)
-- [UI Kit contract](/reference/ui-kit-contract-v1)
-- [组件手册](/reference/ui-kit/components)
-- [插件开发者指南](/reference/plugin-developer-guide)
-- [Contract matrix](/reference/plugin-contract-matrix)
-
-## 状态
-
-当前平台和 UI Kit 仍然是 Alpha contract。组件 Demo 复用桌面应用中的真实 primitives，Host projection、Overlay、Bridge 和 runtime qualification 继续由各自的 reference 与 fixture 提供证据。
+第三方扩展通过声明式贡献和受限协议接入。UI 系统中的 React 组件面向可信宿主代码。先[选择贡献](./platform/choose-contribution)，再决定是否需要自定义 UI surface。

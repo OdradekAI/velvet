@@ -7,7 +7,7 @@ import remains available from `apps/desktop/src/app/ui/index.ts`.
 ## Contract
 
 - **Props:** `items`, `onSelect`
-- **States:** default, badges
+- **States:** selected, disabled, focus, badge (stories: default, badges)
 - **Accessibility:** navigation landmark, roving focus, focus follows Arrow/Home/End selection, disabled items are skipped
 - **Contract:** `apps/desktop/src/app/ui/contracts/host-projections/activity-bar.contract.ts`
 - **Stories:** `apps/desktop/src/app/ui/stories/host-projections/activity-bar.stories.tsx`
@@ -30,6 +30,8 @@ The current story runner provides deterministic fixture coverage. Required for o
 Unverified external behavior remains `unknown` until a runtime capture proves it.
 
 ## Validation
+
+Run from `apps/desktop`:
 
 ```sh
 npm run typecheck

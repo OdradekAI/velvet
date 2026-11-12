@@ -7,7 +7,7 @@ import remains available from `apps/desktop/src/app/ui/index.ts`.
 ## Contract
 
 - **Props:** `open`, `commands`, `scope`, `scopeOptions`, `onScopeChange`, `query`, `onQueryChange`, `onSelect`, `onClose`, `restoreFocusRef`
-- **States:** open, empty
+- **States:** open, empty, selected, disabled
 - **Contract:** `apps/desktop/src/app/ui/contracts/host-projections/command-palette.contract.ts`
 - **Stories:** `apps/desktop/src/app/ui/stories/host-projections/command-palette.stories.tsx`
 - **Qualification:** both Node/Happy DOM and real browser
@@ -20,6 +20,7 @@ classes and Workbench implementation details are not public API.
 
 - `command-palette/open`
 - `command-palette/empty`
+- `command-palette/scope`
 - `command-palette/controlled-query`
 - `command-palette/host-results`
 
@@ -48,6 +49,8 @@ effect.
 Unverified external behavior remains `unknown` until a runtime capture proves it.
 
 ## Validation
+
+Run from `apps/desktop`:
 
 ```sh
 npm run typecheck

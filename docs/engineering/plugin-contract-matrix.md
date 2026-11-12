@@ -6,7 +6,7 @@ This document is the issue 010 entry point for validating the plugin boundary
 across the Rust workspace, the independent Tauri workspace, and the desktop
 TypeScript/UI Bridge. It records repeatable fixtures and the limits of each
 result. A green unit or contract test proves the named seam; it does not prove
-that a production marketplace, package signature, or platform sandbox is
+that a production marketplace, signing service, or platform sandbox is
 available.
 
 ## Alpha contract freeze
@@ -15,8 +15,8 @@ The current freeze applies to the repository-owned manifest schema and ID/range
 rules, lifecycle and contribution registries, capability checks, CoreTransport
 mirrors, Job/diagnostic seams, extension storage/facet provenance and the
 framework-neutral UI Kit bridge. These surfaces fail closed on major version
-mismatches, unknown required fields, invalid capabilities/zones and incompatible
-component contracts; minor evolution is optional and additive.
+mismatches, unknown non-reserved manifest fields, invalid capabilities/zones
+and incompatible component contracts; minor evolution is optional and additive.
 
 The Asset Inspector, Echo sidecar and fake `HostFacade` are local deterministic
 fixtures. Their results are recorded as `pass (fixture)` where appropriate and
@@ -67,7 +67,7 @@ The result values above are the local run recorded for this checkout on
 | UI Kit theme and component negotiation | Host-owned UI bridge schema and renderer components | Bridge version, origin policy and typed overlay/progress requests | `PluginUiRegistry`, `PluginSurfaceHost`, token sanitizer and host UI Kit | `apps/desktop/test/ui-kit-contract.test.mjs` (schema, token filtering, theme update, component fallback); `apps/desktop/test/ui-kit-components.test.mjs` (tabs, states, grid, table, command palette, theme application); `apps/desktop/test/plugin-surface-adapter.test.mjs` (origin and dispose); `apps/desktop/test/workbench-dom-regression.test.mjs` (ARIA labels and focus restoration); `ui-kit-contract-v1.md`; `ui-kit-component-guide.md` | `pass (fixture)` |
 | Asset Inspector developer path | Namespaced extension facet and Job owner | Manifest/projection/Job DTOs | Preview augmentation and Views | `examples/plugins/asset-inspector/manifest.json`; `examples/plugins/asset-inspector/src/asset-inspector.mjs`; `examples/plugins/asset-inspector/src/fixture-host.mjs`; `examples/plugins/asset-inspector/run-demo.mjs`; `apps/desktop/test/asset-inspector-demo.test.mjs` | `pass (fixture)` |
 | External sidecar failure isolation | `ProcessPluginRuntime` and per-extension failure domain | Runtime state, disable and recovery projection | UI surface removal and remount after recovery | `examples/plugins/echo-sidecar`; `crates/plugin-host/src/host_tests.rs`; `apps/desktop/test/external-plugin-e2e.test.mjs` | `pass (fixture)` |
-| Extension storage migration | `PluginHost::ExtensionStorage` and migration participants | Manifest storage declaration and recovery actions | Recovery UI only consumes metadata projection | `crates/plugin-host/src/host_tests.rs`; `apps/desktop/test/asset-inspector-demo.test.mjs` | `pass` |
+| Extension storage migration | `plugin-host::ExtensionStorage` and migration participants | Manifest storage declaration and recovery actions | Recovery UI only consumes metadata projection | `crates/plugin-host/src/host_tests.rs`; `apps/desktop/test/asset-inspector-demo.test.mjs` | `pass` |
 | Install, upgrade, rollback and uninstall | ApplicationCore package transaction and PluginHost lifecycle | Typed inspect/install/commit/rollback commands | Extensions dialog and recovery operations | `crates/application-core/src/composition_tests.rs`; `apps/desktop/test/plugin-manager-dialog.test.mjs`; `apps/desktop/test/plugin-package-picker.test.mjs` | `pass (fixture)` |
 | Compatibility and migration surfaces | `plugin-api` schema/range types; PluginHost storage and facet owners | Manifest, runtime, storage and recovery DTOs | UI Bridge/component/theme negotiation | `crates/plugin-api/src/lib.rs`; `crates/plugin-host/src/host_tests.rs`; `crates/workbench-protocol/src/protocol_tests.rs`; `apps/desktop/test/ui-kit-contract.test.mjs`; Asset Inspector schema/migration fixture | `pass (fixture)` |
 
@@ -133,9 +133,10 @@ The following remain explicit gates rather than hidden assumptions:
 - `RuntimeKind::Wasm` and `RuntimeKind::Sidecar` describe a public contract;
   they do not make a sidecar a security sandbox or prove a production WASM
   runtime.
-- Publisher signing, revocation, Marketplace publication, notarization and
-  installer rollback require release qualification and are not proven by the
-  local fixtures.
+- Local package signature, publisher key rotation and revoked-key rejection
+  have host fixtures. Production signing/revocation service operation,
+  Marketplace publication, notarization and installer rollback still require
+  release qualification.
 - macOS/Linux native lifecycle evidence exists in the release harness; Windows
   runtime, Job Object and installer qualification remain environment gates.
 - A passing `npm test` proves the current desktop harness. It does not qualify

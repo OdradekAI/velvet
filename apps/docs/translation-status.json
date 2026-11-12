@@ -1,0 +1,397 @@
+{
+  "docs/guides/asset-analysis.md": {
+    "status": "reviewed",
+    "sourceHash": "7f5f873ff7fd9c2add1a2faff927ddc9272be93f624bbf6fc6b3f66cb3d67050",
+    "translationHash": "99763e0ad36c0f9d21604aeb80b1c48d539c9fd555fd5390c8607e1790c3ccf8"
+  },
+  "docs/guides/commands-and-views.md": {
+    "status": "reviewed",
+    "sourceHash": "bb72ccc6c61018f17d324bcc5831295f5959a78f16f3f7668638ab60878f8dd4",
+    "translationHash": "8b950ed5f9e334db829eca144ef1bc7b1f9ea05265ca09d89b7e7ddeda07c62d"
+  },
+  "docs/guides/isolated-ui.md": {
+    "status": "reviewed",
+    "sourceHash": "6bd67b64341521c2d8051d72305a619f9176a84459907012c8899afcd99056c2",
+    "translationHash": "1ad4f96a8988649061ce6c3552f12974c153565cf634f3348e55235d56d8c2bb"
+  },
+  "docs/index.md": {
+    "status": "reviewed",
+    "sourceHash": "fe0e1cc5f2cfae3d4368f138319dc79f5628d1094a373357e40a40e7c760c8bb",
+    "translationHash": "5c4dea80d3e4d6e658edfd9204dc96ecac6e18d654ba7471de99869494091f2c"
+  },
+  "docs/maintenance/documentation-structure.md": {
+    "status": "reviewed",
+    "sourceHash": "0b4146cff2db74a5f42bf336c00b50c70c02821e22db18e40a4b3820e4e33dbc",
+    "translationHash": "b0e32545e787c525be2959b82a4936a9b12e7cb54830a8f5be809bba6e5be4eb"
+  },
+  "docs/maintenance/index.md": {
+    "status": "reviewed",
+    "sourceHash": "50e0ee640e2effc03a5dd6148ffb40547b637787a3b74f9633a69487de723f26",
+    "translationHash": "1a87d6fd63256fffae8dd40659aa3597da5d117bca0a08977a579a99a927f088"
+  },
+  "docs/platform/capabilities.md": {
+    "status": "reviewed",
+    "sourceHash": "1ace392005ea0543b53c718e8fee1c592a65aa2a4640429862424410066cc804",
+    "translationHash": "fda7f230dcd4ba9f30c3d5a3b6339a853ae971fa5458234db9f3ab9606605d42"
+  },
+  "docs/platform/choose-contribution.md": {
+    "status": "reviewed",
+    "sourceHash": "34f736375903ae01c86b966123c3216c0591d14d2901d7db9a75af9f3c7e7ee2",
+    "translationHash": "9dec5e1965b2b1a9ea4f349c340f5658ad6b74a2dec50316dedce71d97385e49"
+  },
+  "docs/platform/concepts.md": {
+    "status": "reviewed",
+    "sourceHash": "7d0cabfb4ddf493172ae221db3c54973ae041c0da8e8cdb262bac1b6e0098b06",
+    "translationHash": "fcdffbf08e1ba9745ab41208ae61c7306980d864ab470d2138b55212d050d480"
+  },
+  "docs/platform/contributions.md": {
+    "status": "reviewed",
+    "sourceHash": "d7248a5aa8fad7611d160967d53f7702499452b113febe91f603e7b249cd982d",
+    "translationHash": "d68073793b93ce85f2c40fdc28701f1d5a4b22b48d2a1db87a9b973bd9359808"
+  },
+  "docs/platform/integrations.md": {
+    "status": "reviewed",
+    "sourceHash": "86058244ba105df75e564dce6b1ceda8bcd0abd3d151f890e0b34f7642905ad7",
+    "translationHash": "2a11c4680f9296651946431604d1878d5064ddfd81428ac06f1e009c00538201"
+  },
+  "docs/platform/migration.md": {
+    "status": "reviewed",
+    "sourceHash": "22d8aaaf9f9520da8ac6b3bbedbccd5fb1ae93142161f239c2a183954019400d",
+    "translationHash": "0eefd903b018b2331dd4ce5766d285e8b77ed1b1a6b99e9bfddf9b6662f036de"
+  },
+  "docs/platform/overview.md": {
+    "status": "reviewed",
+    "sourceHash": "88aaf93206df0ef10a49fad87c2fe8a066c83d129c05f391e83ef39a6895793f",
+    "translationHash": "b22e032145e5bad7f866163dffe0774b0a7abe4dab645de441e565af574f6363"
+  },
+  "docs/platform/quick-start.md": {
+    "status": "reviewed",
+    "sourceHash": "1408599eb2b0d6deec197df3d50340d7d32cefe57f01cc019af85bebefb7e1c2",
+    "translationHash": "fc95835ab4801e18270f915e956147d4eb56423aba699923b9874edb8c26b423"
+  },
+  "docs/platform/security.md": {
+    "status": "reviewed",
+    "sourceHash": "131a74d655a886d55a4e9d7da31d6a3492b36ab7cf752c03ed4cd503f71bc67d",
+    "translationHash": "c117103cadc362a8b2fe3a6470d0b58dbf7a467edf2d6076c00d126b0ef008fe"
+  },
+  "docs/platform/testing.md": {
+    "status": "reviewed",
+    "sourceHash": "07338f2f182a9d45ef4b72ebaefd47d0255d18432e301d875d9c4f4bf8c4b3f8",
+    "translationHash": "9a38ef048f46f0aeaf5fad24e3104263a8ba2bc19309dad0731a9879305e6bab"
+  },
+  "docs/platform/ui-bridge.md": {
+    "status": "reviewed",
+    "sourceHash": "383cdcda64b3217fd3901250e0bef28700be47f4d7b10ab487b79ea8c4078731",
+    "translationHash": "5ccc6e2172fc638be52ac0af4ab7ef57f213113647f1b3e9d11389ec97180981"
+  },
+  "docs/search.md": {
+    "status": "reviewed",
+    "sourceHash": "d4f7e6985af04e9b79e966481d20cd19de9c72dfb285b4515bbdb8f010fc23a2",
+    "translationHash": "24150221d50eeb4403dcd3cacb322026a919300c8a76b376ce512a1fd1bc8ff8"
+  },
+  "docs/ui-kit/accessibility.md": {
+    "status": "reviewed",
+    "sourceHash": "b615a5d01196bdea7d0216d235480809b3f91aa91a18d26619e1ecc464011dd3",
+    "translationHash": "f25951d9067fd8c9df0f05d41f929ab02b9fd2e9eb11f701989ab8bea21f1308"
+  },
+  "docs/ui-kit/components/badge.md": {
+    "status": "reviewed",
+    "sourceHash": "d6c933e843934a88d949280bd02de9957c8752bd3e1e3e6838b3ae57fc3765ea",
+    "translationHash": "3e269d8bc9fe0cb821f186ae8a4beb98dcec9a51a05fead7fd08787002dba5d0"
+  },
+  "docs/ui-kit/components/button.md": {
+    "status": "reviewed",
+    "sourceHash": "ab8705f24a39f0745dd23209d6cf8134e78e556f885bda9e17eab88ddae11841",
+    "translationHash": "2b43ffd4f0e2ef9273cd571d0308d5832a401b9400d310c26ddb95adcae91587"
+  },
+  "docs/ui-kit/components/checkbox.md": {
+    "status": "reviewed",
+    "sourceHash": "aaad5c69681a81509b60cd42de33e2ac7a14190cabe582e6176331288f5d58ec",
+    "translationHash": "cabf3b1e1a2f225975facf51595d540325395225fece4cf487eefef670cda7fa"
+  },
+  "docs/ui-kit/components/context-menu.md": {
+    "status": "reviewed",
+    "sourceHash": "d816dc41f6ee66bdd887594052b80e1cd2aecbb8cbb6c15f89b4224500f944cf",
+    "translationHash": "54184d78cbd5fc55664a06ab324bd6d2eaad98379c2d6860341fd334d3de2d6d"
+  },
+  "docs/ui-kit/components/dialog.md": {
+    "status": "reviewed",
+    "sourceHash": "5d83db8da846c470b8ad94e337a23507c32e8665d5e25a4f860b67a7adf760df",
+    "translationHash": "d901555e3e0adb4c2cebdd6e4794c3589e06d237060514fcf11dfa5b3e9cb13a"
+  },
+  "docs/ui-kit/components/icon-button.md": {
+    "status": "reviewed",
+    "sourceHash": "a1a7bfc93fc0ccd5c44451b1cea6119e340dff3be9a22773c29fe7cb1472c166",
+    "translationHash": "58445bdc55c09bcddd3ce33edfef51dae8b330ca63836689d01816141c10994e"
+  },
+  "docs/ui-kit/components/icon.md": {
+    "status": "reviewed",
+    "sourceHash": "876f34846c027fd2402a5689b50fbf0256010c7e7cea91df14e278949b77f186",
+    "translationHash": "39d9c287246f7a90c544775d91253a92ab83c948a06ce47b4f018846c6c2a9c2"
+  },
+  "docs/ui-kit/components/inline.md": {
+    "status": "reviewed",
+    "sourceHash": "4629340fa16609781c47b1289c298401a8cff156032c4f2658826478b12acc34",
+    "translationHash": "f81aa777a7015638146b717a035b0fb2a34595ebf3f77b98339dec2f393ee120"
+  },
+  "docs/ui-kit/components/input.md": {
+    "status": "reviewed",
+    "sourceHash": "b24280e189906e94b1964944edecdb9a59517222fb9c750e41aa11a2c6c09db2",
+    "translationHash": "0e2b9f65965f5d3e580ef7dc196650cdbed255f80447ba509f9db4d17823cf39"
+  },
+  "docs/ui-kit/components/progress.md": {
+    "status": "reviewed",
+    "sourceHash": "03b078ab9aa33ee0d97cdf58bdce12a399d52b25c688ae7bbdd3db1f29a67782",
+    "translationHash": "9418ede9c279e85620a2a1ece60c34438372ddd3ffe8da90a82ba3cc2447b5e3"
+  },
+  "docs/ui-kit/components/select.md": {
+    "status": "reviewed",
+    "sourceHash": "33ad425add647a1d2b4b1b0fa1b124e68efff733e6afabed778577e60185dade",
+    "translationHash": "7f3a33f247bab4b49a83f76a88a61c3c72dd248b7c04a9b6100da1dbe30d720b"
+  },
+  "docs/ui-kit/components/separator.md": {
+    "status": "reviewed",
+    "sourceHash": "f7f4202eabd67bcdbd1d70d01959b9bec2065cbbce4ef99f22591109ffcd6a35",
+    "translationHash": "178c5e827116bffc7cd66e24b3aa2d56f4e317bf66c4e6a1264115fa27957cf7"
+  },
+  "docs/ui-kit/components/stack.md": {
+    "status": "reviewed",
+    "sourceHash": "6d27f79d32ac92ac7ead207c255ccdc59018148bcdff6606d6522ab4e4b16f18",
+    "translationHash": "897c5d877ec179365ab1d769b216ecdc1a5d0de60103be079e39d6c1af53d69c"
+  },
+  "docs/ui-kit/components/state.md": {
+    "status": "reviewed",
+    "sourceHash": "01b2619b0747b8fbee2a27fd36aef740686e695590ca6005a77058a2fe088fcc",
+    "translationHash": "ae329b38f7ae49a314ad14fc25da24fa1e6c725e025a7062899458fa5ac7c94b"
+  },
+  "docs/ui-kit/components/tabs.md": {
+    "status": "reviewed",
+    "sourceHash": "d3275d2ef48f82e5b901c91d3c0f420284d2891c24459b3f431f0e01812646ed",
+    "translationHash": "c025b1c9c8a1e8c56b92d0334cfd861c91aa049b0cd176ed1a1bc00b9b26e949"
+  },
+  "docs/ui-kit/components/text.md": {
+    "status": "reviewed",
+    "sourceHash": "474a2e0315f828dd7ed390c0f95977b1b5d2482790cf60e6fe0c862c8b0ff843",
+    "translationHash": "30728a57d4309697f3e490ef474fd0009a726e67ada52fb566c88cc8452d5c7b"
+  },
+  "docs/ui-kit/components/toast.md": {
+    "status": "reviewed",
+    "sourceHash": "45702763c4d73b50d5c3e9f187e4104cad8fffc04e89c378a56fea8781dd4d44",
+    "translationHash": "d29cac41a56320f2142e884f8216ea43952e4ddf08bd25d836c285cc36d201e7"
+  },
+  "docs/ui-kit/customization.md": {
+    "status": "reviewed",
+    "sourceHash": "e2e3acbfee5e9eddd01be0767aa6a826c8df14d223288308ead576a3ab036769",
+    "translationHash": "d28e4c9ff1adf371829f3986e148e4a311e0fe58ca2d588b8194dd6c7f86f83f"
+  },
+  "docs/ui-kit/index.md": {
+    "status": "reviewed",
+    "sourceHash": "4880d348f1f010428cb2778680e7a38b88ca24dbf3e94b6ca170aa907fe0bfad",
+    "translationHash": "05858fa11ccecf132d317752ec5bdbe5feb8671a26b9f937f24be1bcc3ce6229"
+  },
+  "docs/ui-kit/showcase.md": {
+    "status": "reviewed",
+    "sourceHash": "6baa2c561b598149601173088e54a2e9f68dc079d2f7cbdb9e55188a6a78a08a",
+    "translationHash": "29d4c75fa89a3a4ccf5230d59dc84c3a1cd3fe3da008b343b3c90fa0b794087c"
+  },
+  "reference/plugin-api-index.md": {
+    "status": "reviewed",
+    "sourceHash": "8c6595ebe892dfd32f3bce02d55dad96c72243c7475ff261bb72711987432ad3",
+    "translationHash": "c9e7baa65450e095000b55e0db4296aae9b9666e55b686b2185057974186bdf7"
+  },
+  "reference/plugin-contract-matrix.md": {
+    "status": "reviewed",
+    "sourceHash": "da676b0fc1fa57716db32e675f2d45c671b2d8b8d4e512aa03d7f884d3efe1af",
+    "translationHash": "8fab0985b4ef602b6d7123b4148a5d7cfd5495b62e4a686740c20232f409c92b"
+  },
+  "reference/plugin-developer-guide.md": {
+    "status": "reviewed",
+    "sourceHash": "56b59cec51b79402186179988f58f7481216b24323c6ceb695c8a67ba6b21a67",
+    "translationHash": "a855f871bfb57cb60c0be093d9e4f1dbbc922615b7896d93f106b73a88ea3df6"
+  },
+  "reference/plugin-ecosystem-qualification.md": {
+    "status": "reviewed",
+    "sourceHash": "2841720c5f445db930cc8cbd201a12f24a1a038b04b5c048601fe0a7935ff46b",
+    "translationHash": "5523d60cb15cbe850e1b624150053739f023512711e5b6c3ec02c280033d8fa9"
+  },
+  "reference/plugin-manifest-v1.md": {
+    "status": "reviewed",
+    "sourceHash": "539cc85854ed0ccb668eafcfac967d2368c364fdf97a40567dda40d286fef39a",
+    "translationHash": "e5e34ef33b9f60c9c48899fddea4d05e0a6ee591524e598fe757c36917c6736b"
+  },
+  "reference/plugin-registry-v1.md": {
+    "status": "reviewed",
+    "sourceHash": "a3d5579b14a36fd5c637297a3a39d5f1f042f394bca378fb207bfc5c925cf5d4",
+    "translationHash": "33f02b13d66c39b17a3af56ff826b25e75caf72b57993821398b32a4be08b218"
+  },
+  "reference/ui-bridge-protocol-v1.md": {
+    "status": "reviewed",
+    "sourceHash": "abbd6d43dfbf0119ce4a8ebc8a535b30640de067aa41f6c01a7cb7dcd588abfd",
+    "translationHash": "6289f6f6fd6f5af3f4ca659e5733eb47b7675fb2ac5a5efaf44647f21cc2d5b2"
+  },
+  "reference/ui-kit-component-guide.md": {
+    "status": "reviewed",
+    "sourceHash": "e5241dbf2d51550faabbe7e213ceccc0eda86463f6d8a6106522d10bb1a9d3b0",
+    "translationHash": "a6e023ef8e7b4910c1dd25f1ede2f7137f96f936274961745b907b89c7989a4b"
+  },
+  "reference/ui-kit-contract-v1.md": {
+    "status": "reviewed",
+    "sourceHash": "468119e0a1bb11d84799df6cf52760e526468afa6e197522892ebaf81f5ec9a7",
+    "translationHash": "a8a3c8b27974d445f57741da8b8d771e9384c7606531a2f412efa3852e5046ad"
+  },
+  "reference/ui-kit/action-coverage.md": {
+    "status": "reviewed",
+    "sourceHash": "a4c25ca2905c93add1360a049ee54f656ae1435ff57791b9f3e601252ef3ea05",
+    "translationHash": "cdf3cc9ad31cc6613a10262ea98f47bd9ea804aaeb55d450a6490ac789cb84fc"
+  },
+  "reference/ui-kit/components/README.md": {
+    "status": "reviewed",
+    "sourceHash": "1070bd321fef0402e548483d2f739fcab7ad2dcd927950796fd3f0e14deace82",
+    "translationHash": "f1f2b7434bc3a4caada42fbd6f31f1080799e5b494afc9ffe921d708f627faa6"
+  },
+  "reference/ui-kit/components/host-projections/activity-bar.md": {
+    "status": "reviewed",
+    "sourceHash": "384213233cdb3b87c083a637e24332c4b16f1aee51b8b21f22bce21f333c7024",
+    "translationHash": "3b32f26d149b975098da722068a36bfd48212e8d6439cf4b5aedb1cd60d00bca"
+  },
+  "reference/ui-kit/components/host-projections/asset-grid.md": {
+    "status": "reviewed",
+    "sourceHash": "aea2a76ec9b3bc5b59f7bc0170d805f7d2690f3ceab2ed474e7acb1b2efdcf04",
+    "translationHash": "f2c85b71bf4b3de889d189ac30933c3c08e581d7f1f17ef0039da04ab33a004c"
+  },
+  "reference/ui-kit/components/host-projections/command-palette.md": {
+    "status": "reviewed",
+    "sourceHash": "c1bc0924de52a95645396aaaddd11cdc159f215b40e9241b35bf7cd594a55b4c",
+    "translationHash": "1ff1a6f8f733c2415ab4cbe783f3e8d704ac62b1e0084af95a93149cf92cf6b2"
+  },
+  "reference/ui-kit/components/host-projections/data-table.md": {
+    "status": "reviewed",
+    "sourceHash": "036ce6fb9ee73671b73cd21a43e80bd84eeb371c07b21d16ebbd92ee6676f3d9",
+    "translationHash": "b1381669d7c46296facf7b6224a8e113dcdd6edde5cb726f314436cb58509704"
+  },
+  "reference/ui-kit/components/host-projections/filter-facet-menu.md": {
+    "status": "reviewed",
+    "sourceHash": "900e28082162dc7ec0b917d2c5c843af1b6403566deae8a44b72c2755c0b45eb",
+    "translationHash": "5e6e0cec0002c83a5908cd82425127be14d7cdd40c3d135299ab054229726e3c"
+  },
+  "reference/ui-kit/components/host-projections/filter-panel.md": {
+    "status": "reviewed",
+    "sourceHash": "ea03242eb3dd6523cd2d85796678f8a376128725247aeb86f15ead3b1d962a4b",
+    "translationHash": "f40e3490bd14f1e426dbb6227e577fd9a02c49a39bc22c782ed87aba68ba1d7d"
+  },
+  "reference/ui-kit/components/host-projections/inspector.md": {
+    "status": "reviewed",
+    "sourceHash": "ad4606a6be668ae6f8b0443d6c1e201dd14fe104ad3cc522202f606d56c4e5f6",
+    "translationHash": "330b14579586590801bca633fc043100752bb3ee7fe18d19454e5b22039858cd"
+  },
+  "reference/ui-kit/components/host-projections/pane.md": {
+    "status": "reviewed",
+    "sourceHash": "cf17397527259f016f1b42440aedee389474c6a9da54cf16dce287518424a211",
+    "translationHash": "70cfc5577bdf40828d571f0043a8e4884c0380f58e2d60737d2cfcf0ae6a2212"
+  },
+  "reference/ui-kit/components/host-projections/panel.md": {
+    "status": "reviewed",
+    "sourceHash": "7afc8e20e4e590bce13ce77c82c3417d883886d37e7cb8c11f0a5326497551fe",
+    "translationHash": "959f87349e33bab79dec7646f260173261439264ba83215f4f87606a77505451"
+  },
+  "reference/ui-kit/components/host-projections/preview-host.md": {
+    "status": "reviewed",
+    "sourceHash": "2e5bd07275e6fee20d716e81b42f5afce183f5498796ebc90dc63428902cecbc",
+    "translationHash": "09ac5d709090ad14136c76aa60dc36b5e696d7bd82c1c689890b25d451c1cb21"
+  },
+  "reference/ui-kit/components/host-projections/quick-search.md": {
+    "status": "reviewed",
+    "sourceHash": "4f8ca3722e6f28f33ddda9dd5808922873fb7cc42c0a4296c02553c17dfe23bd",
+    "translationHash": "2ec0e59b120073128dd8fa69cd286c48a14aef913d462a96d8f31bc4f558c18f"
+  },
+  "reference/ui-kit/components/host-projections/zoom-control.md": {
+    "status": "reviewed",
+    "sourceHash": "457bcb397da373bbecc25191c1dc8cd476a77f2709f5045e43fb938ce754846d",
+    "translationHash": "1e2a7a7ba39ea5fb217977b35457e5547c470e3b44a789ec1914713beae39b59"
+  },
+  "reference/ui-kit/components/overlays/context-menu.md": {
+    "status": "reviewed",
+    "sourceHash": "48d8ea40fe732ca32c40e21b2c6660d4bf3799ae3350762872519fd0d6c8fd42",
+    "translationHash": "b2fc189399ecd310865364c3acd7f7eb5d80565c87329150d11060aabe468bf7"
+  },
+  "reference/ui-kit/components/overlays/dialog.md": {
+    "status": "reviewed",
+    "sourceHash": "81072c6f0e729d0f1b4561220a1eec4a891d6e6e7e4dba4243287b748f243662",
+    "translationHash": "94cc430a99c62df6842873d3d2446df4a8ad4f11a0a6a7e3831f5af2b9557483"
+  },
+  "reference/ui-kit/components/overlays/toast.md": {
+    "status": "reviewed",
+    "sourceHash": "ae8cbec41aab41038d81856f9d5a9f12480e2ddc1d62b4419b2aaa185d7701e4",
+    "translationHash": "420f57d27b09571e1a7076af140eec175da478e82310e52c6c603c220ef86f72"
+  },
+  "reference/ui-kit/components/primitives/badge.md": {
+    "status": "reviewed",
+    "sourceHash": "49b829fb9b75049f4fc10c277fb2e80751754028008b70dba5c1310278487656",
+    "translationHash": "461e96bfff215d29dab170cfc88708f49c9f1b31a2888f09740851bd75ad2504"
+  },
+  "reference/ui-kit/components/primitives/button.md": {
+    "status": "reviewed",
+    "sourceHash": "c17bb6e1874a1f8ab498b75922bf9e4920b67e21428699ac2e527a0140111d30",
+    "translationHash": "994c8825f8ad8969bdd38bfa75ae3bede375ac099088f92ebc64daf179b49cdb"
+  },
+  "reference/ui-kit/components/primitives/checkbox.md": {
+    "status": "reviewed",
+    "sourceHash": "ae47aec56886ad12f9907cf8e6a1af6282f67f701a17df307eb33b69c181afaa",
+    "translationHash": "b089e1f9c7592bf09d075b81c3d551bc61c17cae72339a995fd022489ed6ff6f"
+  },
+  "reference/ui-kit/components/primitives/icon-button.md": {
+    "status": "reviewed",
+    "sourceHash": "1aa015183279eb17cd51e20acdafcc642854e5fb159c8a2a0826822a754cdba0",
+    "translationHash": "9fe4cff409cea6a3a30b1951292d2884619256100e1235e76ae4c6b5aecdcff3"
+  },
+  "reference/ui-kit/components/primitives/icon.md": {
+    "status": "reviewed",
+    "sourceHash": "6896da23459330469d9b83f778e27e80934977fa126098b4f03f02b0b0c06a81",
+    "translationHash": "7e6df755792775fc55c11f5b664fec9955836dc2418ceb05d9e0a66d9b310b4d"
+  },
+  "reference/ui-kit/components/primitives/inline.md": {
+    "status": "reviewed",
+    "sourceHash": "df71ef4d5b3dbedfcee5e20b66c0c892d138ac00d2c9f449044c7b643968aa64",
+    "translationHash": "3396d7f680686943badf47c3edbc13ab9047f4279d053297d4f05613a6d60208"
+  },
+  "reference/ui-kit/components/primitives/input.md": {
+    "status": "reviewed",
+    "sourceHash": "642520da7ac3a0fdcfb0e9944bbbc18cd67a9d932b2fdf8af62cbc1f6a3ab019",
+    "translationHash": "a45d4afabd3675e094b83a5e7d83a8d3fefc8359bb71ac9284b547ef5ccaebcc"
+  },
+  "reference/ui-kit/components/primitives/progress.md": {
+    "status": "reviewed",
+    "sourceHash": "bc2772ecab0b43caad4e14e2d1b87a9de289f0979a64a519ff48f6b05aa32cfb",
+    "translationHash": "3bc6ee622eae5f69c9ce7abce2222d95a2758bd146badb29f54e0facc172891f"
+  },
+  "reference/ui-kit/components/primitives/select.md": {
+    "status": "reviewed",
+    "sourceHash": "5cf11ce799f883a5a19e6d02d4de5bd4848556283f7955af27da83c471d14ad5",
+    "translationHash": "221819e22e5281430e7ea595cbed3c3c59c7da6d8232fd74fef33126271fada6"
+  },
+  "reference/ui-kit/components/primitives/separator.md": {
+    "status": "reviewed",
+    "sourceHash": "4cca71e0bf087d76dd090436b787af83454b38904e4c9e7667136dc383a62820",
+    "translationHash": "98c5dacab70ecdcce93a7ff0325789c2229a119063be7df89029ca8f2711d2e0"
+  },
+  "reference/ui-kit/components/primitives/stack.md": {
+    "status": "reviewed",
+    "sourceHash": "cb019aa95f24d92030d558bb8d6317e8677fc16692b17e0097187be23f5e7e35",
+    "translationHash": "048d5cb1cdd9a8dbd57f8e3c74182ed328d3bf743161f25a733a228e35cef339"
+  },
+  "reference/ui-kit/components/primitives/state.md": {
+    "status": "reviewed",
+    "sourceHash": "30461874988432be6b36b619b36b1fe651cc30faf17da68f25d61a62bb46bd14",
+    "translationHash": "88331fb4514086de530e5c02820976bd33721b920f11d0647eec820af5585b6c"
+  },
+  "reference/ui-kit/components/primitives/tabs.md": {
+    "status": "reviewed",
+    "sourceHash": "f4f0f82d722e81e9cff1f7cda86f5d14f32f97c59da881a39929a409f1b2dc4a",
+    "translationHash": "9eb8fc24839c3766be40f34de9176848e01b816876496e11184e0d0e4667f5c8"
+  },
+  "reference/ui-kit/components/primitives/text.md": {
+    "status": "reviewed",
+    "sourceHash": "2e6732d606f150c0341bd1706f48c1dd0a1a672164663e4793f0aa10f27bd9bc",
+    "translationHash": "5ae2a1d1401b837af458b745d88afb16bfec154ff99649d147b857bd46c0af53"
+  }
+}

@@ -14,9 +14,12 @@ qualification or an external package ABI.
 
 | Surface | Current version | Compatibility rule |
 | --- | ---: | --- |
-| UI bridge messages | `1` | A different bridge version fails the surface before activation. |
+| UI bridge messages | `1` | Registration rejects an incompatible descriptor; a different version reported in `surface.ready` fails and disposes the session. |
 | Theme schema | `velvet.ui.theme/1` | Legacy snapshots are normalized; unknown schema versions fail closed. |
-| Component contract | `1` | The host advertises version `1`; a surface may report one offered version and is failed and disposed when it is incompatible. |
+| Component contract | `1` | The host advertises version `1`; registration checks any declared version, and an incompatible version reported in `surface.ready` fails and disposes the session. |
+
+Activation does not wait for `surface.ready`; the ready message checks
+compatibility when it arrives.
 
 The host owns layout, Activity Bar, panes, PreviewHost primary selection,
 OperationsPanel, global overlays, focus restoration and global shortcuts. The
@@ -59,15 +62,16 @@ The host retains ownership of Activity Bar, Navigation/Context/Operations
 panes, global overlays, PreviewHost, OperationsPanel and global shortcuts.
 
 Custom Views are registered through the host registry and remain inside their
-declared semantic zone. A custom surface may request focus, resize, locale,
-theme updates and registered command dispatch. It cannot create a second
-layout owner, install a global key handler, inject arbitrary DOM/CSS or mutate
-host state directly.
+declared semantic zone. A custom surface receives host-pushed size, locale and theme updates,
+and may request focus and registered command dispatch. It cannot create a second
+layout owner, install a global host key handler, inject arbitrary DOM/CSS into
+the host document or mutate host state directly. Its isolated renderer owns
+its own document.
 
 ## Visual system and renderer boundary
 
-The default host visual language follows the observed desktop workbench grammar.
-It uses the observed desktop workbench grammar as design input: dense
+The default host visual language uses the observed desktop workbench grammar
+as design input: dense
 navigation/workspace/Inspector zones, near-flat charcoal surfaces, thin
 separators, rounded selected rows, compact system-sans typography, one
 saturated indigo/purple accent, icon-first toolbars with explicit search,
@@ -94,11 +98,12 @@ are added one host use at a time after production bundle measurement.
 The component set is split into three ownership groups:
 
 1. **Primitives** — text, icon, button, icon button, input, select, checkbox,
-   separator, stack, inline, tabs, progress, state and toast.
-2. **Host composites** — Activity Bar, Pane, PreviewHost, AssetGrid,
-   DataTable and CommandPalette. These retain host-owned context, focus,
+   badge, separator, stack, inline, tabs, progress and state.
+2. **Host composites** — Panel, Activity Bar, Pane, PreviewHost, Inspector,
+   AssetGrid, DataTable, FilterPanel, FilterFacetMenu, CommandPalette,
+   QuickSearch and ZoomControl. These retain host-owned context, focus,
    layout and projection state.
-3. **Overlay wrappers** — Dialog and Context Menu today; Tooltip, Popover,
+3. **Overlay wrappers** — Dialog, Context Menu and Toast today; Tooltip, Popover,
    DropdownMenu or ScrollArea only when a concrete host surface needs them.
 
 Every group remains replaceable behind the semantic wrapper and the

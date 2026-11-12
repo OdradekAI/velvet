@@ -4,11 +4,11 @@ title: State
 sidebar_label: State
 ---
 
-import { StatePlayground } from '@site/src/components/UiKitPrimitivePlaygrounds';
+import { StatePlayground } from '@site/src/components/playgrounds/state';
 
 # VelvetState
 
-`VelvetState` 用于组合 loading、empty 和 error 状态。它把状态语义、live region、错误重试和可选 action 集中在一个宿主拥有的 projection 中。
+`VelvetState` 用于组合 loading、empty 和 error 状态。这个基础组件呈现调用方拥有的状态语义、动态播报区域、错误重试和可选操作插槽，不拥有业务操作或重试的生命周期。
 
 ## Demo
 

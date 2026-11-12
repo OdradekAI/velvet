@@ -4,7 +4,7 @@ title: Dialog
 sidebar_label: Dialog
 ---
 
-import { DialogPlayground } from '@site/src/components/UiKitPrimitivePlaygrounds';
+import { DialogPlayground } from '@site/src/components/playgrounds/dialog';
 
 # VelvetDialog
 
@@ -26,11 +26,11 @@ import { DialogPlayground } from '@site/src/components/UiKitPrimitivePlaygrounds
 | `actions` | `readonly VelvetDialogAction[]` | `[]` | Footer actions |
 | `severity` | `normal \| warning \| danger` | `normal` | Semantic risk level |
 | `closeLabel` | `string` | `Close` | Close button label |
-| `restoreFocusRef` | `RefObject<HTMLElement>` | — | Element to focus after close |
+| `restoreFocusRef` | `RefObject<HTMLElement \| null>` | — | Element to focus after close |
 
 ### VelvetDialogAction
 
-`id`, `label`, `variant`, `primary`, `disabled`, `busy`, and `onSelect` form the action contract.
+`id`, `label`, `variant`, `primary`, `disabled`, `busy`, and `onSelect` form the action contract. `id`, `label` and `onSelect` are required; the other fields are optional. An action callback does not automatically close the controlled dialog: the caller updates `open`.
 
 ## States and accessibility
 

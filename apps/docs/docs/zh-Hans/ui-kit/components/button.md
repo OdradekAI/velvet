@@ -4,7 +4,7 @@ title: Button
 sidebar_label: Button
 ---
 
-import { ButtonPlayground } from '@site/src/components/UiKitComponentPlayground';
+import { ButtonPlayground } from '@site/src/components/playgrounds/button';
 
 # VelvetButton
 
@@ -26,6 +26,7 @@ Button 用于 command 或 local action。宿主 command、capability 和 enablem
 | `onClick` | `MouseEventHandler` | — | 本地或宿主 action 回调 |
 | `ariaLabel` | `string` | — | 可访问名称 |
 | `describedBy` | `string` | — | 可访问描述节点引用 |
+| `ariaLive` | `off \| polite \| assertive` | — | 公共类型已声明；当前 Button 未映射到原生 `aria-live` |
 | `apiVersion` | `string` | `1.0` | UI Kit contract 版本标记 |
 | `testId` | `string` | — | 宿主 qualification hook |
 

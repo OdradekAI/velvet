@@ -6,9 +6,13 @@ sidebar_label: UI Kit overview
 
 # UI Kit
 
+These React examples are for trusted host UI. Third-party authors should start with the [UI Bridge](/platform/ui-bridge) and consume semantic tokens/messages; there is no published React SDK package.
+
 The UI Kit is a UI capability layer provided by the Plugin Platform. It serves trusted first-party extensions through React wrappers and third-party isolated surfaces through semantic component names, theme tokens, and host requests.
 
 The UI Kit does not own Workbench layout, overlays, Jobs, or core data. It describes component semantics, states, actions, focus, and accessibility.
+
+## Documentation paths
 
 - [UI Kit Showcase](./showcase)
 - [Button component](./components/button)
@@ -31,4 +35,5 @@ The UI Kit does not own Workbench layout, overlays, Jobs, or core data. It descr
 - [Customization](./customization)
 - [Accessibility](./accessibility)
 - [UI Kit contract](/reference/ui-kit-contract-v1)
+- [Component guide](/reference/ui-kit-component-guide)
 - [Component manuals](/reference/ui-kit/components)

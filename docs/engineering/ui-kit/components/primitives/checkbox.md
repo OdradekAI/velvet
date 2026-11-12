@@ -10,11 +10,15 @@ import { VelvetCheckbox } from './app/ui/index.js';
 ## Contract
 
 - **Props:** `checked`, `label`, `disabled`, `onCheckedChange`
-- **State:** checked, disabled
-- **Owner:** see `apps/desktop/src/app/ui/contracts/primitives/checkbox.contract.ts`.
-- **Slots:** the contract file lists the supported child/data slots.
-- **Actions:** Semantic actions are observed through the typed callback or native control event.
-- **Keyboard and accessibility:** Space toggles the controlled checked value.
+- **States:** `checked`, `unchecked`, `disabled`, `focus`
+- **Owner:** `host`; see `apps/desktop/src/app/ui/contracts/primitives/checkbox.contract.ts`.
+- **Slots:** none.
+- **Actions:** `toggle` calls `onCheckedChange` with `event.currentTarget.checked`; the callback carries a boolean, not an event.
+- **Keyboard and accessibility:** Tab focuses the enabled native checkbox; Space or a click on the checkbox/label requests a toggle. Disabled checkboxes cannot be focused or toggled through normal user interaction.
+
+`checked: boolean`, `label: string` and `onCheckedChange: (checked: boolean) => void` are required. After the callback, the host must pass the updated `checked` value. `ariaLabel`, `describedBy` and the remaining common metadata apply to the outer label, not directly to the input. The visible `label` names the input through a generated id. `disabled` disables the input; `busy` alone does not disable it.
+
+The wrapper also accepts `UiCommonProps`: `apiVersion` (default `'1.0'`), `testId`, `ariaLabel`, `describedBy`, `disabled`, `busy`, `ariaLive?: 'off' | 'polite' | 'assertive'` and `data-*` metadata. See `apps/desktop/src/app/ui/internal/types.ts` and `apps/desktop/src/app/ui/internal/ui-data-props.ts`; these props do not imply uniform disabling behavior across display and interactive components. `className` is supported.
 
 The contract is semantic. React implementation details, Tailwind classes, Radix
 attributes and private DOM structure are not public API.
@@ -37,8 +41,12 @@ The executable stories are in
 
 ## Validation
 
+Run from `apps/desktop`:
+
 ```sh
 npm run typecheck
 npm run generate:ui-kit-catalog
 npm test
 ```
+
+See [VelvetCheckbox API and Playground](/ui-kit/components/checkbox) for interactive examples and prop controls.

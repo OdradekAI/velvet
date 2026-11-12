@@ -4,7 +4,7 @@ title: IconButton
 sidebar_label: IconButton
 ---
 
-import { IconButtonPlayground } from '@site/src/components/UiKitPrimitivePlaygrounds';
+import { IconButtonPlayground } from '@site/src/components/playgrounds/icon-button';
 
 # VelvetIconButton
 
@@ -24,6 +24,7 @@ import { IconButtonPlayground } from '@site/src/components/UiKitPrimitivePlaygro
 | `busy` | `boolean` | `false` | Shows busy state and prevents activation |
 | `onClick` | `MouseEventHandler` | — | Action callback |
 | `variant` | `default \| quiet \| danger` | `default` | Button visual variant |
+| `ariaLive` | `off \| polite \| assertive` | — | Declared in the common type; current Button does not map it to native `aria-live` |
 | `apiVersion` | `string` | `1.0` | UI Kit contract version marker |
 | `testId` | `string` | — | Stable qualification hook |
 

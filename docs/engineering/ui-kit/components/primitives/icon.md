@@ -10,11 +10,15 @@ import { VelvetIcon } from './app/ui/index.js';
 ## Contract
 
 - **Props:** `name`, `children`, `label`, `className`
-- **State:** default, labelled
-- **Owner:** see `apps/desktop/src/app/ui/contracts/primitives/icon.contract.ts`.
-- **Slots:** `name` selects a host-owned semantic glyph; `children` remains a compatibility slot for custom renderer content.
-- **Actions:** No semantic action; this component preserves child semantics.
-- **Keyboard and accessibility:** No keyboard behavior is introduced by this layout or display component.
+- **States:** `default`, `decorative`, `labelled`
+- **Owner:** `component`; see `apps/desktop/src/app/ui/contracts/primitives/icon.contract.ts`.
+- **Slots:** `name`, `children`.
+- **Actions:** No semantic action is defined.
+- **Keyboard and accessibility:** No keyboard behavior is added. A non-empty `label` produces `role="img"` and `aria-label`; otherwise the wrapper has `aria-hidden="true"`.
+
+`name?: VelvetIconName` selects a host-owned semantic glyph. `children?: ReactNode` is the compatibility slot for custom renderer content and takes precedence over `name`. The supported name literals are defined in `apps/desktop/src/app/ui/primitives/icon.tsx`. `label?: string` controls accessible icon semantics; an empty label is treated as decorative. The explicit `label` handling overrides the inherited `ariaLabel` prop.
+
+The wrapper also accepts `UiCommonProps`: `apiVersion` (default `'1.0'`), `testId`, `ariaLabel`, `describedBy`, `disabled`, `busy`, `ariaLive?: 'off' | 'polite' | 'assertive'` and `data-*` metadata. See `apps/desktop/src/app/ui/internal/types.ts` and `apps/desktop/src/app/ui/internal/ui-data-props.ts`; these props do not imply uniform disabling behavior across display and interactive components. `className` is supported.
 
 The contract is semantic. React implementation details, Tailwind classes, Radix
 attributes and private DOM structure are not public API.
@@ -38,8 +42,12 @@ The executable stories are in
 
 ## Validation
 
+Run from `apps/desktop`:
+
 ```sh
 npm run typecheck
 npm run generate:ui-kit-catalog
 npm test
 ```
+
+See [VelvetIcon API and Playground](/ui-kit/components/icon) for interactive examples and prop controls.

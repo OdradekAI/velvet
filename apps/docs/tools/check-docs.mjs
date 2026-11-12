@@ -1,5 +1,7 @@
 import { lstat, readdir, readFile, realpath } from 'node:fs/promises';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { assertManifestFields, assertReviewedTranslation, assertTranslationContractParity, englishPages as loadEnglishPages, markdownFiles, pageRoute, translatedPath } from './docs-content.mjs';
 
 const docsRoot = path.resolve(import.meta.dirname, '..');
 const repositoryRoot = path.resolve(docsRoot, '../..');
@@ -8,38 +10,12 @@ const chineseDocsRoot = path.join(docsRoot, 'docs/zh-Hans');
 const englishReferenceRoot = path.join(docsRoot, 'reference/en');
 const chineseReferenceRoot = path.join(docsRoot, 'reference/zh-Hans');
 const canonicalReferenceRoot = path.join(repositoryRoot, 'docs/engineering');
-
-async function markdownFiles(directory) {
-  const entries = await readdir(directory, { withFileTypes: true });
-  const files = [];
-
-  for (const entry of entries) {
-    const entryPath = path.join(directory, entry.name);
-    if (entry.isDirectory()) {
-      files.push(...await markdownFiles(entryPath));
-    } else if (entry.isFile() && entry.name.endsWith('.md')) {
-      files.push(entryPath);
-    }
-  }
-
-  return files.sort();
-}
+const publishedPages = await loadEnglishPages();
+const publishedRoutes = new Map(publishedPages.map((page) => [page.route, page]));
+if (publishedRoutes.size !== publishedPages.length) throw new Error('Duplicate published routes');
 
 async function canonicalReferenceFiles() {
-  const canonicalTopLevelFiles = [
-    'plugin-contract-matrix.md',
-    'plugin-developer-guide.md',
-    'plugin-ecosystem-qualification.md',
-    'plugin-manifest-v1.md',
-    'plugin-registry-v1.md',
-    'ui-kit-component-guide.md',
-    'ui-kit-contract-v1.md',
-  ].map((file) => path.join(canonicalReferenceRoot, file));
-
-  return [
-    ...canonicalTopLevelFiles,
-    ...await markdownFiles(path.join(canonicalReferenceRoot, 'ui-kit')),
-  ].sort();
+  return publishedPages.filter((page) => page.key.startsWith('reference/')).map((page) => page.file).sort();
 }
 
 function relativeMarkdownFiles(files, root) {
@@ -80,6 +56,8 @@ async function assertEnglishReferenceLink() {
       + `Actual: ${path.relative(repositoryRoot, actualTarget)}`,
     );
   }
+  const tracked = execFileSync('git', ['ls-files', '--stage', 'apps/docs/reference/en'], { cwd: repositoryRoot, encoding: 'utf8' });
+  if (!tracked.startsWith('120000 ')) throw new Error('English Reference must remain a tracked symlink');
 }
 
 async function assertMainLanguageParity() {
@@ -161,30 +139,9 @@ async function assertChineseLinksStayLocalized() {
 }
 
 function routeToSourcePaths(route, locale = 'en') {
-  let relativeRoute = route.replace(/^\//u, '').split(/[?#]/u, 1)[0];
-  if (locale === 'zh-Hans') {
-    relativeRoute = relativeRoute.replace(/^zh-Hans\/?/u, '');
-  }
-
-  const referenceRoot = locale === 'zh-Hans' ? chineseReferenceRoot : canonicalReferenceRoot;
-  const docsRootForLocale = locale === 'zh-Hans' ? chineseDocsRoot : englishDocsRoot;
-
-  if (relativeRoute === 'reference/ui-kit/components') {
-    return [path.join(referenceRoot, 'ui-kit/components/README.md')];
-  }
-
-  if (relativeRoute.startsWith('reference/')) {
-    return [path.join(referenceRoot, `${relativeRoute.slice('reference/'.length)}.md`)];
-  }
-
-  if (relativeRoute === '') {
-    return [path.join(docsRootForLocale, 'index.md')];
-  }
-
-  return [
-    path.join(docsRootForLocale, `${relativeRoute}.md`),
-    path.join(docsRootForLocale, relativeRoute, 'index.md'),
-  ];
+  const normalized = route.split(/[?#]/u, 1)[0].replace(/^\/zh-Hans(?=\/|$)/, '').replace(/\/$/, '') || '/';
+  const page = publishedRoutes.get(normalized);
+  return page ? [locale === 'zh-Hans' ? translatedPath(page.key) : page.file] : [];
 }
 
 function isExternalLink(target) {
@@ -268,7 +225,7 @@ async function assertMarkdownLinks() {
 async function assertLlmsRoutes() {
   const llmsPath = path.join(docsRoot, 'static/llms.txt');
   const llms = await readFile(llmsPath, 'utf8');
-  const routes = [...llms.matchAll(/^- (\/[^\s]+)$/gmu)].map((match) => match[1]);
+  const routes = [...llms.matchAll(/^- (\/[^\s]*)$/gmu)].map((match) => match[1]);
   const missingRoutes = [];
 
   for (const route of routes) {
@@ -285,8 +242,69 @@ async function assertLlmsRoutes() {
   if (missingRoutes.length) {
     throw new Error(`llms.txt contains missing routes\n${formatList(missingRoutes)}`);
   }
+  const coverage = compareSets(new Set(publishedRoutes.keys()), new Set(routes));
+  if (coverage.missing.length || coverage.extra.length || new Set(routes).size !== routes.length) {
+    throw new Error('llms.txt must list every published route once. Run npm run generate:index.');
+  }
 
   return routes.length;
+}
+
+function firstCodeCells(markdown) {
+  return [...markdown.matchAll(/^\| `([^`]+)` \|/gm)].map(([, cell]) => cell).sort();
+}
+
+async function assertContentContracts() {
+  const records = JSON.parse(await readFile(path.join(docsRoot, 'translation-status.json'), 'utf8'));
+  const recordKeys = compareSets(new Set(publishedPages.map((page) => page.key)), new Set(Object.keys(records)));
+  if (recordKeys.missing.length || recordKeys.extra.length) throw new Error('Translation records must match published pages');
+  const rust = await readFile(path.join(repositoryRoot, 'crates/plugin-api/src/lib.rs'), 'utf8');
+  const bridge = await readFile(path.join(repositoryRoot, 'apps/desktop/src/workbench/plugins/ui-bridge.ts'), 'utf8');
+  const bridgeKinds = [...bridge.slice(bridge.indexOf('export type HostToSurfaceMessage'), bridge.indexOf('export interface UiBridgeEndpoint')).matchAll(/readonly type: '([^']+)'/g)].map(([, kind]) => kind).sort();
+  const protocol = await readFile(path.join(repositoryRoot, 'crates/workbench-protocol/src/protocol.rs'), 'utf8');
+  const requestBody = protocol.match(/pub enum PluginRequest \{([\s\S]*?)\n\}/)?.[1] ?? '';
+  const requestKinds = [...requestBody.matchAll(/^    (\w+) \{/gm)].map(([, kind]) => kind.replace(/([a-z])([A-Z])/g, '$1-$2').toLowerCase()).sort();
+  for (const page of publishedPages) {
+    const translated = await readFile(translatedPath(page.key), 'utf8');
+    assertReviewedTranslation(page.key, page.content, translated, records[page.key], process.argv.includes('--require-reviewed'));
+    if (records[page.key].status === 'reviewed') assertTranslationContractParity(page.key, page.content, translated);
+    if (pageRoute(page.key, translated) !== page.route) throw new Error(`Locale route mismatch: ${page.key}`);
+    if (page.key === 'reference/plugin-manifest-v1.md') {
+      assertManifestFields(rust, page.content);
+      assertManifestFields(rust, translated);
+    }
+    if (page.key === 'reference/ui-bridge-protocol-v1.md') {
+      for (const content of [page.content, translated]) {
+        const table = content.match(/\{\/\* bridge-messages:start \*\/\}([\s\S]*?)\{\/\* bridge-messages:end \*\/\}/)?.[1] ?? '';
+        if (JSON.stringify(firstCodeCells(table)) !== JSON.stringify(bridgeKinds)) throw new Error('Bridge message catalog differs from source');
+      }
+    }
+    if (page.key === 'reference/plugin-api-index.md') {
+      for (const content of [page.content, translated]) {
+        if (JSON.stringify(firstCodeCells(content)) !== JSON.stringify(requestKinds)) throw new Error('Host request catalog differs from source');
+      }
+    }
+    if (page.key.startsWith('docs/ui-kit/components/') && JSON.stringify(firstCodeCells(page.content)) !== JSON.stringify(firstCodeCells(translated))) {
+      throw new Error(`Component prop tables differ between languages: ${page.key}`);
+    }
+  }
+  const config = JSON.parse(await readFile(path.join(docsRoot, 'tsconfig.json'), 'utf8'));
+  if (!config.compilerOptions.strict || !config.compilerOptions.isolatedModules) throw new Error('Keep docs TypeScript strict and isolatedModules enabled');
+}
+
+async function assertDemoImports(directory = path.join(docsRoot, 'src')) {
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const file = path.join(directory, entry.name);
+    if (entry.isDirectory()) await assertDemoImports(file);
+    else if (/\.tsx?$/.test(entry.name)) {
+      const content = await readFile(file, 'utf8');
+      for (const [, target] of content.matchAll(/(?:from\s+|import\s*(?:\(\s*)?)["']([^"']+)["']/g)) {
+        if ((target.startsWith('@velvet-') && target !== '@velvet-ui') || (target.startsWith('.') && !path.resolve(path.dirname(file), target).startsWith(docsRoot + path.sep))) {
+          throw new Error(`Docs demo import crosses its UI entrypoint: ${file} -> ${target}`);
+        }
+      }
+    }
+  }
 }
 
 const linksOnly = process.argv.includes('--links-only');
@@ -312,6 +330,8 @@ const [mainPages, referencePages, englishPages, llmsRoutes] = await Promise.all(
   assertLlmsRoutes(),
 ]);
 await assertChineseLinksStayLocalized();
+await assertContentContracts();
+await assertDemoImports();
 
 console.log(
   `Docs checks passed: ${mainPages} main pages, `

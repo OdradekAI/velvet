@@ -4,7 +4,7 @@ title: Select
 sidebar_label: Select
 ---
 
-import { SelectPlayground } from '@site/src/components/UiKitPrimitivePlaygrounds';
+import { SelectPlayground } from '@site/src/components/playgrounds/select';
 
 # VelvetSelect
 
@@ -27,7 +27,7 @@ import { SelectPlayground } from '@site/src/components/UiKitPrimitivePlaygrounds
 | `busy` | `boolean` | `false` | Sets busy semantics and prevents selection |
 | `ariaLabel` | `string` | — | Maps to native `aria-label` |
 | `describedBy` | `string` | — | Maps to native `aria-describedby` |
-| `ariaLive` | `off \| polite \| assertive` | — | Live-region semantics |
+| `ariaLive` | `off \| polite \| assertive` | — | Declared in the common type; current wrapper does not map it to native `aria-live` |
 | `apiVersion` | `string` | `1.0` | UI Kit contract version marker |
 | `testId` | `string` | — | Stable qualification hook |
 | `className` | `string` | — | Host-approved semantic style extension |
@@ -47,6 +47,8 @@ Use `value` for controlled selection and `defaultValue` for uncontrolled selecti
 ## Accessibility
 
 The component renders a native `<select>` and keeps option announcements, arrow-key selection, and form submission semantics. Use a visible `<label>` where possible, or `ariaLabel` when no visible label exists. A multiple select should explain how to select and how many options are available.
+
+The current implementation forwards `ariaLive` as a camelCase prop instead of mapping it to `aria-live`; even a direct native `aria-live` prop is overwritten by the common-prop projection. Use a separate live region for announcements until this implementation gap is fixed.
 
 Behavior, stories, and browser evidence are listed in the [Select manual](/reference/ui-kit/components/primitives/select).
 

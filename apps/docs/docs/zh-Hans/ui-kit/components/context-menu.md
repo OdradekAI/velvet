@@ -4,7 +4,7 @@ title: ContextMenu
 sidebar_label: ContextMenu
 ---
 
-import { ContextMenuPlayground } from '@site/src/components/UiKitPrimitivePlaygrounds';
+import { ContextMenuPlayground } from '@site/src/components/playgrounds/context-menu';
 
 # VelvetContextMenu
 
@@ -31,8 +31,11 @@ import { ContextMenuPlayground } from '@site/src/components/UiKitPrimitivePlaygr
 | `checked` | `boolean` | `menuitemcheckbox` 状态 |
 | `shortcutHint` | `string` | 键盘提示 |
 | `separatorBefore` | `boolean` | 是否显示分隔线 |
+| `group` | `string` | 可选元数据；当前渲染器不按它分组 |
 | `submenu` | `readonly VelvetContextMenuAction[]` | 递归子菜单 |
-| `onSelect` | `() => void` | 选择回调 |
+| `onSelect` | `() => void` | 可选选择回调 |
+
+Action 只有 `id` 和 `label` 必填。`checked` 由调用方拥有，选择时调用 `onSelect`，不会自动切换该值。`shortcutHint` 只显示文本，不注册快捷键。非空 submenu 渲染为子菜单触发器，不调用父项操作。
 
 ## 状态与无障碍
 

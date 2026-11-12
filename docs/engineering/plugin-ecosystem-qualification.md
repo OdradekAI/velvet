@@ -44,9 +44,10 @@ fixtures where they do not exercise a production runtime:
   [plugin developer guide](plugin-developer-guide.md).
 
 These fixtures prove typed seams, lifecycle cleanup, permission checks,
-cancellation and failure projection. They do not establish package signing,
-publisher revocation, a security sandbox, target-platform accessibility or a
-public SDK ABI.
+cancellation and failure projection. Host fixtures also cover package signature
+verification, publisher key rotation and revoked-key rejection; they do not
+establish a production signing/revocation service, a security sandbox,
+target-platform accessibility or a public SDK ABI.
 
 ## Ownership and change control
 

@@ -10,4 +10,4 @@ import UiKitShowcase from '@site/src/components/UiKitShowcase';
 
 <UiKitShowcase locale="en" />
 
-This page uses the real primitive components from the desktop application. The reference pages define their contract, API, qualification, and compatibility behavior.
+This page uses the real primitive components from the desktop application to demonstrate appearance and interaction states. The reference pages define their contract, API, qualification, and compatibility behavior.

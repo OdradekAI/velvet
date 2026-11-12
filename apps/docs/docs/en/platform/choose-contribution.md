@@ -12,7 +12,11 @@ Choose the host capability first, then decide whether custom UI is needed.
 | --- | --- | --- |
 | Add navigation or a tool | `view-container`, `view`, `activity-bar-entry` | UI Kit or UI Bridge |
 | Add a one-shot action | `command`, `menu`, `keybinding` | Host Command Palette, Context Menu, or Overlay |
-| Enhance Asset preview | `preview-provider`, `preview-augmentation`, `inspector-section` | PreviewHost, Inspector, or UI Bridge |
+| Enhance Asset preview | `preview-provider`, `preview-augmentation`, `inspector` | PreviewHost, Inspector, or UI Bridge |
 | Run expensive work | `job` | OperationsPanel and Progress projection |
 
-Trusted first-party extensions may use Velvet React wrappers. Third-party extensions use the framework-neutral UI Bridge. Plugins that only need host interaction should use Commands, Notifications, Progress, or Host projections without creating a custom surface.
+Trusted first-party extensions may use Velvet React wrappers. Third-party extensions use the framework-neutral UI Bridge and render their own React, Vue, Svelte or plain HTML surface. Plugins that only need host interaction should use Commands, Notifications, Progress, or Host projections without creating a custom surface.
+
+The host retains ownership of layout, focus, overlays, global shortcuts, permission checks and failure recovery.
+
+[Find the exact entry point and implementation status in the capability catalog](./capabilities).

@@ -4,7 +4,7 @@ title: Badge
 sidebar_label: Badge
 ---
 
-import { BadgePlayground } from '@site/src/components/UiKitPrimitivePlaygrounds';
+import { BadgePlayground } from '@site/src/components/playgrounds/badge';
 
 # VelvetBadge
 
@@ -26,7 +26,7 @@ import { BadgePlayground } from '@site/src/components/UiKitPrimitivePlaygrounds'
 
 ## States and accessibility
 
-The component covers default and tone variants. It does not render a button or link, so it should not carry an action that requires keyboard activation.
+The component covers default and tone variants. It does not render a button or link, so it should not carry an action that requires keyboard activation. Use it as content within a Button or link when interaction is needed.
 
 Behavior is listed in the [Badge manual](/reference/ui-kit/components/primitives/badge).
 

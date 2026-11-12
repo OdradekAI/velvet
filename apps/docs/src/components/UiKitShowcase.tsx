@@ -2,13 +2,13 @@ import { useState } from 'react';
 
 import Link from '@docusaurus/Link';
 
-import { VelvetBadge } from '@velvet-desktop/app/ui/primitives/badge';
-import { VelvetButton } from '@velvet-desktop/app/ui/primitives/button';
-import { VelvetCheckbox } from '@velvet-desktop/app/ui/primitives/checkbox';
-import { VelvetInput } from '@velvet-desktop/app/ui/primitives/input';
-import { VelvetSelect } from '@velvet-desktop/app/ui/primitives/select';
-import { VelvetState } from '@velvet-desktop/app/ui/primitives/state';
-import { VelvetTabs } from '@velvet-desktop/app/ui/primitives/tabs';
+import { VelvetBadge } from '@velvet-ui';
+import { VelvetButton } from '@velvet-ui';
+import { VelvetCheckbox } from '@velvet-ui';
+import { VelvetInput } from '@velvet-ui';
+import { VelvetSelect } from '@velvet-ui';
+import { VelvetState } from '@velvet-ui';
+import { VelvetTabs } from '@velvet-ui';
 
 import '../css/ui-kit-showcase.css';
 

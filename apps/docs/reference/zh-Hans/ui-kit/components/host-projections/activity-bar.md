@@ -6,30 +6,41 @@ sidebar_label: Activity Bar
 
 # VelvetActivityBar
 
-`VelvetActivityBar` 是 Workbench 导航栏的宿主投影。宿主提供条目和选择回调，插件不能直接修改导航布局。
+`VelvetActivityBar` 是工作台导航栏的 Velvet 宿主投影组件。实现位于 `apps/desktop/src/app/ui/host-projections/`；公开导入入口仍为 `apps/desktop/src/app/ui/index.ts`。
 
-## 契约
+<span id="契约" className="velvet-doc-anchor" />
 
-- Props：`items`、`onSelect`
-- 状态：默认、带徽标
-- 合同：`apps/desktop/src/app/ui/contracts/host-projections/activity-bar.contract.ts`
-- Stories：`apps/desktop/src/app/ui/stories/host-projections/activity-bar.stories.tsx`
+## 契约 {/* #contract */}
 
-组件只公开语义属性和回调。Radix 类型、私有 DOM、Tailwind class 和 Workbench 实现细节不属于插件 API。
+- **属性：** `items`、`onSelect`
+- **状态：** selected、disabled、focus、badge（story：default、badges）
+- **无障碍：** navigation 地标、移动式焦点；方向键、Home 和 End 改变选择时焦点随之移动，并跳过禁用条目
+- **契约：** `apps/desktop/src/app/ui/contracts/host-projections/activity-bar.contract.ts`
+- **Story：** `apps/desktop/src/app/ui/stories/host-projections/activity-bar.stories.tsx`
+- **宿主边界：** 布局、浮层、焦点和投影状态仍由宿主拥有。
 
-## 故事与无障碍
+组件契约只规定语义。Radix 类型、私有 DOM 结构、Tailwind 类和 Workbench 实现细节不属于公开 API。
 
-- `activity-bar/default` 覆盖点击选择和方向键导航。
-- `activity-bar/badges` 覆盖条目徽标。
-- 使用 navigation landmark 和 roving focus。Arrow、Home、End 会移动焦点和选择，disabled 条目会被跳过。
+<span id="故事与无障碍" className="velvet-doc-anchor" />
 
-## 所有权与验证
+## Story 与证据 {/* #stories-and-evidence */}
 
-布局、焦点和 projection state 由宿主拥有。修改键盘行为或条目语义时运行：
+- `activity-bar/default`
+- `activity-bar/badges`
+
+默认场景覆盖 ArrowRight 导航、点击选择和焦点移动。真实浏览器宿主夹具验证禁用条目会被跳过，且新选中的条目获得焦点。
+
+当前 story 运行器提供确定性夹具覆盖。对于浮层和宿主投影，修改焦点、portal、几何尺寸或宿主投影行为时，必须运行真实浏览器资格验证夹具。未经验证的外部行为仍标记为 `unknown`，直到运行时捕获提供证据。
+
+<span id="所有权与验证" className="velvet-doc-anchor" />
+
+## 验证 {/* #validation */}
+
+在 `apps/desktop` 中运行：
 
 ```sh
-cd apps/desktop
 npm run typecheck
 npm run generate:ui-kit-catalog
+npm test
 npm run qualify:ui-host-projections
 ```

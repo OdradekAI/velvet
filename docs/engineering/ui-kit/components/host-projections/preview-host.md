@@ -42,6 +42,8 @@ to the ready preview state, plus the provider toolbar, mode marker, mode toggle,
 provider action pressed/disabled state and explicit external-open callback.
 
 `mode` is host-controlled. `onModeChange` and `onOpenExternal` are explicit host
+action callbacks; the component does not change preview mode or open an external
+application itself.
 
 `providerActions` is a typed host slot for provider-specific controls such as
 rotate, pan or slideshow. Each action supplies a stable id and accessible label;
@@ -74,15 +76,16 @@ The native smoke qualification uses the real Rust `ApplicationCore`,
 It injects a bounded in-memory preview runtime only at the plugin runtime seam:
 the first provider request fails, the retry returns a UI Bridge provider and a
 metadata augmentation, and release requests revoke both session action
-authorizations. Run it with:
+authorizations. Run from `apps/desktop`:
 
 ```sh
 npm run qualify:native-preview
 ```
 
 This test qualifies the Rust/Tauri transport and preview lifecycle without
-claiming that a platform WebView renderer was launched; WebView geometry and
-focus remain covered by the browser qualification fixture.
+claiming that a platform WebView renderer was launched. The browser fixture
+covers renderer geometry and focus; native platform WebView geometry and focus
+require separate qualification.
 
 The semantic visual contract keeps the preview on the canvas surface, reserves
 a 48px control strip for provider actions and keeps zoom bounds in the host
@@ -94,6 +97,8 @@ The current story runner provides deterministic fixture coverage. Required for o
 Unverified external behavior remains `unknown` until a runtime capture proves it.
 
 ## Validation
+
+Run from `apps/desktop`:
 
 ```sh
 npm run typecheck

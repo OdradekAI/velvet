@@ -37,6 +37,8 @@ module-level SCSS, templates and behavior evidence used by this wrapper.
 
 ## Validation
 
+Run from `apps/desktop`:
+
 ```sh
 npm run typecheck
 npm run generate:ui-kit-catalog

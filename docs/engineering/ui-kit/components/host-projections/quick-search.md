@@ -19,7 +19,9 @@ command execution.
 The component never reads a library index, parses query syntax, performs
 transliteration, ranks results, deduplicates history, writes history or calls
 CoreTransport. A Workbench adapter prepares the result and history projections,
-then owns query, tab, selection and persistence state.
+then owns query, tab, selection and persistence state. If `query` is omitted,
+the component keeps a local input draft and still reports changes through
+`onQueryChange`; supplying `query` makes the value host-controlled.
 
 ## Evidence boundary
 
@@ -40,6 +42,8 @@ switching, history rendering/selection, Arrow/Enter selection and restored
 trigger focus.
 
 ## Validation
+
+Run from `apps/desktop`:
 
 ```sh
 npm run typecheck

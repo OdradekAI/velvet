@@ -4,11 +4,11 @@ title: Text
 sidebar_label: Text
 ---
 
-import { TextPlayground } from '@site/src/components/UiKitPrimitivePlaygrounds';
+import { TextPlayground } from '@site/src/components/playgrounds/text';
 
 # VelvetText
 
-`VelvetText` provides semantic text and tone wrapping. It lets plugin surfaces use host typography, color, and HTML element semantics.
+`VelvetText` provides semantic text and tone wrapping. Trusted host UI uses it for typography, color and HTML element semantics; isolated extensions consume theme projections and render their own text.
 
 ## Demo
 

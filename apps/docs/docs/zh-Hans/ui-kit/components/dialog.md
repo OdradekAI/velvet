@@ -4,7 +4,7 @@ title: Dialog
 sidebar_label: Dialog
 ---
 
-import { DialogPlayground } from '@site/src/components/UiKitPrimitivePlaygrounds';
+import { DialogPlayground } from '@site/src/components/playgrounds/dialog';
 
 # VelvetDialog
 
@@ -26,11 +26,11 @@ import { DialogPlayground } from '@site/src/components/UiKitPrimitivePlaygrounds
 | `actions` | `readonly VelvetDialogAction[]` | `[]` | Footer action |
 | `severity` | `normal \| warning \| danger` | `normal` | 语义化风险级别 |
 | `closeLabel` | `string` | `Close` | 关闭按钮 label |
-| `restoreFocusRef` | `RefObject<HTMLElement>` | — | 关闭后恢复焦点的元素 |
+| `restoreFocusRef` | `RefObject<HTMLElement \| null>` | — | 关闭后恢复焦点的元素 |
 
 ### VelvetDialogAction
 
-`id`、`label`、`variant`、`primary`、`disabled`、`busy` 和 `onSelect` 构成 action contract。
+`id`、`label`、`variant`、`primary`、`disabled`、`busy` 和 `onSelect` 构成操作契约。`id`、`label` 和 `onSelect` 必填，其他字段可选。操作回调不会自动关闭受控对话框，调用方需要更新 `open`。
 
 ## 状态与无障碍
 

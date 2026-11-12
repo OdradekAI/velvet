@@ -3,28 +3,48 @@
     "message": "Next",
     "description": "The label for version current"
   },
-  "sidebar.reference.category.Plugin Platform reference": {
-    "message": "Plugin Platform reference",
-    "description": "The label for category 'Plugin Platform reference' in sidebar 'reference'"
+  "sidebar.reference.link.Capability catalog": {
+    "message": "Capability catalog",
+    "description": "The label for link 'Capability catalog' in sidebar 'reference', linking to '/platform/capabilities'"
   },
-  "sidebar.reference.category.UI Kit contract and components": {
-    "message": "UI Kit contract and components",
-    "description": "The label for category 'UI Kit contract and components' in sidebar 'reference'"
+  "sidebar.reference.link.Fixture developer guide": {
+    "message": "Fixture developer guide",
+    "description": "The label for link 'Fixture developer guide' in sidebar 'reference', linking to '/reference/plugin-developer-guide'"
   },
-  "sidebar.reference.category.Component manuals": {
-    "message": "Component manuals",
-    "description": "The label for category 'Component manuals' in sidebar 'reference'"
+  "sidebar.reference.link.Maintainer evidence": {
+    "message": "Maintainer evidence",
+    "description": "The label for link 'Maintainer evidence' in sidebar 'reference', linking to '/maintenance'"
   },
-  "sidebar.reference.category.host-projections": {
-    "message": "Host projections",
-    "description": "The label for the host-projections category in sidebar 'reference'"
+  "sidebar.hostUi.category.Host component manuals": {
+    "message": "Host component manuals",
+    "description": "The label for category 'Host component manuals' in sidebar 'hostUi'"
   },
-  "sidebar.reference.category.overlays": {
-    "message": "Overlays",
-    "description": "The label for the overlays category in sidebar 'reference'"
+  "sidebar.hostUi.category.host-projections": {
+    "message": "host-projections",
+    "description": "The label for category 'host-projections' in sidebar 'hostUi'"
   },
-  "sidebar.reference.category.primitives": {
-    "message": "Primitives",
-    "description": "The label for the primitives category in sidebar 'reference'"
+  "sidebar.hostUi.category.overlays": {
+    "message": "overlays",
+    "description": "The label for category 'overlays' in sidebar 'hostUi'"
+  },
+  "sidebar.hostUi.category.primitives": {
+    "message": "primitives",
+    "description": "The label for category 'primitives' in sidebar 'hostUi'"
+  },
+  "sidebar.hostUi.link.UI examples": {
+    "message": "UI examples",
+    "description": "The label for link 'UI examples' in sidebar 'hostUi', linking to '/ui-kit'"
+  },
+  "sidebar.engineering.link.Maintainer map": {
+    "message": "Maintainer map",
+    "description": "The label for link 'Maintainer map' in sidebar 'engineering', linking to '/maintenance'"
+  },
+  "sidebar.fixtures.link.Run your first fixture": {
+    "message": "Run your first fixture",
+    "description": "The label for link 'Run your first fixture' in sidebar 'fixtures', linking to '/platform/quick-start'"
+  },
+  "sidebar.fixtures.link.API and protocol index": {
+    "message": "API and protocol index",
+    "description": "The label for link 'API and protocol index' in sidebar 'fixtures', linking to '/reference/plugin-api-index'"
   }
 }

@@ -1,29 +1,24 @@
 ---
 id: index
-title: Velvet Plugin Platform
+title: Velvet developer documentation
 slug: /
-sidebar_position: 1
 ---
 
-# Velvet Plugin Platform
+# Velvet developer documentation
 
-Velvet is a desktop workbench where the host owns layout, permissions, plugin lifecycle, and core state. Plugins contribute Views, Commands, Preview providers, Jobs, and UI surfaces. The UI Kit is one UI capability provided by the Plugin Platform.
+<span id="velvet-plugin-platform" className="velvet-doc-anchor" />
 
-The documentation starts with the platform, then moves through contributions, UI surfaces, UI Kit, Bridge, security, and qualification.
+Velvet is a desktop Workbench with host-owned state, layout, permissions and extension lifecycle. The current plugin contracts are **Alpha, maintained in this repository**. There is no published external SDK. Runnable fixtures demonstrate specific seams; they do not qualify a production sandbox or every target platform.
 
-## Start here
+<span id="start-here" className="velvet-doc-anchor" />
+<span id="reference-layers" className="velvet-doc-anchor" />
 
-- [Plugin Platform overview](./platform/overview)
-- [Quick start](./platform/quick-start)
-- [Choose a contribution](./platform/choose-contribution)
-- [UI Kit overview](./ui-kit)
-- [UI Kit Showcase](./ui-kit/showcase)
-- [Button API and Playground](./ui-kit/components/button)
+| Your task | Start here |
+| --- | --- |
+| Build a product extension | [Run your first fixture](./platform/quick-start), then [find a capability](./platform/capabilities) |
+| Look up a declaration or message | [API and protocol index](/reference/plugin-api-index) |
+| Develop trusted host UI | [UI system](./ui-kit), including live component examples |
+| Maintain the repository | [Maintainer map](/maintenance) |
+| Find a page or identifier | [Search](./search) |
 
-## Reference layers
-
-- [Plugin manifest](/reference/plugin-manifest-v1)
-- [UI Kit contract](/reference/ui-kit-contract-v1)
-- [Component manuals](/reference/ui-kit/components)
-- [Plugin developer guide](/reference/plugin-developer-guide)
-- [Contract matrix](/reference/plugin-contract-matrix)
+Third-party extensions use declared contributions and bounded protocols. The React components in the UI system are for trusted host code. [Choose a contribution](./platform/choose-contribution) before choosing a custom UI surface.

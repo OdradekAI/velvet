@@ -20,4 +20,10 @@ Plugin Platform
 └── Qualification     contracts, stories, browser and release gates
 ```
 
-Start with [Quick start](./quick-start). Choose a contribution in [Choose a contribution](./choose-contribution), then continue to [UI Kit](../ui-kit) or [UI Bridge](./ui-bridge).
+## Choose a reading path
+
+- For your first plugin, start with [Quick start](./quick-start).
+- To contribute a View, Command or Job, read [Contributions](./contributions).
+- To render UI, [choose a contribution](./choose-contribution), then use the trusted [UI Kit](../ui-kit) or isolated [UI Bridge](./ui-bridge).
+- For enforcement boundaries, read [Security](./security).
+- For host component props, states and interactions, see [UI Kit components](../ui-kit/components/button).

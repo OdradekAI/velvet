@@ -3,28 +3,48 @@
     "message": "Next",
     "description": "The label for version current"
   },
-  "sidebar.reference.category.Plugin Platform reference": {
-    "message": "插件平台参考",
-    "description": "The label for category 'Plugin Platform reference' in sidebar 'reference'"
+  "sidebar.reference.link.Capability catalog": {
+    "message": "能力目录",
+    "description": "The label for link 'Capability catalog' in sidebar 'reference', linking to '/platform/capabilities'"
   },
-  "sidebar.reference.category.UI Kit contract and components": {
-    "message": "UI Kit contract 与组件",
-    "description": "The label for category 'UI Kit contract and components' in sidebar 'reference'"
+  "sidebar.reference.link.Fixture developer guide": {
+    "message": "Fixture 开发指南",
+    "description": "The label for link 'Fixture developer guide' in sidebar 'reference', linking to '/reference/plugin-developer-guide'"
   },
-  "sidebar.reference.category.Component manuals": {
-    "message": "组件手册",
-    "description": "The label for category 'Component manuals' in sidebar 'reference'"
+  "sidebar.reference.link.Maintainer evidence": {
+    "message": "维护者验证证据",
+    "description": "The label for link 'Maintainer evidence' in sidebar 'reference', linking to '/maintenance'"
   },
-  "sidebar.reference.category.host-projections": {
+  "sidebar.hostUi.category.Host component manuals": {
+    "message": "宿主组件手册",
+    "description": "The label for category 'Host component manuals' in sidebar 'hostUi'"
+  },
+  "sidebar.hostUi.category.host-projections": {
     "message": "宿主投影",
-    "description": "The label for category 'host-projections' in sidebar 'reference'"
+    "description": "The label for category 'host-projections' in sidebar 'hostUi'"
   },
-  "sidebar.reference.category.overlays": {
-    "message": "覆盖层",
-    "description": "The label for category 'overlays' in sidebar 'reference'"
+  "sidebar.hostUi.category.overlays": {
+    "message": "浮层",
+    "description": "The label for category 'overlays' in sidebar 'hostUi'"
   },
-  "sidebar.reference.category.primitives": {
+  "sidebar.hostUi.category.primitives": {
     "message": "基础组件",
-    "description": "The label for category 'primitives' in sidebar 'reference'"
+    "description": "The label for category 'primitives' in sidebar 'hostUi'"
+  },
+  "sidebar.hostUi.link.UI examples": {
+    "message": "UI 示例",
+    "description": "The label for link 'UI examples' in sidebar 'hostUi', linking to '/ui-kit'"
+  },
+  "sidebar.engineering.link.Maintainer map": {
+    "message": "维护者地图",
+    "description": "The label for link 'Maintainer map' in sidebar 'engineering', linking to '/maintenance'"
+  },
+  "sidebar.fixtures.link.Run your first fixture": {
+    "message": "运行首个 fixture",
+    "description": "The label for link 'Run your first fixture' in sidebar 'fixtures', linking to '/platform/quick-start'"
+  },
+  "sidebar.fixtures.link.API and protocol index": {
+    "message": "API 与协议索引",
+    "description": "The label for link 'API and protocol index' in sidebar 'fixtures', linking to '/reference/plugin-api-index'"
   }
 }

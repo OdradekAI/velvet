@@ -9,12 +9,16 @@ import { VelvetText } from './app/ui/index.js';
 
 ## Contract
 
-- **Props:** `as`, `tone`, `children`
-- **State:** default, tones
-- **Owner:** see `apps/desktop/src/app/ui/contracts/primitives/text.contract.ts`.
-- **Slots:** the contract file lists the supported child/data slots.
-- **Actions:** No semantic action; this component preserves child semantics.
-- **Keyboard and accessibility:** No keyboard behavior is introduced by this layout or display component.
+- **Props:** `as`, `tone`, `children`, `className`, `ariaLabel`
+- **States:** `default`, `tone`
+- **Owner:** `component`; see `apps/desktop/src/app/ui/contracts/primitives/text.contract.ts`.
+- **Slots:** `children`.
+- **Actions:** No semantic action is defined.
+- **Keyboard and accessibility:** No keyboard behavior is introduced; the chosen HTML element and child semantics are preserved.
+
+`children: ReactNode` is required. `as` is `'p' | 'span' | 'strong' | 'small' | 'h1' | 'h2' | 'h3'` (default `'span'`); `tone` is `'primary' | 'secondary' | 'muted' | 'danger' | 'success' | 'warning'` (default `'primary'`). The wrapper also accepts `className?: string`, `id?: string` and `role?: string`. Use `as` to select appropriate native text/heading semantics.
+
+The wrapper also accepts `UiCommonProps`: `apiVersion` (default `'1.0'`), `testId`, `ariaLabel`, `describedBy`, `disabled`, `busy`, `ariaLive?: 'off' | 'polite' | 'assertive'` and `data-*` metadata. See `apps/desktop/src/app/ui/internal/types.ts` and `apps/desktop/src/app/ui/internal/ui-data-props.ts`; these props do not imply uniform disabling behavior across display and interactive components. `className` is supported.
 
 The contract is semantic. React implementation details, Tailwind classes, Radix
 attributes and private DOM structure are not public API.
@@ -37,8 +41,12 @@ The executable stories are in
 
 ## Validation
 
+Run from `apps/desktop`:
+
 ```sh
 npm run typecheck
 npm run generate:ui-kit-catalog
 npm test
 ```
+
+See [VelvetText API and Playground](/ui-kit/components/text) for interactive examples and prop controls.

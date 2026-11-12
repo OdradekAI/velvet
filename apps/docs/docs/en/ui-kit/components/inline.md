@@ -4,7 +4,7 @@ title: Inline
 sidebar_label: Inline
 ---
 
-import { InlinePlayground } from '@site/src/components/UiKitPrimitivePlaygrounds';
+import { InlinePlayground } from '@site/src/components/playgrounds/inline';
 
 # VelvetInline
 
@@ -26,7 +26,7 @@ import { InlinePlayground } from '@site/src/components/UiKitPrimitivePlaygrounds
 
 ## States and accessibility
 
-Inline renders a horizontal layout container and does not change child reading order, focus order, or keyboard behavior. Use Stack or a host projection for wrapping or complex layout.
+Inline renders a horizontal layout container and does not change child reading order, focus order, or keyboard behavior. Use Stack for a selectable row/column direction. Neither wrapper declares a wrapping prop; more complex layout belongs to the host composition.
 
 Behavior is listed in the [Inline manual](/reference/ui-kit/components/primitives/inline).
 
