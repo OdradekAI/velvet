@@ -143,6 +143,10 @@ jobs:
         working-directory: apps/docs
         run: npm ci
 
+      - name: Install desktop UI dependencies
+        working-directory: apps/desktop
+        run: npm ci
+
       - name: Verify documentation release build
         working-directory: apps/docs
         run: npm run verify:release
